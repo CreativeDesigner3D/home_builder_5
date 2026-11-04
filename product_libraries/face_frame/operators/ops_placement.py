@@ -149,6 +149,11 @@ def _cage_dimensions(scene_props, cabinet_type):
             scene_props.base_cabinet_height)
 
 
+# Catalog names that place a range hood: the plain (metal) hood and the
+# same hood with its wood hood built on placement.
+RANGE_HOOD_NAMES = ("Range Hood", "Wood Hood")
+
+
 def _appliance_dimensions(scene_props, appliance_name):
     """Return (width, height, depth) for an appliance preview cage and
     final placement. Falls back to the appliance class's class-level
@@ -172,7 +177,7 @@ def _appliance_dimensions(scene_props, appliance_name):
         # A standalone unit starts at the appliance's own standard width,
         # not the (wider) refrigerator cabinet width; type W to change it.
         return (cls.width, scene_props.refrigerator_height, cls.depth)
-    if appliance_name == "Range Hood":
+    if appliance_name in RANGE_HOOD_NAMES:
         ceiling = bpy.context.scene.home_builder.ceiling_height
         mount_z = _appliance_z_location(scene_props, appliance_name)
         height = max(ceiling - mount_z, cls.height)
@@ -180,6 +185,18 @@ def _appliance_dimensions(scene_props, appliance_name):
         # below it; the user can type a width override during placement.
         return (scene_props.range_width, height, cls.depth)
     return (cls.width, cls.height, cls.depth)
+
+
+def _build_placed_wood_hood(hood_obj):
+    """Build the wood hood on a freshly placed range hood, with the
+    options the hood dialog starts a new one from (its taper seeded
+    from the hood's width, as the dialog does)."""
+    from ...common import wood_hoods
+    opts = dict(wood_hoods._CUSTOM_DEFAULTS)
+    width = wood_hoods._HoodWrap(hood_obj).get_input('Dim X')
+    opts['top_width'] = width / 2.0
+    hood_obj[wood_hoods.HOOD_CUSTOM_PROP] = opts
+    wood_hoods.build_wood_hood(hood_obj, 'CUSTOM')
 
 
 def _appliance_z_location(scene_props, appliance_name):
@@ -190,7 +207,7 @@ def _appliance_z_location(scene_props, appliance_name):
     sits on the floor (Z=0); the operator's invoke uses cursor Z for
     the floor case so the user can rough in shelf/island placements.
     """
-    if appliance_name == "Range Hood":
+    if appliance_name in RANGE_HOOD_NAMES:
         return scene_props.default_wall_cabinet_location
     if appliance_name == "Corbel":
         # Top of the corbel under the countertop overhang: its top at
@@ -3077,7 +3094,7 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
                 self._preview_cage.set_input('Dim Y', self._cabinet_depth)
 
         # Sink + cursor on a Range -> island layout (sink facing the
-        # range across a 48" aisle). Checked before wall detection: a
+        # range across the island aisle). Checked before wall detection: a
         # direct raycast hit on the range is a stronger signal than the
         # nearest-wall floor-projection fallback, which would otherwise
         # grab the wall the range sits against.
@@ -3101,7 +3118,7 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
         # Standard-cabinet facing-bay (island-style). Once the user has
         # rotated the cage with R (_free_rotation_z != 0), a hit on the
         # FRONT face of an existing face-frame cabinet places this cabinet
-        # across a 48" aisle facing that bay - the same snap the Sink gets
+        # across the island aisle facing that bay - the same snap the Sink gets
         # for free, now opt-in for any cabinet. Gated on rotation so it
         # never changes default placement; checked BEFORE wall detection
         # for the same reason as the Sink block (a front-face hit would
@@ -3908,7 +3925,7 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
             cage_obj.parent = None
             cage_obj.matrix_world = world
 
-        gap = units.inch(48.0)
+        gap = context.scene.hb_face_frame.island_aisle_width
         sink_w = self._cabinet_width
         sink_d = self._cabinet_depth
 
@@ -3937,7 +3954,7 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
             context.area.tag_redraw()
 
     def _position_facing_range(self, context, range_obj):
-        """Place the sink facing a Range across a 48" aisle, centered on
+        """Place the sink facing a Range across the island aisle, centered on
         the range's width. range_obj is the Range appliance under the
         cursor.
         """
@@ -3953,7 +3970,7 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
             range_obj.matrix_world.translation.z)
 
     def _position_facing_bay(self, context, cab_obj, bay_obj):
-        """Place the cage facing a face frame cabinet across a 48"
+        """Place the cage facing a face frame cabinet across the island
         aisle, centered on bay_obj. bay_obj is the bay cage under the
         cursor, or None to center on the cabinet as a whole. Used by the
         Sink (automatic) and by any cabinet once rotated with R (opt-in,
@@ -5650,7 +5667,7 @@ class hb_face_frame_OT_place_appliance(bpy.types.Operator,
         # it looks for a bay (most-specific) or any cabinet/appliance
         # (PRODUCT). Other appliances center on a window when the
         # cursor is over one.
-        if self.appliance_name == "Range Hood":
+        if self.appliance_name in RANGE_HOOD_NAMES:
             kinds = {'BAY', 'PRODUCT'}
         else:
             kinds = {'WINDOW'}
@@ -5867,6 +5884,8 @@ class hb_face_frame_OT_place_appliance(bpy.types.Operator,
             self.report({'ERROR'}, f"Appliance creation failed: {e}")
             hb_placement.clear_header_text(context)
             return {'CANCELLED'}
+        if self.appliance_name == "Wood Hood":
+            _build_placed_wood_hood(appliance.obj)
 
         return self._finish_placed(
             context, appliance.obj, captured_parent, captured_world,

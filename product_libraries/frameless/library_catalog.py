@@ -23,8 +23,9 @@ three legs share one picture -- so the two are carried separately and
 
 This module fulfils the contract in
 ``operators/library_panel.register_catalog``: SECTIONS, section_by_key,
-category_items, search_products, thumbnail_path, place(), and the
-optional SIZES_FORM / AUTO_JOIN header controls.
+category_items, search_products, thumbnail_path, place(), the
+optional SIZES_FORM / AUTO_JOIN header controls, and USER_GROUPS /
+user_groups() for the saved cabinet groups.
 """
 
 import os
@@ -110,7 +111,11 @@ SECTIONS = (
                           "Stacked Washer Dryer"),
                          ("Laundry Tall", "Tall Laundry", "Tall Laundry"))),
             ("Bath", (("Toilet", "Toilet", "Toilet"),
-                      ("Pedestal Sink", "Pedestal Sink", "Pedestal Sink"))),
+                      ("Pedestal Sink", "Pedestal Sink", "Pedestal Sink"),
+                      ("Alcove Tub", "Alcove Tub", "Alcove Tub"),
+                      ("Freestanding Tub", "Freestanding Tub", "Freestanding Tub"),
+                      ("Shower", "Shower", "Shower"),
+                      ("Tub Shower", "Tub Shower", "Tub Shower"))),
         ),
     },
     {
@@ -482,6 +487,17 @@ def _pull_thumbnail(ident):
         return None
     path = os.path.join(pulls_closets.HANDLES_DIR, stem + '.png')
     return path if os.path.exists(path) else None
+
+
+# Saved cabinet groups, for the browser's User section: this namespace's
+# create / save / load operators, as the sidebar's User box fires them.
+USER_GROUPS = 'hb_frameless'
+
+
+def user_groups():
+    """Every saved cabinet group: [{name, filepath, thumbnail}]."""
+    from .operators import ops_library
+    return ops_library.get_user_library_items()
 
 
 def place(context, product):

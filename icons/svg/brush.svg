@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="none" stroke="#fff" stroke-width="1" stroke-linecap="butt" stroke-linejoin="miter">
+  <!-- A paint brush: handle, ferrule, bristles -->
+  <rect x="7" y="1" width="2" height="6" fill="#fff" stroke="none"/>
+  <rect x="5.5" y="7.5" width="5" height="2"/>
+  <path d="M5.5 10.5h5L11.5 15h-7z" fill="#fff" stroke="none"/>
+</svg>

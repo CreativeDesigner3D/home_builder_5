@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="none" stroke="#fff" stroke-width="1" stroke-linecap="butt" stroke-linejoin="miter">
+  <!-- A dimension: witness lines and a ticked span -->
+  <path d="M1.5 2v10M14.5 2v10" stroke-opacity=".7"/>
+  <path d="M1.5 9.5h13"/>
+  <path d="M0 11l3-3M13 11l3-3"/>
+</svg>

@@ -7,7 +7,7 @@ switches scenes. Hosted in the viewport HUD the panel stays up while you
 work -- picking a scene, running a room action or clicking away all
 leave it open, and the tab button that opened it closes it again.
 Room rows carry rename and delete buttons,
-and a New Room button sits at the bottom -- each of those closes the
+and a New Room button heads the Rooms section -- each of those closes the
 navigator and opens the corresponding operator dialog. Click outside /
 Esc / RMB dismisses.
 
@@ -35,6 +35,7 @@ from ..hb_gpu_draw import (
 # instead of copying this file.
 from ..hb_gpu_ui import (
     Theme,
+    semibold_font,
     paint_button as _paint_button,
     draw_centered_text as _draw_centered_text,
     ScrollList,
@@ -181,10 +182,14 @@ _active_tab = TAB_ROOMS
 # without knowing what it is. With nothing registered the panel is
 # exactly the three tabs it was.
 _extra_tabs = []         # (order, key, label, available_fn)
+# Each tab's icon, (name, icon_dir): icon_dir None for this add-on's own
+# icons, else the folder of baked PNGs the contributing add-on ships.
+_tab_icons = {TAB_ROOMS: ('rooms', None), TAB_LIBRARY: ('library', None),
+              TAB_OPTIONS: ('settings', None)}
 
 
 def register_tab(key, module, label=None, order=100, available=None,
-                 prefer=None):
+                 prefer=None, icon=None, icon_dir=None):
     """Add a tab and the provider that draws it.
 
     `label` is what the tab button says (the key, if omitted) -- a key
@@ -194,6 +199,9 @@ def register_tab(key, module, label=None, order=100, available=None,
     `prefer` is an optional callable(scene) saying the tab is THE thing
     to look at on that scene: arriving there switches the panel to it,
     opening the panel if it was closed (see resolve_active_tab).
+    `icon` names the tab's icon, from `icon_dir` (a folder of baked PNGs)
+    when the icon is the contributing add-on's own. With an icon the tab
+    shows only it until opened; without one it keeps its label.
     Sorted by (order, key); built-ins take an implicit order from their
     position, spaced so a contribution can land between two of them.
     Re-registering a key replaces it, so a reloaded add-on cannot stack
@@ -205,11 +213,15 @@ def register_tab(key, module, label=None, order=100, available=None,
     _providers[key] = module
     if prefer is not None:
         _preferred[key] = prefer
+    if icon is not None:
+        _tab_icons[key] = (icon, icon_dir)
 
 
 def unregister_tab(key):
     global _active_tab
     _preferred.pop(key, None)
+    if key not in TABS:
+        _tab_icons.pop(key, None)
     for i, tab in enumerate(list(_extra_tabs)):
         if tab[1] == key:
             del _extra_tabs[i]
@@ -232,6 +244,11 @@ def tab_label(tab):
         if key == tab:
             return label
     return tab
+
+
+def tab_icon(tab):
+    """(name, icon_dir) for the tab's icon, or None."""
+    return _tab_icons.get(tab)
 
 
 def tab_available(tab, scene=None):
@@ -599,7 +616,6 @@ def _build_layout(region, area, current_scene_name,
         ('row', scene, parent, color, is_current, rect,
                 delete_rect_or_None)
         ('section_action', label, text, rect)
-        ('new_room', rect)
     Room and layout-view rows carry a delete sub-rect; detail rows
     carry None.
     """
@@ -672,10 +688,9 @@ def _build_layout(region, area, current_scene_name,
     panel_top = anchor_top if anchor_top >= 0.0 else y_max - margin
 
     action_rows = (len(_room_actions) + 2) // 3     # three per row
-    actions_h = action_rows * (new_room_h + 3 * s)
-    fixed_h = (pad_y * 2 + panel_hdr_h + section_gap
-               + actions_h
-               + new_room_gap + new_room_h)
+    actions_h = (new_room_gap + action_rows * (new_room_h + 3 * s)
+                 if action_rows else 0.0)
+    fixed_h = pad_y * 2 + panel_hdr_h + section_gap + actions_h
     tab = resolve_active_tab()
     is_rooms = tab == TAB_ROOMS
     avail_h = panel_top - (y_min + PANEL_BOTTOM_MARGIN * s)
@@ -711,7 +726,8 @@ def _build_layout(region, area, current_scene_name,
     # ---- Panel header ----------------------------------------------------
     cursor_y = panel_top - pad_y
     ph_rect = (content_x, cursor_y - panel_hdr_h, content_w, panel_hdr_h)
-    entries.append(('panel_header', current_scene_name, ph_rect))
+    bar = _level_bar(current_scene_name, ph_rect)
+    entries.append(bar if bar is not None else ('panel_header', current_scene_name, ph_rect))
     cursor_y -= panel_hdr_h + section_gap
 
 
@@ -789,7 +805,7 @@ def _build_layout(region, area, current_scene_name,
                 delete_rect,
             ))
 
-    # ---- Room actions + New Room ------------------------------------------
+    # ---- Room actions ----------------------------------------------------
     cursor_y = list_bottom - new_room_gap
     if _room_actions:
         gap_x = 3 * s
@@ -802,8 +818,6 @@ def _build_layout(region, area, current_scene_name,
                     (content_x + j * (bw + gap_x), cursor_y - new_room_h,
                      bw, new_room_h)))
             cursor_y -= new_room_h + gap_x
-    new_room_rect = (content_x, cursor_y - new_room_h, content_w, new_room_h)
-    entries.append(('new_room', new_room_rect))
 
     return panel_rect, entries
 
@@ -836,7 +850,6 @@ def hit_test(mx, my, entries):
         ('clear_section', label)  the header's clear-all button
         ('section_action', label)  a section's action button
         ('delete', scene) / ('row', scene)
-        ('new_room', None)
     List entries scrolled partly out of the clip rect only hit on their
     visible part. Shared by the modal and the HUD click path so the
     two can't disagree.
@@ -869,9 +882,6 @@ def hit_test(mx, my, entries):
         elif kind == 'room_action':
             if _point_in_rect(mx, my, entry[5]):
                 return ('room_action', entry)
-        elif kind == 'new_room':
-            if _point_in_rect(mx, my, entry[1]):
-                return ('new_room', None)
     return None
 
 
@@ -1041,6 +1051,86 @@ def commit_drag():
 
 
 # ---- Draw helpers -----------------------------------------------------------
+
+# ---- The level bar ----------------------------------------------------------
+# In a house the panel's top row is its levels, one chip each - click one
+# to draw on it - and All, lit while every level shows: click it to show
+# only the level you are on, again to show them all. It is on every tab,
+# TOOL included, so the level can change while a tool runs.
+
+LEVEL_CAPTION = "LEVEL"
+ALL_LABEL = "All"
+
+
+def _level_bar(scene_name, rect):
+    """('level_bar', chips, rect) for a house scene, else None. Each chip
+    is (what, index, label, rect, lit): what is 'level' or 'all'."""
+    from .. import hb_house
+    scene = bpy.data.scenes.get(scene_name)
+    if scene is None or not scene.get(hb_house.HOUSE_SCENE_KEY):
+        return None
+    house = scene.hb_house
+    if not len(house.levels):
+        return None
+    s = _s()
+    rx, ry, rw, rh = rect
+    font = HEADER_FONT_SIZE * s
+    cap_w = _text_w(0, font, LEVEL_CAPTION) + 8 * s
+    all_w = _text_w(0, font, ALL_LABEL) + 18 * s
+    gap = 2 * s
+    h = rh - 4 * s
+    y = ry + 2 * s
+    n = len(house.levels)
+    each = max((rw - cap_w - all_w - gap * n) / n, 10 * s)
+    chips, x = [], rx + cap_w
+    for i, level in enumerate(house.levels):
+        chips.append(('level', i, level.name, (x, y, each, h), i == house.active_level_index))
+        x += each + gap
+    chips.append(('all', None, ALL_LABEL, (rx + rw - all_w, y, all_w, h),
+                  house.level_display == 'ALL'))
+    return ('level_bar', chips, rect)
+
+
+def _draw_level_bar(shader, font_id, entry, mx, my):
+    _kind, chips, rect = entry
+    rx, ry, rw, rh = rect
+    s = _s()
+    font = HEADER_FONT_SIZE * s
+    _draw_text(semibold_font(), rx, _vcenter_baseline(rect, font_id, font), font,
+               HEADER_TEXT, LEVEL_CAPTION)
+    for what, _i, label, chip, lit in chips:
+        hot = _point_in_rect(mx, my, chip)
+        _paint_button(shader, chip, hovered=hot, active=lit)
+        shown = _fit_text(font_id, font, label, chip[2] - 6 * s)
+        _draw_centered_text(font_id, chip, font,
+                            TEXT_PRIMARY if (lit or hot) else TEXT_NORMAL, shown)
+    _draw_rect(shader, rx, ry - 2 * s, rw, max(1.0, s), SEPARATOR_COLOR)
+
+
+def _level_bar_click(context, mx, my, entries):
+    """A click on a level chip or All: True if it took it."""
+    bar = next((e for e in entries if e[0] == 'level_bar'), None)
+    if bar is None:
+        return False
+    scene = context.scene
+    house = getattr(scene, 'hb_house', None)
+    if house is None:
+        return False
+    for what, i, _label, chip, _lit in bar[1]:
+        if not _point_in_rect(mx, my, chip):
+            continue
+        if what == 'level':
+            if house.active_level_index != i:
+                house.active_level_index = i
+        else:
+            house.level_display = 'ACTIVE' if house.level_display == 'ALL' else 'ALL'
+        for window in context.window_manager.windows:
+            for area in window.screen.areas:
+                if area.type == 'VIEW_3D':
+                    area.tag_redraw()
+        return True
+    return False
+
 
 def _draw_panel_header(shader, font_id, rect, current_name):
     rx, ry, rw, rh = rect
@@ -1254,6 +1344,8 @@ def paint_navigator(panel_rect, entries, mx, my):
             break            # the provider owns everything below the strip
         if kind == 'panel_header':
             _draw_panel_header(shader, font_id, entry[2], entry[1])
+        elif kind == 'level_bar':
+            _draw_level_bar(shader, font_id, entry, mx, my)
         elif kind == 'list':
             _, _clip, track, thumb = entry
             if track is not None:
@@ -1264,8 +1356,6 @@ def paint_navigator(panel_rect, entries, mx, my):
                           hovered=_point_in_rect(mx, my, entry[5]))
             _draw_centered_text(font_id, entry[5], HEADER_FONT_SIZE * s,
                                 TEXT_NORMAL, entry[2])
-        elif kind == 'new_room':
-            _draw_new_room_button(shader, font_id, entry[1], mx, my)
 
     gpu.state.blend_set('NONE')
 
@@ -1321,6 +1411,8 @@ def handle_navigator_click(context, mx, my, entries):
     passes it through so the viewport stays interactive). Hits never close
     the panel; the tab button that opened it is what closes it.
     """
+    if _level_bar_click(context, mx, my, entries):
+        return True
     hit = hit_test(mx, my, entries)
     if hit is None:
         # Not a shell element. On a hosted tab the body owns the rest of
@@ -1357,8 +1449,6 @@ def handle_navigator_click(context, mx, my, entries):
             except Exception as ex:
                 print('Home Builder: room action %s failed: %s'
                       % (operator, ex))
-        elif kind == 'new_room':
-            bpy.ops.home_builder.create_room('INVOKE_DEFAULT')
     except Exception:
         pass
     return True
@@ -1485,12 +1575,6 @@ class home_builder_OT_scene_navigator(bpy.types.Operator):
         except Exception as e:
             self.report({'WARNING'}, f"Could not switch to {scene_name}: {e}")
 
-    def _create_room(self, context):
-        try:
-            bpy.ops.home_builder.create_room('INVOKE_DEFAULT')
-        except Exception as e:
-            self.report({'WARNING'}, f"Could not create room: {e}")
-
     def _rename_room(self, context, scene):
         # temp_override(scene=...) so rename_room's poll and invoke see the
         # target room; execute targets it explicitly via scene_name.
@@ -1553,6 +1637,9 @@ class home_builder_OT_scene_navigator(bpy.types.Operator):
         if event.type == 'LEFTMOUSE' and event.value == 'PRESS':
             mx = event.mouse_x - self.region.x
             my = event.mouse_y - self.region.y
+            if _level_bar_click(context, mx, my, self.entries):
+                self._rebuild_layout(context)
+                return {'RUNNING_MODAL'}
             hit = hit_test(mx, my, self.entries)
             if hit is None:
                 # nothing hit -- dismiss
@@ -1585,10 +1672,6 @@ class home_builder_OT_scene_navigator(bpy.types.Operator):
                 self._cleanup(context)
                 if scene.name != context.scene.name:
                     self._switch_to(context, scene.name)
-                return {'FINISHED'}
-            if kind == 'new_room':
-                self._cleanup(context)
-                self._create_room(context)
                 return {'FINISHED'}
             return {'RUNNING_MODAL'}
 
@@ -1659,6 +1742,9 @@ classes = (
 def register():
     for cls in classes:
         bpy.utils.register_class(cls)
+    # New Room heads the Rooms list, where you look for it; at the
+    # bottom it sat under Layout Views' own create button.
+    register_section_action('ROOMS', "New Room", 'home_builder.create_room')
     # Linking another room's geometry into this one, and the options for
     # how: which of its walls / lights / products come across, what
     # colour it draws in, whether it shows at all. A form -- there is a
@@ -1673,5 +1759,6 @@ def register():
 
 def unregister():
     unregister_room_action('linked_rooms')
+    unregister_section_action('ROOMS')
     for cls in reversed(classes):
         bpy.utils.unregister_class(cls)

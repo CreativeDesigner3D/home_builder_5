@@ -3,7 +3,7 @@ import gpu
 import blf
 from gpu_extras.batch import batch_for_shader
 from bpy_extras import view3d_utils
-from .. import hb_types, hb_snap, hb_placement, units
+from .. import hb_house, hb_types, hb_snap, hb_placement, units
 import math
 from mathutils import Vector
 from ..hb_details import GeoNodeText
@@ -445,23 +445,7 @@ class WallObjectPlacementMixin(hb_placement.PlacementMixin):
     
     def cut_wall(self, wall_obj, cutting_obj):
         """Add a boolean modifier to the wall to cut a hole for the door/window."""
-        # Create a unique modifier name based on the cutting object
-        mod_name = f"Boolean_{cutting_obj.name}"
-        
-        # Check if modifier already exists
-        if mod_name in wall_obj.modifiers:
-            return wall_obj.modifiers[mod_name]
-        
-        # Add boolean modifier
-        mod = wall_obj.modifiers.new(name=mod_name, type='BOOLEAN')
-        mod.operation = 'DIFFERENCE'
-        mod.object = cutting_obj
-        mod.solver = 'EXACT'
-        
-        # Hide the cutting object from render
-        cutting_obj.hide_render = True
-        
-        return mod
+        return cut_wall(wall_obj, cutting_obj)
 
     def find_nearest_wall_to_cursor(self, threshold=0.3):
         """Find the closest wall to the current hit location in 2D plan-view
@@ -654,6 +638,25 @@ class WallObjectPlacementMixin(hb_placement.PlacementMixin):
             return True
         return False
 
+    def _hide_annotations(self, hide):
+        """Hide what hangs off the placed object (its swing, its label,
+        its type's symbol), or show again what was hidden."""
+        hidden = getattr(self, '_hidden_annotations', None)
+        if hidden is None:
+            hidden = self._hidden_annotations = []
+        placed = self.get_placed_object()
+        if hide and placed is not None:
+            for child in placed.children_recursive:
+                if child.visible_get():
+                    child.hide_set(True)
+                    hidden.append(child.name)
+        elif not hide and hidden:
+            for name in hidden:
+                obj = bpy.data.objects.get(name)
+                if obj is not None:
+                    obj.hide_set(False)
+            hidden.clear()
+
     def handle_two_point_d_key(self, event) -> bool:
         """D key toggles two-point width mode. Returns True if handled."""
         if event.type == 'D' and event.value == 'PRESS':
@@ -676,6 +679,137 @@ class WallObjectPlacementMixin(hb_placement.PlacementMixin):
             self.width_locked_in_phase2 = True
 
     # ========== End Two-Point Width Mode ==========
+
+
+def cut_wall(wall_obj, cutting_obj):
+    """Add a boolean modifier to the wall to cut a hole for the door/window."""
+    # Create a unique modifier name based on the cutting object
+    mod_name = f"Boolean_{cutting_obj.name}"
+
+    # Check if modifier already exists
+    if mod_name in wall_obj.modifiers:
+        return wall_obj.modifiers[mod_name]
+
+    # Add boolean modifier
+    mod = wall_obj.modifiers.new(name=mod_name, type='BOOLEAN')
+    mod.operation = 'DIFFERENCE'
+    mod.object = cutting_obj
+    mod.solver = 'EXACT'
+
+    # Hide the cutting object from render
+    cutting_obj.hide_render = True
+
+    return mod
+
+
+def create_wall_object_cage(spec, context):
+    """A new door, window or opening cage, sized from the scene's
+    defaults, with its label and (doors) swing annotation: (cage, swing
+    or None). `spec` is a placement tool class, whose attributes say
+    which kind of thing it is."""
+    props = context.scene.home_builder
+    hb_wm = bpy.context.window_manager.home_builder
+    add_on_prefs = hb_wm.get_user_preferences(bpy.context)
+
+    placed = hb_types.GeoNodeCage()
+    placed.create(spec.OBJECT_NAME)
+    if spec.BP_FLAG:
+        placed.obj[spec.BP_FLAG] = True
+    if spec.MENU_ID:
+        placed.obj['MENU_ID'] = spec.MENU_ID
+    placed.set_input('Dim X', getattr(props, spec.WIDTH_PROP_NAME))
+    placed.set_input('Dim Y', props.wall_thickness)
+    placed.set_input('Dim Z', getattr(props, spec.HEIGHT_PROP_NAME))
+    placed.obj.color = add_on_prefs.door_window_color
+    if props.show_entry_door_and_window_cages:
+        placed.obj.display_type = 'TEXTURED'
+        placed.obj.show_in_front = True
+    else:
+        placed.obj.display_type = 'WIRE'
+
+    dim_x = placed.var_input('Dim X', 'dim_x')
+    dim_y = placed.var_input('Dim Y', 'dim_y')
+    dim_z = placed.var_input('Dim Z', 'dim_z')
+
+    # Optional swing annotation (door subclasses only)
+    swing = None
+    if spec.HAS_SWING:
+        swing = hb_types.GeoNodeDoorSwing()
+        swing.create('Door Swing Annotation')
+        swing.obj.parent = placed.obj
+        swing.driver_input("Dim X", 'dim_x', [dim_x])
+        swing.driver_input("Dim Y", 'dim_y', [dim_y])
+        if spec.INITIAL_SWING_INPUTS:
+            for k, v in spec.INITIAL_SWING_INPUTS.items():
+                swing.set_input(k, v)
+        # A new door follows the room's Show Door Swings setting.
+        if not getattr(props, 'show_door_swings', True):
+            try:
+                swing.obj.hide_set(True)
+            except RuntimeError:
+                pass  # not yet in the view layer
+
+    if spec.IS_OPEN_DOORWAY:
+        placed.obj['IS_OPEN_DOORWAY'] = True
+
+    # Text annotation (open doorways carry no label -- they are
+    # just an opening, not a door)
+    if spec.TEXT_KIND:
+        text = GeoNodeText()
+        text.create(spec.TEXT_NAME, spec.TEXT_KIND,
+                    props.annotation_text_size)
+        text.obj.parent = placed.obj
+        text.obj.rotation_euler.x = math.radians(90)
+        text.driver_location("x", 'dim_x/2', [dim_x])
+        text.driver_location("y", 'dim_y/2', [dim_y])
+        text.driver_location("z", 'dim_z/2', [dim_z])
+        text.set_alignment('CENTER', 'CENTER')
+    return placed, swing
+
+
+def place_wall_object(context, wall_obj, kind, x, width=None, height=None, z=None):
+    """Put a door, window or opening in a wall without the placement
+    tool, as a click of it would: `kind` 'DOOR', 'DOUBLE_DOOR', 'OPENING'
+    or 'WINDOW'; `x` its left end along the wall; width, height and the
+    height off the floor `z` default as the tool's do. The opening is cut
+    and its model built in the scene's style. Returns the cage object."""
+    spec = PLACE_KINDS[kind]
+    placed, _swing = create_wall_object_cage(spec, context)
+    if width is not None:
+        placed.set_input('Dim X', width)
+    if height is not None:
+        placed.set_input('Dim Z', height)
+    if z is None:
+        z = (getattr(context.scene.home_builder, spec.Z_OFFSET_PROP_NAME)
+             if spec.Z_OFFSET_PROP_NAME else 0.0)
+    wall = hb_types.GeoNodeWall(wall_obj)
+    placed.obj.parent = wall_obj
+    placed.obj.location = (x, 0.0, z)
+    placed.obj.rotation_euler = (0.0, 0.0, 0.0)
+    placed.set_input('Dim Y', wall.get_input('Thickness'))
+    if spec.BP_FLAG == 'IS_FIREPLACE_BP':
+        from .. import hb_fireplaces
+        if width is None:
+            placed.set_input('Dim X', context.scene.hb_house.fireplace_width)
+        if height is None:
+            placed.set_input('Dim Z', context.scene.hb_house.fireplace_height)
+        hb_fireplaces.place(context, placed.obj)
+        return placed.obj
+    if spec.BP_FLAG == 'IS_BAY_BP':
+        from .. import hb_bays
+        if width is None:
+            placed.set_input('Dim X', context.scene.hb_house.bay_width)
+        hb_bays.place(context, placed.obj)
+        return placed.obj
+    cutting_obj = placed.obj
+    if spec.BUILD_GEO:
+        cutting_obj = door_window_geo.update_reveal_cutter(placed.obj)
+    cut_wall(wall_obj, cutting_obj)
+    if spec.BUILD_GEO:
+        door_window_geo.apply_scene_style_and_build(placed.obj, context)
+    from .. import hb_trim
+    hb_trim.refresh_for_wall(wall_obj)
+    return placed.obj
 
 
 class _PlaceWallObjectBase(bpy.types.Operator, WallObjectPlacementMixin):
@@ -782,64 +916,7 @@ class _PlaceWallObjectBase(bpy.types.Operator, WallObjectPlacementMixin):
 
     def create_placed_object(self, context):
         """Create the placed object: cage + text + optional swing annotation."""
-        props = context.scene.home_builder
-        hb_wm = bpy.context.window_manager.home_builder
-        add_on_prefs = hb_wm.get_user_preferences(bpy.context)
-
-        self.placed_obj = hb_types.GeoNodeCage()
-        self.placed_obj.create(self.OBJECT_NAME)
-        if self.BP_FLAG:
-            self.placed_obj.obj[self.BP_FLAG] = True
-        if self.MENU_ID:
-            self.placed_obj.obj['MENU_ID'] = self.MENU_ID
-        self.placed_obj.set_input('Dim X', getattr(props, self.WIDTH_PROP_NAME))
-        self.placed_obj.set_input('Dim Y', props.wall_thickness)
-        self.placed_obj.set_input('Dim Z', getattr(props, self.HEIGHT_PROP_NAME))
-        self.placed_obj.obj.color = add_on_prefs.door_window_color
-        if props.show_entry_door_and_window_cages:
-            self.placed_obj.obj.display_type = 'TEXTURED'
-            self.placed_obj.obj.show_in_front = True
-        else:
-            self.placed_obj.obj.display_type = 'WIRE'
-
-        dim_x = self.placed_obj.var_input('Dim X', 'dim_x')
-        dim_y = self.placed_obj.var_input('Dim Y', 'dim_y')
-        dim_z = self.placed_obj.var_input('Dim Z', 'dim_z')
-
-        # Optional swing annotation (door subclasses only)
-        self.swing_obj = None
-        if self.HAS_SWING:
-            self.swing_obj = hb_types.GeoNodeDoorSwing()
-            self.swing_obj.create('Door Swing Annotation')
-            self.swing_obj.obj.parent = self.placed_obj.obj
-            self.swing_obj.driver_input("Dim X", 'dim_x', [dim_x])
-            self.swing_obj.driver_input("Dim Y", 'dim_y', [dim_y])
-            if self.INITIAL_SWING_INPUTS:
-                for k, v in self.INITIAL_SWING_INPUTS.items():
-                    self.swing_obj.set_input(k, v)
-            # A new door follows the room's Show Door Swings setting.
-            if not getattr(props, 'show_door_swings', True):
-                try:
-                    self.swing_obj.obj.hide_set(True)
-                except RuntimeError:
-                    pass  # not yet in the view layer
-
-        if self.IS_OPEN_DOORWAY:
-            self.placed_obj.obj['IS_OPEN_DOORWAY'] = True
-
-        # Text annotation (open doorways carry no label -- they are
-        # just an opening, not a door)
-        if self.TEXT_KIND:
-            text = GeoNodeText()
-            text.create(self.TEXT_NAME, self.TEXT_KIND,
-                        props.annotation_text_size)
-            text.obj.parent = self.placed_obj.obj
-            text.obj.rotation_euler.x = math.radians(90)
-            text.driver_location("x", 'dim_x/2', [dim_x])
-            text.driver_location("y", 'dim_y/2', [dim_y])
-            text.driver_location("z", 'dim_z/2', [dim_z])
-            text.set_alignment('CENTER', 'CENTER')
-
+        self.placed_obj, self.swing_obj = create_wall_object_cage(type(self), context)
         self.register_placement_object(self.placed_obj.obj)
         self.create_placement_dimensions()
         self._symbol_key = None
@@ -1075,6 +1152,9 @@ class _PlaceWallObjectBase(bpy.types.Operator, WallObjectPlacementMixin):
         # Two-point phase 1: hide the object so the user picks a clean start,
         # but still show the gap-relative offset dimensions.
         in_phase1 = self.two_point_in_phase1()
+        # Picking the first point: the door's swing and symbol go with it,
+        # or they would stand where it was last drawn
+        self._hide_annotations(in_phase1)
         if in_phase1:
             self.placed_obj.obj.hide_set(True)
             self.update_two_point_phase1_dimensions(context)
@@ -1110,7 +1190,11 @@ class _PlaceWallObjectBase(bpy.types.Operator, WallObjectPlacementMixin):
                 if self.BUILD_GEO:
                     door_window_geo.apply_scene_style_and_build(
                         self.placed_obj.obj, context)
+                # The rooms' trim breaks round it
+                from .. import hb_trim
+                hb_trim.refresh_for_wall(self.selected_wall)
                 self.placed_count += 1
+                tool_session.placed(self.placed_obj.obj)
                 if self.continuous:
                     self.start_next_object(context)
                     self.update_header(context)
@@ -1215,6 +1299,75 @@ class home_builder_doors_windows_OT_place_window(_PlaceWallObjectBase):
     TEXT_KIND = "WINDOW"
     TEXT_NAME = "Window Text"
     RESET_Z_WHEN_FREE = False
+
+
+class home_builder_doors_windows_OT_place_fireplace(_PlaceWallObjectBase):
+    bl_idname = "home_builder_doors_windows.place_fireplace"
+    bl_label = "Place Fireplace"
+    bl_description = ("Place a fireplace on a wall: its chimney stands outside, or rises "
+                      "through the floors above. Arrow keys for offset, W for width")
+
+    OBJECT_NAME = "Fireplace"
+    OBJECT_LABEL = "fireplace"
+    BP_FLAG = "IS_FIREPLACE_BP"
+    MENU_ID = "HOME_BUILDER_MT_fireplace_commands"
+    # The cage is made at a window's size, then set to the tool's
+    WIDTH_PROP_NAME = "window_width"
+    HEIGHT_PROP_NAME = "window_height"
+    TEXT_KIND = None
+    BUILD_GEO = False
+
+    def create_placed_object(self, context):
+        super().create_placed_object(context)
+        house = context.scene.hb_house
+        self.placed_obj.set_input('Dim X', house.fireplace_width)
+        self.placed_obj.set_input('Dim Z', house.fireplace_height)
+
+    def cut_wall(self, wall_obj, cutting_obj):
+        # The fireplace decides: an Outside chimney's mouth goes through
+        # the wall, an Inside one stands in front of it
+        from .. import hb_fireplaces
+        hb_fireplaces.place(bpy.context, cutting_obj)
+        return None
+
+
+class home_builder_doors_windows_OT_place_bay(_PlaceWallObjectBase):
+    bl_idname = "home_builder_doors_windows.place_bay"
+    bl_label = "Place Bay Window"
+    bl_description = ("Place a bay, bow or box window on an outside wall. Arrow keys "
+                      "for offset, W for width")
+
+    OBJECT_NAME = "Bay Window"
+    OBJECT_LABEL = "bay window"
+    BP_FLAG = "IS_BAY_BP"
+    MENU_ID = "HOME_BUILDER_MT_bay_window_commands"
+    # The cage is made at a window's size, then set to the tool's
+    WIDTH_PROP_NAME = "window_width"
+    HEIGHT_PROP_NAME = "window_height"
+    TEXT_KIND = None
+    BUILD_GEO = False
+
+    def create_placed_object(self, context):
+        super().create_placed_object(context)
+        house = context.scene.hb_house
+        self.placed_obj.set_input('Dim X', house.bay_width)
+        self.placed_obj.set_input('Dim Z', house.bay_head_height)
+
+    def cut_wall(self, wall_obj, cutting_obj):
+        from .. import hb_bays
+        hb_bays.place(bpy.context, cutting_obj)
+        return None
+
+
+# What place_wall_object can place, by the placement tool for each
+PLACE_KINDS = {
+    'DOOR': home_builder_doors_windows_OT_place_door,
+    'DOUBLE_DOOR': home_builder_doors_windows_OT_place_double_door,
+    'OPENING': home_builder_doors_windows_OT_place_open_door,
+    'WINDOW': home_builder_doors_windows_OT_place_window,
+    'FIREPLACE': home_builder_doors_windows_OT_place_fireplace,
+    'BAY': home_builder_doors_windows_OT_place_bay,
+}
 
 
 def _door_style_preset_items(self, context):
@@ -1656,6 +1809,18 @@ class home_builder_doors_windows_OT_window_prompts(bpy.types.Operator):
     casing_width: bpy.props.FloatProperty(name="Casing Width", unit='LENGTH', precision=5)  # type: ignore
     include_sill: bpy.props.BoolProperty(name="Exterior Sill")  # type: ignore
     include_stool: bpy.props.BoolProperty(name="Interior Stool")  # type: ignore
+    shutter_style: bpy.props.EnumProperty(
+        name="Shutters", items=hb_house.SHUTTER_STYLE_ITEMS)  # type: ignore
+    shutter_width: bpy.props.FloatProperty(
+        name="Shutter Width", unit='LENGTH', precision=5, min=0,
+        description="Each shutter's width; 0 is half the window's opening")  # type: ignore
+    shutter_color: bpy.props.FloatVectorProperty(
+        name="Shutter Color", subtype='COLOR', size=3, min=0.0, max=1.0)  # type: ignore
+    ext_trim_style: bpy.props.EnumProperty(
+        name="Exterior Trim", items=hb_house.EXT_TRIM_ITEMS)  # type: ignore
+    ext_casing_width: bpy.props.FloatProperty(
+        name="Exterior Casing Width", unit='LENGTH', precision=5, min=0,
+        description="The exterior casing's width; 0 is the casing width")  # type: ignore
     reveal_ext_on: bpy.props.BoolProperty(
         name="Exterior Reveal",
         description="Carve a reveal in from this wall's y=0 face "
@@ -1726,9 +1891,9 @@ class home_builder_doors_windows_OT_window_prompts(bpy.types.Operator):
             door_window_geo.remove_reveal_cutter(self.window.obj)
         else:
             _apply_preset_if_changed(self, door_window_geo.WINDOW_CATEGORY)
-            door_window_geo.set_opts(
-                self.window.obj, _collect_operator_opts(
-                    self, door_window_geo.WINDOW_DEFAULTS))
+            opts = _collect_operator_opts(self, door_window_geo.WINDOW_DEFAULTS)
+            opts['shutter_color'] = door_window_geo.color_hex(tuple(self.shutter_color))
+            door_window_geo.set_opts(self.window.obj, opts)
             door_window_geo.build_geometry(self.window.obj)
         return True
 
@@ -1741,6 +1906,8 @@ class home_builder_doors_windows_OT_window_prompts(bpy.types.Operator):
         self.style = _seed_operator_from_opts(
             self, bp, door_window_geo.WINDOW_DEFAULTS,
             _window_style_preset_items, context)
+        opts = door_window_geo.merged_opts(bp) or door_window_geo.WINDOW_DEFAULTS
+        self.shutter_color = door_window_geo._hex_color(opts['shutter_color'])
         self._applied_style = self.style
         wm = context.window_manager
         return wm.invoke_props_dialog(self, width=380)
@@ -1805,6 +1972,15 @@ class home_builder_doors_windows_OT_window_prompts(bpy.types.Operator):
         row = box.row(align=True)
         row.prop(self, 'include_sill')
         row.prop(self, 'include_stool')
+
+        box.separator()
+        box.label(text="Outdoors")
+        _labelled_row(box, self, 'ext_trim_style', "Exterior Trim:")
+        _labelled_row(box, self, 'ext_casing_width', "Exterior Casing:")
+        _labelled_row(box, self, 'shutter_style', "Shutters:")
+        if self.shutter_style != 'NONE':
+            _labelled_row(box, self, 'shutter_width', "Shutter Width:")
+            _labelled_row(box, self, 'shutter_color', "Shutter Color:")
 
     def _draw_reveals(self, box):
         _draw_reveals_tab(box, self)
@@ -2095,6 +2271,8 @@ classes = (
     home_builder_doors_windows_OT_place_double_door,
     home_builder_doors_windows_OT_place_open_door,
     home_builder_doors_windows_OT_place_window,
+    home_builder_doors_windows_OT_place_fireplace,
+    home_builder_doors_windows_OT_place_bay,
     home_builder_doors_windows_OT_duplicate_window,
     home_builder_doors_windows_OT_duplicate_door,
     home_builder_doors_windows_OT_door_prompts,

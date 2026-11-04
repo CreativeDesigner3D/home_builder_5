@@ -468,8 +468,23 @@ def _outdoor_faces(obj, mesh, rooms, both_sides):
     rooms; the roof-made walls have no rooms beside them, so `both_sides`
     takes both of their faces."""
     from mathutils import Vector
+    from . import hb_assemblies
+    # Over a siding layer, the boards are built in from the face by its
+    # depth: the wall's thickness already holds them. A filled-in gable
+    # end takes its level's walls' depth, so its boards line up with theirs
+    if obj.get('IS_WALL_BP'):
+        inset = hb_assemblies.siding_inset(obj)
+    else:
+        inset = hb_assemblies.level_siding_inset(hb_house.house_scene_of(bpy.context.scene) or bpy.context.scene,
+                                                 obj.get(hb_house.LEVEL_KEY, ''))
     m = obj.matrix_world
     rot = m.to_3x3()
+    # A bay's side has no room behind it to tell its faces apart: only its
+    # reference face is outdoors
+    ref_out = None
+    if obj.get('WALL_TYPE') == 'Bay':
+        ref_out = rot @ Vector((0.0, -1.0, 0.0))
+        ref_out = Vector((ref_out.x, ref_out.y, 0.0)).normalized()
     mesh.calc_loop_triangles()
     tris = {}
     for tri in mesh.loop_triangles:
@@ -488,7 +503,10 @@ def _outdoor_faces(obj, mesh, rooms, both_sides):
         if (max(ss) - min(ss) < 0.25 or max(zs) - min(zs) < 0.05
                 or _area(poly) < MIN_FACE_AREA):
             continue                # a wall's end, or a sliver (a cut can leave them across an opening)
-        if not both_sides:
+        if ref_out is not None:
+            if n.dot(ref_out) < 0.9:
+                continue
+        elif not both_sides:
             # Which way a face looks can't be read from its normal (a wall
             # drawn the other way round has its faces turned): a face just
             # off a room is an inside face; the outdoor side of the others
@@ -501,7 +519,7 @@ def _outdoor_faces(obj, mesh, rooms, both_sides):
             if in_room(0.25) and not in_room(-0.25):
                 n = -n
                 a = Vector((-n.y, n.x, 0.0))
-        offset = pts[0].dot(n)
+        offset = pts[0].dot(n) - inset
         for tri in tris.get(f.index, ()):
             corners = [m @ mesh.vertices[i].co for i in tri]
             out.append((n, offset, [(p.dot(a), p.z) for p in corners]))
@@ -778,8 +796,8 @@ def _outside_input(obj, wall, rooms):
     """Which of a wall's big faces is outdoors. A wall's thickness falls
     to one side of its reference line - outward or inward depending on
     how it was drawn - so look which side has the house's rooms. A
-    dormer front's thickness is always inward."""
-    if obj.get('WALL_TYPE') == 'Dormer':
+    dormer front's or a bay's side's thickness is always inward."""
+    if obj.get('WALL_TYPE') in hb_wall_graph.MODULE_WALL_TYPES:
         return REF_SIDE
     from mathutils import Vector
     m = obj.matrix_world
@@ -789,6 +807,76 @@ def _outside_input(obj, wall, rooms):
     if any(hb_wall_graph.point_in_polygon((thick_side.x, thick_side.y), poly) for poly in rooms):
         return REF_SIDE
     return THICK_SIDE
+
+def outdoor_side(wall_obj, rooms=None):
+    """Which face of a house's exterior wall is outdoors: 'REF' (its
+    local y = 0 face) or 'FAR' (its thickness face); None for a wall
+    that isn't an exterior or dormer wall of a house. Pass `rooms` from
+    _indoor_polygons when asking for many walls."""
+    from . import hb_types
+    if wall_obj is None or not wall_obj.get('IS_WALL_BP'):
+        return None
+    if wall_obj.get('WALL_TYPE', 'Exterior') not in ('Exterior',) + hb_wall_graph.MODULE_WALL_TYPES:
+        return None
+    scene = hb_house.house_scene_of(bpy.context.scene)
+    if scene is None:
+        return None
+    if rooms is None:
+        rooms = _indoor_polygons(scene)
+    level_rooms = rooms.get(wall_obj.get(hb_house.LEVEL_KEY, ''), [])
+    side = _outside_input(wall_obj, hb_types.GeoNodeWall(wall_obj), level_rooms)
+    return 'REF' if side == REF_SIDE else 'FAR'
+
+
+BOARD_PROUD = {'LAP': LAP_PROUD, 'SHINGLE': SHINGLE_PROUD, 'BOARD_BATTEN': BATTEN_PROUD}
+NO_OUTSIDE = "0.0000|"          # a window's outdoor trim on a plain wall
+
+
+def window_outside(cage_obj, rooms=None):
+    """What a window in a house's outside wall builds its outdoor trim
+    and shutters against, or None for one that isn't in one:
+    proud   how far the siding's real boards stand off the wall's face
+    masonry the wall's brick or stone material, or None
+    x       where the window starts along its wall
+    room    (lo, hi) along the wall its shutters may take: the outdoor
+            face less a corner board at each end, and half the way to
+            the openings either side
+    sig     a summary of what the siding sets, to see when it changes."""
+    from . import hb_assemblies, hb_types
+    from .operators import walls
+    wall_obj = cage_obj.parent
+    side = outdoor_side(wall_obj, rooms)
+    if side is None:
+        return None
+    scene = hb_house.house_scene_of(bpy.context.scene)
+    style, color = wall_finish(scene, wall_obj)
+    built = scene.hb_house.siding_geometry and style in BUILT
+    proud = 0.0
+    if built:
+        proud = max(BOARD_PROUD[style] - hb_assemblies.siding_inset(wall_obj), 0.0)
+    masonry = siding_material(style, color, False) if style in ('BRICK', 'STONE') else None
+    ext = walls.wall_face_extents(wall_obj)
+    lo, hi = ext['back' if side == 'REF' else 'front'] if ext else (-1e9, 1e9)
+    margin = 0.025 + (CORNER_WIDTH + CORNER_THICK if built else 0.0)
+    lo, hi = lo + margin, hi - margin
+    cage = hb_types.GeoNodeCage(cage_obj)
+    x0 = cage_obj.location.x
+    x1 = x0 + cage.get_input('Dim X')
+    for other in wall_obj.children:
+        if other is cage_obj or not ('IS_WINDOW_BP' in other or 'IS_ENTRY_DOOR_BP' in other):
+            continue
+        o = hb_types.GeoNodeCage(other)
+        if not o.has_modifier():
+            continue
+        o0 = other.location.x
+        o1 = o0 + o.get_input('Dim X')
+        if o1 <= x0 + 1e-6:
+            lo = max(lo, (o1 + x0) / 2.0)
+        elif o0 >= x1 - 1e-6:
+            hi = min(hi, (x1 + o0) / 2.0)
+    sig = "%.4f|%s" % (proud, masonry.name if masonry is not None else "")
+    return {'proud': proud, 'masonry': masonry, 'x': x0, 'room': (lo, hi), 'sig': sig}
+
 
 def _roof_walls(scene):
     """(level, object) for the walls the roofs make: filled-in gable ends
@@ -815,7 +903,7 @@ def level_finish(scene, level):
 def wall_finish(scene, obj):
     """(style, colour) of an outside wall: its own, its level's or the house's."""
     own = getattr(obj, 'hb_siding', None)
-    if own is not None and own.style != 'INHERIT' and obj.get('WALL_TYPE') != 'Dormer':
+    if own is not None and own.style != 'INHERIT' and obj.get('WALL_TYPE') not in hb_wall_graph.MODULE_WALL_TYPES:
         return own.style, tuple(own.color)
     return level_finish(scene, _level_of(scene, obj))
 
@@ -855,7 +943,7 @@ def apply_exterior_finish(scene):
     for obj in scene.objects:
         if not obj.get('IS_WALL_BP'):
             continue
-        if obj.get('WALL_TYPE', 'Exterior') not in ('Exterior', 'Dormer'):
+        if obj.get('WALL_TYPE', 'Exterior') not in ('Exterior',) + hb_wall_graph.MODULE_WALL_TYPES:
             continue
         wall = hb_types.GeoNodeWall(obj)
         if not (wall.has_modifier() and wall.has_input(THICK_SIDE)):
@@ -872,6 +960,16 @@ def apply_exterior_finish(scene):
                 gable = gable_finish(scene, level)
                 siding = split_material(finish, gable, split, built)
         outside = _outside_input(obj, wall, rooms.get(obj.get(hb_house.LEVEL_KEY, ''), []))
+        # Its windows' exterior casing and sill go on that face too, and
+        # are built again when the siding they stand proud of changes
+        from .product_libraries.common import door_window_geo
+        for child in obj.children:
+            if child.get('IS_WINDOW_BP') and door_window_geo.stored_opts(child) is not None:
+                info = window_outside(child, rooms)
+                if info is not None and child.get(door_window_geo.OUTSIDE_SIG_KEY, NO_OUTSIDE) != info['sig']:
+                    door_window_geo.build_geometry(child)
+                else:
+                    door_window_geo.face_outdoors(child, outside == REF_SIDE)
         for name in (THICK_SIDE, REF_SIDE, 'Inside Face', 'Outside Face'):
             if not wall.has_input(name):
                 continue
@@ -890,9 +988,13 @@ def apply_exterior_finish(scene):
             obj.data.materials.append(siding)
         roof_done.append((obj, finish, None, None))
     build_siding_geometry(scene, walls_done, roof_done, rooms)
+    # Inside, the rooms' paint and tile - after the siding, so a wall
+    # with rooms both sides (a garage against the house) keeps its paint
+    from . import hb_wall_finish
+    hb_wall_finish.apply_wall_coverings(scene)
 
     old = _base_object(scene)
-    ground = min(house.levels, key=lambda l: l.elevation) if len(house.levels) else None
+    ground = hb_house.ground_level(house)
     if house.base_style == 'NONE' or ground is None or house.base_height <= 0:
         if old is not None:
             mesh = old.data

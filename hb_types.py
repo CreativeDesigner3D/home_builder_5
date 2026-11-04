@@ -573,7 +573,7 @@ class GeoNodeWall(GeoNodeObject):
 
         #Create a object to store the wall length used for constraints
         self.obj_x = hb_utils.new_object("obj_x",None)
-        self.obj_x.empty_display_size = .01
+        self.obj_x.empty_display_size = 0.0      # a helper: drawn as nothing
         self.obj_x.location = (0,0,0)
         self.obj_x.parent = self.obj
         self.obj_x["obj_x"] = True        

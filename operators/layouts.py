@@ -4217,43 +4217,33 @@ class home_builder_layouts_OT_generate_2d_plan(bpy.types.Operator):
             if not openings:
                 segments = [(0.0, length)]
 
-            # Get miter angles for mitered corner geometry
-            try:
-                left_angle = wall.get_input('Left Angle')
-            except:
-                left_angle = 0.0
-            try:
-                right_angle = wall.get_input('Right Angle')
-            except:
-                right_angle = 0.0
+            # Where each face really starts and ends: a junction trims or
+            # extends the wall (Extension) and shears its far face (Angle)
+            from . import walls as walls_ops
+            ext = walls_ops.wall_face_extents(wall_obj)
+            if ext is None:
+                ext = {'back': (0.0, length), 'front': (0.0, length)}
+            base_z = wall_matrix.translation.z      # the wall's own level
 
-            left_offset = thickness * math.tan(left_angle) if abs(left_angle) > 0.001 else 0.0
-            right_offset = thickness * math.tan(right_angle) if abs(right_angle) > 0.001 else 0.0
-
-            # Create quad for each solid segment with mitered ends
+            # Create quad for each solid segment, the wall's ends as built,
+            # straight at openings
             for seg_start, seg_end in segments:
-                # Inside edge (Y=0): always straight
-                x0_inside = seg_start
-                x1_inside = seg_end
-
-                # Outside edge (Y=thickness): mitered at wall endpoints, straight at openings
-                x0_outside = seg_start
-                x1_outside = seg_end
+                x0_inside = x0_outside = seg_start
+                x1_inside = x1_outside = seg_end
 
                 if seg_start == 0.0:
-                    x0_outside = left_offset  # Mitered start
+                    x0_inside, x0_outside = ext['back'][0], ext['front'][0]
 
                 if abs(seg_end - length) < 0.001:
-                    x1_outside = length + right_offset  # Mitered end
+                    x1_inside, x1_outside = ext['back'][1], ext['front'][1]
 
                 p0 = wall_matrix @ Vector((x0_inside, 0, 0))
                 p1 = wall_matrix @ Vector((x1_inside, 0, 0))
                 p2 = wall_matrix @ Vector((x1_outside, thickness, 0))
                 p3 = wall_matrix @ Vector((x0_outside, thickness, 0))
 
-                # Flatten to Z=0
                 for p in (p0, p1, p2, p3):
-                    p.z = 0
+                    p.z = base_z
 
                 v0 = bm.verts.new(p0)
                 v1 = bm.verts.new(p1)

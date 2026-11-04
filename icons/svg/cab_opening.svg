@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="none" stroke="#fff" stroke-width="1" stroke-linecap="butt" stroke-linejoin="miter">
+  <!-- A face frame with its opening picked out -->
+  <rect x="4" y="4" width="8" height="8" fill="#fff" fill-opacity=".35" stroke="none"/>
+  <rect x="1.5" y="1.5" width="13" height="13"/>
+  <rect x="3.5" y="3.5" width="9" height="9"/>
+</svg>

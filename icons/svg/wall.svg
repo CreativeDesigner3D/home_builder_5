@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="none" stroke="#fff" stroke-width="1" stroke-linecap="butt" stroke-linejoin="miter">
+  <!-- Two runs of wall turning a corner, in plan, the cut filled -->
+  <path d="M2 1h3v9h10v4H2z" fill="#fff" fill-opacity=".35" stroke="none"/>
+  <path d="M1.5 1v13.5H15M5.5 1v9.5H15"/>
+</svg>

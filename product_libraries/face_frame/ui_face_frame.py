@@ -1295,6 +1295,7 @@ def draw_bay_finish_options(layout, bay_obj):
         col.prop(bp, 'finish_bay_flush', text="Finish Flush")
         if bp.finish_bay_flush:
             col.prop(bp, 'finish_bay_flush_depth', text="Flush Depth")
+            col.prop(bp, 'finish_bay_flush_top', text="Flush Top")
 
 
 def draw_bay_properties(layout, bay_obj):
@@ -1458,6 +1459,7 @@ def draw_opening_finish_options(layout, opening_obj):
         col.prop(op, 'finish_opening_flush', text="Finish Flush")
         if op.finish_opening_flush:
             col.prop(op, 'finish_opening_flush_depth', text="Flush Depth")
+            col.prop(op, 'finish_opening_flush_top', text="Flush Top")
 
 
 def draw_opening_properties(layout, opening_obj):
@@ -1727,9 +1729,29 @@ def draw_drawer_insert_settings(layout, item, show_hint=True):
         return
     if kind == 'DIVIDER':
         layout.prop(item, 'divider_lengthwise')
-        row = layout.row()
-        row.enabled = item.accessory_qty == 1
-        row.prop(item, 'divider_offset', text="Position (0 = Auto)")
+        # One row per space between the dividers, sized like openings:
+        # unlock a space to type its size, the locked ones share what
+        # is left.
+        n_spaces = min(item.accessory_qty + 1,
+                       len(item.divider_space_unlock))
+        side = "Left" if item.divider_lengthwise else "Front"
+        col = layout.column(align=True)
+        for i in range(n_spaces):
+            label = f"Space {i + 1}"
+            if i == 0:
+                label += f" ({side})"
+            unlocked = item.divider_space_unlock[i]
+            size_row = col.row(align=True)
+            field = size_row.row(align=True)
+            field.enabled = unlocked
+            field.prop(item, 'divider_space_sizes', index=i, text=label)
+            size_row.prop(item, 'divider_space_unlock', index=i, text="",
+                          icon='UNLOCKED' if unlocked else 'LOCKED')
+        # Stop at the dividers running the other way, crossing only
+        # some of their spaces (0 = run to the drawer side).
+        row = layout.row(align=True)
+        row.prop(item, 'divider_span_from', text="Cross From Space")
+        row.prop(item, 'divider_span_to', text="to")
         return
     if kind in ('CUTLERY', 'TRAY', 'KNIFE_BLOCK'):
         layout.prop(item, 'insert_slots', text="Compartments (0 = Auto)")
@@ -2371,7 +2393,8 @@ def draw_finished_ends(layout, cab_props):
 
     # Carcass back (the unfinished liner behind the interior). Locked it
     # is the standard back for the construction; unlock to set another.
-    if cab_props.back_finished_end_condition != 'WORKING_FF':
+    if cab_props.back_finished_end_condition not in ('WORKING_FF',
+                                                     'NO_BACK'):
         unlocked = cab_props.unlock_back_thickness
         brow = col.row(align=True)
         field = brow.row(align=True)

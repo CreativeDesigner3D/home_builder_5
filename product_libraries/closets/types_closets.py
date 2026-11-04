@@ -7530,7 +7530,7 @@ class LShelfClosetStarter(GeoNodeCage):
             bw = sp.l_back_width
             flip = sp.l_flip_partition
             use_radius = bool(sp.l_use_radius)
-            rad = max(float(sp.l_corner_radius), 0.0)
+            rad = max(float(sp.l_corner_radius), const.L_CORNER_RADIUS_MIN)
             wo = self.obj.get('hb_l_wall_offset', const.L_WALL_OFFSET)
             # Mounting belongs to the unit, not to the class it was
             # placed from: a corner standing on the floor can be lifted
@@ -7817,6 +7817,13 @@ class LShelfClosetStarter(GeoNodeCage):
                 # into the space an end panel gave up.
                 cut_x = max(W - r_pt - LD, 0.001)
                 cut_y = max(D - l_pt - RD, 0.001)
+                # The arc leaves a flat on each wing's front edge, so
+                # it is held that far inside the cut; when that will
+                # not fit the smallest radius the corner goes square.
+                shelf_rad = min(rad, cut_x - const.L_CORNER_MIN_FLAT,
+                                cut_y - const.L_CORNER_MIN_FLAT)
+                if shelf_rad < const.L_CORNER_RADIUS_MIN:
+                    round_it = False
                 notch = shelf.modifiers.get('L Notch')
                 if notch is not None:
                     cpm = CabinetPartModifier(shelf)
@@ -7837,11 +7844,7 @@ class LShelfClosetStarter(GeoNodeCage):
                     cpm.set_input('X', cut_x)
                     cpm.set_input('Y', cut_y)
                     cpm.set_input('Route Depth', st + 0.001)
-                    # A radius wider than the cut itself would round
-                    # past the wings, so it is held inside them.
-                    cpm.set_input('Radius',
-                                  max(min(rad, cut_x - 0.001,
-                                          cut_y - 0.001), 0.0))
+                    cpm.set_input('Radius', max(shelf_rad, 0.0))
                     cpm.set_input('Resolution',
                                   const.L_CORNER_RADIUS_SEGMENTS)
                     cpm.set_input('Turn On', True)

@@ -1,0 +1,4 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="none" stroke="#fff" stroke-width="1" stroke-linecap="round" stroke-linejoin="round">
+  <!-- An open hand: this picks a part up and drags it, unlike Move's axes -->
+  <path d="M5.5 8.5v-5a1 1 0 0 1 2 0v4M7.5 7.5v-5.5a1 1 0 0 1 2 0v5.5M9.5 7.5v-4.5a1 1 0 0 1 2 0v5M11.5 8v-2.5a1 1 0 0 1 2 0v5c0 2.5-1.8 4.5-4.5 4.5h-1c-1.6 0-2.6-.8-3.5-2l-2.2-3.2a1 1 0 0 1 1.6-1.2l1.6 1.9"/>
+</svg>

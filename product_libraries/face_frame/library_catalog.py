@@ -34,7 +34,8 @@ convention of the library, not a coincidence -- see
 
 Deliberately NOT here: the User library (read off disk at draw time) and
 the Angled section (hidden until those products have builders). Both
-keep their own draw methods.
+keep their own draw methods. The viewport panel reaches the User
+library through ``user_groups`` instead.
 """
 
 import os
@@ -75,6 +76,7 @@ SECTIONS = (
             ("Standalone", (("Dishwasher", "Dishwasher"),
                             ("Range", "Range"),
                             ("Metal Hood", "Range Hood"),
+                            ("Wood Hood", "Wood Hood"),
                             ("Refrigerator", "Standalone Refrigerator"))),
             # Generic under-counter appliance (beverage centre, wine
             # fridge, ice maker) - relabel after placing via Set Label.
@@ -84,7 +86,11 @@ SECTIONS = (
                          ("Stacked", "Stacked Washer Dryer"),
                          ("Laundry Tall", "Laundry Cabinet"))),
             ("Bath", (("Toilet", "Toilet"),
-                      ("Pedestal Sink", "Pedestal Sink"))),
+                      ("Pedestal Sink", "Pedestal Sink"),
+                      ("Alcove Tub", "Alcove Tub"),
+                      ("Freestanding Tub", "Freestanding Tub"),
+                      ("Shower", "Shower"),
+                      ("Tub Shower", "Tub Shower"))),
         ),
     },
     {
@@ -343,7 +349,7 @@ OPTION_FORMS = (
 def _front_style_fields(kind):
     """The fields of one door or drawer front style. The catalog pick
     (series, shape, panel) decides the construction; the widths follow
-    it until their padlock is opened. Hardware callouts and the profile overrides stay
+    it until their padlock is opened. Hardware callouts and the door profile overrides stay
     in the sidebar."""
     five_piece = lambda p: p.door_type == '5_PIECE'
 
@@ -372,6 +378,9 @@ def _front_style_fields(kind):
     if kind == 'DRAWER':
         fields.append(('bool', 'match_door_rail_width',
                        "Match Door Rail Width", {'when': five_piece}))
+        # Drawer fronts of one style can take a different edge than the
+        # other drawer fronts in the room.
+        fields.append(('enum', 'edge_profile_override', "Edge Profile"))
     return tuple(fields)
 
 
@@ -560,7 +569,9 @@ def _cabinet_style_fields():
     # hardware that goes with each (_DOOR_STYLE_FIELDS /
     # _DRAWER_STYLE_FIELDS); the panel reads them as a line each.
     notes = (
-        # Printed at the end of the style's Style Section block.
+        # Printed at the end of the style's Style Section block, under
+        # the header (blank prints NOTES).
+        ('text', 'ss_notes_header', "Header", {}),
         ('items', 'ss_notes', None,
          {'kind': 'text', 'prop': 'text',
           'remove': ('hb_face_frame.remove_style_note',
@@ -1452,6 +1463,18 @@ OPTION_SUBPAGES = {
     'DRAWER_FRONT_STYLES': _front_manager('DRAWER',
                                           'draw_drawer_front_styles_ui'),
 }
+
+
+# Saved cabinet groups. The browser draws its User section from these and
+# fires this namespace's create / save / load operators -- the ones the
+# sidebar's User box fires.
+USER_GROUPS = 'hb_face_frame'
+
+
+def user_groups():
+    """Every saved cabinet group: [{name, filepath, thumbnail}]."""
+    from .operators import ops_library
+    return ops_library.get_user_library_items()
 
 
 def place(context, product):

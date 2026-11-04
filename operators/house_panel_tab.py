@@ -2,8 +2,12 @@
 
 Drawn with the Options tab's widgets (options_panel.build_page): before
 a house project is started the tab offers to start one. In the house
-scene a row of icon tabs across the top picks one page at a time, so
-the panel stays short:
+scene a row of tabs across the top - each an icon over its name - picks
+one page at a time, so the panel stays short. Every page reads the same
+way down: its title and the level it is about, what you work with on it,
+the settings of what is picked, and last, under Whole House, what holds
+for the whole house. What is selected in the view (a bay, a fireplace,
+a light, a stair, furniture) is on the SELECTED tab, not here:
 
 * Levels -- the level list as a pool (pick a level to draw on it, a
   second click renames it, NEW adds one on top, the delete chip removes
@@ -29,17 +33,18 @@ from .. import hb_house
 from .. import hb_rooms
 from .. import units
 from ..hb_gpu_draw import draw_rect, draw_text, point_in_rect
+from ..hb_icons import draw_icon
 from ..hb_gpu_ui import (Theme, scale, paint_button, draw_polyline, text_width,
-                         fit_text, enum_label)
+                         fit_text, enum_label, semibold_font)
 
 TAB_KEY = 'HOUSE'
 TAB_LABEL = "HOUSE"
 TAB_ORDER = 5           # between ROOMS (0) and LIBRARY (10)
 PREFERRED_WIDTH = 280   # unscaled
 
-TABS_H = 26             # the page tabs' height, unscaled
-TABS_GAP = 6            # and the space under them
-FONT = 11
+TABS_H = 40             # the page tabs' height, unscaled: icon over name
+TABS_GAP = 8            # and the space under them
+FONT = 9                # the tabs' names
 
 _list = None            # this tab's ScrollList, made on first build
 _page = 'LEVELS'        # the page on show
@@ -85,7 +90,7 @@ def _view_summary(house):
 LEVEL_SPEC = {
     'kind': 'pool',
     'title': "Levels",
-    'list_label': "Levels",
+    'list_label': "All Levels",
     'scope': 'scene',
     'props': 'hb_house',
     'collection': 'levels',
@@ -110,7 +115,8 @@ PLAN_VIEW_FIELDS = (
 def _framing_summary(house):
     if not house.show_framing:
         return "Off"
-    return f"{house.framing_spacing}\" o.c. · " + ("crawlspace" if house.ground_floor == 'CRAWL' else "slab")
+    from .. import hb_framing
+    return f"{house.framing_spacing}\" o.c. · " + ("floor framed" if hb_framing.ground_framed(house) else "slab")
 
 
 VIEW_FIELDS = (
@@ -121,19 +127,188 @@ VIEW_FIELDS = (
         ('bool', 'show_roofs', "Roofs"),
         ('bool', 'show_ceilings', "Ceilings"),
         ('bool', 'show_room_labels', "Room Labels"),
+        ('bool', 'show_window_cages', "Window Cages"),
+        ('bool', 'show_annotations', "Annotations"),
         ('bool', 'show_framing', "Framing"),
+    )}),
+    ('pick', lambda context: _import_entries(context), "Import Room as Level"),
+)
+
+
+# ---- Eaves -------------------------------------------------------------------
+
+def _eaves_summary(house):
+    if not house.eave_trim:
+        return "Off"
+    parts = [_label(house, 'soffit_style')]
+    if house.gutters:
+        parts.append(f"{house.gutter_size}\" {_label(house, 'gutter_style')} gutters")
+    return " · ".join(parts)
+
+
+EAVE_FIELDS = (
+    ('group', 'house_eaves', "Eaves & Gutters", {'summary': _eaves_summary, 'fields': (
+        ('bool', 'eave_trim', "Eave Trim"),
+        ('distance', 'fascia_height', "Fascia Height", {'when': lambda h: h.eave_trim}),
+        ('distance', 'fascia_thickness', "Fascia Thickness", {'when': lambda h: h.eave_trim}),
+        ('bool', 'rake_boards', "Rake Boards", {'when': lambda h: h.eave_trim}),
+        ('choices', 'soffit_style', "Soffit", {'cols': 2, 'when': lambda h: h.eave_trim}),
+        ('bool', 'gutters', "Gutters", {'when': lambda h: h.eave_trim}),
+        ('choices', 'gutter_style', "Style", {'cols': 2, 'when': lambda h: h.eave_trim and h.gutters}),
+        ('choices', 'gutter_size', "Size", {'cols': 2, 'when': lambda h: h.eave_trim and h.gutters}),
+        ('bool', 'gutters_on_dormers', "On Dormers", {'when': lambda h: h.eave_trim and h.gutters}),
+        ('bool', 'downspouts', "Downspouts", {'when': lambda h: h.eave_trim and h.gutters}),
+    )}),
+)
+
+
+# ---- Backdrop -----------------------------------------------------------------
+# A plan to trace on the active level (hb_backdrop)
+
+def _has_backdrop(level):
+    from .. import hb_backdrop
+    return bool(hb_backdrop.backdrops_of(level.id_data, level))
+
+
+def _backdrop_summary(level):
+    from .. import hb_backdrop
+    return hb_backdrop.backdrop_summary(level)
+
+
+BACKDROP_FIELDS = (
+    ('group', 'house_backdrop', "Backdrop", {'summary': _backdrop_summary, 'fields': (
+        ('actions', (("Add PDF / Image", "home_builder.add_backdrop"),
+                     ("Set Scale", "home_builder.scale_backdrop")), ""),
+        ('bool', 'backdrop_shown', "Show"),
+        ('bool', 'backdrop_locked', "Lock"),
+        ('number', 'backdrop_opacity', "Opacity"),
+        ('actions', (("Move to Match", "home_builder.move_backdrop"),), ""),
+        ('distance', 'backdrop_x', "X", {'when': _has_backdrop}),
+        ('distance', 'backdrop_y', "Y", {'when': _has_backdrop}),
+        ('number', 'backdrop_rotation', "Rotation", {'when': _has_backdrop}),
+        ('actions', (("Remove", "home_builder.remove_backdrop"),), "", {'when': _has_backdrop}),
+        ('hints', lambda context: ("Or drop a PDF on the view.",
+                                   "Set Scale: click a printed dimension's ends."), ""),
+    )}),
+)
+
+
+# ---- Structure ----------------------------------------------------------------
+# What the house is built of: its framing now, its foundation and wall
+# layers as they come.
+
+def _members_summary(house):
+    from .. import hb_members
+    scene = house.id_data
+    beams = len(hb_members.members_of(scene, kind='BEAM'))
+    posts = len(hb_members.members_of(scene, kind='POST'))
+    return f"{beams} beam{'s' if beams != 1 else ''} · {posts} post{'s' if posts != 1 else ''}"
+
+
+def _foundation_summary(house):
+    return _label(house, 'foundation_type')
+
+
+def _found(*kinds):
+    return lambda house: house.foundation_type in kinds
+
+
+FOUNDATION_FIELDS = (
+    ('group', 'house_foundation', "Foundation", {'summary': _foundation_summary, 'fields': (
+        ('choices', 'foundation_type', "Type", {'cols': 2}),
+        ('bool', 'ground_auto', "Ground Auto"),
+        ('distance', 'ground_below_floor', "Ground Below Floor", {'when': lambda h: not h.ground_auto}),
+        ('distance', 'foundation_wall_thickness', "Wall Thickness", {'when': _found('CRAWL', 'BASEMENT')}),
+        ('distance', 'crawl_height', "Stem Wall Height", {'when': _found('CRAWL')}),
+        ('distance', 'basement_height', "Wall Height", {'when': _found('BASEMENT')}),
+        ('distance', 'footing_width', "Footing Width", {'when': _found('SLAB', 'CRAWL', 'BASEMENT')}),
+        ('distance', 'footing_depth', "Footing Depth", {'when': _found('SLAB', 'CRAWL', 'BASEMENT')}),
+        ('distance', 'slab_thickness', "Slab Thickness", {'when': _found('SLAB', 'BASEMENT')}),
+        ('hints', lambda context: ("Follows the ground level's walls.",
+                                   "A basement is a level: draw on it."), ""),
+        ('actions', (("Rebuild Foundation", "home_builder.rebuild_foundation"),), "",
+         {'when': _found('SLAB', 'CRAWL', 'BASEMENT')}),
+    )}),
+)
+
+
+def _layer_row(layer):
+    return f"{layer.name}  {units.unit_to_string(bpy.context.scene.unit_settings, layer.thickness)}"
+
+
+def _assembly_total(context, asm=None):
+    from .. import hb_assemblies
+    asm = asm or hb_assemblies.active_assembly(context)
+    if asm is None:
+        return ()
+    t = units.unit_to_string(context.scene.unit_settings, hb_assemblies.total(asm))
+    return (f"Total {t}, outside first.",)
+
+
+ASSEMBLY_SPEC = {
+    'kind': 'pool',
+    'title': "Wall Assemblies",
+    'list_label': "Wall Assemblies",
+    'scope': 'scene',
+    'props': 'hb_house',
+    'collection': 'assemblies',
+    'index': 'active_assembly_index',
+    'add_op': 'home_builder.add_assembly',
+    'remove_op': 'home_builder.remove_assembly',
+    'allow_empty': True,
+    'fields': (
+        ('enum', 'wall_type', "For"),
+        ('bool', 'for_new_walls', "New Walls Use It"),
+        ('notes', lambda context: _assembly_total(context), ""),
+    ),
+    'actions': ((("Apply to Selected", "home_builder.apply_assembly", {'target': 'SELECTED'}, None),
+                 ("Apply to Level", "home_builder.apply_assembly", {'target': 'LEVEL'}, None)),),
+}
+
+
+def _active_assembly(context):
+    from .. import hb_assemblies
+    return hb_assemblies.active_assembly(context)
+
+
+LAYER_SPEC = {
+    'kind': 'pool',
+    'title': "Layers",
+    'list_label': "Layers, outside first",
+    'props': _active_assembly,
+    'collection': 'layers',
+    'index': 'active_layer_index',
+    'add_op': 'home_builder.add_wall_layer',
+    'remove_op': 'home_builder.remove_wall_layer',
+    'row_text': _layer_row,
+    'fields': (
+        ('enum', 'kind', "Kind"),
+        ('distance', 'thickness', "Thickness"),
+        ('native', 'material', "Material"),
+    ),
+}
+
+
+STRUCTURE_FIELDS = FOUNDATION_FIELDS + (
+    ('group', 'house_members', "Beams and Posts", {'summary': _members_summary, 'fields': (
+        ('actions', (("Place Beam", "home_builder.place_beam"),
+                     ("Place Post", "home_builder.place_post")), ""),
+        ('hints', lambda context: ("Right-click one to change its size.",), ""),
     )}),
     ('group', 'house_framing', "Framing", {'summary': _framing_summary, 'fields': (
         ('bool', 'show_framing', "Show Framing"),
         ('choices', 'framing_spacing', "Spacing", {'cols': 2}),
-        ('choices', 'ground_floor', "Ground Floor", {'cols': 2}),
+        ('choices', 'ground_floor', "Ground Floor", {'cols': 2,
+                                                   'when': lambda house: house.foundation_type == 'NONE'}),
         ('bool', 'framing_walls', "Walls"),
         ('bool', 'framing_floors', "Floors"),
         ('bool', 'framing_ceilings', "Ceilings"),
         ('bool', 'framing_roofs', "Roofs"),
+        ('bool', 'framing_corners', "Corner Studs"),
+        ('bool', 'framing_blocking', "Blocking"),
+        ('bool', 'framing_collar_ties', "Collar Ties"),
         ('actions', (("Rebuild Framing", "home_builder.rebuild_framing"),), ""),
     )}),
-    ('pick', lambda context: _import_entries(context), "Import Room as Level"),
 )
 
 
@@ -148,7 +323,6 @@ def _overriding(owner):
 
 
 EXTERIOR_FIELDS = (
-    ('label', None, "Siding"),
     ('enum', 'siding_style', "Siding"),
     ('native', 'siding_color', "Siding Color", {'when': lambda h: h.siding_style != 'NONE'}),
     ('bool', 'siding_geometry', "Real Geometry"),
@@ -194,6 +368,113 @@ def _wall_siding_fields(count):
     )
 
 
+def _selected_windows(context):
+    """The selected windows that are built with options (cage-only
+    openings have no trim to change)."""
+    from ..product_libraries.common import door_window_geo
+    out = []
+    for obj in context.selected_objects:
+        cage = hb_house.window_cage(obj)
+        if cage is not None and cage not in out and door_window_geo.stored_opts(cage) is not None:
+            out.append(cage)
+    return out
+
+
+def _selected_bay(context):
+    from .. import hb_bays
+    for obj in [context.active_object] + list(context.selected_objects):
+        cage = hb_bays.bay_of(obj)
+        if cage is not None:
+            return cage
+    return None
+
+
+def _bay_summary(bay):
+    from .. import hb_bays
+    warn = hb_bays.warning(bay.id_data)
+    return warn or f"{_label(bay, 'kind')} · {_label(bay, 'roof')} roof"
+
+
+def _bay_kind(*kinds):
+    return lambda bay: bay.kind in kinds
+
+
+BAY_FIELDS = (
+    ('group', 'outside_bay', "Selected Bay Window", {'summary': _bay_summary, 'fields': (
+        ('enum', 'kind', "Kind"),
+        ('distance', 'width', "Width"),
+        ('distance', 'projection', "Projection"),
+        ('number', 'side_angle', "Side Angle", {'when': _bay_kind('BAY')}),
+        ('number', 'segments', "Segments", {'when': _bay_kind('BOW')}),
+        ('enum', 'base', "Base"),
+        ('distance', 'seat_height', "Seat Height", {'when': lambda b: b.base == 'SEAT'}),
+        ('distance', 'sill_height', "Sill Height", {'when': lambda b: b.base == 'FLOOR'}),
+        ('distance', 'head_height', "Head Height"),
+        ('enum', 'roof', "Roof"),
+        ('number', 'roof_pitch', "Roof Pitch (in 12)", {'when': lambda b: b.roof != 'NONE'}),
+    )}),
+)
+
+
+def _selected_fireplace(context):
+    from .. import hb_fireplaces
+    for obj in [context.active_object] + list(context.selected_objects):
+        cage = hb_fireplaces.fireplace_of(obj)
+        if cage is not None:
+            return cage
+    return None
+
+
+def _fireplace_summary(fp):
+    return f"{_label(fp, 'chimney')} chimney · {_label(fp, 'mantel')} mantel"
+
+
+FIREPLACE_FIELDS = (
+    ('group', 'outside_fireplace', "Selected Fireplace", {'summary': _fireplace_summary, 'fields': (
+        ('distance', 'opening_width', "Opening Width"),
+        ('distance', 'opening_height', "Opening Height"),
+        ('distance', 'hearth_height', "Hearth Height"),
+        ('enum', 'chimney', "Chimney"),
+        ('enum', 'style', "Chimney Style", {'when': lambda fp: fp.chimney != 'NONE'}),
+        ('enum', 'finish', "Masonry"),
+        ('native', 'color', "Masonry Color"),
+        ('enum', 'mantel', "Mantel"),
+        ('distance', 'firebox_depth', "Firebox Depth"),
+        ('distance', 'hearth_depth', "Hearth Depth"),
+        ('distance', 'hearth_extension', "Hearth Extension"),
+        ('distance', 'surround_width', "Surround Width"),
+        ('distance', 'stack_width', "Stack Width", {'when': lambda fp: fp.chimney != 'NONE'}),
+        ('distance', 'stack_depth', "Stack Depth", {'when': lambda fp: fp.chimney != 'NONE'}),
+        ('distance', 'extra_height', "Extra Height", {'when': lambda fp: fp.chimney != 'NONE'}),
+    )}),
+)
+
+
+def _shutters_on(we):
+    return we.shutter_style != 'NONE'
+
+
+def _window_summary(we):
+    out = _label(we, 'ext_trim_style')
+    if we.shutter_style != 'NONE':
+        out += " · " + _label(we, 'shutter_style') + " shutters"
+    return out
+
+
+def _window_fields(count):
+    word = "Window" if count == 1 else f"{count} Windows"
+    return (
+        ('group', 'outside_windows', f"Selected {word}",
+         {'summary': _window_summary, 'fields': (
+             ('enum', 'shutter_style', "Shutters"),
+             ('distance', 'shutter_width', "Shutter Width", {'when': _shutters_on}),
+             ('native', 'shutter_color', "Shutter Color", {'when': _shutters_on}),
+             ('enum', 'ext_trim_style', "Exterior Trim"),
+             ('distance', 'ext_casing_width', "Exterior Casing Width"),
+         )}),
+    )
+
+
 # ---- Roof -------------------------------------------------------------------
 
 def _on(roof):
@@ -206,9 +487,21 @@ def _footprint_summary(roof):
     return f"Custom, {_length(roof, roof.ext_x1 - roof.ext_x0)} x {_length(roof, roof.ext_y1 - roof.ext_y0)}"
 
 
+# Styles whose ends slope down, with eaves all round and no gable overhang
+_SLOPED_ENDS = ('HIP', 'MANSARD', 'CLIPPED_GABLE', 'DUTCH_GABLE')
+
+
+def _style_is(*styles):
+    return lambda roof: roof.enabled and roof.style in styles
+
+
 def _overhang_summary(roof):
+    if roof.style == 'FLAT' and roof.parapet_height > 0:
+        return "Inside the parapets"
     out = f"{_length(roof, roof.eave_overhang)} eaves"
-    if roof.style != 'HIP':
+    if roof.eave_flare and roof.style not in ('SHED', 'FLAT'):
+        out += f" flared {roof.flare_pitch:g}/12"
+    if roof.style not in _SLOPED_ENDS:
         out += f" · {_length(roof, roof.gable_overhang)} gables"
     return out
 
@@ -220,21 +513,37 @@ def _dormer_summary(roof):
 
 
 ROOF_FIELDS = (
+    ('bool', 'enabled', "Roof on This Level"),
     ('actions', (("Fit Roof to Outline", "home_builder.fit_roof_to_outline"),
                  ("Edit Roof", "home_builder.edit_roof")), ""),
-    ('bool', 'enabled', "Roof on This Level"),
+    ('hints', lambda context: ("Turn on to roof this level's walls.",), "",
+     {'when': lambda roof: not roof.enabled}),
     ('enum', 'style', "Style", {'when': _on}),
     ('enum', 'base', "Sits On", {'when': _on}),
     ('distance', 'eave_height', "Eave Height", {'when': _on}),
     ('number', 'pitch', "Pitch (in 12)",
-     {'when': lambda roof: roof.enabled and roof.style in ('GABLE', 'HIP')}),
-    ('number', 'lower_pitch', "Lower Pitch (in 12)",
-     {'when': lambda roof: roof.enabled and roof.style == 'GAMBREL'}),
-    ('distance', 'break_height', "Break Height",
-     {'when': lambda roof: roof.enabled and roof.style == 'GAMBREL'}),
-    ('number', 'pitch', "Upper Pitch (in 12)",
-     {'when': lambda roof: roof.enabled and roof.style == 'GAMBREL'}),
+     {'when': _style_is('GABLE', 'HIP', 'SHED', 'CLIPPED_GABLE', 'DUTCH_GABLE')}),
+    ('number', 'pitch', "Front Pitch (in 12)", {'when': _style_is('SALTBOX')}),
+    ('number', 'ridge_position', "Ridge Position", {'when': _style_is('SALTBOX')}),
+    ('number', 'flat_slope', "Slope (in 12)", {'when': _style_is('FLAT')}),
+    ('enum', 'high_side', "High Side", {'when': _style_is('SHED', 'FLAT')}),
+    ('distance', 'parapet_height', "Parapet",
+     {'when': lambda roof: roof.enabled and roof.style == 'FLAT' and roof.base == 'WALLS'}),
+    ('number', 'lower_pitch', "Lower Pitch (in 12)", {'when': _style_is('GAMBREL', 'MANSARD')}),
+    ('distance', 'break_height', "Break Height", {'when': _style_is('GAMBREL', 'MANSARD')}),
+    ('number', 'pitch', "Upper Pitch (in 12)", {'when': _style_is('GAMBREL')}),
+    ('enum', 'mansard_top', "Top", {'when': _style_is('MANSARD')}),
+    ('number', 'pitch', "Top Pitch (in 12)",
+     {'when': lambda roof: roof.enabled and roof.style == 'MANSARD' and roof.mansard_top == 'HIP'}),
+    ('distance', 'clip_height', "Clip Height", {'when': _style_is('CLIPPED_GABLE')}),
+    ('distance', 'gable_height', "Gable Height", {'when': _style_is('DUTCH_GABLE')}),
     ('enum', 'ridge', "Ridge", {'when': _on}),
+    ('choices', 'framing', "Framing", {'cols': 3,
+                                        'when': lambda roof: roof.enabled and roof.style == 'GABLE'
+                                        and roof.base != 'FLOOR'}),
+    ('distance', 'truss_spacing', "Truss Spacing",
+     {'when': lambda roof: roof.enabled and roof.style == 'GABLE' and roof.base != 'FLOOR'
+      and roof.framing != 'RAFTERS'}),
     ('bool', 'rise_through', "Upper Floor Rises Through", {'when': _on}),
     ('group', 'roof_footprint', "Footprint", {'when': _on, 'summary': _footprint_summary, 'fields': (
         ('bool', 'use_extents', "Custom Footprint"),
@@ -245,8 +554,12 @@ ROOF_FIELDS = (
     )}),
     ('group', 'roof_build', "Overhangs & Finish", {'when': _on, 'summary': _overhang_summary, 'fields': (
         ('distance', 'eave_overhang', "Eave Overhang"),
+        ('bool', 'eave_flare', "Flared Eaves",
+         {'when': lambda roof: roof.style not in ('SHED', 'FLAT')}),
+        ('number', 'flare_pitch', "Flare Pitch (in 12)",
+         {'when': lambda roof: roof.eave_flare and roof.style not in ('SHED', 'FLAT')}),
         ('distance', 'gable_overhang', "Gable Overhang",
-         {'when': lambda roof: roof.style != 'HIP'}),
+         {'when': lambda roof: roof.style not in _SLOPED_ENDS}),
         ('distance', 'thickness', "Thickness"),
         ('native', 'material', "Material"),
     )}),
@@ -287,6 +600,41 @@ PIECE_SPEC = {
             ('distance', 'x1', "Right Edge"),
             ('distance', 'y0', "Front Edge"),
             ('distance', 'y1', "Back Edge"),
+        )}),
+    ),
+}
+
+
+def _skylight_row(sk):
+    from .. import hb_skylights
+    level = hb_house.active_level(bpy.context)
+    warn = hb_skylights.warning(bpy.context.scene, level, sk) if level is not None else ""
+    return f"{sk.name}  ·  {warn}" if warn else sk.name
+
+
+def _skylight_position(sk):
+    return f"{_length(sk, sk.x)}, {_length(sk, sk.y)}"
+
+
+SKYLIGHT_SPEC = {
+    'kind': 'pool',
+    'title': "Skylights",
+    'list_label': "Skylights",
+    'props': lambda context: hb_house.active_level(context).roof,
+    'collection': 'skylights',
+    'index': 'active_skylight_index',
+    'remove_op': 'home_builder.remove_skylight',
+    'allow_empty': True,
+    'row_text': _skylight_row,
+    'actions': ((("Add Skylight", "home_builder.place_skylight", None, None),),),
+    'fields': (
+        ('distance', 'width', "Width"),
+        ('distance', 'length', "Length"),
+        ('enum', 'curb', "Mounting"),
+        ('enum', 'shaft', "Light Shaft"),
+        ('group', 'skylight_position', "Position", {'summary': _skylight_position, 'fields': (
+            ('distance', 'x', "X"),
+            ('distance', 'y', "Y"),
         )}),
     ),
 }
@@ -362,6 +710,225 @@ FLOOR_DEFAULT_FIELDS = (
 )
 
 
+def _lighting_notes(context, room):
+    from .. import hb_lighting
+    return (hb_lighting.room_summary(context, room),)
+
+
+def _selected_light(context):
+    from .. import hb_lighting
+    for obj in [context.active_object] + list(context.selected_objects):
+        cage = hb_lighting.fixture_of(obj)
+        if cage is not None:
+            return cage
+    return None
+
+
+LIGHT_FIELDS = (
+    ('group', 'selected_light', "Selected Light", {'summary': lambda l: f"{l.lumens:,.0f} lm · {l.kelvin:.0f} K",
+                                                   'fields': (
+        ('number', 'lumens', "Lumens"),
+        ('number', 'kelvin', "Color Temperature (K)"),
+        ('distance', 'width', "Width"),
+        ('distance', 'depth', "Depth"),
+        ('distance', 'height', "Height"),
+    )}),
+)
+
+def _selected_stair(context):
+    from .. import hb_stairs
+    for obj in [context.active_object] + list(context.selected_objects):
+        stair = hb_stairs.stair_of(obj)
+        if stair is not None:
+            return stair
+    return None
+
+
+def _stair_summary(st):
+    from .. import hb_stairs
+    warn = hb_stairs.warnings(st.id_data)
+    if warn:
+        return warn[0]
+    return hb_stairs.describe(st.id_data, bpy.context.scene.unit_settings)
+
+
+def _stair_notes(context, st):
+    from .. import hb_stairs
+    obj = st.id_data
+    lines = [hb_stairs.describe(obj, context.scene.unit_settings)]
+    lines += ["Check: " + w for w in hb_stairs.warnings(obj)]
+    return lines
+
+
+def _stair_turns(st):
+    return st.stair_type != 'STRAIGHT'
+
+
+STAIR_FIELDS = (
+    ('group', 'selected_stair', "Selected Stair", {'summary': _stair_summary, 'fields': (
+        ('notes', _stair_notes, "", {'owner': True}),
+        ('enum', 'stair_type', "Type"),
+        ('enum', 'turn', "Turn", {'when': _stair_turns}),
+        ('bool', 'winders', "Winders", {'when': lambda st: st.stair_type in ('L_SHAPE', 'U_SHAPE')}),
+        ('distance', 'radius', "Inside Radius", {'when': lambda st: st.stair_type == 'CURVED'}),
+        ('distance', 'diameter', "Diameter", {'when': lambda st: st.stair_type == 'SPIRAL'}),
+        ('number', 'spiral_angle', "Tread Angle", {'when': lambda st: st.stair_type == 'SPIRAL'}),
+        ('distance', 'width', "Width", {'when': lambda st: st.stair_type != 'SPIRAL'}),
+        ('distance', 'max_riser', "Max Riser"),
+        ('distance', 'tread_depth', "Tread Depth", {'when': lambda st: st.stair_type != 'SPIRAL'}),
+        ('bool', 'auto_rise', "Rise from Levels", {'when': lambda st: bool(st.id_data.get(hb_house.LEVEL_KEY))}),
+        ('distance', 'total_rise', "Total Rise"),
+        ('distance', 'landing_height', "Turn Height", {'when': lambda st: st.stair_type in ('L_SHAPE', 'U_SHAPE')}),
+        ('distance', 'landing_depth', "Landing Depth", {'when': lambda st: st.stair_type == 'U_SHAPE'}),
+        ('distance', 'gap', "Gap Between Flights", {'when': lambda st: st.stair_type == 'U_SHAPE'}),
+        ('distance', 'headroom', "Headroom"),
+        ('bool', 'cut_walls', "Cut Walls"),
+        ('bool', 'guard', "Guard Rail"),
+        ('distance', 'guard_height', "Guard Height", {'when': lambda st: st.guard}),
+        ('actions', (("Edit Stairs", "home_builder_stairs.edit_stairs"),
+                     ("Delete", "home_builder_stairs.delete_stairs")), ""),
+    )}),
+    ('group', 'stair_build', "Construction", {'summary': lambda st: f"{_label(st, 'risers')} risers · {_label(st, 'stringer')} stringers",
+                                             'fields': (
+        ('enum', 'risers', "Risers"),
+        ('enum', 'stringer', "Stringers"),
+        ('distance', 'nosing', "Nosing"),
+        ('bool', 'skirt', "Skirt Boards", {'when': lambda st: st.stringer != 'CLOSED'}),
+        ('enum', 'under', "Under the Stair"),
+    )}),
+    ('group', 'stair_railing', "Railing", {'summary': lambda st: ("None" if st.railing == 'NONE'
+                                                               else f"{_label(st, 'baluster')} · {_label(st, 'railing')}"),
+                                          'fields': (
+        ('choices', 'railing', "Railings", {'cols': 2}),
+        ('enum', 'baluster', "Style", {'when': lambda st: st.railing != 'NONE'}),
+        ('distance', 'rail_height', "Rail Height", {'when': lambda st: st.railing != 'NONE'}),
+        ('bool', 'wall_rail', "Handrail on Walls", {'when': lambda st: st.railing != 'NONE'}),
+    )}),
+    ('group', 'stair_materials', "Materials", {'summary': lambda st: (st.tread_material.name if st.tread_material
+                                                                     else "Oak treads, painted"),
+                                              'fields': (
+        ('native', 'tread_material', "Treads"),
+        ('native', 'riser_material', "Risers"),
+        ('native', 'stringer_material', "Stringers"),
+        ('native', 'rail_material', "Rails"),
+        ('native', 'baluster_material', "Balusters"),
+    )}),
+)
+
+
+def _selected_furnishing(context):
+    from .. import hb_furnishings
+    for obj in [context.active_object] + list(context.selected_objects):
+        cage = hb_furnishings.furnishing_of(obj)
+        if cage is not None:
+            return cage
+    return None
+
+
+def _furniture_kind(*kinds):
+    return lambda f: f.id_data.get('FURNISHING_KIND') in kinds
+
+
+FURNITURE_FIELDS = (
+    ('group', 'selected_furniture', "Selected Furniture",
+     {'summary': lambda f: f"{_length(f, f.width)} x {_length(f, f.depth)}", 'fields': (
+         ('enum', 'bed_size', "Size", {'when': _furniture_kind('BED')}),
+         ('distance', 'width', "Width"),
+         ('distance', 'depth', "Depth"),
+         ('distance', 'height', "Height"),
+         ('enum', 'shape', "Shape", {'when': _furniture_kind('DINING_TABLE')}),
+         ('number', 'chairs', "Chairs", {'when': _furniture_kind('DINING_TABLE')}),
+         ('enum', 'side', "Return", {'when': _furniture_kind('SECTIONAL')}),
+         ('actions', (("Turn", "home_builder.turn_furnishing"),
+                      ("Delete", "home_builder.delete_furnishing")), ""),
+     )}),
+)
+
+
+LIGHTING_DEFAULT_FIELDS = (
+    ('group', 'lighting_defaults', "Lighting",
+     {'summary': lambda h: (f"In renders · {h.fixture_dimmer:.2g}x" if h.fixture_lights else "Off in renders"),
+      'fields': (
+          ('bool', 'fixture_lights', "Lights in Renders"),
+          ('number', 'fixture_dimmer', "Dimmer"),
+          ('bool', 'show_light_objects', "Show Light Objects"),
+          ('notes', lambda context: ("Place fixtures with Furnish, or fill a",
+                                     "room from its Lighting group."), ""),
+      )}),
+)
+
+
+def _trim_on(h):
+    return h.trim_by_room
+
+
+TRIM_DEFAULT_FIELDS = (
+    ('group', 'trim_defaults', "Trim",
+     {'summary': lambda h: "Round the rooms" if h.trim_by_room else "Off", 'fields': (
+         ('bool', 'trim_by_room', "Interior Trim"),
+         ('bool', 'trim_base', "Baseboard", {'when': _trim_on}),
+         ('distance', 'trim_base_height', "Base Height", {'when': lambda h: h.trim_by_room and h.trim_base}),
+         ('bool', 'trim_shoe', "Shoe", {'when': lambda h: h.trim_by_room and h.trim_base}),
+         ('distance', 'trim_chair_height', "Chair Rail", {'when': _trim_on}),
+         ('bool', 'trim_crown', "Crown", {'when': _trim_on}),
+         ('native', 'trim_color', "Trim Color", {'when': _trim_on}),
+         ('notes', lambda context: ("Baths, laundry and garages get no crown",
+                                    "or chair rail."), "", {'when': _trim_on}),
+     )}),
+)
+
+
+def _trim_summary(room):
+    if room.trim_auto:
+        return "House default"
+    parts = []
+    if room.trim_base:
+        parts.append("base")
+    if room.trim_chair_height > 0:
+        parts.append("chair rail")
+    if room.trim_crown:
+        parts.append("crown")
+    return ", ".join(parts).capitalize() or "None"
+
+
+def _own_trim(room):
+    return not room.trim_auto
+
+
+def _walls_on(h):
+    return h.walls_by_room
+
+
+WALL_DEFAULT_FIELDS = (
+    ('group', 'wall_defaults', "Wall Finishes",
+     {'summary': lambda h: "By room" if h.walls_by_room else "Off", 'fields': (
+         ('bool', 'walls_by_room', "Paint Walls by Room"),
+         ('native', 'walls_room_color', "Rooms", {'when': _walls_on}),
+         ('native', 'walls_wet_color', "Baths & Laundry", {'when': _walls_on}),
+         ('enum', 'walls_wet_band', "Bath Band", {'when': _walls_on}),
+         ('distance', 'walls_band_height', "Band Height",
+          {'when': lambda h: h.walls_by_room and h.walls_wet_band != 'NONE'}),
+         ('native', 'walls_band_color', "Band Color",
+          {'when': lambda h: h.walls_by_room and h.walls_wet_band != 'NONE'}),
+         ('native', 'walls_garage_color', "Garages", {'when': _walls_on}),
+         ('native', 'ceiling_color', "Ceilings", {'when': _walls_on}),
+     )}),
+)
+
+
+def _walls_summary(room):
+    if room.walls_auto:
+        return "House default"
+    out = _label(room, 'walls_finish')
+    if room.walls_band != 'NONE':
+        out += f" · {_label(room, 'walls_band')} band {_length(room, room.walls_band_height)}"
+    return out
+
+
+def _own_walls(room):
+    return not room.walls_auto
+
+
 def _ceiling_summary(room):
     height = room.ceiling_height
     if height <= 0:
@@ -372,6 +939,24 @@ def _ceiling_summary(room):
     return f"{_label(room, 'ceiling_style')} · {_length(room, height)}"
 
 
+def _has_steps(room):
+    from .. import hb_porches
+    return hb_porches.has_steps(room)
+
+
+def _upper_porch(room):
+    """Whether the porch is on a level above the ground level."""
+    house = room.id_data.hb_house
+    ground = hb_house.ground_level(house)
+    level = next((l for l in house.levels if room in list(l.rooms)), None)
+    return level is not None and ground is not None and level.elevation > ground.elevation + 1e-3
+
+
+def _porch_notes(context, room):
+    from .. import hb_porches
+    return hb_porches.notes(room)
+
+
 def _porch_summary(room):
     return f"Roof: {_label(room, 'porch_roof')} · {_length(room, room.post_width)} posts"
 
@@ -379,7 +964,7 @@ def _porch_summary(room):
 ROOM_SPEC = {
     'kind': 'pool',
     'title': "Rooms",
-    'list_label': "Rooms",
+    'list_label': "All Rooms",
     'props': hb_house.active_level,
     'collection': 'rooms',
     'index': 'active_room_index',
@@ -406,6 +991,40 @@ ROOM_SPEC = {
             ('native', 'floor_material', "Material",
              {'when': lambda room: room.has_floor and room.floor_finish == 'CUSTOM'}),
         )}),
+        ('group', 'room_lighting', "Lighting", {'summary': lambda room: _lighting_notes(bpy.context, room)[0],
+                                                'fields': (
+            ('notes', lambda context, room: _lighting_notes(context, room), "", {'owner': True}),
+            ('distance', 'light_spacing', "Grid Spacing"),
+            ('distance', 'light_from_walls', "From Walls"),
+            ('bool', 'show_light_objects', "Show Light Objects"),
+            ('actions', (("Add Recessed Grid", "home_builder.add_recessed_grid"),
+                         ("Add Center Fixture", "home_builder.add_center_fixture")), ""),
+            ('actions', (("Remove Room Lights", "home_builder.remove_room_lights"),), ""),
+        )}),
+        ('group', 'room_trim', "Trim", {'when': lambda room: room.id_data.hb_house.trim_by_room,
+                                        'summary': _trim_summary, 'fields': (
+            ('bool', 'trim_auto', "Use House Default"),
+            ('bool', 'trim_base', "Baseboard", {'when': _own_trim}),
+            ('distance', 'trim_base_height', "Base Height",
+             {'when': lambda room: _own_trim(room) and room.trim_base}),
+            ('bool', 'trim_shoe', "Shoe", {'when': lambda room: _own_trim(room) and room.trim_base}),
+            ('distance', 'trim_chair_height', "Chair Rail", {'when': _own_trim}),
+            ('bool', 'trim_crown', "Crown", {'when': _own_trim}),
+            ('native', 'trim_color', "Trim Color", {'when': _own_trim}),
+        )}),
+        ('group', 'room_walls', "Walls", {'when': lambda room: room.id_data.hb_house.walls_by_room,
+                                          'summary': _walls_summary, 'fields': (
+            ('bool', 'walls_auto', "Use House Default"),
+            ('enum', 'walls_finish', "Walls", {'when': _own_walls}),
+            ('native', 'walls_color', "Color", {'when': _own_walls}),
+            ('enum', 'walls_band', "Lower Band", {'when': _own_walls}),
+            ('distance', 'walls_band_height', "Band Height",
+             {'when': lambda room: _own_walls(room) and room.walls_band != 'NONE'}),
+            ('native', 'walls_band_color', "Band Color",
+             {'when': lambda room: _own_walls(room) and room.walls_band != 'NONE'}),
+            ('native', 'ceiling_color', "Ceiling Color",
+             {'when': lambda room: _own_walls(room) and room.ceiling_material is None}),
+        )}),
         ('group', 'room_ceiling', "Ceiling", {'summary': _ceiling_summary, 'fields': (
             ('distance', 'ceiling_height', "Ceiling Height"),
             ('notes', _room_height_note, "", {'owner': True}),
@@ -421,10 +1040,24 @@ ROOM_SPEC = {
             ('enum', 'porch_roof', "Porch Roof"),
             ('number', 'porch_roof_pitch', "Porch Roof Pitch (in 12)",
              {'when': lambda room: room.porch_roof != 'NONE'}),
+            ('enum', 'porch_structure', "Structure"),
             ('distance', 'post_width', "Post Width"),
             ('distance', 'post_spacing', "Post Spacing (most)"),
-            ('distance', 'beam_depth', "Beam Depth"),
+            ('distance', 'beam_depth', "Beam Depth", {'when': lambda room: room.porch_structure == 'POSTS'}),
             ('distance', 'floor_drop', "Step Down"),
+            ('enum', 'porch_railing', "Railing"),
+            ('distance', 'porch_rail_height', "Rail Height", {'when': lambda room: room.porch_railing != 'NONE'}),
+            ('enum', 'porch_base', "Base"),
+            ('choices', 'porch_steps_on', "Steps On", {'cols': 4}),
+            ('enum', 'porch_steps_span', "Steps Span", {'when': _has_steps}),
+            ('enum', 'porch_steps_style', "Steps Style", {'when': _has_steps}),
+            ('distance', 'porch_steps_width', "Steps Width",
+             {'when': lambda room: _has_steps(room) and room.porch_steps_span == 'WIDTH'}),
+            ('distance', 'porch_steps_offset', "Steps Offset",
+             {'when': lambda room: _has_steps(room) and room.porch_steps_span == 'WIDTH'}),
+            ('distance', 'porch_step_riser', "Max Step Riser", {'when': _has_steps}),
+            ('bool', 'porch_supports', "Posts to Ground", {'when': _upper_porch}),
+            ('notes', lambda context, room: _porch_notes(context, room), "", {'owner': True}),
             ('native', 'post_material', "Post Material"),
         )}),
     ),
@@ -486,11 +1119,31 @@ def _icon_rooms(shader, cx, cy, g, color):
     draw_polyline(shader, [(cx - h * 0.1, cy + h * 0.05), (cx + h, cy + h * 0.05)], color)
 
 
+def _icon_structure(shader, cx, cy, g, color):
+    """A framed wall: studs between plates."""
+    h = g * 0.45
+    draw_polyline(shader, [(cx - h, cy - h), (cx + h, cy - h)], color)
+    draw_polyline(shader, [(cx - h, cy + h), (cx + h, cy + h)], color)
+    for k in (-1.0, -0.33, 0.33, 1.0):
+        draw_polyline(shader, [(cx + h * k, cy - h), (cx + h * k, cy + h)], color)
+
+
+def _page_icon(name, fallback):
+    """The baked SVG icon `name` in the page-tab icon signature, or the
+    line drawing if its PNGs are missing."""
+    def icon(shader, cx, cy, g, color):
+        if not draw_icon(name, (cx - g / 2.0, cy - g / 2.0, g, g), color,
+                         size=16):
+            fallback(shader, cx, cy, g, color)
+    return icon
+
+
 PAGES = (
-    ('LEVELS', "Levels", _icon_levels),
-    ('OUTSIDE', "Outside", _icon_outside),
-    ('ROOF', "Roof", _icon_roof),
-    ('ROOMS', "Rooms", _icon_rooms),
+    ('LEVELS', "Levels", _page_icon('levels', _icon_levels)),
+    ('OUTSIDE', "Outside", _page_icon('outside', _icon_outside)),
+    ('ROOF', "Roof", _page_icon('roof', _icon_roof)),
+    ('ROOMS', "Rooms", _page_icon('rooms', _icon_rooms)),
+    ('STRUCTURE', "Structure", _page_icon('structure', _icon_structure)),
 )
 
 
@@ -512,10 +1165,12 @@ def _tabs_shown(context):
 
 
 def _tab_cells(rect):
+    """The pages side by side, each as wide as the next: every one shows
+    its icon and, under it, its name."""
     x0, y0, w, h = rect
-    n = len(PAGES)
-    bw = w / n
-    return [(key, label, icon, (x0 + i * bw, y0, bw, h)) for i, (key, label, icon) in enumerate(PAGES)]
+    bw = w / len(PAGES)
+    return [(key, label, icon, (x0 + i * bw, y0, bw, h))
+            for i, (key, label, icon) in enumerate(PAGES)]
 
 
 def _paint_tabs(entry, mx, my):
@@ -524,7 +1179,7 @@ def _paint_tabs(entry, mx, my):
     shader = gpu.shader.from_builtin('UNIFORM_COLOR')
     gpu.state.blend_set('ALPHA')
     shader.bind()
-    font = 0
+    font = semibold_font()
     for key, label, icon, cell in _tab_cells(rect):
         x, y, w, h = cell
         inner = (x + 1 * s, y, w - 2 * s, h)
@@ -532,14 +1187,12 @@ def _paint_tabs(entry, mx, my):
         hot = point_in_rect(mx, my, cell)
         paint_button(shader, inner, hovered=hot, active=active)
         color = Theme.TEXT_PRIMARY if (active or hot) else Theme.TEXT_NORMAL
-        g = 12 * s
-        shown = fit_text(font, FONT * s, label, w - g - 14 * s)
-        tw = text_width(font, FONT * s, shown)
-        total = g + 5 * s + tw
-        left = x + (w - total) / 2.0
+        g = 14 * s
         shader.bind()
-        icon(shader, left + g / 2.0, y + h / 2.0, g, color)
-        draw_text(font, left + g + 5 * s, y + h * 0.32, FONT * s, color, shown)
+        icon(shader, x + w / 2.0, y + h * 0.64, g, color)
+        shown = fit_text(font, FONT * s, label, w - 4 * s)
+        tw = text_width(font, FONT * s, shown)
+        draw_text(font, x + (w - tw) / 2.0, y + h * 0.14, FONT * s, color, shown)
 
 
 # ---- The pages ----------------------------------------------------------------
@@ -579,16 +1232,24 @@ def _blocks(context):
              {'scene_name': house_scene.name}, None),)))
         return blocks
 
+    # Every page the same way down: its title (and the level it is
+    # about), what you work with on it, the settings of what is picked,
+    # and last the settings for the whole house. What is selected in the
+    # view - a bay, a fireplace, a light, a stair, furniture - is on the
+    # SELECTED tab, not here.
     level = hb_house.active_level(context)
-    where = f" · {level.name}" if level is not None else ""
+    level_name = level.name if level is not None else ""
+    house = scene.hb_house
+    title = dict((key, label) for key, label, _icon in PAGES)[_page]
+    blocks = [('title', (title, level_name))]
     if _page == 'LEVELS':
-        blocks = options_panel.field_blocks(context, PLAN_VIEW_FIELDS, scene.hb_house)
+        blocks.extend(options_panel.field_blocks(context, PLAN_VIEW_FIELDS, house))
         blocks.extend(options_panel.pool_blocks(context, LEVEL_SPEC))
-        blocks.append(('gap', None))
-        blocks.extend(options_panel.field_blocks(context, VIEW_FIELDS, scene.hb_house))
+        if level is not None:
+            blocks.append(('gap', None))
+            blocks.extend(options_panel.field_blocks(context, BACKDROP_FIELDS, level))
+        blocks.extend(_whole_house(context, VIEW_FIELDS, house))
     elif _page == 'OUTSIDE':
-        blocks = [('head', ("Outside", False, None))]
-        blocks.extend(options_panel.field_blocks(context, EXTERIOR_FIELDS, scene.hb_house))
         if level is not None:
             blocks.extend(options_panel.field_blocks(context, _level_siding_fields(level), level))
         walls = _selected_walls(context)
@@ -596,25 +1257,60 @@ def _blocks(context):
             owner = context.active_object if context.active_object in walls else walls[0]
             blocks.extend(options_panel.field_blocks(context, _wall_siding_fields(len(walls)),
                                                      owner.hb_siding))
-        else:
-            blocks.append(('note', "Select outside walls to give them their own siding."))
-        blocks.append(('gap', None))
-        blocks.extend(options_panel.field_blocks(context, BASE_FIELDS, scene.hb_house))
+        windows = _selected_windows(context)
+        if windows:
+            active = hb_house.window_cage(context.active_object)
+            owner = active if active in windows else windows[0]
+            blocks.extend(options_panel.field_blocks(context, _window_fields(len(windows)),
+                                                     owner.hb_window_ext))
+        if not walls and not windows:
+            blocks.append(('hint', "Select walls or windows for their own siding and trim."))
+        blocks.extend(_whole_house(context, EXTERIOR_FIELDS + (('gap', None, ""),) + BASE_FIELDS, house))
     elif _page == 'ROOF':
-        blocks = [('head', ("Roof" + where, False, None))]
         if level is not None:
-            blocks.extend(options_panel.field_blocks(context, ROOF_FIELDS, level.roof))
+            # Show Roofs beside the switch, so a roof turned on here can be
+            # seen (or hidden) without going back to the Levels page
+            blocks.extend(options_panel.field_blocks(context, ROOF_FIELDS[:1], level.roof))
+            if level.roof.enabled:
+                blocks.extend(options_panel.field_blocks(
+                    context, (('bool', 'show_roofs', "Show Roofs"),), house))
+            blocks.extend(options_panel.field_blocks(context, ROOF_FIELDS[1:], level.roof))
             if level.roof.enabled:
                 blocks.append(('gap', None))
                 blocks.extend(options_panel.pool_blocks(context, PIECE_SPEC))
-                blocks.append(('note', "Draw pieces in Edit Roof (G, D, A),"))
-                blocks.append(('note', "or select walls and use an Add button."))
-    else:
-        blocks = options_panel.field_blocks(context, FLOOR_DEFAULT_FIELDS, scene.hb_house)
+                blocks.append(('hint', "Draw pieces in Edit Roof, or select walls and Add."))
+                blocks.append(('gap', None))
+                blocks.extend(options_panel.pool_blocks(context, SKYLIGHT_SPEC))
+        blocks.extend(_whole_house(context, EAVE_FIELDS, house))
+    elif _page == 'STRUCTURE':
+        blocks.extend(options_panel.field_blocks(context, STRUCTURE_FIELDS, house))
         blocks.append(('gap', None))
+        if len(house.assemblies):
+            blocks.extend(options_panel.pool_blocks(context, ASSEMBLY_SPEC))
+            blocks.extend(options_panel.pool_blocks(context, LAYER_SPEC))
+        else:
+            blocks.append(('head', ("Wall Assemblies", False, None)))
+            blocks.append(('hint', "What walls are made of, layer by layer."))
+            blocks.append(('actions', (("Add Standard Assemblies",
+                                        "home_builder.add_standard_assemblies", None, None),)))
+    else:
         if level is not None:
             blocks.extend(options_panel.pool_blocks(context, ROOM_SPEC))
+            if not len(level.rooms):
+                blocks.append(('hint', "No rooms yet: draw walls that close a space."))
+        blocks.extend(_whole_house(context, FLOOR_DEFAULT_FIELDS + WALL_DEFAULT_FIELDS
+                                   + TRIM_DEFAULT_FIELDS + LIGHTING_DEFAULT_FIELDS, house))
     return blocks
+
+
+def _whole_house(context, fields, house):
+    """The settings for the whole house, last on a page under their own
+    caption."""
+    from . import options_panel
+    inner = options_panel.field_blocks(context, fields, house)
+    if not inner:
+        return []
+    return [('gap', None), ('head', ("Whole House", False, None))] + inner
 
 
 def _scroll_list():
@@ -676,11 +1372,16 @@ def scroll(mx, my, entries, rows):
     return options_panel.scroll_page(mx, my, rest, rows, _scroll_list())
 
 
+# Commands that take something away: quiet until hovered
+QUIET = ("home_builder.remove_backdrop", "home_builder.remove_room_lights")
+
+
 def register():
-    from . import scene_navigator
+    from . import scene_navigator, options_panel
+    options_panel.QUIET_OPS.update(QUIET)
     scene_navigator.register_tab(TAB_KEY, sys.modules[__name__],
                                  label=TAB_LABEL, order=TAB_ORDER,
-                                 available=available)
+                                 available=available, icon='house')
 
 
 def unregister():

@@ -48,7 +48,9 @@ chip is opened), ``native`` (a colour or datablock, edited through Blender's
 own field in a popover), ``file`` (a path, chosen in Blender's file
 browser and cleared by the chip on its row), ``items`` (a row per item of a
 collection, each with a remove chip), ``pick`` (a button opening a menu
-of commands worked out as it opens), ``notes`` (lines of text a callable
+of commands worked out as it opens), ``icons`` (a row of square command
+buttons, each an icon that names itself on hover: ``(icon, label,
+operator[, kwargs[, when]])``, ``when`` taking the owner), ``notes`` (lines of text a callable
 works out from the context) and ``gap`` (space). A field may carry a dict after its label: ``when``
 hides it unless the callable, given the owner, says so; ``thumb`` maps
 a choice to its picture.
@@ -58,6 +60,7 @@ import bpy
 
 from .. import units
 from .. import hb_placement
+from ..hb_icons import draw_icon, has_icon
 from ..hb_gpu_draw import (
     draw_rect,
     draw_rect_outline,
@@ -66,6 +69,7 @@ from ..hb_gpu_draw import (
     point_in_rect,
 )
 from ..hb_gpu_ui import (
+    semibold_font,
     Theme,
     begin_clip,
     end_clip,
@@ -125,6 +129,12 @@ TILE_NAME_H = 14     # the name under a tile's picture
 TILE_BAR_H = 20      # a style tile's strip of checkbox and icons
 TILE_ICON = 18       # one icon button on that strip
 CARD_H = 50          # the summary card over a pool's selected item
+TITLE_H = 28         # a page's title row
+HINT_H = 18          # a line of help: shorter than a row, and dim
+
+# Commands that undo or remove: drawn as text until hovered, so they sit
+# back from the ones that make things
+QUIET_OPS = set()
 DOT = 8              # a list row's colour dot
 
 
@@ -302,9 +312,76 @@ def _field_shown(field, owner):
         return True
 
 
+# ---- Several at once ---------------------------------------------------------
+# A page shows one owner, but the selection may hold more of the same
+# kind: five cabinets picked to set one depth. A peers function names
+# them -- fn(owner) -> the other owners an edit to `owner` also goes to --
+# and the fields then read "Mixed" where they differ and write to all.
+
+_peer_fns = []
+
+
+def register_peers(fn):
+    if fn not in _peer_fns:
+        _peer_fns.append(fn)
+
+
+def unregister_peers(fn):
+    if fn in _peer_fns:
+        _peer_fns.remove(fn)
+
+
+def peers(owner):
+    """The other owners an edit to `owner` also goes to."""
+    out = []
+    for fn in _peer_fns:
+        try:
+            out.extend(fn(owner) or ())
+        except Exception:
+            pass
+    return out
+
+
+def _same(a, b):
+    if isinstance(a, float) or isinstance(b, float):
+        try:
+            return abs(float(a) - float(b)) < 1e-6
+        except (TypeError, ValueError):
+            return False
+    return a == b
+
+
+def is_mixed(owner, prop):
+    """True when the owner's peers do not all share its value."""
+    others = peers(owner)
+    if not others:
+        return False
+    try:
+        value = getattr(owner, prop)
+        return any(not _same(getattr(p, prop), value) for p in others)
+    except Exception:
+        return False
+
+
+def write(owner, prop, value):
+    """Set `prop` on the owner and on each of its peers."""
+    setattr(owner, prop, value)
+    for peer in peers(owner):
+        try:
+            if getattr(peer, prop) != value:
+                setattr(peer, prop, value)
+        except Exception as ex:
+            print('Home Builder: %s failed on %s: %s'
+                  % (prop, getattr(peer.id_data, 'name', '?'), ex))
+
+
 def _resolve(id_data, path):
     """The owner an (ID, path) key names. A prop on the ID itself has
-    an empty path, which path_resolve does not take."""
+    an empty path, which path_resolve does not take; one seen through
+    a schema (prop_proxy) is built again from its key."""
+    if path.startswith('#proxy:'):
+        from . import prop_proxy
+        return prop_proxy.resolve(id_data, path)
     return id_data.path_resolve(path) if path else id_data
 
 
@@ -593,6 +670,16 @@ def _field_blocks(context, fields, owner):
             except Exception:
                 lines = ()
             blocks.extend(('note', line) for line in lines)
+        elif field[0] == 'hints':
+            # Help, not settings: the same as notes, drawn small and dim.
+            try:
+                if _field_parts(field)[3].get('owner'):
+                    lines = field[1](context, owner) or ()
+                else:
+                    lines = field[1](context) or ()
+            except Exception:
+                lines = ()
+            blocks.extend(('hint', line) for line in lines)
         elif field[0] == 'value':
             # A labelled value to read, worked out by a callable given
             # the owner -- a count, a source, what the thing is.
@@ -606,6 +693,14 @@ def _field_blocks(context, fields, owner):
             # A row of commands placed among the fields, so a section
             # can group its commands under the label they belong to.
             blocks.append(('actions', tuple(_norm_action(a) for a in field[1])))
+        elif field[0] == 'icons':
+            # A row of icon buttons: a section's commands in one line.
+            row = tuple(
+                (a[1], a[2], a[3] if len(a) > 3 else None, a[0])
+                for a in field[1]
+                if len(a) < 5 or a[4] is None or a[4](owner))
+            if row:
+                blocks.append(('icon_actions', row))
         elif field[0] == 'pick':
             blocks.append(('pick', (field[2], field[1])))
         elif field[0] == 'items':
@@ -664,7 +759,8 @@ def _group_blocks(context, field, owner):
     def toggle(m=method):
         toggle_section(bpy.context, m)
 
-    blocks = [('section', (label, method, expanded, toggle, summary))]
+    blocks = [('section', (label, method, expanded, toggle, summary,
+                           options.get('icon')))]
     if expanded:
         inner = _field_blocks(context, options.get('fields', ()), owner)
         blocks.extend(('indent', b) for b in inner)
@@ -861,6 +957,10 @@ def _block_h(block, s):
         return _block_h(block[1], s)
     if kind in ('head', 'section'):
         return SECTION_H * s
+    if kind == 'title':
+        return (TITLE_H + ROW_GAP) * s
+    if kind == 'hint':
+        return (HINT_H + ROW_GAP) * s
     if kind == 'tiles':
         return (block[1][1].get('height', TILE_H) + ROW_GAP) * s
     if kind == 'picture_tiles':
@@ -878,6 +978,10 @@ _last_list_h = 0.0      # the list's height at the last build, for Tab
 
 
 _page = None            # (blocks function, ScrollList) last built
+# The page typing started on, and its list height: with two pages on
+# screen at once (the panel and the selection inspector) the last one
+# drawn is not necessarily the one being typed into.
+_typing_page = None     # ((blocks function, ScrollList), list height)
 
 
 def _current_page():
@@ -886,12 +990,16 @@ def _current_page():
     return _page or (_blocks, _list)
 
 
+def _typed_page():
+    return _typing_page[0] if _typing_page else _current_page()
+
+
 def _typed_fields(context):
     """Every field that is typed into, top to bottom, on screen or
     not: (key, kind, owner, prop, offset from the top, height)."""
     s = scale()
     out, y = [], 0.0
-    for block in _current_page()[0](context):
+    for block in _typed_page()[0](context):
         h = _block_h(block, s)
         inner = block
         while inner[0] == 'indent':
@@ -907,14 +1015,16 @@ def _typed_fields(context):
     return out
 
 
-def _begin_typing(kind, owner, prop):
+def _begin_typing(kind, owner, prop, page=None):
     """A distance is typed fresh; text is edited from what is there,
-    all of it selected so that typing replaces it."""
-    global _edit_kind
+    all of it selected so that typing replaces it. `page` is the page
+    being typed on, when it is not the one built last."""
+    global _edit_kind, _typing_page
     key = _owner_key(owner, prop)
     if key is None:
         return False
     _edit_kind = kind
+    _typing_page = page or (_current_page(), _last_list_h)
     if kind == 'text':
         _value_edit.begin(key, str(getattr(owner, prop, "") or ""),
                           select=True)
@@ -934,10 +1044,12 @@ def _begin_neighbour(context, key, step):
     if not 0 <= i < len(fields):
         return False
     _key, kind, owner, prop, offset, height = fields[i]
-    if not _begin_typing(kind, owner, prop):
+    page = _typing_page or (_current_page(), _last_list_h)
+    if not _begin_typing(kind, owner, prop, page):
         return False
-    if _last_list_h > 0:
-        _current_page()[1].scroll_into_view(offset, height, _last_list_h)
+    list_h = page[1]
+    if list_h > 0:
+        page[0][1].scroll_into_view(offset, height, list_h)
     return True
 
 
@@ -955,7 +1067,8 @@ def build_page(rect, context, blocks_fn, lst):
 
     Rows inside `rect`. Entries:
 
-        ('section_row', label, method_name, rect, expanded, toggle)
+        ('section_row', label, method_name, rect, expanded, toggle,
+                      summary, icon)   icon None on most
                       toggle None for a library section, else a callable
         ('value_row', label, text, rect)
         ('styles_head', label, rect, add_rect, pool)   add_rect None on most
@@ -963,6 +1076,7 @@ def build_page(rect, context, blocks_fn, lst):
                       up_rect, down_rect, pool)
         ('field_row', kind, prop, label, owner, value, rect, value_rect)
         ('action_btn', label, op_id, prop, value, rect, enabled)
+        ('icon_btn', label, op_id, kwargs, rect, enabled, icon)
         ('form_row', label, method_name, rect)
         ('styles_clip', clip_rect, track, thumb)
     """
@@ -1003,9 +1117,10 @@ def build_page(rect, context, blocks_fn, lst):
             label, method, expanded = payload[:3]
             toggle = payload[3] if len(payload) > 3 else None
             summary = payload[4] if len(payload) > 4 else ""
+            icon = payload[5] if len(payload) > 5 else None
             entries.append(('section_row', label, method,
                             (x, block_top - sect_h, row_w, sect_h), expanded,
-                            toggle, summary))
+                            toggle, summary, icon))
         elif kind == 'value':
             label, text = payload
             entries.append(('value_row', label, text,
@@ -1016,6 +1131,12 @@ def build_page(rect, context, blocks_fn, lst):
         elif kind == 'note':
             entries.append(('note_row', payload,
                             (x, block_top - row_h, row_w, row_h)))
+        elif kind == 'hint':
+            hh = HINT_H * s
+            entries.append(('hint_row', payload, (x, block_top - hh, row_w, hh)))
+        elif kind == 'title':
+            th = TITLE_H * s
+            entries.append(('title_row', payload, (x, block_top - th, row_w, th)))
         elif kind == 'head':
             label, with_add, pool = payload
             head_rect = (x, block_top - sect_h, row_w, sect_h)
@@ -1074,6 +1195,15 @@ def build_page(rect, context, blocks_fn, lst):
                     continue
                 entries.append(('action_btn', label, op_id, prop, value,
                                 rect, _can_run(op_id, polled)))
+        elif kind == 'icon_actions':
+            # Square buttons from the left, a row's height each.
+            step = row_h + gap
+            for j, (label, op_id, kwargs, icon) in enumerate(payload):
+                rect = (x + j * step, block_top - row_h, row_h, row_h)
+                if rect[0] + row_h > x + row_w + 0.5:
+                    break           # more than a row holds: the caller's to split
+                entries.append(('icon_btn', label, op_id, kwargs, rect,
+                                _can_run(op_id, polled), icon))
         elif kind == 'field':
             field, owner = payload
             entries.extend(_field_entries(context, field, owner, x,
@@ -1082,6 +1212,8 @@ def build_page(rect, context, blocks_fn, lst):
             field, owner = payload
             prop = _field_parts(field)[1]
             current = getattr(owner, prop, None)
+            if is_mixed(owner, prop):
+                current = set() if isinstance(current, set) else None
             y = block_top
             for row in _choice_rows(field, owner):
                 if row[0] == 'caption':
@@ -1092,7 +1224,7 @@ def build_page(rect, context, blocks_fn, lst):
                     for j, (ident, label) in enumerate(row[1]):
                         entries.append(('choice_btn', owner, prop, ident, label,
                                         (x + j * (cw + gap), y - row_h, cw, row_h),
-                                        ident == current))
+                                        ident in current if isinstance(current, set) else ident == current))
                 y -= (ROW_H + ROW_GAP) * s
         elif kind == 'pick':
             label, fn = payload
@@ -1238,6 +1370,12 @@ def _field_entries(context, field, owner, x, top, row_w, row_h, s):
         value = _native_value(owner, prop)
     else:
         value = enum_label(owner, prop)
+    if fkind != 'native' and is_mixed(owner, prop):
+        options['mixed'] = True
+        if fkind == 'bool':
+            value = False
+        elif not _value_edit.editing(_owner_key(owner, prop)):
+            value = "Mixed"
     out = [('field_row', fkind, prop, label, owner, value, rect, value_rect,
             options)]
     chip = CHIP * s
@@ -1292,7 +1430,7 @@ def _clip(entries):
 
 def _paint_head(shader, font_id, s, mx, my, label, rect, add_rect):
     rx, ry, rw, rh = rect
-    draw_text(font_id, rx, ry + rh * 0.32, FONT * s,
+    draw_text(semibold_font(), rx, ry + rh * 0.32, FONT * s,
               Theme.TEXT_HEADER, label.upper())
     # The rule stops short of the button rather than running under
     # it -- a line crossing a control reads as a mistake.
@@ -1348,17 +1486,26 @@ def paint(entries, mx, my):
                               not expanded,
                               Theme.GLYPH_HOVER if hot else Theme.GLYPH)
                 summary = entry[6] if len(entry) > 6 else ""
-                label_w = rw - 20 * s
+                icon = entry[7] if len(entry) > 7 else None
+                lx = rx + 16 * s
+                if icon and has_icon(icon):
+                    # The group's own icon between chevron and name.
+                    draw_icon(icon, (lx - 2 * s, ry, rh, rh), Theme.GLYPH_HOVER
+                              if (expanded or hot) else Theme.GLYPH, size=14)
+                    shader.bind()
+                    lx += rh
+                label_w = rx + rw - 4 * s - lx
+                bold = semibold_font()
                 if summary:
-                    label_w = min(text_width(font_id, FONT * s, label),
+                    label_w = min(text_width(bold, FONT * s, label),
                                   (rw - 20 * s) * 0.45)
-                shown = fit_text(font_id, FONT * s, label, label_w)
-                draw_text(font_id, rx + 16 * s, ry + rh * 0.28, FONT * s,
+                shown = fit_text(bold, FONT * s, label, label_w)
+                draw_text(bold, lx, ry + rh * 0.28, FONT * s,
                           Theme.TEXT_PRIMARY if (expanded or hot)
                           else Theme.TEXT_NORMAL, shown)
                 if summary:
                     # What is set in the group, read without opening it.
-                    sx = rx + 16 * s + label_w + 10 * s
+                    sx = lx + label_w + 10 * s
                     shown_sum = fit_text(font_id, FONT * s, summary,
                                          rx + rw - 6 * s - sx)
                     draw_text(font_id, sx, ry + rh * 0.28, FONT * s,
@@ -1373,7 +1520,7 @@ def paint(entries, mx, my):
                 # reads as a group name and not as a value.
                 _, label, rect = entry
                 rx, ry, rw, rh = rect
-                draw_text(font_id, rx + 8 * s, ry + rh * 0.28, FONT * s,
+                draw_text(semibold_font(), rx + 8 * s, ry + rh * 0.28, FONT * s,
                           Theme.TEXT_HEADER, label.upper())
             elif kind == 'value_row':
                 # Read, not edited: the label where a field's is, the
@@ -1392,6 +1539,31 @@ def paint(entries, mx, my):
                           Theme.TEXT_NORMAL, shown_label)
                 draw_text(font_id, rx + lw + 6 * s, ry + rh * 0.28, FONT * s,
                           Theme.TEXT_PRIMARY, shown)
+            elif kind == 'title_row':
+                # The page's name, and what it is about (the level) dim
+                # on the right, over a rule.
+                _, (text, aside), rect = entry
+                rx, ry, rw, rh = rect
+                big = (FONT + 3) * s
+                bold = semibold_font()
+                aside_w = text_width(font_id, FONT * s, aside) if aside else 0.0
+                shown = fit_text(bold, big, text, rw - aside_w - 16 * s)
+                draw_text(bold, rx + 2 * s, ry + rh * 0.36, big,
+                          Theme.TEXT_PRIMARY, shown)
+                if aside:
+                    shown_aside = fit_text(font_id, FONT * s, aside, rw * 0.5)
+                    draw_text(font_id, rx + rw - text_width(font_id, FONT * s, shown_aside) - 2 * s,
+                              ry + rh * 0.38, FONT * s, Theme.TEXT_HEADER, shown_aside)
+                draw_rects(shader, [(rx, ry + 3 * s, rw, 1 * s)], Theme.SEPARATOR)
+            elif kind == 'hint_row':
+                _, text, rect = entry
+                rx, ry, rw, rh = rect
+                small = FONT * s
+                shown = fit_text(font_id, small, text, rw - 12 * s)
+                if point_in_rect(mx, my, rect):
+                    note_tip_if_cut(rect, shown, text)
+                draw_text(font_id, rx + 8 * s, ry + rh * 0.3, small,
+                          Theme.TEXT_HEADER, shown)
             elif kind == 'note_row':
                 _, text, rect = entry
                 rx, ry, rw, rh = rect
@@ -1506,7 +1678,9 @@ def paint(entries, mx, my):
                 hot = point_in_rect(mx, my, value_rect) and not readonly
                 frac = options.get('frac', 0.42)
                 if fkind == 'bool':
-                    paint_check(shader, font_id, rect, FONT * s, label,
+                    paint_check(shader, font_id, rect, FONT * s,
+                                label + ("  (Mixed)" if options.get('mixed')
+                                         else ""),
                                 bool(value), point_in_rect(mx, my, rect))
                 elif fkind in TYPED_KINDS:
                     editing = _value_edit.editing(_owner_key(owner, prop))
@@ -1588,7 +1762,9 @@ def paint(entries, mx, my):
                              active=on and glyph == 'text')
                 color = Theme.GLYPH_HOVER if (c_hot or on) else Theme.GLYPH
                 if glyph == 'lock':
-                    _glyph_lock(shader, rect, not on, color)
+                    if not draw_icon('unlock' if on else 'lock', rect,
+                                     color):
+                        _glyph_lock(shader, rect, not on, color)
                 else:
                     glyph_rename(shader, rect, color)
             elif kind == 'clear_chip':
@@ -1612,9 +1788,29 @@ def paint(entries, mx, my):
                 draw_centered_text(font_id, rect, FONT * s,
                                    Theme.TEXT_PRIMARY if hovered
                                    else Theme.TEXT_NORMAL, label)
+            elif kind == 'icon_btn':
+                _, label, _op, _kw, rect, enabled, icon = entry
+                hovered = point_in_rect(mx, my, rect)
+                paint_button(shader, rect, hovered=enabled and hovered)
+                color = (Theme.TEXT_DIM if not enabled
+                         else Theme.GLYPH_HOVER if hovered else Theme.GLYPH)
+                if has_icon(icon):
+                    draw_icon(icon, rect, color)
+                    shader.bind()
+                else:
+                    # Not baked yet: the start of its name, so the
+                    # button still says what it is.
+                    draw_centered_text(font_id, rect, FONT * s * 0.85, color,
+                                       label[:2])
+                if hovered:
+                    note_tip(rect, label)
             elif kind == 'action_btn':
                 _, label, _op, _prop, _val, rect, enabled = entry
                 hovered = enabled and point_in_rect(mx, my, rect)
+                if _op in QUIET_OPS and not hovered:
+                    draw_centered_text(font_id, rect, FONT * s,
+                                       Theme.TEXT_DIM if not enabled else Theme.TEXT_HEADER, label)
+                    continue
                 paint_button(shader, rect, hovered=hovered)
                 draw_centered_text(font_id, rect, FONT * s,
                                    Theme.TEXT_DIM if not enabled
@@ -2093,7 +2289,9 @@ def hit(context, mx, my, entries):
                 continue
             if fkind == 'bool' and point_in_rect(mx, my, rect):
                 try:
-                    setattr(owner, prop, not getattr(owner, prop))
+                    # Mixed reads as off, so the click turns them all on.
+                    write(owner, prop, True if options.get('mixed')
+                          else not getattr(owner, prop))
                 except Exception as ex:
                     print('Home Builder: %s failed: %s' % (prop, ex))
                 _tag()
@@ -2140,7 +2338,7 @@ def hit(context, mx, my, entries):
                 return True
         if kind == 'toggle_chip' and point_in_rect(mx, my, entry[3]):
             try:
-                setattr(entry[1], entry[2], not getattr(entry[1], entry[2]))
+                write(entry[1], entry[2], not getattr(entry[1], entry[2]))
             except Exception as ex:
                 print('Home Builder: %s failed: %s' % (entry[2], ex))
             _tag()
@@ -2158,6 +2356,11 @@ def hit(context, mx, my, entries):
             return True
         if kind == 'pick_btn' and point_in_rect(mx, my, entry[3]):
             open_pick_menu(context, entry[2], entry[1])
+            return True
+        if kind == 'icon_btn' and point_in_rect(mx, my, entry[4]):
+            if entry[5]:
+                _run_on_release(entry[2], dict(entry[3] or {}))
+            _tag()
             return True
         if kind == 'action_btn' and point_in_rect(mx, my, entry[5]):
             if not entry[6]:
@@ -2180,8 +2383,11 @@ def hit(context, mx, my, entries):
             return True
         if kind == 'choice_btn' and point_in_rect(mx, my, entry[5]):
             owner, prop, ident = entry[1], entry[2], entry[3]
-            if getattr(owner, prop, None) != ident:
-                setattr(owner, prop, ident)
+            current = getattr(owner, prop, None)
+            if isinstance(current, set):
+                write(owner, prop, current ^ {ident})      # a set: one on or off
+            elif current != ident or is_mixed(owner, prop):
+                write(owner, prop, ident)
             _tag()
             return True
         if kind == 'back_row' and point_in_rect(mx, my, entry[2]):
@@ -2259,6 +2465,23 @@ def manager_blocks(context, spec):
 def new_scroll_list():
     """A ScrollList set up the way this tab's own is."""
     return ScrollList(bar_width=4, bar_pad=4, min_rows=3)
+
+
+def begin_typing(owner, prop, kind='text'):
+    """Start typing into a hosted page's field, as a click on it does --
+    for a command that has just made the thing the field describes (a
+    new item whose name is wanted next). The field shows the caret once
+    its page draws it. Returns False when typing could not start."""
+    if kind not in TYPED_KINDS or not _begin_typing(kind, owner, prop):
+        return False
+    try:
+        bpy.ops.home_builder.options_edit_value('INVOKE_DEFAULT')
+    except Exception as ex:
+        _value_edit.cancel()
+        print('Home Builder: could not start typing: %s' % ex)
+        return False
+    _tag()
+    return True
 
 
 def _tag():
@@ -2490,7 +2713,7 @@ class home_builder_OT_options_set_enum(bpy.types.Operator):
         if owner is None:
             return {'CANCELLED'}
         try:
-            setattr(owner, prop, self.value)
+            write(owner, prop, self.value)
         except Exception as ex:
             self.report({'WARNING'}, str(ex))
             return {'CANCELLED'}
@@ -2559,7 +2782,7 @@ def commit_value(context):
         if value is None:
             return False
     try:
-        setattr(owner, prop, value)
+        write(owner, prop, value)
     except Exception as ex:
         print('Home Builder: %s failed: %s' % (prop, ex))
         return False
@@ -2641,6 +2864,8 @@ class home_builder_OT_options_drag_value(bpy.types.Operator):
         if self.key is None:
             return {'CANCELLED'}
         self.start = getattr(owner, self.prop)
+        # What each peer held, so a cancelled drag puts each one back.
+        self.peer_start = [(p, getattr(p, self.prop)) for p in peers(owner)]
         self.imperial = context.scene.unit_settings.system == 'IMPERIAL'
         self.steps = drag_steps(self.kind, owner, self.prop, self.imperial)
         self.press_x = event.mouse_x
@@ -2661,7 +2886,17 @@ class home_builder_OT_options_drag_value(bpy.types.Operator):
         owner = self._owner()
         value = _clamp(owner, self.prop, value)
         if getattr(owner, self.prop) != value:
-            setattr(owner, self.prop, value)
+            write(owner, self.prop, value)
+        _tag()
+
+    def _restore(self):
+        owner = self._owner()
+        setattr(owner, self.prop, self.start)
+        for peer, value in self.peer_start:
+            try:
+                setattr(peer, self.prop, value)
+            except Exception:
+                pass
         _tag()
 
     def _end_drag(self):
@@ -2708,7 +2943,7 @@ class home_builder_OT_options_drag_value(bpy.types.Operator):
 
         if event.type in {'ESC', 'RIGHTMOUSE'} and event.value == 'PRESS':
             if self.dragging:
-                self._set(self.start)
+                self._restore()
             self._end_drag()
             return {'CANCELLED'}
 

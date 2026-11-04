@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="none" stroke="#fff" stroke-width="1" stroke-linecap="butt" stroke-linejoin="miter">
+  <!-- Jambs, a leaf open ninety degrees, and its swing -->
+  <rect x="1" y="2" width="2" height="12.5" fill="#fff" stroke="none"/>
+  <path d="M1.5 12v3M14.5 12v3"/>
+  <path d="M2 2A12.5 12.5 0 0 1 14.5 14.5" stroke-opacity=".7"/>
+</svg>

@@ -268,6 +268,58 @@ class PedestalSink(Appliance):
         self.create_appliance(name, 'PEDESTAL_SINK', label='LAV')
 
 
+class AlcoveTub(Appliance):
+    """A tub set between two walls, its apron to the room."""
+
+    width = inch(60)
+    height = inch(20)
+    depth = inch(30)
+
+    APPLIANCE_TYPE = 'ALCOVE_TUB'
+
+    def create(self, name="Alcove Tub"):
+        self.create_appliance(name, 'ALCOVE_TUB', label='TUB')
+
+
+class FreestandingTub(Appliance):
+    """An oval tub standing free on the floor, a filler at its drain end."""
+
+    width = inch(66)
+    height = inch(23)
+    depth = inch(32)
+
+    APPLIANCE_TYPE = 'FREESTANDING_TUB'
+
+    def create(self, name="Freestanding Tub"):
+        self.create_appliance(name, 'FREESTANDING_TUB', label='TUB')
+
+
+class Shower(Appliance):
+    """A shower pan with its glass, the head and valve on the back wall."""
+
+    width = inch(36)
+    height = inch(80)
+    depth = inch(36)
+
+    APPLIANCE_TYPE = 'SHOWER'
+
+    def create(self, name="Shower"):
+        self.create_appliance(name, 'SHOWER', label='SHOWER')
+
+
+class TubShower(Appliance):
+    """An alcove tub with a shower over it: a curtain or a glass screen."""
+
+    width = inch(60)
+    height = inch(80)
+    depth = inch(30)
+
+    APPLIANCE_TYPE = 'TUB_SHOWER'
+
+    def create(self, name="Tub Shower"):
+        self.create_appliance(name, 'TUB_SHOWER', label='TUB / SHOWER')
+
+
 class WashingMachine(Appliance):
     """Clothes washing machine."""
 

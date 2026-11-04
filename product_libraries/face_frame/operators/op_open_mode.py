@@ -90,11 +90,9 @@ def _raycast_under_cursor(context, event):
     coord = (event.mouse_region_x, event.mouse_region_y)
     view_vector = view3d_utils.region_2d_to_vector_3d(region, rv3d, coord)
     ray_origin = view3d_utils.region_2d_to_origin_3d(region, rv3d, coord)
-    depsgraph = context.evaluated_depsgraph_get()
-    hit, _loc, _norm, _idx, obj, _mat = context.scene.ray_cast(
-        depsgraph, ray_origin, view_vector
-    )
-    return obj if hit else None
+    # Past the cages, so it works in every selection mode.
+    from ....hb_utils import ray_cast_past_cages
+    return ray_cast_past_cages(context, ray_origin, view_vector)
 
 
 def _build_tween_context(opening_cage):

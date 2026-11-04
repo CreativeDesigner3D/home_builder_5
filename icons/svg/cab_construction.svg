@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="none" stroke="#fff" stroke-width="1" stroke-linecap="butt" stroke-linejoin="miter">
+  <!-- The carcass as a box -->
+  <path d="M1.5 5.5l4-4h9l-4 4zM14.5 1.5v9l-4 4"/>
+  <rect x="1.5" y="5.5" width="9" height="9"/>
+  <path d="M1.5 10.5h9"/>
+</svg>

@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="none" stroke="#fff" stroke-width="1" stroke-linecap="butt" stroke-linejoin="miter">
+  <!-- Flush Toe Kick: the kick face in line with the cabinet front -->
+  <rect x="2" y="12" width="12" height="2" fill="#fff" fill-opacity=".35" stroke="none"/>
+  <rect x="1.5" y="1.5" width="13" height="10"/>
+  <path d="M1.5 11.5v3h13v-3"/>
+</svg>

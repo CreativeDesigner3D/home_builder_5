@@ -23,6 +23,7 @@ import math
 import bpy
 import gpu
 
+from ..hb_icons import icon_glyph, draw_icon
 from ..hb_gpu_draw import (
     get_visible_window_bounds,
     draw_rect,
@@ -36,7 +37,8 @@ from ..hb_gpu_ui import (
     text_width,
     draw_centered_text,
     paint_frame,
-    paint_button,
+    paint_group_bar,
+    paint_pill,
     draw_polyline,
     arc_points,
     circle_points,
@@ -49,7 +51,7 @@ MARGIN_X = 8            # inset from the visible region's left edge
 TOP_OFFSET = 54         # fallback drop from the top when the HUD has no strip
 STRIP_GAP = 12          # drop below the HUD tab strip's anchor point
 BTN = 26
-BTN_GAP = 3
+BTN_GAP = 2             # between tools in one group's bar
 GROUP_GAP = 10
 LABEL_GAP = 8
 LABEL_PAD_X = 6
@@ -72,6 +74,26 @@ _hover = None
 _hover_caret = False     # cursor is on the options corner, not the tool
 _hover_settings = None   # options form under the cursor, if any
 _hover_toggle = False    # cursor is on the compact/expanded toggle
+_hover_selection = None  # (names, active) while the cursor is on a tool
+
+
+def selection_before_press():
+    """The selection as it stood while the cursor rested on a tool button
+    - (selected object names, active name) - or None off the strip.
+
+    The active tool's click-select sees the press before the strip does
+    and clears the selection (or picks whatever sits behind the button),
+    so a tool that works on the selection reads it from here."""
+    return _hover_selection
+
+
+def _grab_selection(context):
+    try:
+        active = context.view_layer.objects.active
+        return ([o.name for o in context.selected_objects],
+                active.name if active is not None else None)
+    except Exception:
+        return None
 
 
 # ---- Glyphs ----------------------------------------------------------------
@@ -224,6 +246,36 @@ def _g_obstacle(shader, box, color):
         draw_lines(shader, [(px + pw * 0.3, cy), (px + pw * 0.7, cy)], color)
 
 
+def _g_fireplace(shader, box, color):
+    """A firebox's arched mouth in its surround, a stack over it."""
+    x, y, w, h = box
+    bx, bw = x + w * 0.12, w * 0.76
+    top = y + h * 0.62
+    draw_polyline(shader, [(bx, y), (bx + bw, y), (bx + bw, top), (bx, top)], color, closed=True)
+    mx, mw = bx + bw * 0.25, bw * 0.5
+    draw_polyline(shader, [(mx, y), (mx, y + h * 0.36), (mx + mw, y + h * 0.36), (mx + mw, y)], color)
+    sx = bx + bw * 0.58
+    draw_polyline(shader, [(sx, top), (sx, y + h), (sx + bw * 0.24, y + h), (sx + bw * 0.24, top)], color)
+
+
+def _g_bay(shader, box, color):
+    """A wall line with a bay standing out of it, three sides."""
+    x, y, w, h = box
+    base = y + h * 0.25
+    draw_lines(shader, [(x, base), (x + w * 0.18, base), (x + w * 0.82, base), (x + w, base)], color)
+    draw_polyline(shader, [(x + w * 0.18, base), (x + w * 0.34, y + h * 0.78),
+                           (x + w * 0.66, y + h * 0.78), (x + w * 0.82, base)], color)
+
+
+def _g_furnish(shader, box, color):
+    """A chair from the side: back and rear leg, seat, front leg."""
+    x, y, w, h = box
+    back, front, seat = x + w * 0.22, x + w * 0.78, y + h * 0.42
+    draw_lines(shader, [(back, y), (back, y + h),
+                        (back, seat), (front, seat),
+                        (front, seat), (front, y)], color)
+
+
 def _g_measure(shader, box, color):
     """A dimension line: what the tool leaves on screen.
 
@@ -281,21 +333,47 @@ def _g_stairs(shader, box, color):
 #              badly, and several tools share one form, so the name
 #              has to describe the form and not the button.
 
+# The marks above as baked SVG icons (icons/svg), each falling back to its
+# line drawing if the icon's PNGs are missing. Sized to the button rather
+# than fitted to the inset box the palette hands a glyph, so they come out
+# at the grid size they are drawn for.
+def _icon(name, fallback):
+    return icon_glyph(name, fallback, size=16)
+
+
+_I_WALL = _icon('wall', _g_wall)
+_I_DOOR = _icon('door', _g_door)
+_I_DOUBLE_DOOR = _icon('double_door', _g_double_door)
+_I_OPEN_DOOR = _icon('opening', _g_open_door)
+_I_WINDOW = _icon('window', _g_window)
+_I_FIREPLACE = _icon('fireplace', _g_fireplace)
+_I_BAY = _icon('bay', _g_bay)
+_I_FURNISH = _icon('furnish', _g_furnish)
+_I_OBSTACLE = _icon('obstacle', _g_obstacle)
+_I_FLOOR = _icon('floor', _g_floor)
+_I_CEILING = _icon('ceiling', _g_ceiling)
+_I_STAIRS = _icon('stairs', _g_stairs)
+_I_LIGHTS = _icon('lights', _g_lights)
+_I_MEASURE = _icon('measure', _g_measure)
+
 BUILTIN_TOOLS = (
-    ("home_builder_walls.draw_walls", "Draw Walls", _g_wall, 0,
+    ("home_builder_walls.draw_walls", "Draw Walls", _I_WALL, 0,
      'draw_wall_settings', "Wall Settings"),
-    ("home_builder_doors_windows.place_door", "Single Door", _g_door, 1,
+    ("home_builder_doors_windows.place_door", "Single Door", _I_DOOR, 1,
      'draw_door_window_defaults', "Door & Window Settings"),
     ("home_builder_doors_windows.place_double_door", "Double Door",
-     _g_double_door, 1, 'draw_door_window_defaults', "Door & Window Settings"),
+     _I_DOUBLE_DOOR, 1, 'draw_door_window_defaults', "Door & Window Settings"),
     ("home_builder_doors_windows.place_open_door", "Open Doorway",
-     _g_open_door, 1, 'draw_door_window_defaults', "Door & Window Settings"),
-    ("home_builder_doors_windows.place_window", "Window", _g_window, 1,
+     _I_OPEN_DOOR, 1, 'draw_door_window_defaults', "Door & Window Settings"),
+    ("home_builder_doors_windows.place_window", "Window", _I_WINDOW, 1,
      'draw_door_window_defaults', "Door & Window Settings"),
     # Outlets, switches, vents and the rest: they sit on the walls like
     # the openings do, so they share the group. Which one comes in, and
     # its size, is the form behind the button.
-    ("home_builder_obstacles.place_obstacle", "Obstacle", _g_obstacle, 1,
+    ("home_builder_doors_windows.place_fireplace", "Fireplace", _I_FIREPLACE, 1, None, None),
+    ("home_builder_doors_windows.place_bay", "Bay Window", _I_BAY, 1, None, None),
+    ("home_builder.furnish", "Furnish", _I_FURNISH, 1, None, None),
+    ("home_builder_obstacles.place_obstacle", "Obstacle", _I_OBSTACLE, 1,
      'draw_obstacle_options', "Obstacle Settings"),
     # Named for the thing, not the act: every button on the strip adds
     # something, so "Add" on three of them is a word the eye has to read
@@ -307,20 +385,28 @@ BUILTIN_TOOLS = (
     # Floor: it builds the same slab and also gives it a material, and
     # can restyle it afterwards. Two buttons doing almost the same thing
     # is worse than one that does more.
-    ("home_builder.floor", "Floor", _g_floor, 2, None, None),
-    ("home_builder_walls.add_ceiling", "Ceiling", _g_ceiling, 2, None, None),
-    ("home_builder_stairs.place_stairs", "Stairs", _g_stairs, 2, None, None),
+    ("home_builder.floor", "Floor", _I_FLOOR, 2, None, None),
+    ("home_builder_walls.add_ceiling", "Ceiling", _I_CEILING, 2, None, None),
+    ("home_builder_stairs.place_stairs", "Stairs", _I_STAIRS, 2, None, None),
     # Room Lights carries an options form because adding lights a second
     # time lays a new set on top of the first, and there was otherwise no
     # way to hide or clear them without going back to the sidebar.
-    ("home_builder_walls.add_room_lights", "Room Lights", _g_lights, 2,
+    ("home_builder_walls.add_room_lights", "Room Lights", _I_LIGHTS, 2,
      'room_lights_options', "Room Light Settings"),
     # Group 4, not 3: a downstream add-on has claimed 3 for its own run,
     # and measuring belongs at the end of the strip anyway -- it is the
     # one tool here that adds nothing to the room.
-    ("home_builder.measure", "Measure", _g_measure, 4,
+    ("home_builder.measure", "Measure", _I_MEASURE, 4,
      'measure_options', "Measure Settings"),
+    # Cutaway was here, a switch among tools that add to the room; it is
+    # a way of looking and lives in the HUD's View group now.
 )
+
+# Strip buttons that switch something on and off: lit while on, and
+# pressed without stopping the tool that is running. operator -> is_on(scene)
+TOGGLES = {
+    "home_builder.toggle_cutaway": lambda scene: bool(getattr(scene, 'hb_cutaway', False)),
+}
 
 # Group captions, shown only in expanded mode. A group is just an int on
 # a tool -- it controls the gap in compact mode and needs a name to head
@@ -470,6 +556,17 @@ def _g_expand(shader, box, color):
                                    (ox + span, cy - span)], color)
 
 
+def _paint_expand(shader, box, color):
+    name = 'expand' if not expanded() else 'collapse'
+    if not draw_icon(name, box, color, size=16):
+        _g_expand(shader, box, color)
+
+
+def _paint_settings(shader, box, color):
+    if not draw_icon('settings', box, color, size=12):
+        _g_settings(shader, box, color)
+
+
 # ---- Gating ----------------------------------------------------------------
 
 def _get_prefs():
@@ -480,6 +577,9 @@ def _get_prefs():
 
 
 def palette_enabled():
+    from . import viewport_hud
+    if viewport_hud._suspended:
+        return False
     p = _get_prefs()
     return bool(p and getattr(p, "use_room_palette", False))
 
@@ -743,13 +843,27 @@ def _draw():
     btn = BTN * s
     hover_rect = None
 
+    # A rounded bar behind each group, and one behind the toggle: the
+    # strip reads as its groups, the way the HUD's rows do.
+    bars, group = [], object()
+    for kind, payload, rect in layout:
+        if kind == 'toggle':
+            bars.append([rect])
+            group = object()
+        elif kind == 'tool':
+            if TOOLS_NOW[payload][3] != group:
+                group = TOOLS_NOW[payload][3]
+                bars.append([])
+            bars[-1].append(rect)
+    for rects in bars:
+        paint_group_bar(shader, rects)
+
     for kind, payload, rect in layout:
         x, y, w, h = rect
         if kind == 'toggle':
             hovered = _hover_toggle
-            paint_button(shader, rect, hovered=hovered,
-                         border=Theme.BTN_BORDER)
-            _g_expand(shader,
+            paint_pill(shader, rect, hovered=hovered)
+            _paint_expand(shader,
                       (x + inset, y + inset, btn - inset * 2, h - inset * 2),
                       Theme.GLYPH_HOVER if hovered else Theme.GLYPH)
             if payload:
@@ -771,10 +885,11 @@ def _draw():
         hovered = index == hover
         # The tool running now stays lit until it ends.
         running = TOOLS_NOW[index][0] == running_tool
-        # Brighter edge: this strip floats on the viewport, not
-        # inside a panel, so it should announce itself.
-        paint_button(shader, rect, hovered=hovered, active=running,
-                     border=Theme.BTN_BORDER)
+        if TOOLS_NOW[index][0] in TOGGLES:
+            running = TOGGLES[TOOLS_NOW[index][0]](context.scene)
+        # The group's bar is the resting fill; the tool shows a pill
+        # only when hovered or running.
+        paint_pill(shader, rect, hovered=hovered, active=running)
         # The glyph keeps its square regardless of how wide the button
         # grew, so both modes show the same marks in the same place.
         TOOLS_NOW[index][2](
@@ -796,7 +911,7 @@ def _draw():
                 Theme.GLYPH if hovered else Theme.TEXT_DIM)
             mx_, my_, mw_, mh_ = _settings_rect(rect)
             if is_expanded:
-                _g_settings(shader, (mx_, my_, mw_, mh_), mark)
+                _paint_settings(shader, (mx_, my_, mw_, mh_), mark)
             else:
                 # Compact: a filled corner of the button, because there
                 # is no room beside the glyph for anything more.
@@ -874,6 +989,11 @@ class home_builder_OT_room_palette_click(bpy.types.Operator):
         index = _hit(mx, my, layout)
         if index is None:
             return {'PASS_THROUGH'}
+        if tools()[index][0] in TOGGLES:
+            module, name = tools()[index][0].split('.')
+            getattr(getattr(bpy.ops, module), name)()
+            context.area.tag_redraw()
+            return {'FINISHED'}
         try:
             # Through the tool session: the tool running now, if any,
             # stops first, and picking it again leaves it running.
@@ -897,11 +1017,12 @@ class home_builder_OT_room_palette_hover(bpy.types.Operator):
 
     def invoke(self, context, event):
         global _mouse_region, _hover, _hover_caret, _hover_settings
-        global _hover_toggle
+        global _hover_toggle, _hover_selection
         _mouse_region = context.region
         mx, my = event.mouse_region_x, event.mouse_region_y
         layout = compute_layout(context.area)
         hit = _hit(mx, my, layout)
+        _hover_selection = _grab_selection(context) if hit is not None else None
         settings = _hit_settings(mx, my, layout)
         toggle = _hit_toggle(mx, my, layout)
         # The settings mark always sits inside a tool row, so a

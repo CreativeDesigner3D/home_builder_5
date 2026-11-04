@@ -674,12 +674,10 @@ def detach_from_cabinet(objs):
             del obj[WALL_ATTACHED_TAG]
 
 
-class HB_GENERAL_OT_attach_to_cabinet(bpy.types.Operator):
-    """Make the selected parts part of a cabinet: click the cabinet and
-    they move, copy and delete with it and are drawn with it"""
-    bl_idname = "hb_general.attach_to_cabinet"
-    bl_label = "Attach to Cabinet"
-    bl_options = {'REGISTER', 'UNDO'}
+class _AttachPickMixin:
+    """Click-a-target modal shared by the attach operators. Kept off
+    bpy.types.Operator: subclassing a registered operator breaks the
+    parent's poll."""
 
     @classmethod
     def poll(cls, context):
@@ -774,7 +772,15 @@ class HB_GENERAL_OT_attach_to_cabinet(bpy.types.Operator):
         return {'RUNNING_MODAL'}
 
 
-class HB_GENERAL_OT_attach_to_wall(HB_GENERAL_OT_attach_to_cabinet):
+class HB_GENERAL_OT_attach_to_cabinet(_AttachPickMixin, bpy.types.Operator):
+    """Make the selected parts part of a cabinet: click the cabinet and
+    they move, copy and delete with it and are drawn with it"""
+    bl_idname = "hb_general.attach_to_cabinet"
+    bl_label = "Attach to Cabinet"
+    bl_options = {'REGISTER', 'UNDO'}
+
+
+class HB_GENERAL_OT_attach_to_wall(_AttachPickMixin, bpy.types.Operator):
     """Put the selected parts on a wall: click the wall and they show in
     its elevation, even where cabinets stand in front of it"""
     bl_idname = "hb_general.attach_to_wall"

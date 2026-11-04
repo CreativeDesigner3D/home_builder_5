@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="none" stroke="#fff" stroke-width="1" stroke-linecap="butt" stroke-linejoin="miter">
+  <!-- A bulb with its base, light going out from it -->
+  <circle cx="8" cy="8" r="3.5"/>
+  <path d="M6 13.5h4"/>
+  <path d="M8 .5v2M2.6 2.6l1.4 1.4M13.4 2.6L12 4M.5 8h2M13.5 8h2"/>
+</svg>

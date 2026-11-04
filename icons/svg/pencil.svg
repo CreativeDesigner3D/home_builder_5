@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="none" stroke="#fff" stroke-width="1" stroke-linecap="butt" stroke-linejoin="miter">
+  <!-- A pencil on the diagonal -->
+  <path d="M2.5 13.5l1-3.5L11 2.5 13.5 5 6 12.5z"/>
+  <path d="M9.5 4L12 6.5"/>
+  <path d="M2.5 13.5l.6-2.1 1.5 1.5z" fill="#fff" stroke="none"/>
+</svg>

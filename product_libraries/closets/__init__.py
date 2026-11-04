@@ -3,6 +3,7 @@ from . import menus_closets
 from . import operators
 from . import gpu_overlay_closets
 from . import drop_dims_closets
+from . import selected_card
 
 NAMESPACE = "hb_closets"
 MENU_NAME = "Closet"
@@ -13,9 +14,11 @@ def register():
     menus_closets.register()
     operators.register()
     gpu_overlay_closets.register()
+    selected_card.register()
 
 
 def unregister():
+    selected_card.unregister()
     drop_dims_closets.unregister()
     gpu_overlay_closets.unregister()
     operators.unregister()

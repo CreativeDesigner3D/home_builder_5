@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="none" stroke="#fff" stroke-width="1" stroke-linecap="butt" stroke-linejoin="miter">
+  <!-- A chair from the side: its back and rear leg, the seat, the front leg -->
+  <path d="M4.5 1v14"/>
+  <rect x="4" y="8" width="9" height="1.5" fill="#fff" stroke="none"/>
+  <path d="M12.5 9.5V15"/>
+  <path d="M4.5 3.5h1.5M4.5 6h1.5" stroke-opacity=".7"/>
+</svg>

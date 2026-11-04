@@ -7,8 +7,19 @@ from . import hb_rooms
 from . import hb_roofs
 from . import hb_walk
 from . import hb_roof_edit
+from . import hb_stair_edit
 from . import hb_room_pick
 from . import hb_framing
+from . import hb_backdrop
+from . import hb_foundation
+from . import hb_assemblies
+from . import hb_skylights
+from . import hb_fireplaces
+from . import hb_bays
+from . import hb_lighting
+from . import hb_furnishings
+from . import hb_stairs
+from . import hb_cutaway
 from . import hb_props_obstacles
 from . import ops
 from .ui import view3d_sidebar
@@ -17,6 +28,8 @@ from .ui import menus
 from .operators import walls
 from .operators import wall_handles
 from .operators import tool_session
+from .operators import selected_tab
+from .operators import selected_pages
 from .operators import doors_windows
 from .operators import layouts
 from .operators import rooms
@@ -24,6 +37,8 @@ from .operators import details
 from .operators import ops_obstacles
 from .operators import export
 from .operators import ops_stairs
+from .operators import ops_members
+from .operators import ops_furnish
 from .operators import scene_navigator
 from .operators import room_palette
 from .operators import measure_tool
@@ -65,7 +80,7 @@ from bpy.app.handlers import persistent
 bl_info = {
     "name": "Home Builder 5",
     "author": "Andrew Peel",
-    "version": (5, 2, 50),
+    "version": (5, 2, 56),
     "blender": (5, 1, 0),
     "location": "3D Viewport Sidebar",
     "description": "Library for Designing Interior Spaces",
@@ -220,6 +235,15 @@ class Home_Builder_AddonPreferences(bpy.types.AddonPreferences):
                     "windows, add a floor or ceiling - as a glyph strip "
                     "in the 3D viewport. The sidebar buttons keep working "
                     "either way",
+        default=True,
+        update=_update_use_viewport_hud,
+    ) # type: ignore
+
+    show_mode_names: bpy.props.BoolProperty(
+        name="Selection Mode Names",
+        description="Name every selection mode beside its icon. Off, the "
+                    "modes are icons, named on hover, and only the mode in "
+                    "use says its name",
         default=True,
         update=_update_use_viewport_hud,
     ) # type: ignore
@@ -397,6 +421,9 @@ class Home_Builder_AddonPreferences(bpy.types.AddonPreferences):
         box.label(text="Viewport Interface", icon='WINDOW')
         col = box.column(align=True)
         col.prop(self, "use_viewport_hud")
+        sub = col.column(align=True)
+        sub.enabled = self.use_viewport_hud
+        sub.prop(self, "show_mode_names")
         col.prop(self, "use_room_palette")
         sub = col.column(align=True)
         sub.enabled = self.use_room_palette
@@ -449,8 +476,19 @@ def register():
     hb_roofs.register()
     hb_walk.register()
     hb_roof_edit.register()
+    hb_stair_edit.register()
     hb_room_pick.register()
     hb_framing.register()
+    hb_backdrop.register()
+    hb_foundation.register()
+    hb_assemblies.register()
+    hb_skylights.register()
+    hb_fireplaces.register()
+    hb_bays.register()
+    hb_lighting.register()
+    hb_furnishings.register()
+    hb_stairs.register()
+    hb_cutaway.register()
     hb_snap_engine.register()
     hb_props_obstacles.register()
     ops_obstacles.register()
@@ -462,6 +500,8 @@ def register():
     doors_windows.register()
     export.register()
     ops_stairs.register()
+    ops_members.register()
+    ops_furnish.register()
     layout_lock.register()
     scene_navigator.register()
     viewport_hud.register()
@@ -473,6 +513,8 @@ def register():
     appliance_panel_tab.register()   # after the navigator: it adds a tab
     house_panel_tab.register()       # after the navigator: it adds a tab
     tool_session.register()          # same
+    selected_tab.register()          # same
+    selected_pages.register()
     thumb_picker.register()
     style_editor.register()
     room_dim_overlay.register()
@@ -497,6 +539,9 @@ def register():
     cabinet_groups.register()
     molding.register()
     # catalog.register()
+    # Last of the viewport drawing: the HUD's hover chip goes over the
+    # tool strip and panels drawn after the HUD itself.
+    viewport_hud.register_tip()
 
     hb_assets.ensure_asset_libraries()
 
@@ -514,7 +559,18 @@ def unregister():
 
     hb_props.unregister()
     hb_walk.unregister()
+    hb_stair_edit.unregister()
     hb_roof_edit.unregister()
+    hb_cutaway.unregister()
+    hb_stairs.unregister()
+    hb_furnishings.unregister()
+    hb_lighting.unregister()
+    hb_bays.unregister()
+    hb_fireplaces.unregister()
+    hb_skylights.unregister()
+    hb_assemblies.unregister()
+    hb_foundation.unregister()
+    hb_backdrop.unregister()
     hb_framing.unregister()
     hb_room_pick.unregister()
     hb_roofs.unregister()
@@ -524,6 +580,8 @@ def unregister():
     hb_snap_engine.unregister()
     hb_props_obstacles.unregister()
     ops_obstacles.unregister()
+    selected_pages.unregister()
+    selected_tab.unregister()
     tool_session.unregister()
     wall_handles.unregister()
     walls.unregister()
@@ -546,6 +604,8 @@ def unregister():
     layout_lock.unregister()
     room_dim_overlay.unregister()
     wall_baseboard.unregister()
+    ops_furnish.unregister()
+    ops_members.unregister()
     ops_stairs.unregister()
     ops_surfaces.unregister()
     cabinet_clipboard.unregister()

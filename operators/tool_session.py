@@ -1,4 +1,5 @@
-"""Sticky tools and the TOOL page, in house projects.
+"""Sticky tools and the TOOL page, in house projects (and anywhere for
+the tools whose settings are only on the page).
 
 A placement tool started in a house scene - Draw Walls, the door and
 window tools, Obstacle, Stairs - runs as a tool session:
@@ -42,6 +43,7 @@ _prev = None            # (panel was open, tab) before the session began
 _relaunch = None        # (bl_idname, window, area, region) to start again
 _restart = False        # the stop asked for is to start the tool again
 _list = None            # the TOOL page's ScrollList
+_last = None            # name of the last thing the session's tool placed
 
 MOUSE_EVENTS = {'MOUSEMOVE', 'LEFTMOUSE', 'RIGHTMOUSE', 'WHEELUPMOUSE',
                 'WHEELDOWNMOUSE', 'TRACKPADPAN'}
@@ -55,10 +57,19 @@ def is_house(scene):
     return scene is not None and bool(scene.get(hb_house.HOUSE_SCENE_KEY))
 
 
+def joins(scene, idname):
+    """Whether a tool runs as a session in this scene: every tool in a
+    house; anywhere, the tools whose settings are only on the TOOL page
+    (Fireplace, Bay Window, Furnish, Obstacle...) - with no page they
+    would run blind."""
+    return scene is not None and (is_house(scene) or idname in HOUSE_PAGES
+                                  or idname in ANYWHERE)
+
+
 def stays_on(context):
     """Whether tools keep going after each placement here."""
     scene = context.scene
-    return is_house(scene) and scene.hb_house.tools_stay_on
+    return joins(scene, _tool) and scene.hb_house.tools_stay_on
 
 
 def active_tool():
@@ -70,13 +81,15 @@ def begin(op, context):
     """A tool is starting: make it the session's, and show its page.
     Call where the tool adds its modal handler."""
     global _tool, _owner, _prev
-    if not is_house(context.scene):
+    if not joins(context.scene, type(op).bl_idname):
         return
     from . import viewport_hud, scene_navigator as nav
+    global _last
     op._exit_requested = False
     viewport_hud.register_active_modal(op)
     if _tool is None:
         _prev = (nav.panel_open(), nav.active_tab())
+        _last = None
     _tool = type(op).bl_idname
     _owner = op
     nav.set_active_tab(TAB_KEY)
@@ -85,8 +98,38 @@ def begin(op, context):
     _tag_redraw()
 
 
+def placed(obj):
+    """A tool has put something down. When the tool ends, the last thing
+    placed is selected and the SELECTED tab shows its settings - what it
+    should be is often clearer once it is there."""
+    global _last
+    if obj is not None:
+        _last = obj.name
+
+
+def _select_last():
+    """Select what the session placed last, if the SELECTED tab can show
+    it, and let the tab come up for it."""
+    global _last
+    name, _last = _last, None
+    obj = bpy.data.objects.get(name) if name else None
+    context = bpy.context
+    if obj is None or context.view_layer is None or obj.name not in context.view_layer.objects:
+        return
+    from types import SimpleNamespace
+    from . import selected_tab
+    if selected_tab._item(SimpleNamespace(active_object=obj, selected_objects=[obj])) is None:
+        return
+    for o in context.selected_objects:
+        o.select_set(False)
+    obj.select_set(True)
+    context.view_layer.objects.active = obj
+    bpy.app.timers.register(selected_tab._deferred, first_interval=0.0)
+
+
 def _end():
-    """The session is over: put the panel back the way it was."""
+    """The session is over: put the panel back the way it was - or, if
+    the tool placed something the SELECTED tab shows, show it there."""
     global _tool, _owner, _prev
     from . import scene_navigator as nav
     # Read the tab while the TOOL tab still exists: with no tool it is
@@ -101,6 +144,10 @@ def _end():
             nav.set_active_tab(tab)
         if not was_open:
             nav.close_panel()
+    try:
+        _select_last()
+    except Exception as e:
+        print(f"Home Builder: {e}")
     _tag_redraw()
 
 
@@ -308,6 +355,12 @@ WINDOW_FIELDS = (
     ('choices', 'window_style', "Style", {'cols': 2}),
 )
 
+# On scene.hb_house: what goes on a window outdoors
+WINDOW_OUTDOOR_FIELDS = (
+    ('choices', 'window_shutters', "Shutters", {'cols': 2}),
+    ('choices', 'window_ext_trim', "Exterior Trim", {'cols': 2}),
+)
+
 # On scene.hb_obstacles: the whole library, grouped as it is listed, then
 # the size of the one picked. Picking another restarts the tool with it.
 OBSTACLE_FIELDS = (
@@ -319,6 +372,100 @@ OBSTACLE_FIELDS = (
     ('distance', 'obstacle_height_from_floor', "From Floor"),
 )
 
+def _mat(*kinds):
+    return lambda house: house.member_material in kinds
+
+
+# On scene.hb_house: what the next beam or post placed is
+BEAM_FIELDS = (
+    ('choices', 'member_material', "Material", {'cols': 4}),
+    ('choices', 'member_lumber', "Size", {'cols': 4, 'when': _mat('LUMBER')}),
+    ('number', 'member_plies', "Plies", {'when': _mat('LUMBER', 'LVL')}),
+    ('distance', 'member_depth', "Depth", {'when': _mat('LVL', 'GLULAM', 'STEEL')}),
+    ('distance', 'member_width', "Width", {'when': _mat('GLULAM', 'STEEL')}),
+    ('choices', 'beam_position', "Position", {'cols': 2}),
+    ('bool', 'beam_end_posts', "Posts at Ends"),
+    ('choices', 'post_size', "Post", {'cols': 4,
+                                      'when': lambda house: house.beam_end_posts
+                                      and house.member_material != 'STEEL'}),
+)
+
+POST_FIELDS = (
+    ('choices', 'member_material', "Material", {'cols': 4}),
+    ('choices', 'post_size', "Size", {'cols': 4, 'when': lambda house: house.member_material != 'STEEL'}),
+    ('distance', 'member_width', "Width", {'when': _mat('STEEL')}),
+)
+
+# On scene.hb_house: the Furnish catalog, by category; picking one
+# restarts the tool with it
+FURNISH_FIELDS = (
+    ('choices', 'furnish_item', "", {'cols': 2}),
+)
+
+
+def _bay_is(*kinds):
+    return lambda house: house.bay_kind in kinds
+
+
+BAY_FIELDS = (
+    ('choices', 'bay_kind', "Kind", {'cols': 3}),
+    ('distance', 'bay_width', "Width"),
+    ('distance', 'bay_projection', "Projection"),
+    ('number', 'bay_side_angle', "Side Angle", {'when': _bay_is('BAY')}),
+    ('number', 'bay_segments', "Segments", {'when': _bay_is('BOW')}),
+    ('choices', 'bay_base', "Base", {'cols': 2}),
+    ('distance', 'bay_seat_height', "Seat Height", {'when': lambda house: house.bay_base == 'SEAT'}),
+    ('distance', 'bay_head_height', "Head Height"),
+    ('choices', 'bay_roof', "Roof", {'cols': 3}),
+    ('number', 'bay_roof_pitch', "Roof Pitch (in 12)", {'when': lambda house: house.bay_roof != 'NONE'}),
+)
+
+FIREPLACE_FIELDS = (
+    ('distance', 'fireplace_width', "Opening Width"),
+    ('distance', 'fireplace_height', "Opening Height"),
+    ('choices', 'fireplace_chimney', "Chimney", {'cols': 3}),
+    ('choices', 'fireplace_style', "Chimney Style", {'cols': 2}),
+    ('choices', 'fireplace_mantel', "Mantel", {'cols': 3}),
+)
+
+STAIR_FIELDS = (
+    ('choices', 'stair_from', "Draw From", {'cols': 2}),
+    ('choices', 'stair_type', "Type", {'cols': 3}),
+    ('choices', 'stair_turn', "Turn", {'cols': 2, 'when': lambda h: h.stair_type != 'STRAIGHT'}),
+    ('bool', 'stair_winders', "Winders", {'when': lambda h: h.stair_type in ('L_SHAPE', 'U_SHAPE')}),
+    ('distance', 'stair_radius', "Inside Radius", {'when': lambda h: h.stair_type == 'CURVED'}),
+    ('distance', 'stair_diameter', "Diameter", {'when': lambda h: h.stair_type == 'SPIRAL'}),
+    ('distance', 'stair_width', "Width", {'when': lambda h: h.stair_type != 'SPIRAL'}),
+    ('distance', 'stair_max_riser', "Max Riser"),
+    ('distance', 'stair_tread', "Tread Depth", {'when': lambda h: h.stair_type != 'SPIRAL'}),
+    ('choices', 'stair_risers', "Risers", {'cols': 2}),
+    ('choices', 'stair_stringer', "Stringers", {'cols': 3, 'when': lambda h: h.stair_type != 'SPIRAL'}),
+    ('choices', 'stair_railing', "Railings", {'cols': 2}),
+    ('choices', 'stair_baluster', "Railing Style", {'cols': 2, 'when': lambda h: h.stair_railing != 'NONE'}),
+)
+
+SKYLIGHT_FIELDS = (
+    ('distance', 'skylight_width', "Width"),
+    ('distance', 'skylight_length', "Length"),
+    ('choices', 'skylight_curb', "Mounting", {'cols': 2}),
+    ('choices', 'skylight_shaft', "Light Shaft", {'cols': 2}),
+)
+
+# Tools whose fields are on scene.hb_house rather than scene.home_builder
+HOUSE_PAGES = {
+    "home_builder.place_skylight": ("Skylight", SKYLIGHT_FIELDS),
+    "home_builder_doors_windows.place_fireplace": ("Fireplace", FIREPLACE_FIELDS),
+    "home_builder_doors_windows.place_bay": ("Bay Window", BAY_FIELDS),
+    "home_builder.furnish": ("Furnish", FURNISH_FIELDS),
+    "home_builder_stairs.place_stairs": ("Stairs", STAIR_FIELDS),
+    "home_builder.place_beam": ("Beam", BEAM_FIELDS),
+    "home_builder.place_post": ("Post", POST_FIELDS),
+}
+
+# Tools on scene.home_builder's pages that also run as sessions outside
+# a house
+ANYWHERE = {"home_builder_obstacles.place_obstacle"}
+
 # bl_idname: (title, fields on scene.home_builder)
 PAGES = {
     "home_builder_walls.draw_walls": ("Draw Walls", WALL_FIELDS),
@@ -327,29 +474,41 @@ PAGES = {
     "home_builder_doors_windows.place_open_door": ("Open Doorway", OPENING_FIELDS),
     "home_builder_doors_windows.place_window": ("Window", WINDOW_FIELDS),
     "home_builder_obstacles.place_obstacle": ("Obstacle", ()),
-    "home_builder_stairs.place_stairs": ("Stairs", ()),
 }
 
 HINTS = {
     "home_builder_walls.draw_walls": "C closes the room · T tracks a point",
     "home_builder_obstacles.place_obstacle": "Pick one above, then click a wall, floor or ceiling",
-    "home_builder_stairs.place_stairs": "R turns · T changes type · D flips",
+    "home_builder_stairs.place_stairs": "R turns it, click to place · or press and drag the way it "
+                                        "climbs · sides snap to walls · T type · D turn side",
+    "home_builder.place_beam": "Snaps to wall corners and faces, posts and beam ends",
+    "home_builder.place_post": "Runs up to the beam over it, or to the ceiling",
+    "home_builder.place_skylight": "Click on the roof: it lies on the slope there",
+    "home_builder_doors_windows.place_fireplace": "Click a wall · arrow keys for offset, W for width",
+    "home_builder_doors_windows.place_bay": "Click an outside wall · arrow keys for offset, W for width",
+    "home_builder.furnish": "Pick one above · click a wall face, or furniture on the floor (R turns it)",
 }
 
 
 def available(scene):
-    return _tool is not None and is_house(scene)
+    return _tool is not None and joins(scene, _tool)
 
 
 def _blocks(context):
     from . import options_panel
     title, fields = PAGES.get(_tool, ("Tool", ()))
     hb = context.scene.home_builder
+    if _tool in HOUSE_PAGES:
+        title, fields = HOUSE_PAGES[_tool]
+        hb = context.scene.hb_house
     blocks = [('head', (title, False, None))]
     if _tool == "home_builder_obstacles.place_obstacle":
         blocks.extend(options_panel.field_blocks(
             context, OBSTACLE_FIELDS, context.scene.hb_obstacles))
     blocks.extend(options_panel.field_blocks(context, fields, hb))
+    if _tool == "home_builder_doors_windows.place_window":
+        blocks.extend(options_panel.field_blocks(
+            context, WINDOW_OUTDOOR_FIELDS, context.scene.hb_house))
     if _tool == "home_builder_walls.draw_walls":
         blocks.append(('note', "Changes apply to the wall you are drawing."))
     elif fields:
@@ -410,7 +569,7 @@ def register():
     bpy.utils.register_class(HOME_BUILDER_OT_end_tool)
     scene_navigator.register_tab(TAB_KEY, sys.modules[__name__],
                                  label=TAB_LABEL, order=TAB_ORDER,
-                                 available=available)
+                                 available=available, icon='pencil')
 
 
 def unregister():

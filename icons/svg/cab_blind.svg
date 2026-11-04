@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="none" stroke="#fff" stroke-width="1" stroke-linecap="butt" stroke-linejoin="miter">
+  <!-- Blind corner: a cabinet with its blind part shaded -->
+  <rect x="2" y="3" width="5" height="9" fill="#fff" fill-opacity=".35" stroke="none"/>
+  <rect x="1.5" y="2.5" width="13" height="10"/>
+  <rect x="8.5" y="4.5" width="4" height="6"/>
+</svg>

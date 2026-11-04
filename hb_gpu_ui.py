@@ -22,9 +22,13 @@ import bpy
 import blf
 import gpu
 
+from .hb_icons import icon_glyph
 from .hb_gpu_draw import (
     draw_rect,
     draw_rect_outline,
+    draw_round_rect,
+    draw_round_rect_outline,
+    draw_soft_shadow,
     draw_lines,
     draw_glyphs,
     draw_text,
@@ -86,6 +90,25 @@ class Theme:
 
 
 # ---- Text -------------------------------------------------------------------
+
+_SEMIBOLD = None
+
+
+def semibold_font():
+    """Inter SemiBold (assets/fonts, SIL Open Font License) for titles,
+    group names and headings - the weight Blender's own Inter, font 0,
+    cannot be asked for. Font 0 if it will not load."""
+    global _SEMIBOLD
+    if _SEMIBOLD is None:
+        import os
+        path = os.path.join(os.path.dirname(__file__), 'assets', 'fonts', 'Inter-SemiBold.woff2')
+        try:
+            fid = blf.load(path) if os.path.exists(path) else -1
+        except Exception:
+            fid = -1
+        _SEMIBOLD = fid if fid >= 0 else 0
+    return _SEMIBOLD
+
 
 def text_width(font_id, size, text):
     """Width in px of `text` at an already-scaled `size`."""
@@ -155,8 +178,9 @@ def paint_tip(shader, font_id, size):
     if y + h > region_h - 2 * s:
         y = rect[1] - h - 3 * s
     gpu.state.blend_set('ALPHA')
-    draw_rect(shader, x, y, w, h, Theme.PANEL_BG[:3] + (0.98,))
-    draw_rect_outline(shader, x, y, w, h, Theme.BTN_BORDER)
+    r = BUTTON_RADIUS * s
+    draw_round_rect(shader, x, y, w, h, r, Theme.PANEL_BG[:3] + (0.98,))
+    draw_round_rect_outline(shader, x, y, w, h, r, Theme.BTN_BORDER)
     draw_text(font_id, x + pad, vcenter_baseline((x, y, w, h), font_id, size),
               size, Theme.TEXT_PRIMARY, text)
 
@@ -217,7 +241,7 @@ def draw_arrow_head(shader, tip, direction, size, color):
 # Small vector affordances. Sizes arrive pre-scaled; each is drawn from
 # the rect or centre it is given so callers keep control of placement.
 
-def glyph_rename(shader, rect, color):
+def _lines_rename(shader, rect, color):
     """A text-field box with a cursor bar -- the rename affordance."""
     rx, ry, rw, rh = rect
     s = scale()
@@ -229,7 +253,7 @@ def glyph_rename(shader, rect, color):
     draw_rect(shader, cx, by + 2 * s, 1.5 * s, bh - 4 * s, color)
 
 
-def glyph_delete(shader, rect, color):
+def _lines_delete(shader, rect, color):
     """An X -- the delete affordance."""
     rx, ry, rw, rh = rect
     pad = 5 * scale()
@@ -238,7 +262,7 @@ def glyph_delete(shader, rect, color):
     draw_lines(shader, [(x0, y0), (x1, y1), (x0, y1), (x1, y0)], color)
 
 
-def glyph_pencil(shader, rect, color):
+def _lines_pencil(shader, rect, color):
     """A pencil on the diagonal -- the edit affordance."""
     rx, ry, rw, rh = rect
     pad = 4 * scale()
@@ -254,7 +278,7 @@ def glyph_pencil(shader, rect, color):
     ], color)
 
 
-def glyph_brush(shader, rect, color):
+def _lines_brush(shader, rect, color):
     """A paint brush: handle, ferrule and bristles -- the paint
     affordance."""
     rx, ry, rw, rh = rect
@@ -273,7 +297,7 @@ def glyph_brush(shader, rect, color):
     ], color)
 
 
-def glyph_duplicate(shader, rect, color):
+def _lines_duplicate(shader, rect, color):
     """Two overlapping sheets -- the duplicate affordance."""
     rx, ry, rw, rh = rect
     s = scale()
@@ -283,6 +307,15 @@ def glyph_duplicate(shader, rect, color):
     off = (rw - 2 * pad) * 0.3
     draw_rect_outline(shader, rx + pad, ry + pad, w, h, color)
     draw_rect_outline(shader, rx + pad + off, ry + pad + off, w, h, color)
+
+
+# The affordances above are drawn from the baked SVG icons (icons/svg);
+# the line versions stand in if an icon's PNGs are missing.
+glyph_rename = icon_glyph('rename', _lines_rename)
+glyph_delete = icon_glyph('delete', _lines_delete)
+glyph_pencil = icon_glyph('pencil', _lines_pencil)
+glyph_brush = icon_glyph('brush', _lines_brush)
+glyph_duplicate = icon_glyph('duplicate', _lines_duplicate)
 
 
 def glyph_plus(shader, cx, cy, size, color):
@@ -350,12 +383,59 @@ def end_clip(prev):
     gpu.state.scissor_test_set(False)
 
 
-def paint_frame(shader, rect, bg=Theme.PANEL_BG, border=Theme.PANEL_BORDER):
-    """Filled panel background plus its 1px border."""
+# Corner radii, unscaled: a panel floating on the viewport, and a button
+# or field inside one.
+FRAME_RADIUS = 6
+BUTTON_RADIUS = 3
+
+
+def paint_frame(shader, rect, bg=Theme.PANEL_BG, border=Theme.PANEL_BORDER,
+                shadow=True):
+    """A panel: rounded, lifted off the viewport by a soft shadow, with
+    its 1px border."""
     x, y, w, h = rect
-    draw_rect(shader, x, y, w, h, bg)
+    r = FRAME_RADIUS * scale()
+    if shadow:
+        draw_soft_shadow(shader, x, y, w, h, r, spread=6 * scale())
+    draw_round_rect(shader, x, y, w, h, r, bg)
     if border is not None:
-        draw_rect_outline(shader, x, y, w, h, border)
+        draw_round_rect_outline(shader, x, y, w, h, r, border)
+
+
+def paint_group_bar(shader, rects, pad=2.0, shadow=True, bg=Theme.BTN_BG,
+                    border=Theme.BTN_BORDER):
+    """One rounded bar behind a group of buttons that belong together,
+    so the group reads as one control rather than a row of boxes. The
+    buttons inside paint only a pill when hovered or on (paint_pill).
+    `pad` is unscaled. Returns the bar's rect."""
+    if not rects:
+        return None
+    s = scale()
+    p = pad * s
+    x0 = min(r[0] for r in rects) - p
+    y0 = min(r[1] for r in rects) - p
+    x1 = max(r[0] + r[2] for r in rects) + p
+    y1 = max(r[1] + r[3] for r in rects) + p
+    w, h = x1 - x0, y1 - y0
+    r = FRAME_RADIUS * s
+    if shadow:
+        draw_soft_shadow(shader, x0, y0, w, h, r, spread=4 * s, alpha=0.18)
+    draw_round_rect(shader, x0, y0, w, h, r, bg)
+    if border is not None:
+        draw_round_rect_outline(shader, x0, y0, w, h, r, border)
+    return (x0, y0, w, h)
+
+
+def paint_pill(shader, rect, hovered=False, active=False):
+    """A button inside a group bar: nothing at rest, a rounded pill
+    inset in the bar when hovered, the accent pill when on."""
+    if not (hovered or active):
+        return
+    s = scale()
+    x, y, w, h = rect
+    draw_round_rect(shader, x + 1 * s, y + 1 * s, w - 2 * s, h - 2 * s,
+                    4 * s, Theme.BTN_ACTIVE_BG if active
+                    else Theme.BTN_HOVER_BG)
 
 
 def paint_button(shader, rect, hovered=False, active=False,
@@ -374,9 +454,10 @@ def paint_button(shader, rect, hovered=False, active=False,
     """
     x, y, w, h = rect
     fill = active_bg if active else (hover_bg if hovered else bg)
-    draw_rect(shader, x, y, w, h, fill)
+    r = BUTTON_RADIUS * scale()
+    draw_round_rect(shader, x, y, w, h, r, fill)
     if border is not None:
-        draw_rect_outline(shader, x, y, w, h, border)
+        draw_round_rect_outline(shader, x, y, w, h, r, border)
     return fill
 
 
@@ -472,6 +553,46 @@ def paint_outside(rect, paint):
         for sx, sy, sw, sh in strips:
             if sw <= 0 or sh <= 0:
                 continue
+            gpu.state.scissor_set(ox + sx, oy + sy, sw, sh)
+            paint()
+    finally:
+        gpu.state.scissor_set(*prev)
+        gpu.state.scissor_test_set(False)
+
+
+def paint_outside_rects(rects, paint):
+    """paint_outside for several pieces of chrome at once: `paint()`
+    runs once per strip of the region left over when every rect in
+    `rects` is cut out. None entries are skipped."""
+    rects = [r for r in rects if r is not None]
+    if len(rects) <= 1:
+        paint_outside(rects[0] if rects else None, paint)
+        return
+    prev = gpu.state.scissor_get()
+    ox, oy, rw, rh = prev
+    pieces = [(0, 0, rw, rh)]
+    for x, y, w, h in rects:
+        x0 = max(0, min(rw, int(math.floor(x))))
+        y0 = max(0, min(rh, int(math.floor(y))))
+        x1 = max(0, min(rw, int(math.floor(x + w)) + 1))
+        y1 = max(0, min(rh, int(math.floor(y + h)) + 1))
+        cut = []
+        for px, py, pw, ph in pieces:
+            ix0, iy0 = max(px, x0), max(py, y0)
+            ix1, iy1 = min(px + pw, x1), min(py + ph, y1)
+            if ix0 >= ix1 or iy0 >= iy1:
+                cut.append((px, py, pw, ph))      # untouched by this hole
+                continue
+            cut.extend((
+                (px, py, ix0 - px, ph),
+                (ix1, py, px + pw - ix1, ph),
+                (ix0, py, ix1 - ix0, iy0 - py),
+                (ix0, iy1, ix1 - ix0, py + ph - iy1),
+            ))
+        pieces = [p for p in cut if p[2] > 0 and p[3] > 0]
+    gpu.state.scissor_test_set(True)
+    try:
+        for sx, sy, sw, sh in pieces:
             gpu.state.scissor_set(ox + sx, oy + sy, sw, sh)
             paint()
     finally:
@@ -897,7 +1018,8 @@ def paint_field(shader, font_id, rect, size, label, value, hovered,
         paint_button(shader, value_rect, hovered=hovered, active=active)
     else:
         # No fill: a well with only its outline reads as not pressable.
-        draw_rect_outline(shader, *value_rect, Theme.PANEL_BORDER)
+        draw_round_rect_outline(shader, *value_rect, BUTTON_RADIUS * s,
+                                Theme.PANEL_BORDER)
     vx, vy, vw, vh = value_rect
     caret_w = 7 * s if caret else 0.0
     shown = fit_text(font_id, size, value,

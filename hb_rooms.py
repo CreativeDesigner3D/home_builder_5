@@ -18,6 +18,8 @@ ceiling and label are replaced on each rebuild, never edited; anything
 worth keeping lives on the room (HB_Room in hb_house).
 """
 
+import math
+
 import bpy
 import bmesh
 from mathutils import Vector
@@ -179,11 +181,16 @@ def vault_frame(scene, level, room):
     return None
 
 
-def vault_z(frame, room, level, u):
-    """Height of a vaulted ceiling above the floor at u: under the roof,
-    no lower than the room's flat ceiling, no higher than its peak."""
+def vault_z(frame, room, level, u, v):
+    """Height of a vaulted ceiling above the floor at (u, v): under the
+    roof, no lower than the room's flat ceiling, no higher than its peak."""
     from . import hb_roofs
-    z = hb_roofs._under_z(frame, u) - level.elevation - VAULT_GAP
+    z = hb_roofs.under_z_at(frame, u, v) - level.elevation - VAULT_GAP
+    if frame.get('trusses') == 'SCISSOR':
+        # Under scissor trusses: up their bottom chords, at half the pitch
+        half = (frame['u1'] - frame['u0']) / 2.0
+        chord = frame['base'] + (half - abs(u - frame['uc'])) * frame['p'] / 2.0
+        z = min(z, chord - level.elevation - VAULT_GAP)
     if room.ceiling_style == 'ATTIC':
         # Flat, but down with the roof where the roof is lower
         return max(min(z, room_height(room, level)), 0.05)
@@ -213,14 +220,30 @@ def _vault_mesh(name, polygon, room, level, frame):
     bm = bmesh.new()
     verts = [bm.verts.new((x, y, 0.0)) for x, y in polygon]
     bm.faces.new(verts)
-    normal = (0.0, 1.0, 0.0) if along_x else (1.0, 0.0, 0.0)
-    for u in breaks:
-        co = (0.0, u, 0.0) if along_x else (u, 0.0, 0.0)
+    # Cut where the slope changes: across the ridge, and under a hip also
+    # along its hip lines and at the same heights on its ends
+    cuts = [((u, 0.0), (1.0, 0.0)) for u in breaks]
+    if frame.get('style') == 'HIP':
+        u0, u1, v0, v1 = frame['u0'], frame['u1'], frame['v0'], frame['v1']
+        for u in breaks:
+            d = min(u - u0, u1 - u)
+            if d > 1e-6:
+                cuts += [((0.0, v0 + d), (0.0, 1.0)), ((0.0, v1 - d), (0.0, 1.0))]
+        cuts += [((u0, v0), (1.0, -1.0)), ((u1, v0), (1.0, 1.0)),
+                 ((u0, v1), (1.0, 1.0)), ((u1, v1), (1.0, -1.0))]
+    # Under a roof with other sloped ends, along every line it folds on
+    for a, b in hb_roofs.end_surface_edges(frame):
+        du, dv = b[0] - a[0], b[1] - a[1]
+        if math.hypot(du, dv) > 1e-6:
+            cuts.append(((a[0], a[1]), (-dv, du)))
+    for (cu, cv), (nu, nv) in cuts:
+        co = hb_roofs._world(frame, cu, cv, 0.0)
+        no = hb_roofs._world(frame, nu, nv, 0.0)
         bmesh.ops.bisect_plane(bm, geom=bm.verts[:] + bm.edges[:] + bm.faces[:],
-                               plane_co=co, plane_no=normal)
+                               plane_co=co, plane_no=no)
     for v in bm.verts:
-        u = hb_roofs._uv(frame, (v.co.x, v.co.y))[0]
-        v.co.z = vault_z(frame, room, level, u)
+        u, w = hb_roofs._uv(frame, (v.co.x, v.co.y))
+        v.co.z = vault_z(frame, room, level, u, w)
     bm.normal_update()
     for f in bm.faces:
         if f.normal.z > 0:
@@ -275,12 +298,48 @@ def _build_ceiling(scene, level, room, polygon):
     room.ceiling_obj.hide_viewport = not scene.hb_house.show_ceilings
 
 
+def ceiling_z_at(level, x, y):
+    """The height of the ceiling over (x, y) on a level: the underside of
+    the ceiling of the room there, flat or vaulted, or the level's ceiling
+    height where there is no room."""
+    up = Vector((0.0, 0.0, 1.0))
+    best = None
+    for room in level.rooms:
+        obj = room.ceiling_obj
+        if obj is None or obj.type != 'MESH' or room.orphaned:
+            continue
+        inv = obj.matrix_world.inverted()
+        start = inv @ Vector((x, y, level.elevation + 0.05))
+        hit, loc, _n, _i = obj.ray_cast(start, inv.to_3x3() @ up, distance=100.0)
+        if hit:
+            z = (obj.matrix_world @ loc).z
+            if best is None or z < best:
+                best = z
+    return best if best is not None else level.elevation + level.ceiling_height
+
+
+def _quiet_helpers(scene, level):
+    """The level's room markers and its walls' length empties drawn as
+    nothing (Blender's smallest size) - files made before drew them as
+    small crosses."""
+    for room in level.rooms:
+        if room.marker is not None and room.marker.empty_display_size > 0.001:
+            room.marker.empty_display_size = 0.0
+    for obj in scene.objects:
+        if obj.get('IS_WALL_BP') and obj.get(hb_house.LEVEL_KEY) == level.uid:
+            for child in obj.children:
+                if child.get('obj_x') and child.empty_display_size > 0.001:
+                    child.empty_display_size = 0.0
+
+
 def _new_marker(scene, level, room, point):
     marker = _generated(scene, level, room, f"Room - {room.name}", None,
                         (MARKER_KEY,))
     del marker[GENERATED_KEY]       # the marker is the room, not made from it
     marker.empty_display_type = 'PLAIN_AXES'
-    marker.empty_display_size = 0.15
+    # Drawn as nothing: the room's label says where it is (Select Marker
+    # still selects it)
+    marker.empty_display_size = 0.0
     marker.hide_render = True
     marker.location = (point[0], point[1], level.elevation)
     return marker
@@ -668,6 +727,9 @@ def rebuild_level(scene, level):
     walls._update_scene(scene)
     _objs, segs = walls.level_wall_segs(scene, level.uid)
     areas = hb_wall_graph.find_rooms(segs)
+    # A crawlspace is no room: only a basement's foundation level has them
+    if level.kind == 'FOUNDATION' and level.id_data.hb_house.foundation_type != 'BASEMENT':
+        areas = []
 
     # A room whose marker was deleted is gone
     for i in reversed(range(len(level.rooms))):
@@ -737,6 +799,7 @@ def rebuild_level(scene, level):
         claimed[k] = len(level.rooms) - 1
         new_rooms.append(claimed[k])
 
+    _quiet_helpers(scene, level)
     for k, i in claimed.items():
         room = level.rooms[i]
         area = areas[k]
@@ -757,6 +820,8 @@ def rebuild_level(scene, level):
         elif room.porch_obj is not None:
             hb_porches.remove_porch(room)
         update_room_label(room, area.polygon)
+        from . import hb_trim
+        hb_trim.build(scene, level, room, area)
     # New rooms take the house's floor for their kind
     for i in new_rooms:
         hb_house.apply_floor_default(level.rooms[i])
@@ -765,16 +830,148 @@ def rebuild_level(scene, level):
         if room.orphaned:
             _remove(room.floor_obj)
             _remove(room.ceiling_obj)
+            _remove(room.trim_obj)
             hb_porches.remove_porch(room)
-            room.floor_obj = room.ceiling_obj = None
+            room.floor_obj = room.ceiling_obj = room.trim_obj = None
             room.area = 0.0
             update_room_label(room)
     # New floors and ceilings need their stairwell openings, and new
     # ceilings under a roof its trim
     apply_stairwells(scene)
-    from . import hb_roofs
+    from . import hb_roofs, hb_skylights, hb_fireplaces
     hb_roofs.apply_trims(scene)
+    hb_skylights.apply_ceiling_cuts(scene)
+    hb_fireplaces.apply_chase_cuts(scene)
+    # The ledge where this level is set back from the walls below, and the
+    # one over this level where the level above is set back from it
+    build_ledge(scene, level)
+    build_ledge(scene, level_above(scene.hb_house, level))
     return len(claimed)
+
+
+# =============================================================================
+# LEDGES
+# =============================================================================
+# An upper level set back from the walls below it - a gambrel's knee
+# walls between its dormers, a second floor smaller than the first -
+# leaves the top of those walls open: they rise to the upper floor where
+# its walls stand on them, and between there is nothing, down to the
+# ceiling below. A ledge closes it: the lower level's outline less the
+# upper level's, a slab at the upper floor as thick as the floor, the
+# lower walls' finish. Made with a Boolean against the upper outline, so
+# it follows any shape.
+
+LEDGE_KEY = 'IS_LEVEL_LEDGE'
+LEDGE_CUTTER_KEY = 'IS_LEDGE_CUTTER'
+
+
+def _ledge(scene, level):
+    return next((o for o in scene.objects if o.get(LEDGE_KEY) and o.get(hb_house.LEVEL_KEY) == level.uid), None)
+
+
+def _remove_ledge(scene, level):
+    obj = _ledge(scene, level)
+    if obj is not None:
+        for child in list(obj.children):
+            _remove(child)
+        _remove(obj)
+
+
+def build_ledge(scene, level):
+    """Make, remake or take away `level`'s ledge over the walls below it."""
+    if level is None:
+        return
+    house = scene.hb_house
+    below = hb_house.level_below(house, level)
+    if below is None or level.kind == 'FOUNDATION':
+        _remove_ledge(scene, level)
+        return
+    lower = hb_house.level_outlines(scene, below)
+    upper = hb_house.level_outlines(scene, level)
+    rise = hb_house.rise_to_level_above(below)
+    carried = [o for o in scene.objects
+               if o.get('IS_WALL_BP') and o.get(hb_house.LEVEL_KEY) == below.uid
+               and o.get('WALL_TYPE', 'Exterior') == 'Exterior'
+               and _wall_height(o) >= rise - 0.01]
+    covered = all(any(hb_wall_graph.point_in_polygon(p, q) or hb_wall_graph._dist_to_edges(p, q) < 0.01
+                      for q in upper) for poly in lower for p in poly)
+    # A level below with a roof of its own is roofed over its edges (the
+    # upper level is a room in its roof): only a house roofed from the
+    # upper level, its lower walls rising to it, needs the ledge
+    if not lower or not upper or not carried or covered or below.roof.enabled:
+        _remove_ledge(scene, level)         # nothing set back: no ledge
+        return
+    t = floor_slab_thickness(level)
+    mesh = bpy.data.meshes.new(f"Ledge - {level.name}")
+    bm = bmesh.new()
+    for poly in lower:
+        verts = [bm.verts.new((x, y, 0.0)) for x, y in poly]
+        face = bm.faces.new(verts)
+        res = bmesh.ops.extrude_face_region(bm, geom=[face])
+        moved = [g for g in res['geom'] if isinstance(g, bmesh.types.BMVert)]
+        bmesh.ops.translate(bm, verts=moved, vec=Vector((0, 0, -t)))
+    bmesh.ops.recalc_face_normals(bm, faces=bm.faces[:])
+    bm.to_mesh(mesh)
+    bm.free()
+    # The cutter: the upper level's outline, through the slab
+    cm = bpy.data.meshes.new(f"Ledge Cutter - {level.name}")
+    bm = bmesh.new()
+    for poly in upper:
+        verts = [bm.verts.new((x, y, 0.05)) for x, y in poly]
+        face = bm.faces.new(verts)
+        res = bmesh.ops.extrude_face_region(bm, geom=[face])
+        moved = [g for g in res['geom'] if isinstance(g, bmesh.types.BMVert)]
+        bmesh.ops.translate(bm, verts=moved, vec=Vector((0, 0, -t - 0.1)))
+    bmesh.ops.recalc_face_normals(bm, faces=bm.faces[:])
+    bm.to_mesh(cm)
+    bm.free()
+    mat = None
+    for w in carried:
+        if w.data is not None and len(w.data.materials) and w.data.materials[0] is not None:
+            mat = w.data.materials[0]
+            break
+    if mat is not None:
+        mesh.materials.append(mat)
+    obj = _ledge(scene, level)
+    if obj is None:
+        hb_house.ensure_level_collections(scene, level)
+        col = hb_house.level_subcollection(level, 'Rooms')
+        obj = hb_utils.new_object(f"Ledge - {level.name}", mesh)
+        col.objects.link(obj)
+        obj[LEDGE_KEY] = True
+        obj[hb_house.LEVEL_KEY] = level.uid
+        cutter = hb_utils.new_object(f"Ledge Cutter - {level.name}", cm)
+        col.objects.link(cutter)
+        cutter.parent = obj
+        cutter[LEDGE_CUTTER_KEY] = True
+        cutter['IS_CUTTING_OBJ'] = True
+        cutter.display_type = 'WIRE'
+        cutter.hide_render = True
+        cutter.hide_viewport = True
+        mod = obj.modifiers.new("Upper Outline", 'BOOLEAN')
+        mod.operation = 'DIFFERENCE'
+        mod.solver = 'EXACT'
+        mod.object = cutter
+    else:
+        old = obj.data
+        obj.data = mesh
+        if old is not None and old.users == 0:
+            bpy.data.meshes.remove(old)
+        cutter = next((c for c in obj.children if c.get(LEDGE_CUTTER_KEY)), None)
+        if cutter is not None:
+            oldc = cutter.data
+            cutter.data = cm
+            if oldc is not None and oldc.users == 0:
+                bpy.data.meshes.remove(oldc)
+    obj.location = (0.0, 0.0, level.elevation)
+
+
+def _wall_height(obj):
+    from . import hb_types
+    try:
+        return hb_types.GeoNodeWall(obj).get_input('Height')
+    except Exception:
+        return 0.0
 
 
 def rebuild_room(room):
@@ -812,12 +1009,21 @@ def rebuild_after_walls(scene, level_uid=None):
                 if below is not None:
                     hb_house.set_exterior_wall_heights(scene, below)
                 hb_house.set_exterior_wall_heights(scene, level)
+        # Bays follow the walls they stand out from
+        from . import hb_bays
+        hb_bays.rebuild_all(scene)
         # Roofs follow the walls they sit on and trim the walls under them
         from . import hb_roofs
         hb_roofs.rebuild_roofs(scene)
         # New walls take the house's siding, and the base follows the walls
         from . import hb_exterior
         hb_exterior.apply_exterior_finish(scene)
+        # The foundation follows the ground level's walls
+        ground = hb_house.ground_level(house)
+        if (house.foundation_type != 'NONE' and ground is not None
+                and (level_uid is None or level_uid == ground.uid)):
+            from . import hb_foundation
+            hb_foundation.rebuild(scene)
     # The framing follows all of it
     _refresh_framing(scene)
 
@@ -847,6 +1053,8 @@ def floor_slab_thickness(level):
     so from below or outside there is one solid floor between levels. On
     the ground level it is a thin slab."""
     house = level.id_data.hb_house
+    if level.kind == 'FOUNDATION':
+        return house.slab_thickness        # a basement's floor is its slab
     below = hb_house.level_below(house, level)
     if below is None:
         return FLOOR_THICKNESS
@@ -856,6 +1064,21 @@ def floor_slab_thickness(level):
     return max(gap - SLAB_CLEARANCE, FLOOR_THICKNESS)
 
 
+def stair_home_room(scene, level, stair):
+    """The room a stair starts in - its foot's - or None."""
+    from .hb_wall_graph import point_in_polygon
+    from . import hb_stairs
+    v = hb_stairs.values(stair)
+    (s, _up), _end = hb_stairs.ends(v)
+    m = stair.matrix_world
+    p = (m @ Vector((s.x, s.y + min(v['tread'] / 2.0, 0.1), 0.0))).to_2d()
+    for room in level.rooms:
+        poly = room_polygon(scene, level, room)
+        if poly and point_in_polygon((p.x, p.y), [tuple(q[:2]) for q in poly]):
+            return room
+    return None
+
+
 def stairwell_cutter(stair):
     for child in stair.children:
         if child.get(STAIRWELL_KEY):
@@ -863,17 +1086,247 @@ def stairwell_cutter(stair):
     return None
 
 
+HEADROOM = inch(80)             # clear height over the stair's nosings
+GUARD_HEIGHT = inch(36)
+GUARD_POST = inch(3.5)
+GUARD_POST_SPACING = inch(72)   # at most, between posts along a side
+GUARD_RAIL_W = inch(2.5)
+GUARD_RAIL_T = inch(1.5)
+GUARD_BOTTOM_RAIL = inch(3.0)   # its bottom, above the floor
+GUARD_BALUSTER = inch(0.75)
+GUARD_BALUSTER_GAP = inch(3.75) # under the 4" sphere a guard must stop
+STAIR_GUARD_KEY = 'IS_STAIR_GUARD'
+
+
+def stair_guard(stair):
+    for child in stair.children:
+        if child.get(STAIR_GUARD_KEY):
+            return child
+    return None
+
+
+def _upper_floor_underside(stair, level):
+    """Height of the underside of the floor the stair climbs through, in
+    the stair's own space; None with no level above."""
+    upper = level_above(level.id_data.hb_house, level)
+    if upper is None:
+        return None
+    rise = float(stair.get('STAIR_TOTAL_RISE', stair_rise(level)))
+    return rise - floor_slab_thickness(upper)
+
+
+def stair_opening_rects(stair, level):
+    """The treads and landings that need the floor above opened for
+    headroom: their plan rectangles (x0, y0, x1, y1) in the stair's own
+    space - those whose top comes within the headroom of the underside of
+    the floor above. Empty with no level above."""
+    under = _upper_floor_underside(stair, level)
+    if under is None or stair.data is None:
+        return []
+    headroom = float(stair.get('STAIR_HEADROOM', HEADROOM))
+    mesh = stair.data
+    rects = []
+    for poly in mesh.polygons:
+        if poly.normal.z < 0.9:
+            continue                # treads' and landings' tops only
+        co = [mesh.vertices[i].co for i in poly.vertices]
+        z = max(c.z for c in co)
+        if z + headroom <= under:
+            continue                # headroom to spare under the floor
+        rects.append((min(c.x for c in co), min(c.y for c in co),
+                      max(c.x for c in co), max(c.y for c in co)))
+    # Only under a floor: a stair outside the house climbs through open
+    # air, bar where it comes up through a porch or balcony
+    floors = _upper_floors(stair, level)
+    rects = [r for r in rects if any(_rect_overlaps(r, p) for p in floors)]
+    return _widen_opening(stair, level, rects)
+
+
+def _upper_floors(stair, level):
+    """The room floors of the level above, as polygons in the stair's own
+    space."""
+    upper = level_above(level.id_data.hb_house, level)
+    scene = hb_house.house_scene_of(stair.users_scene[0]) if stair.users_scene else None
+    if scene is None or upper is None:
+        return []
+    inv = stair.matrix_world.inverted()
+    out = []
+    for room in upper.rooms:
+        if room.orphaned or room.floor_obj is None:
+            continue
+        poly = room_polygon(scene, upper, room)
+        if poly:
+            out.append([tuple((inv @ Vector((x, y, 0.0))).to_2d()) for x, y in poly])
+    return out
+
+
+def _rect_overlaps(rect, poly, eps=1e-4):
+    """Whether a rectangle and a polygon share some area: the polygon
+    clipped to the rectangle (Sutherland-Hodgman) leaves any."""
+    x0, y0, x1, y1 = rect
+    pts = list(poly)
+    for inside, cut in ((lambda p: p[0] >= x0, lambda a, b: _cut_x(a, b, x0)),
+                        (lambda p: p[0] <= x1, lambda a, b: _cut_x(a, b, x1)),
+                        (lambda p: p[1] >= y0, lambda a, b: _cut_y(a, b, y0)),
+                        (lambda p: p[1] <= y1, lambda a, b: _cut_y(a, b, y1))):
+        out = []
+        for i, b in enumerate(pts):
+            a = pts[i - 1]
+            if inside(b):
+                if not inside(a):
+                    out.append(cut(a, b))
+                out.append(b)
+            elif inside(a):
+                out.append(cut(a, b))
+        pts = out
+        if len(pts) < 3:
+            return False
+    area = sum(pts[i - 1][0] * p[1] - p[0] * pts[i - 1][1] for i, p in enumerate(pts)) / 2.0
+    return abs(area) > eps
+
+
+def _cut_x(a, b, x):
+    t = (x - a[0]) / (b[0] - a[0])
+    return (x, a[1] + (b[1] - a[1]) * t)
+
+
+def _cut_y(a, b, y):
+    t = (y - a[1]) / (b[1] - a[1])
+    return (a[0] + (b[0] - a[0]) * t, y)
+
+
+OPENING_TO_SIDE = inch(2.5)     # a tread's end this near the stair's side: out to it
+OPENING_TO_WALL = inch(2.5)     # an opening's side this near a wall's face: to it
+OPENING_INTO_WALL = 0.01        # and this far past it, so no sliver of floor is left
+
+
+def _faces_round(stair, level):
+    """The faces of the walls on a stair's level and the one above, in the
+    stair's own frame: [(start, end, wall)]."""
+    from . import hb_types
+    scene = stair.users_scene[0] if stair.users_scene else bpy.context.scene
+    uids = {level.uid}
+    upper = level_above(scene.hb_house, level)
+    if upper is not None:
+        uids.add(upper.uid)
+    inv = stair.matrix_world.inverted()
+    out = []
+    for wall in scene.objects:
+        if not wall.get('IS_WALL_BP') or wall.get(hb_house.LEVEL_KEY, '') not in uids:
+            continue
+        w = hb_types.GeoNodeWall(wall)
+        try:
+            length, t = w.get_input('Length'), w.get_input('Thickness')
+        except Exception:
+            continue
+        m = wall.matrix_world
+        for y in (0.0, t):
+            a, b = m @ Vector((0.0, y, 0.0)), m @ Vector((length, y, 0.0))
+            out.append(((inv @ a).to_2d(), (inv @ b).to_2d(), wall))
+    return out
+
+
+def _widen_opening(stair, level, rects):
+    """The opening out to the stair's sides - its treads are housed between
+    its stringers, which the floor would otherwise be left over - and on to
+    a wall face just beyond, so no strip of floor stands proud of the wall."""
+    from . import hb_stairs, hb_stair_build, hb_stair_shapes as shapes
+    if not rects:
+        return rects
+    v = hb_stairs.values(stair)
+    feet = []
+    if not shapes.is_arc(v):
+        flights, landings = hb_stair_build.layout(v)
+        for f in flights:
+            pts = [(f.m @ Vector((x, y, 0.0))).to_2d() for x, y in
+                   ((0.0, 0.0), (f.W, 0.0), (f.W, f.run), (0.0, f.run))]
+            feet.append((min(p.x for p in pts), min(p.y for p in pts),
+                         max(p.x for p in pts), max(p.y for p in pts)))
+        feet += [tuple(l[:4]) for l in landings]
+    faces = [(pa, pb) for pa, pb, _w in _faces_round(stair, level)]
+
+    def along(lo, hi, a, b):
+        return min(a, b) < hi - 1e-4 and max(a, b) > lo + 1e-4
+
+    out = []
+    for x0, y0, x1, y1 in rects:
+        for fx0, fy0, fx1, fy1 in feet:
+            if not (along(y0, y1, fy0, fy1) and along(x0, x1, fx0, fx1)):
+                continue
+            if 0.0 < x0 - fx0 <= OPENING_TO_SIDE:
+                x0 = fx0
+            if 0.0 < fx1 - x1 <= OPENING_TO_SIDE:
+                x1 = fx1
+            if 0.0 < y0 - fy0 <= OPENING_TO_SIDE:
+                y0 = fy0
+            if 0.0 < fy1 - y1 <= OPENING_TO_SIDE:
+                y1 = fy1
+        for pa, pb in faces:
+            if abs(pa.x - pb.x) < 1e-4 and along(y0, y1, pa.y, pb.y):
+                fx = pa.x
+                if -0.005 <= fx - x1 <= OPENING_TO_WALL:
+                    x1 = max(x1, fx + OPENING_INTO_WALL)
+                elif -0.005 <= x0 - fx <= OPENING_TO_WALL:
+                    x0 = min(x0, fx - OPENING_INTO_WALL)
+            elif abs(pa.y - pb.y) < 1e-4 and along(x0, x1, pa.x, pb.x):
+                fy = pa.y
+                if -0.005 <= fy - y1 <= OPENING_TO_WALL:
+                    y1 = max(y1, fy + OPENING_INTO_WALL)
+                elif -0.005 <= y0 - fy <= OPENING_TO_WALL:
+                    y0 = min(y0, fy - OPENING_INTO_WALL)
+        out.append((x0, y0, x1, y1))
+    return out
+
+
+def stair_opening(stair, level):
+    """(cells, edges) of the stair's opening in its own space: the union of
+    the treads that need headroom as cells, and its outline as edges
+    (start, end, outward normal). Empty with no level above."""
+    from . import hb_structure_geom as geom
+    rects = stair_opening_rects(stair, level)
+    return geom.rect_union_cells(rects), geom.rect_union_edges(rects)
+
+
+def stairwell_openings(scene, level):
+    """The stair openings through a level's floor, from the stairs on the
+    level below: [(cells, edges)] in world XY - cells as 4-point polygons,
+    edges as (start, end, outward normal)."""
+    house = scene.hb_house
+    below = hb_house.level_below(house, level)
+    if below is None:
+        return []
+    out = []
+    for stair in _stairs_on(scene, below):
+        cells, edges = stair_opening(stair, below)
+        if not cells:
+            continue
+        m = stair.matrix_world
+        rot = m.to_3x3()
+        w = lambda x, y: (m @ Vector((x, y, 0.0))).to_2d()
+        out.append((
+            [[tuple(w(x0, y0)), tuple(w(x1, y0)), tuple(w(x1, y1)), tuple(w(x0, y1))]
+             for x0, y0, x1, y1 in cells],
+            [(tuple(w(*a)), tuple(w(*b)), tuple((rot @ Vector((n[0], n[1], 0.0))).to_2d()))
+             for a, b, n in edges]))
+    return out
+
+
 def update_stairwell_cutter(stair):
-    """Fit the stair's cutter to its footprint and to the floor it climbs
-    through, making it the first time."""
+    """Fit the stair's cutter to the opening it needs, and its guard round
+    that opening on the floor above, making them the first time. The
+    opening is the treads that need headroom under the floor above; with
+    no level above, the stair's whole footprint."""
     level = hb_house.get_level(stair.get(hb_house.LEVEL_KEY, ''))
     if level is None or stair.data is None or not stair.data.vertices:
         return None
-    xs = [v.co.x for v in stair.data.vertices]
-    ys = [v.co.y for v in stair.data.vertices]
     rise = float(stair.get('STAIR_TOTAL_RISE', stair_rise(level)))
     z0 = min(level.ceiling_height, rise) - STAIRWELL_REACH
     z1 = rise + STAIRWELL_REACH
+    cells, edges = stair_opening(stair, level)
+    if not cells:
+        xs = [v.co.x for v in stair.data.vertices]
+        ys = [v.co.y for v in stair.data.vertices]
+        cells = [(min(xs), min(ys), max(xs), max(ys))]
     cutter = stairwell_cutter(stair)
     if cutter is None:
         cutter = hb_utils.new_object("Stairwell", bpy.data.meshes.new("Stairwell"))
@@ -889,16 +1342,352 @@ def update_stairwell_cutter(stair):
     # mode's gravity and the snapping rays go straight through the
     # opening instead of landing on an invisible box
     cutter.hide_viewport = True
+    # One closed solid over the cells: they share whole edges, so welding
+    # them, with a side wall per cell side on the outline, leaves no faces
+    # inside and no gaps
     bm = bmesh.new()
-    bmesh.ops.create_cube(bm, size=1.0)
-    for v in bm.verts:
-        v.co.x = min(xs) if v.co.x < 0 else max(xs)
-        v.co.y = min(ys) if v.co.y < 0 else max(ys)
-        v.co.z = z0 if v.co.z < 0 else z1
+    for x0, y0, x1, y1 in cells:
+        for z, flip in ((z0, True), (z1, False)):
+            vs = [bm.verts.new((x0, y0, z)), bm.verts.new((x1, y0, z)),
+                  bm.verts.new((x1, y1, z)), bm.verts.new((x0, y1, z))]
+            bm.faces.new(list(reversed(vs)) if flip else vs)
+    from . import hb_structure_geom as geom
+    for (ax, ay), (bx, by), n in geom.rect_union_edges(cells, merge=False):
+        # Wound to face outward
+        if (bx - ax) * n[1] - (by - ay) * n[0] > 0:
+            ax, ay, bx, by = bx, by, ax, ay
+        bm.faces.new((bm.verts.new((ax, ay, z0)), bm.verts.new((bx, by, z0)),
+                      bm.verts.new((bx, by, z1)), bm.verts.new((ax, ay, z1))))
+    bmesh.ops.remove_doubles(bm, verts=bm.verts, dist=1e-5)
     bm.to_mesh(cutter.data)
     bm.free()
+    # Its sides are what the cut leaves in the floor: painted like a wall,
+    # not the floor's finish
+    from . import hb_stair_build
+    paint = hb_stair_build.materials(stair)[6]
+    if not len(cutter.data.materials):
+        cutter.data.materials.append(paint)
+    elif cutter.data.materials[0] != paint:
+        cutter.data.materials[0] = paint
     cutter.data.update()
+    update_stair_guard(stair, level, edges)
+    update_stairwell_lining(stair, level, edges)
     return cutter
+
+
+# ---- The stairwell's lining ---------------------------------------------------------
+# The opening's edges are the floor's cut: a band the floor's colour
+# between the walls under it and the walls on the floor above. Lined with
+# a strip of wall there, flush with the wall faces, the walls run on up
+# through the floor round the stairwell as one surface.
+
+LINING_KEY = 'IS_STAIRWELL_LINING'
+LINING_T = 0.01             # how deep the lining is, back from its face
+LINING_FACE = 0.015         # a wall face this near an edge is the lining's face
+
+
+def stairwell_lining(stair):
+    return next((c for c in stair.children if c.get(LINING_KEY)), None)
+
+
+def update_stairwell_lining(stair, level, edges):
+    """Line each edge of the stair's opening, through the floor above, with
+    wall: from the underside of that floor up to its top."""
+    under = _upper_floor_underside(stair, level)
+    lining = stairwell_lining(stair)
+    if under is None or not edges:
+        if lining is not None:
+            mesh = lining.data
+            bpy.data.objects.remove(lining, do_unlink=True)
+            if mesh is not None and mesh.users == 0:
+                bpy.data.meshes.remove(mesh)
+        return None
+    top = float(stair.get('STAIR_TOTAL_RISE', stair_rise(level)))
+    faces = _faces_round(stair, level)
+    # Only where floor was cut, or along a wall: an edge out in the open,
+    # past a porch's edge say, has nothing to line
+    floors = _upper_floors(stair, level)
+    kept = []
+    for e in edges:
+        a, b, n = Vector(e[0]), Vector(e[1]), Vector(e[2])
+        if (b - a).length > 1e-4 and any(
+                abs((pb - pa).normalized().cross((b - a).normalized())) <= 1e-3
+                and -LINING_FACE <= (pa - a).dot(n) <= 0.002
+                and _spans(pa, pb, a, b, (b - a).normalized())
+                for pa, pb, _w in faces if (pb - pa).length >= 1e-6):
+            kept.append(e)
+        else:
+            kept += [(p, q, e[2]) for p, q in _on_floor(e, floors)]
+    edges = kept
+    bm = bmesh.new()
+    colour = None
+    material = None
+    for a, b, n in edges:
+        a, b, n = Vector(a), Vector(b), Vector(n)
+        d = b - a
+        if d.length < 1e-4:
+            continue
+        u = d.normalized()
+        # The face it stands on: a wall's along the edge, just inside the
+        # opening (the opening runs a little past it), or the edge itself
+        face_off = -0.001
+        covered = False
+        for pa, pb, wall in faces:
+            fd = pb - pa
+            if fd.length < 1e-6 or abs(fd.normalized().cross(u)) > 1e-3:
+                continue
+            off = (pa - a).dot(n)           # where that face is, along the normal
+            if -LINING_FACE <= off <= 0.002 and _spans(pa, pb, a, b, u):
+                face_off = off
+                if colour is None:
+                    colour = tuple(wall.color)
+                    material = wall.active_material
+                # A wall that already rises through the floor here covers it
+                z0, z1 = _wall_z(wall, stair)
+                if z0 <= under + 1e-3 and z1 >= top - 1e-3:
+                    covered = True
+        if covered:
+            continue
+        p0 = a + n * face_off
+        p1 = b + n * face_off
+        q0 = a + n * (face_off + LINING_T + (-face_off if face_off < 0 else 0.0))
+        q1 = b + n * (face_off + LINING_T + (-face_off if face_off < 0 else 0.0))
+        vs = [bm.verts.new((p.x, p.y, z)) for z in (under, top) for p in (p0, p1, q1, q0)]
+        for f in ((0, 1, 2, 3), (4, 7, 6, 5), (0, 4, 5, 1), (1, 5, 6, 2), (2, 6, 7, 3), (3, 7, 4, 0)):
+            bm.faces.new([vs[i] for i in f])
+    bmesh.ops.recalc_face_normals(bm, faces=bm.faces[:])
+    if lining is None:
+        lining = hb_utils.new_object("Stairwell Lining", bpy.data.meshes.new("Stairwell Lining"))
+        for col in stair.users_collection:
+            col.objects.link(lining)
+        lining.parent = stair
+        lining.matrix_parent_inverse.identity()
+        lining[LINING_KEY] = True
+        lining.hide_select = True
+        if stair.get(hb_house.LEVEL_KEY):
+            lining[hb_house.LEVEL_KEY] = stair[hb_house.LEVEL_KEY]
+    bm.to_mesh(lining.data)
+    bm.free()
+    lining.data.update()
+    # The walls' own look: their colour in the viewport, their material
+    if colour is None:
+        wall = next((o for o in (stair.users_scene[0] if stair.users_scene else bpy.context.scene).objects
+                     if o.get('IS_WALL_BP')), None)
+        if wall is not None:
+            colour, material = tuple(wall.color), wall.active_material
+    if colour is not None:
+        lining.color = colour
+    lining.data.materials.clear()
+    if material is not None:
+        lining.data.materials.append(material)
+    return lining
+
+
+LINING_PROBE = 0.05         # how far past an edge the floor it cut is looked for
+LINING_STEP = 0.02
+
+
+def _on_floor(edge, floors):
+    """The runs of an opening's edge [(start, end)] with floor just beyond
+    it."""
+    a, b, n = Vector(edge[0]), Vector(edge[1]), Vector(edge[2])
+    length = (b - a).length
+    if length < 1e-6:
+        return []
+
+    def floor_at(t):
+        p = a + (b - a) * (t / length) + n * LINING_PROBE
+        return any(hb_wall_graph.point_in_polygon((p.x, p.y), f) for f in floors)
+
+    def edge_of(t_in, t_out):
+        # Where floor gives way, between a point on it and one off it
+        for _ in range(12):
+            mid = (t_in + t_out) / 2.0
+            if floor_at(mid):
+                t_in = mid
+            else:
+                t_out = mid
+        return t_in
+
+    count = max(1, int(math.ceil(length / LINING_STEP)))
+    ts = [length * k / count for k in range(count + 1)]
+    on = [floor_at(t) for t in ts]
+    runs, start = [], None
+    for k, t in enumerate(ts):
+        if on[k] and start is None:
+            start = 0.0 if k == 0 else edge_of(t, ts[k - 1])
+        elif not on[k] and start is not None:
+            runs.append((start, edge_of(ts[k - 1], t)))
+            start = None
+    if start is not None:
+        runs.append((start, length))
+    u = (b - a) / length
+    return [(tuple((a + u * t0).to_2d()), tuple((a + u * t1).to_2d()))
+            for t0, t1 in runs if t1 - t0 > 1e-3]
+
+
+def _wall_z(wall, stair):
+    """A wall's bottom and top in a stair's frame."""
+    from . import hb_types
+    try:
+        h = hb_types.GeoNodeWall(wall).get_input('Height')
+    except Exception:
+        h = 0.0
+    z = wall.matrix_world.translation.z - stair.matrix_world.translation.z
+    return z, z + h
+
+
+def _spans(pa, pb, a, b, u):
+    """Whether a wall face runs along an edge's length."""
+    ta, tb = sorted(((pa - a).dot(u), (pb - a).dot(u)))
+    return ta < (b - a).length - 1e-3 and tb > 1e-3
+
+
+def _guard_material():
+    mat = bpy.data.materials.get("Stair Guard")
+    if mat is None:
+        mat = bpy.data.materials.new("Stair Guard")
+        mat.use_nodes = True
+        bsdf = next((n for n in mat.node_tree.nodes if n.type == 'BSDF_PRINCIPLED'), None)
+        if bsdf is not None:
+            bsdf.inputs['Base Color'].default_value = (0.86, 0.85, 0.82, 1.0)
+            bsdf.inputs['Roughness'].default_value = 0.4
+        mat.diffuse_color = (0.86, 0.85, 0.82, 1.0)
+    return mat
+
+
+def _guard_edges(stair, level, edges):
+    """The opening's edges a guard goes along: not the one the top flight
+    arrives over, nor one running along a wall of the floor above."""
+    mesh = stair.data
+    tops = sorted(((max(mesh.vertices[i].co.z for i in p.vertices), p)
+                   for p in mesh.polygons if p.normal.z > 0.9), key=lambda t: t[0])
+    arrive = None
+    if len(tops) >= 2:
+        top, below = tops[-1][1], tops[-2][1]
+        c1, c0 = top.center, below.center
+        d = (c1 - c0).to_2d()
+        co = [mesh.vertices[i].co for i in top.vertices]
+        if abs(d.x) >= abs(d.y):
+            arrive = ((1, 0) if d.x > 0 else (-1, 0),
+                      max(c.x for c in co) if d.x > 0 else min(c.x for c in co))
+        else:
+            arrive = ((0, 1) if d.y > 0 else (0, -1),
+                      max(c.y for c in co) if d.y > 0 else min(c.y for c in co))
+    from .operators import walls
+    upper = level_above(level.id_data.hb_house, level)
+    scene = hb_house.house_scene_of(stair.users_scene[0]) if stair.users_scene else None
+    segs = walls.level_wall_segs(scene, upper.uid)[1] if (scene and upper) else []
+    m = stair.matrix_world
+    floors = []
+    if scene is not None and upper is not None:
+        for room in upper.rooms:
+            if not room.orphaned and room.floor_obj is not None:
+                poly = room_polygon(scene, upper, room)
+                if poly:
+                    floors.append(poly)
+    kept = []
+    for a, b, n in edges:
+        if arrive is not None and n == arrive[0]:
+            c = a[0] if n[0] != 0 else a[1]
+            if abs(c - arrive[1]) < 1e-4:
+                continue            # where the top flight comes up
+        mid = (m @ Vector(((a[0] + b[0]) / 2.0, (a[1] + b[1]) / 2.0, 0.0))).to_2d()
+        against_wall = False
+        for seg in segs:
+            if seg.thickness <= 0.0:
+                continue
+            rel = (mid.x - seg.start[0], mid.y - seg.start[1])
+            along = rel[0] * seg.dir[0] + rel[1] * seg.dir[1]
+            off = rel[0] * seg.normal[0] + rel[1] * seg.normal[1]
+            if -0.05 <= along <= seg.length + 0.05 and -0.05 <= off <= seg.thickness + 0.05:
+                against_wall = True
+                break
+        if against_wall:
+            continue
+        # Only where there is floor to step off: a stair outside the
+        # house (up to a balcony or porch) has open air round most of it
+        out = (m.to_3x3() @ Vector((n[0], n[1], 0.0))).to_2d().normalized()
+        probe = mid + out * 0.15
+        if floors and not any(hb_wall_graph.point_in_polygon((probe.x, probe.y), p) for p in floors):
+            continue
+        kept.append((a, b, n))
+    return kept
+
+
+def update_stair_guard(stair, level, edges=None):
+    """Posts, rails and balusters round the stair's opening on the floor
+    above, along the edges a person could step off - rebuilt from the
+    stair, removed when it has none or its Guard is off."""
+    guard = stair_guard(stair)
+    if edges is None:
+        edges = stair_opening(stair, level)[1]
+    rise = float(stair.get('STAIR_TOTAL_RISE', stair_rise(level)))
+    kept = _guard_edges(stair, level, edges) if edges and stair.get('STAIR_GUARD', True) else []
+    if not kept:
+        _remove(guard)
+        return None
+    height = float(stair.get('STAIR_GUARD_HEIGHT', GUARD_HEIGHT))
+    bm = bmesh.new()
+
+    def box(cx, cy, z0, z1, along, w, t):
+        """A box centred on (cx, cy), `w` long along unit `along`, `t`
+        across, from z0 to z1."""
+        ax = Vector((along[0], along[1], 0.0)) * (w / 2.0)
+        ac = Vector((-along[1], along[0], 0.0)) * (t / 2.0)
+        c = Vector((cx, cy, 0.0))
+        ring = [c - ax - ac, c + ax - ac, c + ax + ac, c - ax + ac]
+        bottom = [bm.verts.new((p.x, p.y, z0)) for p in ring]
+        top = [bm.verts.new((p.x, p.y, z1)) for p in ring]
+        bm.faces.new(list(reversed(bottom)))
+        bm.faces.new(top)
+        for i in range(4):
+            j = (i + 1) % 4
+            bm.faces.new((bottom[i], bottom[j], top[j], top[i]))
+
+    posts = set()
+    rail_top = rise + height
+    for a, b, n in kept:
+        # Stand just off the opening, on the floor
+        off = (n[0] * GUARD_POST / 2.0, n[1] * GUARD_POST / 2.0)
+        ax, ay = a[0] + off[0], a[1] + off[1]
+        bx, by = b[0] + off[0], b[1] + off[1]
+        length = ((bx - ax) ** 2 + (by - ay) ** 2) ** 0.5
+        if length < 1e-4:
+            continue
+        u = ((bx - ax) / length, (by - ay) / length)
+        count = max(1, int(-(-length // GUARD_POST_SPACING)))
+        for k in range(count + 1):
+            t = length * k / count
+            posts.add((round(ax + u[0] * t, 5), round(ay + u[1] * t, 5)))
+        mx, my = (ax + bx) / 2.0, (ay + by) / 2.0
+        box(mx, my, rail_top - GUARD_RAIL_T, rail_top, u, length, GUARD_RAIL_W)
+        box(mx, my, rise + GUARD_BOTTOM_RAIL, rise + GUARD_BOTTOM_RAIL + GUARD_RAIL_T,
+            u, length, GUARD_RAIL_T)
+        pitch = GUARD_BALUSTER + GUARD_BALUSTER_GAP
+        n_bal = int((length - GUARD_POST) // pitch)
+        if n_bal > 0:
+            start = (length - (n_bal - 1) * pitch) / 2.0
+            for k in range(n_bal):
+                t = start + k * pitch
+                box(ax + u[0] * t, ay + u[1] * t, rise + GUARD_BOTTOM_RAIL + GUARD_RAIL_T,
+                    rail_top - GUARD_RAIL_T, u, GUARD_BALUSTER, GUARD_BALUSTER)
+    for x, y in posts:
+        box(x, y, rise, rail_top + inch(2.0), (1.0, 0.0), GUARD_POST, GUARD_POST)
+
+    if guard is None:
+        guard = hb_utils.new_object("Stair Guard", bpy.data.meshes.new("Stair Guard"))
+        for col in stair.users_collection:
+            col.objects.link(guard)
+        guard.parent = stair
+        guard.matrix_parent_inverse.identity()
+        guard[STAIR_GUARD_KEY] = True
+    bm.to_mesh(guard.data)
+    bm.free()
+    guard.data.materials.clear()
+    guard.data.materials.append(_guard_material())
+    guard.data.update()
+    return guard
 
 
 def _stairs_on(scene, level):
@@ -915,6 +1704,9 @@ def _set_boolean(host, cutter):
         mod.solver = 'EXACT'
         # Ceilings are single sheets: tell the exact solver to expect holes
         mod.use_hole_tolerant = True
+    # The cut's faces take the cutter's paint
+    if mod.material_mode != 'TRANSFER':
+        mod.material_mode = 'TRANSFER'
     mod.object = cutter
 
 
@@ -944,7 +1736,11 @@ def apply_stairwells(scene):
             cutter = update_stairwell_cutter(stair)
             if cutter is None:
                 continue
-            hosts = [r.ceiling_obj for r in level.rooms if r.ceiling_obj]
+            # Its own room's ceiling: one it passes over is kept, the
+            # flight boxed in under it where it hangs below (hb_stair_build)
+            home = stair_home_room(scene, level, stair)
+            hosts = [r.ceiling_obj for r in level.rooms
+                     if r.ceiling_obj and (home is None or r == home)]
             if upper is not None:
                 hosts += [r.floor_obj for r in upper.rooms if r.floor_obj]
             for host in hosts:
@@ -1018,15 +1814,32 @@ def _frame_room(context, room, level):
         r3d.view_distance = size * 1.4
 
 
-def room_polygon(scene, level, room):
-    """The outline of the area a room's marker sits in, or None."""
+def room_area(scene, level, room):
+    """The hb_wall_graph.RoomArea a room's marker sits in, or None."""
     from .operators import walls
     if room.marker is None:
         return None
     _objs, segs = walls.level_wall_segs(scene, level.uid)
     p = room.marker.location
-    return next((a.polygon for a in hb_wall_graph.find_rooms(segs)
+    return next((a for a in hb_wall_graph.find_rooms(segs)
                  if hb_wall_graph.point_in_polygon((p.x, p.y), a.polygon)), None)
+
+
+def room_polygon(scene, level, room):
+    """The outline of the area a room's marker sits in, or None."""
+    area = room_area(scene, level, room)
+    return area.polygon if area is not None else None
+
+
+def room_faces(scene, level, room):
+    """The wall faces that look into a room: [(wall object, side, t0,
+    t1)], side 'REF' (the wall's local y = 0 face) or 'FAR' (its
+    thickness face), t0..t1 the stretch along the wall the room sees."""
+    area = room_area(scene, level, room)
+    if area is None:
+        return []
+    return [(scene.objects[name], side, t0, t1)
+            for name, side, t0, t1 in area.faces if name in scene.objects]
 
 
 ISOLATE_MARGIN = 0.15       # how far past a room's outline its things may reach

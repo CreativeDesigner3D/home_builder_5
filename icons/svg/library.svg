@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="none" stroke="#fff" stroke-width="1" stroke-linecap="butt" stroke-linejoin="miter">
+  <!-- Library: a grid of product tiles -->
+  <rect x="1.5" y="1.5" width="5" height="5"/>
+  <rect x="9.5" y="1.5" width="5" height="5"/>
+  <rect x="1.5" y="9.5" width="5" height="5"/>
+  <rect x="10" y="10" width="4" height="4" fill="#fff" fill-opacity=".35" stroke="none"/>
+  <rect x="9.5" y="9.5" width="5" height="5"/>
+</svg>

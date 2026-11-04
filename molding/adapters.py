@@ -43,6 +43,19 @@ def _frameless_roots(scene, types):
     return out
 
 
+def _valance_roots(scene, crown_roots):
+    """Valances that carry the crown across the gap they span: those
+    whose top meets a crown cabinet's top. A valance hung flush with
+    the bottom of the uppers takes no crown. Valances are typed BASE
+    (their cabinet_type only seeds defaults), so the type filter alone
+    drops them."""
+    return [obj for obj in scene.objects
+            if obj.get('IS_FACE_FRAME_CABINET_CAGE')
+            and obj.get('IS_VALANCE_PRODUCT')
+            and any(engine.members_touch(obj, root, align='top')
+                    for root in crown_roots)]
+
+
 def collect_targets(scene, molding_type):
     """Eligible molding-carrying roots in the room, across both
     libraries. molding_type in {'CROWN', 'BASE', 'LIGHT_RAIL'}."""
@@ -50,7 +63,10 @@ def collect_targets(scene, molding_type):
              'CAP': _CROWN_TYPES,
              'BASE': _BASE_TYPES,
              'LIGHT_RAIL': _RAIL_TYPES}[molding_type]
-    return _face_frame_roots(scene, types) + _frameless_roots(scene, types)
+    out = _face_frame_roots(scene, types) + _frameless_roots(scene, types)
+    if molding_type in ('CROWN', 'CAP'):
+        out += [v for v in _valance_roots(scene, out) if v not in out]
+    return out
 
 
 def _housed_in_cabinet(obj):
@@ -192,26 +208,50 @@ def _measured_kick_setback(cage, ffc):
     return max(depth + best, 0.0)
 
 
-def _finished_back_offset(obj):
-    """How far a finished back stands proud of the cage's back plane.
+# Tags hb5 stamps on the panels that cover a cabinet's back: the
+# applied face-frame panel (PANELED / FALSE_FF / WORKING_FF), which is
+# a nested cabinet, and the textured skin (BEADBOARD / SHIPLAP /
+# V_GROOVE).
+_APPLIED_PANEL_SIDE = 'hb_applied_to_cabinet_side'
+_TEXTURED_PANEL_SIDE = 'hb_textured_panel_side'
 
-    A finished back is built as a SEPARATE 3/4 panel layered behind the
-    carcass (the carcass back keeps its own thickness), so an island's
-    base molding has to wrap the panel's face - on the cage plane it
-    ends up buried inside it. Measured off the built part; 0 when there
-    isn't one.
-    """
+
+def _back_cover_boxes(obj):
+    """Cage-local corner lists of every built panel covering OBJ's back:
+    the plain FINISHED back, a textured back, or an applied (paneled /
+    false / working face frame) back. Dormant zero-size parts are
+    skipped."""
     inv = obj.matrix_world.inverted()
-    best = 0.0
-    for child in _own_parts(obj):
-        if child.get('hb_part_role') != 'FINISHED_BACK':
+    V = mathutils.Vector
+    for child in obj.children:
+        if child.get(_APPLIED_PANEL_SIDE) == 'BACK':
+            w, d, h = engine.cage_dims(child)
+            local = [V((x, y, z)) for x in (0.0, w) for y in (-d, 0.0)
+                     for z in (0.0, h)]
+        elif (child.get('hb_part_role') == 'FINISHED_BACK'
+              or child.get(_TEXTURED_PANEL_SIDE) == 'BACK'):
+            local = [V(c) for c in child.bound_box]
+        else:
             continue
-        corners = [inv @ (child.matrix_world @ mathutils.Vector(c))
-                   for c in child.bound_box]
+        corners = [inv @ (child.matrix_world @ c) for c in local]
         if (max(c.z for c in corners) - min(c.z for c in corners) < 0.01
                 or max(c.x for c in corners) - min(c.x for c in corners)
                 < 0.01):
             continue  # dormant zero-size part
+        yield corners
+
+
+def _finished_back_offset(obj):
+    """How far a finished back stands proud of the cage's back plane.
+
+    A finished back is built as a SEPARATE panel layered behind the
+    carcass (the carcass back keeps its own thickness), so an island's
+    base molding has to wrap the panel's face - on the cage plane it
+    ends up buried inside it. Paneled and textured backs stand out the
+    same way. Measured off the built parts; 0 when there isn't one.
+    """
+    best = 0.0
+    for corners in _back_cover_boxes(obj):
         best = max(best, max(c.y for c in corners))
     return best
 
@@ -221,18 +261,10 @@ def _finished_back_span(obj):
     or None. The panel can run past the cage's own width - stretched
     across a dishwasher or leg standing beside it - and the island
     molding follows it there too."""
-    inv = obj.matrix_world.inverted()
     span = None
-    for child in _own_parts(obj):
-        if child.get('hb_part_role') != 'FINISHED_BACK':
-            continue
-        corners = [inv @ (child.matrix_world @ mathutils.Vector(c))
-                   for c in child.bound_box]
+    for corners in _back_cover_boxes(obj):
         x0 = min(c.x for c in corners)
         x1 = max(c.x for c in corners)
-        if (max(c.z for c in corners) - min(c.z for c in corners) < 0.01
-                or x1 - x0 < 0.01):
-            continue  # dormant zero-size part
         span = (x0, x1) if span is None else (min(span[0], x0),
                                               max(span[1], x1))
     return span
@@ -462,6 +494,11 @@ def build_facts(scene, members):
                              'finish_type', '')
                 fin_l = fin_l or ft in ('FINISH_LEFT', 'FINISH_BOTH')
                 fin_r = fin_r or ft in ('FINISH_RIGHT', 'FINISH_BOTH')
+            if obj.get('IS_VALANCE_PRODUCT'):
+                # A valance's ends are its return panels.
+                vp = getattr(obj, 'valance_product', None)
+                fin_l = fin_l or bool(getattr(vp, 'finish_left', False))
+                fin_r = fin_r or bool(getattr(vp, 'finish_right', False))
             # Crown mounting datum: the DOOR TOP (face-frame opening top
             # plus the door's top overlay). The room's crown reveal is
             # measured up from here, matching the crown detail drawing.

@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="none" stroke="#fff" stroke-width="1" stroke-linecap="butt" stroke-linejoin="miter">
+  <!-- A wall broken by a cased opening: jambs returned, no leaf -->
+  <rect x="0" y="6" width="5" height="4" fill="#fff" fill-opacity=".35" stroke="none"/>
+  <rect x="11" y="6" width="5" height="4" fill="#fff" fill-opacity=".35" stroke="none"/>
+  <path d="M0 5.5h5.5v5H0M16 5.5h-5.5v5H16"/>
+</svg>

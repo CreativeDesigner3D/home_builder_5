@@ -195,6 +195,25 @@ DRAIN_SIDE_ITEMS = [
     ('RIGHT', "Right", "Drain toward the right end"),
 ]
 
+# Tubs and showers (bath_geo)
+SHOWER_GLASS_ITEMS = [
+    ('NONE', "None", "No glass: a curtain, or open"),
+    ('PANEL', "Fixed Panel", "One fixed panel, open at the door side"),
+    ('DOOR', "Door and Panel", "A hinged door beside a fixed panel"),
+    ('THREE', "Three Sided", "A door and panel across the front, panels down both sides"),
+]
+
+DOOR_SIDE_ITEMS = [
+    ('LEFT', "Left", "At the left end"),
+    ('RIGHT', "Right", "At the right end"),
+]
+
+ENCLOSURE_ITEMS = [
+    ('CURTAIN', "Curtain", "A curtain on a rod across the front"),
+    ('SCREEN', "Glass Screen", "A fixed glass screen on the tub's rim at the shower end"),
+    ('NONE', "None", "Open"),
+]
+
 SINK_STYLE_ITEMS = [
     ('SINGLE', "Single Bowl", "One bowl the width of the sink"),
     ('WORKSTATION', "Workstation", "One long bowl with two ledges along "
@@ -3282,6 +3301,12 @@ class HOME_BUILDER_OT_appliance_prompts(bpy.types.Operator):
         name="Bottom Drawer", unit='LENGTH', precision=5, min=0.0,
         description="Storage or warming drawer below the oven, 0 for "
                     "none")  # type: ignore
+    # Tubs and showers (bath_geo)
+    shower_glass: EnumProperty(name="Glass", items=SHOWER_GLASS_ITEMS)  # type: ignore
+    door_side: EnumProperty(name="Door", items=DOOR_SIDE_ITEMS)  # type: ignore
+    curb: BoolProperty(name="Curb", description="A curb across the front of the pan")  # type: ignore
+    enclosure: EnumProperty(name="Enclosure", items=ENCLOSURE_ITEMS)  # type: ignore
+
     small_oven_width: FloatProperty(
         name="Small Oven", unit='LENGTH', precision=5, min=0.0,
         description="Width of the smaller oven of a double, on the "
@@ -3408,6 +3433,19 @@ class HOME_BUILDER_OT_appliance_prompts(bpy.types.Operator):
                       icon='INFO')
             return
         if appl in FIXTURE_TYPES:
+            bath = _bath()
+            if appl in bath.TUB_TYPES:
+                col.prop(self, 'drain_side')
+            if appl == 'SHOWER':
+                col.prop(self, 'shower_glass')
+                if self.shower_glass != 'NONE':
+                    col.prop(self, 'door_side')
+                col.prop(self, 'curb')
+            if appl == 'TUB_SHOWER':
+                col.prop(self, 'enclosure')
+            if self.appliance.parent is not None:
+                col.separator()
+                col.operator("home_builder.fit_fixture_between_walls", icon='ARROW_LEFTRIGHT')
             return
         col.prop(self, 'finish')
         if appl not in ('HOOD', 'SINK', 'COOKTOP') and not (
@@ -3505,6 +3543,16 @@ _CLASSES = (
 )
 
 
+def _bath():
+    from . import bath_geo
+    return bath_geo
+
+
+# Tubs and showers add their builders, defaults and types to the tables
+# above when they load
+from . import bath_geo  # noqa: E402
+
+
 @bpy.app.handlers.persistent
 def _hidden_models_load_post(_dummy):
     """Re-assert the Show Model switch on every room of a file opened.
@@ -3525,11 +3573,13 @@ def _hidden_models_load_post(_dummy):
 def register():
     for cls in _CLASSES:
         bpy.utils.register_class(cls)
+    bath_geo.register()
     if _hidden_models_load_post not in bpy.app.handlers.load_post:
         bpy.app.handlers.load_post.append(_hidden_models_load_post)
 
 
 def unregister():
+    bath_geo.unregister()
     if _hidden_models_load_post in bpy.app.handlers.load_post:
         bpy.app.handlers.load_post.remove(_hidden_models_load_post)
     for cls in reversed(_CLASSES):

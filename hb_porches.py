@@ -23,7 +23,7 @@ import math
 
 import bmesh
 import bpy
-from mathutils import Vector
+from mathutils import Matrix, Vector
 
 from . import hb_house, hb_wall_graph
 
@@ -167,42 +167,503 @@ def _post_material():
     return mat
 
 
-def porch_mesh(name, polygon, segs, room, ceiling):
-    """The mesh of a porch's posts, beams and risers (level-relative)."""
+RISER_MAX = 0.1969              # 7 3/4": the most a porch step rises
+STEP_TREAD = 0.2794             # 11"
+STEP_GAP = 0.005                # m; posts this near a step opening's ends stay
+WOOD_TREAD = 0.032              # 1 1/4" treads
+WOOD_NOSING = 0.025             # 1" over the riser below
+WOOD_RISER = 0.019              # 3/4" riser boards
+CHEEK = 0.025                   # the boards closing wood steps' ends
+SKIRT_T = 0.025
+RAISED = 0.025                  # m; a ground level this far over the grid stands on it
+
+
+def ground_z(level):
+    """The ground's height, relative to `level`'s floor. Ground Auto: the
+    grid (Z 0) when the ground level stands above it, else Ground Below
+    Floor under the ground level's floor."""
+    house = level.id_data.hb_house
+    ground = hb_house.ground_level(house)
+    base = ground.elevation if ground is not None else level.elevation
+    if house.ground_auto and base > RAISED:
+        return -level.elevation
+    return base - house.ground_below_floor - level.elevation
+
+
+SIDES = ('FRONT', 'LEFT', 'RIGHT', 'BACK')
+SIDE_LABELS = {'FRONT': "Front", 'LEFT': "Left", 'RIGHT': "Right", 'BACK': "Back"}
+
+
+def named_edges(polygon, segs):
+    """The porch's open edges with the side each is: [(side, a, b, inward
+    normal)]. Front faces away from the house (the porch's longest open
+    edge when it stands apart); Left and Right as you face the porch from
+    the front; Back towards the house."""
+    edges = porch_edges(polygon, segs)
+    if not edges:
+        return []
+    n_pts = len(polygon)
+    cx = sum(p[0] for p in polygon) / n_pts
+    cy = sum(p[1] for p in polygon) / n_pts
+    # Towards the house: the middles of the porch's outline not on its open edges
+    house = []
+    for i in range(n_pts):
+        a, b = polygon[i], polygon[(i + 1) % n_pts]
+        mid = ((a[0] + b[0]) / 2.0, (a[1] + b[1]) / 2.0)
+        if all(hb_wall_graph._dist_to_edges(mid, [e[0], e[1]]) > ON_EDGE * 5 for e in edges):
+            house.append(mid)
+    if house:
+        hx = sum(p[0] for p in house) / len(house) - cx
+        hy = sum(p[1] for p in house) / len(house) - cy
+        L = math.hypot(hx, hy) or 1.0
+        front = (-hx / L, -hy / L)
+    else:
+        a, b, n_in = max(edges, key=lambda e: math.dist(e[0], e[1]))
+        front = (-n_in[0], -n_in[1])
+    right = (-front[1], front[0])           # facing the porch from the front, your right
+    out = []
+    for a, b, n_in in edges:
+        n = (-n_in[0], -n_in[1])
+        f = n[0] * front[0] + n[1] * front[1]
+        if f > 0.7:
+            side = 'FRONT'
+        elif f < -0.7:
+            side = 'BACK'
+        else:
+            side = 'RIGHT' if n[0] * right[0] + n[1] * right[1] > 0 else 'LEFT'
+        out.append((side, a, b, n_in))
+    return out
+
+
+def has_steps(room):
+    return bool(room.porch_steps_on) or room.porch_steps > 0      # sides chosen, or an edge counted before
+
+
+def step_chains(polygon, segs, room):
+    """The lines a porch's steps come off: [(points, outward normals per
+    span, (s0, s1) or None, (a, b) the edge)] - a set width in the middle
+    of each side chosen, the sides chosen whole (joined round their
+    corners), or every open side."""
+    named = named_edges(polygon, segs)
+    if not named:
+        return []
+    out_of = lambda n: (-n[0], -n[1])
+    if room.porch_steps_span == 'WRAP' and (room.porch_steps_on or room.porch_steps > 0):
+        return [(pts, normals, None, None) for pts, normals in _chains([(a, b, n) for _s, a, b, n in named])]
+    chosen = [(a, b, n) for s, a, b, n in named if s in room.porch_steps_on]
+    if not chosen and room.porch_steps > 0:
+        # Before the sides were named: the edge counted by length
+        a, b, n = sorted([(a, b, n) for _s, a, b, n in named], key=lambda e: -math.dist(e[0], e[1]))[
+            min(room.porch_steps, len(named)) - 1]
+        chosen = [(a, b, n)]
+    if not chosen:
+        return []
+    if room.porch_steps_span in ('EDGE', 'WRAP'):
+        return [(pts, normals, None, None) for pts, normals in _chains(chosen)]
+    out = []
+    for a, b, n_in in chosen:
+        length = math.dist(a, b)
+        w = min(room.porch_steps_width, length)
+        mid = min(max(length / 2.0 + room.porch_steps_offset, w / 2.0), length - w / 2.0)
+        s0, s1 = mid - w / 2.0, mid + w / 2.0
+        out.append(([_along(a, b, s0), _along(a, b, s1)], [out_of(n_in)], (s0, s1), (a, b)))
+    return out
+
+
+def _chains(edges):
+    """Open edges joined end to end: [(points, outward normals)]."""
+    left = [(a, b, (-n[0], -n[1])) for a, b, n in edges]
+    chains = []
+    while left:
+        a, b, n = left.pop()
+        pts, normals = [a, b], [n]
+        grown = True
+        while grown:
+            grown = False
+            for i, (c, d, m) in enumerate(left):
+                if math.dist(c, pts[-1]) < 0.01:
+                    pts.append(d); normals.append(m)
+                elif math.dist(d, pts[-1]) < 0.01:
+                    pts.append(c); normals.append(m)
+                elif math.dist(d, pts[0]) < 0.01:
+                    pts.insert(0, c); normals.insert(0, m)
+                elif math.dist(c, pts[0]) < 0.01:
+                    pts.insert(0, d); normals.insert(0, m)
+                else:
+                    continue
+                left.pop(i)
+                grown = True
+                break
+        chains.append((pts, normals))
+    return chains
+
+
+def _offset(pts, normals, d):
+    """A chain of points moved out by d, mitred where its spans meet."""
+    out = []
+    k = len(pts)
+    for j in range(k):
+        if j == 0:
+            n = normals[0]
+        elif j == k - 1:
+            n = normals[-1]
+        else:
+            n1, n2 = normals[j - 1], normals[j]
+            sx, sy = n1[0] + n2[0], n1[1] + n2[1]
+            dot = 1.0 + n1[0] * n2[0] + n1[1] * n2[1]
+            n = (sx / dot, sy / dot) if dot > 1e-6 else n1
+        out.append((pts[j][0] + n[0] * d, pts[j][1] + n[1] * d))
+    return out
+
+
+def _band(bm, pts, normals, d0, d1, z0, z1, mat):
+    """A solid between two offsets of a chain, z0 to z1."""
+    if z1 - z0 < 1e-5 or d1 - d0 < 1e-5:
+        return
+    ring = _offset(pts, normals, d0) + list(reversed(_offset(pts, normals, d1)))
+    bottom = [bm.verts.new((x, y, z0)) for x, y in ring]
+    top = [bm.verts.new((x, y, z1)) for x, y in ring]
+    start = len(bm.faces)
+    try:
+        bm.faces.new(bottom[::-1])
+        bm.faces.new(top)
+    except ValueError:
+        pass
+    k = len(ring)
+    for i in range(k):
+        j = (i + 1) % k
+        try:
+            bm.faces.new((bottom[i], bottom[j], top[j], top[i]))
+        except ValueError:
+            pass
+    bm.faces.ensure_lookup_table()
+    for f in bm.faces[start:]:
+        f.material_index = mat
+
+
+def step_count(drop, max_riser=RISER_MAX):
+    """(risers, riser) for steps down `drop`: as few as keep each under
+    `max_riser`; (0, 0) when there's nothing to step down."""
+    if drop < 0.02:
+        return 0, 0.0
+    n = max(1, math.ceil(drop / max(max_riser, 0.05) - 1e-6))
+    return n, drop / n
+
+
+def notes(room):
+    """What the porch's steps come to, for its HUD group."""
+    if not has_steps(room) or room.porch_obj is None:
+        return ["Steps: pick a side above (its name shows on", "the porch in the viewport)"]
+    n = room.porch_obj.get('HB_PORCH_STEPS', 0)
+    if not n:
+        return ["No steps: the porch floor is on the ground"]
+    return [f"Steps: {n} risers of {room.porch_obj.get('HB_PORCH_RISER', 0.0) / 0.0254:.2f}\"",
+            "Lower Max Step Riser for more steps"]
+
+
+def _along(a, b, s):
+    d = (b[0] - a[0], b[1] - a[1])
+    L = math.hypot(*d)
+    return (a[0] + d[0] * s / L, a[1] + d[1] * s / L)
+
+
+def _steps(B, room, chains, floor_z, gz, mats):
+    """The steps down from each chain to the ground: solid, or wood treads
+    over risers with boards at the ends. Returns (risers, riser)."""
+    from .hb_stair_build import _railing_along
+    bm = B.bm
+    n, r = step_count(floor_z - gz, room.porch_step_riser)
+    if n == 0:
+        return 0, 0.0
+    T = STEP_TREAD
+    top = lambda i: floor_z - (i + 1) * r          # step i's top, i = 0 the highest
+    wood = room.porch_steps_style == 'WOOD'
+    for pts, normals, _span, _edge in chains:
+        if not wood:
+            for i in range(n - 1):
+                _band(bm, pts, normals, i * T, (i + 1) * T, gz, top(i), 1)
+            continue
+        # The riser off the porch's own edge, then each step's tread and riser
+        _band(bm, pts, normals, 0.0, WOOD_RISER, top(0), floor_z, 5)
+        for i in range(n - 1):
+            _band(bm, pts, normals, i * T, (i + 1) * T + WOOD_NOSING, top(i) - WOOD_TREAD, top(i), 4)
+            _band(bm, pts, normals, (i + 1) * T - WOOD_RISER, (i + 1) * T, top(i) - r, top(i) - WOOD_TREAD, 5)
+        # Boards closing the ends, stepped to the treads
+        run = (n - 1) * T
+        for end, inward in ((0, 1), (len(pts) - 1, -1)):
+            p = pts[end]
+            nrm = normals[0] if end == 0 else normals[-1]
+            q = pts[end + inward]
+            L = math.dist(p, q)
+            u = ((q[0] - p[0]) / L, (q[1] - p[1]) / L)
+            prof = [(0.0, gz), (run + WOOD_NOSING, gz)]
+            for i in range(n - 2, -1, -1):
+                prof += [((i + 1) * T, top(i)), (i * T, top(i))]
+            prof += [(0.0, floor_z)]
+            a = [bm.verts.new((p[0] + nrm[0] * o, p[1] + nrm[1] * o, z)) for o, z in prof]
+            b = [bm.verts.new((p[0] + nrm[0] * o + u[0] * CHEEK, p[1] + nrm[1] * o + u[1] * CHEEK, z))
+                 for o, z in prof]
+            start = len(bm.faces)
+            for face in (a, b[::-1]):
+                try:
+                    bm.faces.new(face)
+                except ValueError:
+                    pass
+            k = len(prof)
+            for i in range(k):
+                j = (i + 1) % k
+                try:
+                    bm.faces.new((a[i], a[j], b[j], b[i]))
+                except ValueError:
+                    pass
+            bm.faces.ensure_lookup_table()
+            for f in bm.faces[start:]:
+                f.material_index = 5
+    # Handrails both sides of a set-width flight of four risers or more
+    if n >= 4 and room.porch_railing != 'NONE':
+        from mathutils import Vector
+        c = {'baluster': room.porch_railing if room.porch_railing != 'SOLID' else 'SQUARE',
+             'rail_height': room.porch_rail_height}
+        for pts, normals, span, _edge in chains:
+            if span is None:
+                continue
+            pa, pb = Vector(pts[0]), Vector(pts[-1])
+            out = Vector(normals[0])
+            for p, s in ((pa, 1.0), (pb, -1.0)):
+                start = p + (pb - pa).normalized() * 0.05 * s
+                end = start + out * (n - 1) * T
+                _railing_along(B, Matrix.Identity(4), start, end,
+                               lambda t: floor_z - (n - 1) * r * t,
+                               lambda t: floor_z - (n - 1) * r * t + room.porch_rail_height, c, mats)
+    return n, r
+
+
+def porch_mesh(name, polygon, segs, room, ceiling, level=None):
+    """The mesh of a porch's posts, beams, risers, base, railings, steps and
+    the posts under an upper one (level-relative). Material slots: 0 posts
+    and railings, 1 the floor's (risers, solid steps), 2 glass, 3 its
+    concrete base, 4 wood treads, 5 painted risers, boards and skirt."""
+    from .hb_stair_build import _B, _railing_along
     w = room.post_width
+    half = w / 2.0
     posts, beams = layout(polygon, segs, w, room.post_spacing)
     floor_z = -room.floor_drop
     beam_bottom = ceiling - room.beam_depth
-    mesh = bpy.data.meshes.new(name)
-    bm = bmesh.new()
-    for x, y in posts:
-        h = w / 2.0
-        _box(bm, [(x - h, y - h), (x + h, y - h), (x + h, y + h), (x - h, y + h)],
-             floor_z, beam_bottom)
-    if room.beam_depth > 0:
-        for a, b, n in beams:
-            _box(bm, _strip(a, b, n, w), beam_bottom, ceiling)
-    post_faces = len(bm.faces)
+    chains = step_chains(polygon, segs, room)
+    # Gaps in the railing where steps come off an edge: [(a, b, s0, s1)]
+    gaps = []
+    for pts, normals, span, edge in chains:
+        if span is not None:
+            gaps.append((edge[0], edge[1], span[0], span[1]))
+        else:
+            for p, q in zip(pts, pts[1:]):
+                gaps.append((p, q, 0.0, math.dist(p, q)))
+    # Posts in a set width of steps' way go: the beam spans the opening
+    for a, b, s0, s1 in gaps:
+        if s0 <= 0.0 and s1 >= math.dist(a, b) - 1e-6:
+            continue                # steps the edge's length: the posts stand at their top
+        L = math.dist(a, b)
+        u = ((b[0] - a[0]) / L, (b[1] - a[1]) / L)
+
+        def in_gap(p, a=a, u=u, s0=s0, s1=s1):
+            rel = (p[0] - a[0], p[1] - a[1])
+            t = rel[0] * u[0] + rel[1] * u[1]
+            off = abs(rel[0] * u[1] - rel[1] * u[0])
+            return off < w and s0 - half + STEP_GAP < t < s1 + half - STEP_GAP
+        posts = [p for p in posts if not in_gap(p)]
+    B = _B()
+    bm = B.bm
+    mats = (0, 0, 2, 0)
+    I = Matrix.Identity(4)
+
+    def box(corners, z0, z1, mat):
+        start = len(bm.faces)
+        _box(bm, corners, z0, z1)
+        bm.faces.ensure_lookup_table()
+        for f in bm.faces[start:]:
+            f.material_index = mat
+
+    structure = room.porch_structure == 'POSTS'
+    if structure:
+        for x, y in posts:
+            box([(x - half, y - half), (x + half, y - half), (x + half, y + half), (x - half, y + half)],
+                floor_z, beam_bottom, 0)
+        if room.beam_depth > 0:
+            for a, b, n in beams:
+                box(_strip(a, b, n, w), beam_bottom, ceiling, 0)
     if room.floor_drop > 0:
         for a, b, n, depth in risers(polygon, segs):
-            _box(bm, _strip(a, b, n, depth), floor_z, 0.0)
+            box(_strip(a, b, n, depth), floor_z, 0.0, 1)
+    gz = ground_z(level) if level is not None else floor_z - 0.45
+    on_posts = room.porch_supports and level is not None and floor_z - gz > 0.5
+    # Under the floor, down to the ground: solid, a skirt, or posts under an upper porch
+    if not on_posts and floor_z - gz > 0.02 and room.porch_base != 'NONE':
+        under = floor_z - 0.012
+        if room.porch_base == 'SOLID':
+            ring = [(x, y) for x, y in polygon]
+            bottom = [bm.verts.new((x, y, gz)) for x, y in ring]
+            topv = [bm.verts.new((x, y, under)) for x, y in ring]
+            start = len(bm.faces)
+            bm.faces.new(bottom[::-1])
+            bm.faces.new(topv)
+            for i in range(len(ring)):
+                j = (i + 1) % len(ring)
+                bm.faces.new((bottom[i], bottom[j], topv[j], topv[i]))
+            bm.faces.ensure_lookup_table()
+            for f in bm.faces[start:]:
+                f.material_index = 3
+        else:
+            for a, b, n in beams:
+                box(_strip(a, b, n, SKIRT_T), gz, under, 5)
+    if on_posts:
+        from . import hb_rooms
+        slab = hb_rooms.floor_slab_thickness(level)
+        under = floor_z - slab
+        depth = max(room.beam_depth, 0.2)
+        for a, b, n in beams:
+            box(_strip(a, b, n, w), under - depth, under, 0)
+        for x, y in posts:
+            box([(x - half, y - half), (x + half, y - half), (x + half, y + half), (x - half, y + half)],
+                gz, under - depth, 0)
+    # Railings along the open edges, between the posts, not across the steps
+    # nor where a stair comes up onto the porch
+    rail_h = room.porch_rail_height
+    stair_treads = _stair_treads(level, floor_z) if level is not None else []
+    if room.porch_railing != 'NONE':
+        c = {'baluster': room.porch_railing, 'rail_height': rail_h}
+        for a, b, n in beams:
+            L = math.dist(a, b)
+            u = ((b[0] - a[0]) / L, (b[1] - a[1]) / L)
+            line_a = (a[0] + n[0] * half, a[1] + n[1] * half)
+            line_b = (line_a[0] + u[0] * L, line_a[1] + u[1] * L)
+            ts = sorted({half, L - half} | {
+                (p[0] - line_a[0]) * u[0] + (p[1] - line_a[1]) * u[1] for p in posts
+                if abs((p[0] - line_a[0]) * n[0] + (p[1] - line_a[1]) * n[1]) < 0.01})
+            ts = [t for t in ts if half - 1e-6 <= t <= L - half + 1e-6]
+            here = [(g0, g1) for ga, gb, g0, g1 in gaps
+                    if (math.dist(ga, a) < 1e-4 and math.dist(gb, b) < 1e-4)]
+            here += [(L - g1, L - g0) for ga, gb, g0, g1 in gaps
+                     if (math.dist(ga, b) < 1e-4 and math.dist(gb, a) < 1e-4)]
+            # Where a stair comes up onto the porch through this edge
+            here += _stair_crossings(stair_treads, line_a, u, L)
+            for t0, t1 in zip(ts, ts[1:]):
+                pieces = [(t0, t1)]
+                for g0, g1 in here:
+                    nxt = []
+                    for p0, p1 in pieces:
+                        if p1 <= g0 or p0 >= g1:
+                            nxt.append((p0, p1))
+                            continue
+                        if p0 < g0:
+                            nxt.append((p0, g0))
+                        if p1 > g1:
+                            nxt.append((g1, p1))
+                    pieces = nxt
+                for p0, p1 in pieces:
+                    if p1 - p0 < 0.05:
+                        continue
+                    # its own posts where no porch post stands: ends at a
+                    # step opening, or every end with no structure
+                    at_gap = lambda t: any(abs(t - g) < 1e-6 for gp in here for g in gp)
+                    own = (not structure or at_gap(p0), not structure or at_gap(p1))
+                    pa = Vector(_along(line_a, line_b, p0))
+                    pb = Vector(_along(line_a, line_b, p1))
+                    _railing_along(B, I, pa, pb, lambda t: floor_z, lambda t: floor_z + rail_h, c, mats, posts=own)
+    n_steps, riser = _steps(B, room, chains, floor_z, gz, mats) if chains else (0, 0.0)
     bm.normal_update()
     bmesh.ops.recalc_face_normals(bm, faces=bm.faces[:])
-    bm.faces.ensure_lookup_table()
-    for i, f in enumerate(bm.faces):
-        f.material_index = 0 if i < post_faces else 1
+    mesh = bpy.data.meshes.new(name)
     bm.to_mesh(mesh)
     bm.free()
-    return mesh, len(posts)
+    return mesh, len(posts), n_steps, riser
+
+
+STAIR_NEAR = 0.35               # m; a tread this near the porch floor's height arrives on it
+STAIR_SAMPLE = 0.02
+
+
+def _stair_treads(level, floor_z):
+    """The plan outlines of the stairs' treads that come up level with a
+    porch's floor (`floor_z`, relative to `level`) - the tops of stairs
+    arriving on it: [[(x, y)]] in the world."""
+    scene = level.id_data
+    z = level.elevation + floor_z
+    out = []
+    for obj in scene.objects:
+        if not obj.get('IS_STAIR') or obj.get('HB_STAIR_PREVIEW') or obj.type != 'MESH':
+            continue
+        m = obj.matrix_world
+        me = obj.data
+        for p in me.polygons:
+            if p.normal.z < 0.9:
+                continue
+            pts = [m @ me.vertices[i].co for i in p.vertices]
+            if abs(max(q.z for q in pts) - z) < STAIR_NEAR:
+                out.append([(q.x, q.y) for q in pts])
+    return out
+
+
+def _stair_crossings(treads, start, u, L):
+    """Where a railing line (from `start` along unit `u`, L long) passes
+    over any of `treads`: [(t0, t1)] along it, a little wider."""
+    if not treads:
+        return []
+    steps = max(2, int(L / STAIR_SAMPLE))
+    over = []
+    for i in range(steps + 1):
+        t = L * i / steps
+        p = (start[0] + u[0] * t, start[1] + u[1] * t)
+        over.append(any(hb_wall_graph.point_in_polygon(p, poly) for poly in treads))
+    out = []
+    i = 0
+    while i <= steps:
+        if over[i]:
+            j = i
+            while j + 1 <= steps and over[j + 1]:
+                j += 1
+            t0, t1 = L * i / steps, L * j / steps
+            out.append((max(0.0, t0 - 0.03), min(L, t1 + 0.03)))
+            i = j + 1
+        else:
+            i += 1
+    return out
+
+
+def refresh(scene, level):
+    """Build a level's porches again (a stair came or went under them)."""
+    from . import hb_rooms
+    from .operators import walls
+    if level is None:
+        return
+    segs = None
+    for room in level.rooms:
+        if room.is_porch and not room.orphaned and room.porch_obj is not None:
+            if segs is None:
+                segs = walls.level_wall_segs(scene, level.uid)[1]
+            poly = hb_rooms.room_polygon(scene, level, room)
+            if poly:
+                build_porch(scene, level, room, poly, segs, hb_rooms.room_floor_material(room))
+
+
+def _glass_material():
+    from .hb_stair_build import _mat
+    return _mat("HB Stair Glass", (0.85, 0.92, 0.95), 0.05, glass=True)
 
 
 def build_porch(scene, level, room, polygon, segs, floor_material):
-    """Make (or remake) a porch room's posts, beams and risers."""
-    from . import hb_rooms
+    """Make (or remake) a porch room's posts, beams, risers, base,
+    railings and steps."""
+    from . import hb_rooms, hb_foundation
+    from .hb_stair_build import _mat
     ceiling = hb_rooms.room_height(room, level)
-    mesh, _count = porch_mesh(f"Porch - {room.name}", polygon, segs, room, ceiling)
-    mesh.materials.append(room.post_material or _post_material())
-    mesh.materials.append(floor_material or room.post_material or _post_material())
+    mesh, _count, n_steps, riser = porch_mesh(f"Porch - {room.name}", polygon, segs, room, ceiling, level)
+    post = room.post_material or _post_material()
+    mesh.materials.append(post)
+    mesh.materials.append(floor_material or post)
+    mesh.materials.append(_glass_material())
+    mesh.materials.append(hb_foundation.concrete_material())
+    mesh.materials.append(_mat("HB Stair Tread", (0.52, 0.34, 0.18), 0.45))
+    mesh.materials.append(post)
     if room.porch_obj is None:
         room.porch_obj = hb_rooms._generated(scene, level, room, f"Porch - {room.name}",
                                              mesh, ('IS_PORCH_BP',))
@@ -213,6 +674,18 @@ def build_porch(scene, level, room, polygon, segs, floor_material):
         if old is not None and old.users == 0:
             bpy.data.meshes.remove(old)
     room.porch_obj.location = (0.0, 0.0, level.elevation)
+    room.porch_obj['HB_PORCH_STEPS'] = n_steps
+    room.porch_obj['HB_PORCH_RISER'] = riser
+    # Where each side's name shows in the viewport (hb_room_pick)
+    import json
+    chains = step_chains(polygon, segs, room)
+    stepped = lambda a, b: any(
+        (e is not None and {e[0], e[1]} == {a, b}) or (e is None and any(
+            {p, q} == {a, b} for p, q in zip(pts, pts[1:]))) for pts, _n, _s, e in chains)
+    room.porch_obj['HB_PORCH_SIDES'] = json.dumps([
+        [side, (a[0] + b[0]) / 2.0 - n_in[0] * 0.35, (a[1] + b[1]) / 2.0 - n_in[1] * 0.35,
+         level.elevation - room.floor_drop, bool(stepped(a, b))]
+        for side, a, b, n_in in named_edges(polygon, segs)])
     from . import hb_roofs
     hb_roofs.build_porch_roof(scene, level, room, polygon, segs)
 

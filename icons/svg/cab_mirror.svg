@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="none" stroke="#fff" stroke-width="1" stroke-linecap="butt" stroke-linejoin="miter">
+  <!-- Duplicate Mirror: a cabinet and its mirror image across a line -->
+  <rect x="1.5" y="3.5" width="5" height="10"/>
+  <rect x="9.5" y="3.5" width="5" height="10"/>
+  <rect x="10" y="4" width="4" height="9" fill="#fff" fill-opacity=".35" stroke="none"/>
+  <path d="M7.5 1h1v2h-1zM7.5 5h1v2h-1zM7.5 9h1v2h-1zM7.5 13h1v2h-1z" fill="#fff" stroke="none"/>
+</svg>

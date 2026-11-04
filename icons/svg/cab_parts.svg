@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="none" stroke="#fff" stroke-width="1" stroke-linecap="butt" stroke-linejoin="miter">
+  <!-- Parts: a cabinet box with one side panel pulled out -->
+  <rect x="5.5" y="3.5" width="9" height="11"/>
+  <path d="M5.5 7.5h9M5.5 11h9" stroke-opacity=".5"/>
+  <rect x="1" y="1" width="3" height="11" fill="#fff" fill-opacity=".35" stroke="none"/>
+  <rect x="0.5" y="0.5" width="3" height="12"/>
+</svg>

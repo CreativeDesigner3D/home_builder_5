@@ -43,6 +43,7 @@ from bpy_extras import view3d_utils
 from . import hb_project
 from . import hb_plan_views
 from .units import inch
+from .product_libraries.interiors import catalog as furnish_catalog
 
 LEVEL_KEY = 'HB_LEVEL'
 HOUSE_SCENE_KEY = 'IS_HOUSE_SCENE'
@@ -168,6 +169,18 @@ def rise_to_level_above(level):
     return level.floor_to_floor
 
 
+def floor_levels(house):
+    """The levels people live on: every level but a foundation."""
+    return [l for l in house.levels if l.kind != 'FOUNDATION']
+
+
+def ground_level(house):
+    """The lowest level people live on - the one a foundation sits
+    under, and the masonry base wraps. None with no levels."""
+    levels = floor_levels(house)
+    return min(levels, key=lambda l: l.elevation) if levels else None
+
+
 def level_below(house, level):
     """The highest level whose elevation is under `level`'s, or None."""
     below = [l for l in house.levels if l.elevation < level.elevation - 1e-6]
@@ -284,6 +297,15 @@ def _adoptable(obj):
     return obj.type != 'CAMERA' and not obj.get(LOCAL_OBJECT_KEY)
 
 
+def level_outlines(scene, level):
+    """The outlines of a level's buildings: [polygon] round the outside
+    faces of each connected group of real walls, counter-clockwise."""
+    from .operators import walls
+    from . import hb_wall_graph
+    _objs, segs = walls.level_wall_segs(scene, level.uid)
+    return [o.polygon for o in hb_wall_graph.level_outlines(segs)]
+
+
 def active_level_of_scene(scene):
     """active_level for a scene that may not be the context's."""
     if is_room_view(scene):
@@ -368,6 +390,17 @@ def _adopt_timer():
     except Exception as ex:
         print('Home Builder: moving objects onto their level failed: %s' % ex)
     return None
+
+
+@persistent
+def _remember_ceilings(_dummy=None):
+    """Levels saved before a level remembered its ceiling height: the
+    height they have now is the one a change is measured from."""
+    for scene in bpy.data.scenes:
+        if scene.get(HOUSE_SCENE_KEY):
+            for level in scene.hb_house.levels:
+                if level.get('applied_ceiling_height') is None:
+                    level['applied_ceiling_height'] = level.ceiling_height
 
 
 @persistent
@@ -520,7 +553,7 @@ def set_exterior_wall_heights(scene, level):
     if upper is not None:
         for obj in scene.objects:
             if (obj.get('IS_WALL_BP') and obj.get(LEVEL_KEY) == upper.uid
-                    and obj.get('WALL_TYPE') not in ('Divider', 'Porch', 'Dormer')):
+                    and obj.get('WALL_TYPE') not in ('Divider', 'Porch', 'Dormer', 'Bay')):
                 band = _wall_band(obj)
                 if band is not None:
                     upper_bands.append(band)
@@ -704,6 +737,7 @@ def _update_level_elevation(self, context):
     below = level_below(self.id_data.hb_house, self)
     if below is not None:
         set_exterior_wall_heights(self.id_data, below)
+    _stairs_follow(self.id_data)
 
 
 def _update_floor_to_floor(self, context):
@@ -711,6 +745,9 @@ def _update_floor_to_floor(self, context):
     it by the same amount, so the stack stays closed."""
     dz = self.floor_to_floor - self.applied_floor_to_floor
     self['applied_floor_to_floor'] = self.floor_to_floor
+    # Set by itself, the floor's thickness takes up the difference
+    self['floor_thickness'] = max(0.0, self.floor_to_floor - self.ceiling_height)
+    self['applied_ceiling_height'] = self.ceiling_height
     if abs(dz) < 1e-9:
         return
     house = self.id_data.hb_house
@@ -718,9 +755,33 @@ def _update_floor_to_floor(self, context):
         if level.elevation > self.elevation + 1e-6:
             level.elevation = level.elevation + dz
     set_exterior_wall_heights(self.id_data, self)
+    _stairs_follow(self.id_data)
+
+
+def _stairs_follow(scene):
+    """The stairs climb to the levels above as they now stand."""
+    from . import hb_stairs, hb_rooms
+    if hb_stairs.follow_levels(scene):
+        hb_rooms.apply_stairwells(scene)
+
+
+def _update_floor_thickness(self, context):
+    ftf = self.ceiling_height + self.floor_thickness
+    if abs(ftf - self.floor_to_floor) > 1e-9:
+        self.floor_to_floor = ftf
 
 
 def _update_ceiling_height(self, context):
+    # The floor above stands as far over the ceiling as it did: it moves
+    # with it, and the levels above with it
+    old = self.get('applied_ceiling_height')
+    gap = (self.floor_to_floor - old) if old is not None else self.floor_thickness
+    self['applied_ceiling_height'] = self.ceiling_height
+    ftf = self.ceiling_height + max(gap, 0.0)
+    if abs(ftf - self.floor_to_floor) > 1e-9:
+        self.floor_to_floor = ftf
+    else:
+        self['floor_thickness'] = max(0.0, self.floor_to_floor - self.ceiling_height)
     level = active_level(context)
     if level is not None and level.uid == self.uid:
         props = self.id_data.home_builder
@@ -1010,9 +1071,57 @@ def _room_shape_changed(self, context):
     hb_rooms.rebuild_room(self)
 
 
+def _ground_changed(self, context):
+    """Porches step down to the ground, and stand on it."""
+    scene = self.id_data
+    from . import hb_rooms
+    for level in self.levels:
+        if any(r.is_porch for r in level.rooms):
+            hb_rooms.rebuild_level(scene, level)
+
+
 def _room_porch_changed(self, context):
     if self.is_porch:
         _room_shape_changed(self, context)
+
+
+# ---- Wall coverings by room (see hb_wall_finish) ------------------------------
+# Items are only ever appended: a saved choice is its place in the list.
+
+WALL_FINISH_ITEMS = [
+    ('PAINT', "Paint", "A painted wall"),
+    ('TILE', "Tile", "Subway tile, floor to ceiling"),
+]
+WALL_BAND_ITEMS = [
+    ('NONE', "None", "No band"),
+    ('TILE', "Tile", "Subway tile up to the band's height"),
+    ('PAINT', "Paint", "A second paint colour up to the band's height"),
+]
+
+
+def _walls_changed(self, context):
+    from . import hb_wall_finish
+    hb_wall_finish.changed(self, context)
+
+
+def _trim_changed(self, context):
+    from . import hb_trim
+    hb_trim.changed(self, context)
+
+
+def _light_grid_changed(self, context):
+    from . import hb_lighting
+    hb_lighting.grid_changed(self, context)
+
+
+def _get_light_objects(self):
+    from . import hb_lighting
+    return hb_lighting.light_objects_shown()
+
+
+def _set_light_objects(self, value):
+    from . import hb_lighting
+    hb_lighting.show_light_objects(self, value)
 
 
 class HB_Room(PropertyGroup):
@@ -1113,6 +1222,65 @@ class HB_Room(PropertyGroup):
         description="A balcony or deck: no ceiling, deck boards for a floor",
         default=False, update=_room_outdoor_changed)  # type: ignore
 
+    # Its trim (see hb_trim)
+    trim_obj: PointerProperty(type=bpy.types.Object)  # type: ignore
+    # Its grid of recessed cans (hb_lighting): changed, the grid is laid again
+    light_spacing: FloatProperty(
+        name="Spacing", description="The most a grid's cans are apart",
+        default=1.83, min=0.6, max=6.0, subtype='DISTANCE', precision=4,
+        update=_light_grid_changed)  # type: ignore
+    light_from_walls: FloatProperty(
+        name="From Walls", description="How far in from the walls the grid's outer cans are",
+        default=0.6, min=0.15, max=3.0, subtype='DISTANCE', precision=4,
+        update=_light_grid_changed)  # type: ignore
+    show_light_objects: BoolProperty(
+        name="Show Light Objects",
+        description="Draw Blender's light objects in the viewport (its Extras overlay, "
+                    "which also draws cameras and empties)",
+        get=_get_light_objects, set=_set_light_objects)  # type: ignore
+
+    trim_auto: BoolProperty(
+        name="Use House Default",
+        description="Trim as the house's Trim defaults say for this kind of room",
+        default=True, update=_trim_changed)  # type: ignore
+    trim_base: BoolProperty(name="Baseboard", default=True, update=_trim_changed)  # type: ignore
+    trim_base_height: FloatProperty(
+        name="Base Height", default=inch(5.25), min=inch(2), max=inch(12),
+        subtype='DISTANCE', precision=4, update=_trim_changed)  # type: ignore
+    trim_shoe: BoolProperty(name="Shoe", description="A quarter round at the foot of the base",
+                            default=False, update=_trim_changed)  # type: ignore
+    trim_chair_height: FloatProperty(
+        name="Chair Rail", description="Its top above the floor; 0 for none",
+        default=0.0, min=0.0, max=inch(60), subtype='DISTANCE', precision=4,
+        update=_trim_changed)  # type: ignore
+    trim_crown: BoolProperty(name="Crown", description="Crown molding where the ceiling is flat",
+                             default=False, update=_trim_changed)  # type: ignore
+    trim_color: FloatVectorProperty(
+        name="Trim Color", subtype='COLOR', size=3, min=0.0, max=1.0,
+        default=(0.95, 0.95, 0.93), update=_trim_changed)  # type: ignore
+
+    # Its walls and ceiling (see hb_wall_finish)
+    walls_auto: BoolProperty(
+        name="Use House Default",
+        description="Walls and ceiling as the house's Wall Finishes say for this kind of room",
+        default=True, update=_walls_changed)  # type: ignore
+    walls_finish: EnumProperty(name="Walls", items=WALL_FINISH_ITEMS, default='PAINT',
+                               update=_walls_changed)  # type: ignore
+    walls_color: FloatVectorProperty(
+        name="Wall Color", subtype='COLOR', size=3, min=0.0, max=1.0,
+        default=(0.93, 0.92, 0.88), update=_walls_changed)  # type: ignore
+    walls_band: EnumProperty(name="Lower Band", items=WALL_BAND_ITEMS, default='NONE',
+                             update=_walls_changed)  # type: ignore
+    walls_band_height: FloatProperty(
+        name="Band Height", default=inch(48), min=0.0, max=inch(120),
+        subtype='DISTANCE', precision=4, update=_walls_changed)  # type: ignore
+    walls_band_color: FloatVectorProperty(
+        name="Band Color", subtype='COLOR', size=3, min=0.0, max=1.0,
+        default=(0.96, 0.96, 0.95), update=_walls_changed)  # type: ignore
+    ceiling_color: FloatVectorProperty(
+        name="Ceiling Color", subtype='COLOR', size=3, min=0.0, max=1.0,
+        default=(0.96, 0.96, 0.95), update=_walls_changed)  # type: ignore
+
     floor_auto: BoolProperty(
         name="Use House Default",
         description=("The floor comes from the house's Floor Defaults for this kind of "
@@ -1158,6 +1326,68 @@ class HB_Room(PropertyGroup):
         default=3.0, min=0.5, max=12.0, precision=2,
         update=_room_porch_changed)  # type: ignore
     porch_roof_obj: PointerProperty(type=bpy.types.Object)  # type: ignore
+    # What else a porch has (hb_porches)
+    porch_structure: EnumProperty(
+        name="Structure",
+        items=[('POSTS', "Posts & Beam", "Posts along the open edges carrying a beam under the ceiling"),
+               ('NONE', "None", "No posts or beam: an open porch or stoop")],
+        default='POSTS', update=_room_porch_changed)  # type: ignore
+    porch_railing: EnumProperty(
+        name="Railing",
+        items=[('NONE', "None", "No railing"),
+               ('SQUARE', "Square", "Square balusters"),
+               ('ROUND', "Round", "Turned (round) balusters"),
+               ('GLASS', "Glass", "Glass panels"),
+               ('SOLID', "Half Wall", "A half wall capped with a rail")],
+        default='NONE', update=_room_porch_changed)  # type: ignore
+    porch_rail_height: FloatProperty(
+        name="Rail Height", default=inch(36), min=inch(24), max=inch(48), subtype='DISTANCE', precision=4,
+        update=_room_porch_changed)  # type: ignore
+    porch_steps: IntProperty(
+        name="Steps On Edge",
+        description="Steps down to the ground from this open edge: 1 is the longest, 2 the next. 0 for none",
+        default=0, min=0, max=8, update=_room_porch_changed)  # type: ignore
+    porch_steps_width: FloatProperty(
+        name="Steps Width", default=inch(48), min=inch(30), max=inch(240), subtype='DISTANCE', precision=4,
+        update=_room_porch_changed)  # type: ignore
+    porch_steps_offset: FloatProperty(
+        name="Steps Offset", description="How far along the edge from its middle the steps are",
+        default=0.0, subtype='DISTANCE', precision=4, update=_room_porch_changed)  # type: ignore
+    porch_base: EnumProperty(
+        name="Base",
+        items=[('SOLID', "Solid", "Concrete from the porch floor down to the ground"),
+               ('SKIRT', "Skirt", "Boards round the open edges, from the floor down to the ground"),
+               ('NONE', "None", "Nothing under the floor")],
+        default='SOLID', update=_room_porch_changed)  # type: ignore
+    porch_steps_on: EnumProperty(
+        name="Steps On",
+        description="The porch's open sides with steps down to the ground. Front faces away from "
+                    "the house; Left and Right as you face the porch from the front",
+        items=[('FRONT', "Front", "The side facing away from the house"),
+               ('LEFT', "Left", "The left side, facing the porch"),
+               ('RIGHT', "Right", "The right side, facing the porch"),
+               ('BACK', "Back", "The side facing the house (a porch standing apart)")],
+        options={'ENUM_FLAG'}, default=set(), update=_room_porch_changed)  # type: ignore
+    porch_step_riser: FloatProperty(
+        name="Max Step Riser",
+        description="The tallest a porch step may rise: lower it for more steps, raise it for fewer",
+        default=inch(7.75), min=inch(4), max=inch(9), subtype='DISTANCE', precision=4,
+        update=_room_porch_changed)  # type: ignore
+    porch_steps_span: EnumProperty(
+        name="Steps Span",
+        items=[('WIDTH', "Set Width", "Steps as wide as Steps Width, in the middle of each side chosen"),
+               ('EDGE', "Whole Side", "Steps the length of each side chosen, joined round the corners"),
+               ('WRAP', "Wrap Around", "Steps round every open side, mitred at the corners")],
+        default='WIDTH', update=_room_porch_changed)  # type: ignore
+    porch_steps_style: EnumProperty(
+        name="Steps Style",
+        items=[('SOLID', "Solid", "Concrete or masonry steps, solid to the ground"),
+               ('WOOD', "Wood", "Wood treads with a nosing over riser boards, boards at the ends")],
+        default='SOLID', update=_room_porch_changed)  # type: ignore
+    porch_supports: BoolProperty(
+        name="Posts to Ground",
+        description="A porch on an upper level: a beam under its floor, on posts down to the ground",
+        default=False, update=_room_porch_changed)  # type: ignore
 
     # Worked out by hb_rooms on each rebuild
     area: FloatProperty(name="Area", default=0.0)  # type: ignore
@@ -1171,12 +1401,63 @@ def _roof_changed(self, context):
     hb_roofs.rebuild_roof_of(self)
 
 
+def _roof_enabled_changed(roof, context):
+    """A roof turned on is shown: with Show Roofs off it would be built and
+    nowhere to be seen."""
+    house = roof.id_data.hb_house
+    if roof.enabled and not house.show_roofs:
+        house.show_roofs = True
+    _roof_changed(roof, context)
+
+
+def _truss_changed(self, context):
+    """Trusses or rafters: the framing changes, and a vaulted ceiling under
+    scissor trusses follows their bottom chords."""
+    from . import hb_rooms
+    hb_rooms.rebuild_after_walls(self.id_data)
+
+
 def _roof_piece_changed(self, context):
     """A roof piece's setting changed: rebuild the roof it belongs to."""
     from . import hb_roofs
     path = self.path_from_id()
     roof = self.id_data.path_resolve(path.rsplit('.pieces[', 1)[0])
     hb_roofs.rebuild_roof_of(roof)
+
+
+def _skylight_changed(self, context):
+    """A skylight's setting changed: set the skylights on its roof again."""
+    from . import hb_skylights
+    path = self.path_from_id()
+    roof = self.id_data.path_resolve(path.rsplit('.skylights[', 1)[0])
+    hb_skylights.rebuild_of(roof)
+
+
+class HB_Skylight(PropertyGroup):
+    """A skylight on a level's main roof (see hb_skylights): a plan centre
+    and a size; it lies on the slope wherever the roof is there."""
+    uid: StringProperty(name="Skylight ID")  # type: ignore
+    name: StringProperty(name="Name", default="Skylight")  # type: ignore
+    x: FloatProperty(name="X", subtype='DISTANCE', precision=4,
+                     update=_skylight_changed)  # type: ignore
+    y: FloatProperty(name="Y", subtype='DISTANCE', precision=4,
+                     update=_skylight_changed)  # type: ignore
+    width: FloatProperty(
+        name="Width", description="Across the slope",
+        default=inch(22.5), min=inch(12), max=inch(72), subtype='DISTANCE', precision=4,
+        update=_skylight_changed)  # type: ignore
+    length: FloatProperty(
+        name="Length", description="Up the slope",
+        default=inch(46.5), min=inch(12), max=inch(96), subtype='DISTANCE', precision=4,
+        update=_skylight_changed)  # type: ignore
+    curb: EnumProperty(name="Mounting", items=[('CURB', "Curb-mounted", "On a curb standing up off the roof"),
+               ('DECK', "Deck-mounted", "Low, on the roof deck itself")],
+                       default='CURB', update=_skylight_changed)  # type: ignore
+    shaft: EnumProperty(name="Light Shaft", items=[('AUTO', "Auto", "A light shaft down to a flat ceiling under it"),
+               ('NONE', "None", "No shaft: the ceiling isn't opened")],
+                        default='AUTO', update=_skylight_changed)  # type: ignore
+    unit_obj: PointerProperty(type=bpy.types.Object)  # type: ignore
+    shaft_obj: PointerProperty(type=bpy.types.Object)  # type: ignore
 
 
 class HB_RoofPiece(PropertyGroup):
@@ -1241,7 +1522,7 @@ class HB_Roof(PropertyGroup):
     level's floor so the level is inside it. See hb_roofs."""
 
     enabled: BoolProperty(name="Roof", default=False,
-                          update=_roof_changed)  # type: ignore
+                          update=lambda self, context: _roof_enabled_changed(self, context))  # type: ignore
 
     style: EnumProperty(
         name="Style",
@@ -1249,8 +1530,54 @@ class HB_Roof(PropertyGroup):
                ('GAMBREL', "Barn (Gambrel)",
                 "A steep lower slope and a shallow upper one on each side, like a barn"),
                ('HIP', "Hip",
-                "Slopes on all four sides, meeting at a ridge - or a point on a square house")],
+                "Slopes on all four sides, meeting at a ridge - or a point on a square house"),
+               # Appended: a saved style is its place in this list
+               ('SHED', "Shed", "One slope, from a low side up to a high one"),
+               ('SALTBOX', "Saltbox", "A gable with its ridge off centre: a short front slope, a long back one"),
+               ('MANSARD', "Mansard",
+                "A steep lower slope on all four sides under a flat or low hip top"),
+               ('CLIPPED_GABLE', "Clipped Gable",
+                "A gable whose ends turn to small hips near the ridge (a jerkinhead)"),
+               ('DUTCH_GABLE', "Dutch Gable", "A hip roof with a small gable on top of each end"),
+               ('FLAT', "Flat", "A low slope for drainage, with an optional parapet")],
         default='GABLE', update=_roof_changed)  # type: ignore
+
+    high_side: EnumProperty(
+        name="High Side",
+        items=[('BACK', "Back", "High along the back (or right) wall, low along the front"),
+               ('FRONT', "Front", "High along the front (or left) wall, low along the back")],
+        default='BACK', update=_roof_changed)  # type: ignore
+    ridge_position: FloatProperty(
+        name="Ridge Position",
+        description="Where a saltbox's ridge is across the house, from the front (0.5 is the middle)",
+        default=0.35, min=0.15, max=0.85, subtype='FACTOR', update=_roof_changed)  # type: ignore
+    mansard_top: EnumProperty(
+        name="Top",
+        items=[('FLAT', "Flat", "A flat top over the steep slopes"),
+               ('HIP', "Low Hip", "A shallow hip at the roof's pitch over the steep slopes")],
+        default='FLAT', update=_roof_changed)  # type: ignore
+    clip_height: FloatProperty(
+        name="Clip Height",
+        description=("Where a clipped gable's ends turn to small hips, measured like the "
+                     "eave height"),
+        default=inch(96), min=0.0, subtype='DISTANCE', precision=4,
+        update=_roof_changed)  # type: ignore
+    gable_height: FloatProperty(
+        name="Gable Height",
+        description=("Where a Dutch gable's hips stop and its small gables start, measured "
+                     "like the eave height"),
+        default=inch(60), min=0.0, subtype='DISTANCE', precision=4,
+        update=_roof_changed)  # type: ignore
+    flat_slope: FloatProperty(
+        name="Slope",
+        description="A flat roof's slope for drainage: rise in 12",
+        default=0.25, min=0.0625, max=2.0, precision=3, update=_roof_changed)  # type: ignore
+    parapet_height: FloatProperty(
+        name="Parapet",
+        description=("How far the walls stand up past a flat roof's top; 0 for none "
+                     "(the roof overhangs the walls)"),
+        default=0.0, min=0.0, max=2.0, subtype='DISTANCE', precision=4,
+        update=_roof_changed)  # type: ignore
 
     rise_through: BoolProperty(
         name="Upper Floor Rises Through",
@@ -1302,10 +1629,29 @@ class HB_Roof(PropertyGroup):
                ('Y', "Along Y", "Ridge runs along Y; gables face Y")],
         default='AUTO', update=_roof_changed)  # type: ignore
 
+    framing: EnumProperty(
+        name="Framing",
+        items=[('RAFTERS', "Rafters", "Rafters to a ridge board, and ceiling joists"),
+               ('COMMON', "Common Trusses", "Trusses with a level bottom chord: the ceiling under them is flat"),
+               ('SCISSOR', "Scissor Trusses", "Trusses whose bottom chords rise at half the pitch: a vaulted ceiling follows them")],
+        default='RAFTERS', update=_truss_changed)  # type: ignore
+    truss_spacing: FloatProperty(
+        name="Truss Spacing", default=inch(24), min=inch(12), max=inch(48),
+        subtype='DISTANCE', precision=4, update=_truss_changed)  # type: ignore
+
     eave_overhang: FloatProperty(
         name="Eave Overhang", description="How far the roof runs past the side walls",
         default=inch(12), min=0.0, subtype='DISTANCE', precision=4,
         update=_roof_changed)  # type: ignore
+    eave_flare: BoolProperty(
+        name="Flared Eaves",
+        description="The overhang kicks out past the walls at a shallower pitch than the slope "
+                    "above it - the bell-cast eave of a gambrel or Dutch colonial",
+        default=False, update=_roof_changed)  # type: ignore
+    flare_pitch: FloatProperty(
+        name="Flare Pitch",
+        description="The overhang's pitch, rise in 12, past the walls",
+        default=6.0, min=0.5, max=24.0, precision=2, update=_roof_changed)  # type: ignore
 
     gable_overhang: FloatProperty(
         name="Gable Overhang", description="How far the roof runs past the gable walls",
@@ -1373,6 +1719,12 @@ class HB_Roof(PropertyGroup):
     dormer_walls_obj: PointerProperty(type=bpy.types.Object)  # type: ignore
     rise_obj: PointerProperty(type=bpy.types.Object)  # type: ignore
 
+    # Skylights (see hb_skylights), and the volumes they cut with
+    skylights: CollectionProperty(type=HB_Skylight)  # type: ignore
+    active_skylight_index: IntProperty(name="Active Skylight")  # type: ignore
+    openings_obj: PointerProperty(type=bpy.types.Object)  # type: ignore
+    skylight_cut_obj: PointerProperty(type=bpy.types.Object)  # type: ignore
+
 
 # The finishes the outside walls can take (see hb_exterior). New ones go
 # on the end: a saved choice is its place in the list.
@@ -1420,8 +1772,219 @@ class HB_WallSiding(PropertyGroup):
         default=(0.92, 0.92, 0.90), update=_wall_siding_changed)  # type: ignore
 
 
+# ---- Fireplaces (see hb_fireplaces) ------------------------------------------
+# Items are only ever appended: a saved choice is its place in the list.
+
+FIREPLACE_CHIMNEY_ITEMS = [
+    ('OUTSIDE', "Outside", "A masonry chimney standing outside the wall"),
+    ('INSIDE', "Inside", "A breast standing in the room, the stack rising through the floors above"),
+    ('NONE', "None", "A breast in the room with no chimney (a vented insert)"),
+]
+FIREPLACE_STYLE_ITEMS = [
+    ('MASONRY', "Masonry", "Brick or stone, with a concrete crown"),
+    ('CHASE', "Framed Chase", "A framed chase in the house's siding, with a metal cap"),
+]
+FIREPLACE_MANTEL_ITEMS = [
+    ('NONE', "None", "No mantel"),
+    ('SHELF', "Shelf", "A shelf over the surround"),
+    ('FULL', "Full", "Pilasters, a frieze and a shelf"),
+]
+
+
+# ---- Windows outdoors: shutters and exterior trim --------------------------
+# Items are only ever appended: a saved choice is its place in the list.
+
+SHUTTER_STYLE_ITEMS = [
+    ('NONE', "None", "No shutters"),
+    ('LOUVERED', "Louvered", "Louvered shutters"),
+    ('RAISED_PANEL', "Raised Panel", "Shutters with two raised panels"),
+    ('BOARD_BATTEN', "Board and Batten", "Boards held by battens and a Z brace"),
+]
+
+EXT_TRIM_ITEMS = [
+    ('CASING', "Casing", "Flat casing round the window"),
+    ('HEAD_CAP', "Head with Cap", "A taller head casing under a drip cap"),
+    ('CRAFTSMAN', "Craftsman", "A deep head running past the side casings, with a cap"),
+    ('BRICK_MOLD', "Brick Mold",
+     "Narrow brick mold, a rowlock sill and a soldier course: for brick and stone walls"),
+]
+
+
+def window_cage(obj):
+    """The window an object is, or is part of; None for anything else."""
+    if obj is None:
+        return None
+    if obj.get('IS_WINDOW_BP'):
+        return obj
+    if obj.parent is not None and obj.parent.get('IS_WINDOW_BP'):
+        return obj.parent
+    return None
+
+
+def _window_opts(obj):
+    from .product_libraries.common import door_window_geo
+    return door_window_geo.merged_opts(obj) or dict(door_window_geo.WINDOW_DEFAULTS)
+
+
+def _set_window_opt(self, key, value):
+    """A window's outdoor option: the same goes on every selected window
+    built with options, and each is built again."""
+    from .product_libraries.common import door_window_geo
+    obj = self.id_data
+    targets = [obj]
+    if obj.select_get():
+        for other in bpy.context.selected_objects:
+            cage = window_cage(other)
+            if cage is not None and cage not in targets:
+                targets.append(cage)
+    for cage in targets:
+        stored = door_window_geo.stored_opts(cage)
+        if stored is None:
+            continue
+        stored[key] = value
+        door_window_geo.set_opts(cage, stored)
+        door_window_geo.build_geometry(cage)
+    _tag_view3d_redraw()
+
+
+def _window_enum(key, items):
+    ids = [i[0] for i in items]
+
+    def get(self):
+        value = _window_opts(self.id_data)[key]
+        return ids.index(value) if value in ids else 0
+
+    def set(self, index):
+        _set_window_opt(self, key, ids[index])
+    return get, set
+
+
+def _window_float(key):
+    def get(self):
+        return float(_window_opts(self.id_data)[key])
+
+    def set(self, value):
+        _set_window_opt(self, key, float(value))
+    return get, set
+
+
+def _get_shutter_color(self):
+    from .product_libraries.common import door_window_geo
+    return door_window_geo._hex_color(_window_opts(self.id_data)['shutter_color'])
+
+
+def _set_shutter_color(self, value):
+    from .product_libraries.common import door_window_geo
+    _set_window_opt(self, 'shutter_color', door_window_geo.color_hex(tuple(value)))
+
+
+_shutters = _window_enum('shutter_style', SHUTTER_STYLE_ITEMS)
+_ext_trim = _window_enum('ext_trim_style', EXT_TRIM_ITEMS)
+_shutter_width = _window_float('shutter_width')
+_ext_casing_width = _window_float('ext_casing_width')
+
+
+class HB_WindowExterior(PropertyGroup):
+    """A window's shutters and exterior trim, for the HUD: read from and
+    written to the window's options, which stay the one place they live."""
+    shutter_style: EnumProperty(
+        name="Shutters", items=SHUTTER_STYLE_ITEMS,
+        get=_shutters[0], set=_shutters[1])  # type: ignore
+    shutter_width: FloatProperty(
+        name="Shutter Width", min=0.0, max=1.5, subtype='DISTANCE', precision=4,
+        description="Each shutter's width; 0 is half the window's opening",
+        get=_shutter_width[0], set=_shutter_width[1])  # type: ignore
+    shutter_color: FloatVectorProperty(
+        name="Shutter Color", subtype='COLOR', size=3, min=0.0, max=1.0,
+        get=_get_shutter_color, set=_set_shutter_color)  # type: ignore
+    ext_trim_style: EnumProperty(
+        name="Exterior Trim", items=EXT_TRIM_ITEMS,
+        get=_ext_trim[0], set=_ext_trim[1])  # type: ignore
+    ext_casing_width: FloatProperty(
+        name="Exterior Casing Width", min=0.0, max=0.3, subtype='DISTANCE', precision=4,
+        description="The exterior casing's width; 0 is the window's casing width",
+        get=_ext_casing_width[0], set=_ext_casing_width[1])  # type: ignore
+
+
+def _backdrop_get(level, i):
+    import math
+    from . import hb_backdrop
+    scene = level.id_data
+    objs = hb_backdrop.backdrops_of(scene, level)
+    if not objs:
+        return 0.0
+    o = objs[0]
+    return math.degrees(o.rotation_euler.z) if i == 2 else o.location[i]
+
+
+def _backdrop_set(level, i, value):
+    from . import hb_backdrop
+    scene = level.id_data
+    if i == 2:
+        hb_backdrop.turn_to(scene, level, value)
+        return
+    d = value - _backdrop_get(level, i)
+    hb_backdrop.move_by(scene, level, d if i == 0 else 0.0, d if i == 1 else 0.0)
+
+
+def _backdrop_settings_changed(self, context):
+    from . import hb_backdrop
+    hb_backdrop._level_settings_changed(self, context)
+
+
+def _foundation_changed(self, context):
+    from . import hb_foundation
+    hb_foundation._settings_changed(self, context)
+
+
+def _eaves_changed(self, context):
+    from . import hb_eaves
+    hb_eaves._settings_changed(self, context)
+
+
 class HB_Level(PropertyGroup):
     uid: StringProperty(name="Level ID")  # type: ignore
+
+    # Which way the floor joists of this level run
+    joist_direction: EnumProperty(
+        name="Joists Run",
+        items=[('AUTO', "Auto", "The way with the shortest spans between walls and beams below"),
+               ('X', "Along X", ""), ('Y', "Along Y", "")],
+        default='AUTO',
+        update=lambda self, context: _framing_changed(self.id_data.hb_house))  # type: ignore
+
+    # A Foundation level is made by the house's foundation (hb_foundation)
+    kind: EnumProperty(
+        name="Kind",
+        items=[('FLOOR', "Floor", "A level people live on"),
+               ('FOUNDATION', "Foundation", "The crawlspace or basement under the house")],
+        default='FLOOR')  # type: ignore
+
+    # The plan traced on this level (see hb_backdrop)
+    backdrop_shown: BoolProperty(
+        name="Show Backdrop", default=True,
+        description="Show the plan traced on this level",
+        update=_backdrop_settings_changed)  # type: ignore
+    backdrop_locked: BoolProperty(
+        name="Lock Backdrop", default=True,
+        description="Keep the backdrop from being picked or moved by accident",
+        update=_backdrop_settings_changed)  # type: ignore
+    backdrop_opacity: FloatProperty(
+        name="Backdrop Opacity", default=0.6, min=0.05, max=1.0,
+        description="How strongly the backdrop shows",
+        update=_backdrop_settings_changed)  # type: ignore
+    backdrop_x: FloatProperty(
+        name="Backdrop X", subtype='DISTANCE', precision=4,
+        description="Where the backdrop's middle is, left and right",
+        get=lambda self: _backdrop_get(self, 0), set=lambda self, v: _backdrop_set(self, 0, v))  # type: ignore
+    backdrop_y: FloatProperty(
+        name="Backdrop Y", subtype='DISTANCE', precision=4,
+        description="Where the backdrop's middle is, front and back",
+        get=lambda self: _backdrop_get(self, 1), set=lambda self, v: _backdrop_set(self, 1, v))  # type: ignore
+    backdrop_rotation: FloatProperty(
+        name="Backdrop Rotation", precision=2,
+        description="How far the backdrop is turned, in degrees",
+        get=lambda self: _backdrop_get(self, 2), set=lambda self, v: _backdrop_set(self, 2, v))  # type: ignore
 
     # This level's outside walls' siding, over the house's
     siding_style: EnumProperty(
@@ -1456,7 +2019,8 @@ class HB_Level(PropertyGroup):
     floor_thickness: FloatProperty(
         name="Floor Thickness",
         description="Floor structure between this level's ceiling and the next level's floor",
-        default=inch(12), min=0.0, subtype='DISTANCE', precision=4)  # type: ignore
+        default=inch(12), min=0.0, subtype='DISTANCE', precision=4,
+        update=lambda self, context: _update_floor_thickness(self, context))  # type: ignore
 
     ceiling_height: FloatProperty(
         name="Ceiling Height",
@@ -1496,6 +2060,42 @@ def _labels_shown_changed(house):
     _tag_view3d_redraw()
 
 
+def _cages_get(house):
+    return bool(house.id_data.home_builder.show_entry_door_and_window_cages)
+
+
+def _cages_set(house, value):
+    # The scene's own setting, the one the sidebar shows: its update
+    # draws the door and window cages solid or as wire.
+    house.id_data.home_builder.show_entry_door_and_window_cages = value
+
+
+def apply_annotation_visibility(scene):
+    """Dimensions, labels and the rest of the drawing marks in the house
+    view, shown or hidden with Annotations - with whatever hangs off them
+    (a dimension's leader carries no tag of its own). Hidden per view
+    layer, so the drawings built from the house keep them."""
+    hide = not scene.hb_house.show_annotations
+
+    def walk(obj):
+        for layer in scene.view_layers:
+            try:
+                obj.hide_set(hide, view_layer=layer)
+            except RuntimeError:
+                pass        # not in that view layer
+        for child in obj.children:
+            walk(child)
+
+    for obj in scene.objects:
+        if obj.get('IS_2D_ANNOTATION') and not (obj.parent and obj.parent.get('IS_2D_ANNOTATION')):
+            walk(obj)
+
+
+def _annotations_shown_changed(house):
+    apply_annotation_visibility(house.id_data)
+    _tag_view3d_redraw()
+
+
 def _framing_shown_changed(house):
     from . import hb_framing
     scene = house.id_data
@@ -1524,13 +2124,365 @@ def _update_level_display(self, context):
     apply_level_display(scene)
 
 
+def _fixtures_changed(self, context):
+    from . import hb_lighting
+    hb_lighting.house_switches_changed(self, context)
+
+
+def _furnish_changed(self, context):
+    from .operators import ops_furnish
+    ops_furnish._furnish_changed(self, context)
+
+
 def _exterior_changed(house):
     from . import hb_exterior
     hb_exterior.apply_exterior_finish(house.id_data)
 
 
+# ---- Wall assemblies (see hb_assemblies) ----------------------------------
+
+LAYER_KINDS = [
+    ('SIDING', "Siding", "The outside finish"),
+    ('SHEATHING', "Sheathing", "Structural panels over the studs"),
+    ('FRAMING', "Framing", "The studs"),
+    ('INSULATION', "Insulation", "Rigid or batt insulation"),
+    ('DRYWALL', "Drywall", "The inside finish"),
+    ('MASONRY', "Masonry", "Brick or block"),
+    ('CONCRETE', "Concrete", "Poured concrete"),
+    ('AIR', "Air Gap", "A drainage or air space"),
+    ('OTHER', "Other", ""),
+]
+
+
+def _assembly_changed(self, context):
+    _tag_view3d_redraw()
+
+
+class HB_WallLayer(PropertyGroup):
+    """One layer of a wall assembly, listed from the outside in."""
+    name: StringProperty(name="Name", default="Layer")  # type: ignore
+    kind: EnumProperty(name="Kind", items=LAYER_KINDS, default='FRAMING',
+                       update=_assembly_changed)  # type: ignore
+    thickness: FloatProperty(name="Thickness", default=inch(3.5), min=inch(0.0625),
+                             max=inch(24), subtype='DISTANCE', precision=4,
+                             update=_assembly_changed)  # type: ignore
+    material: PointerProperty(name="Material", type=bpy.types.Material)  # type: ignore
+
+
+class HB_WallAssembly(PropertyGroup):
+    """A wall's make-up: its layers, outside first. A wall it is applied
+    to is as thick as its layers add up to."""
+    uid: StringProperty(name="Assembly ID")  # type: ignore
+    name: StringProperty(name="Name", default="Wall Assembly")  # type: ignore
+    wall_type: EnumProperty(
+        name="For",
+        items=[('Exterior', "Exterior Walls", ""), ('Interior', "Interior Walls", "")],
+        default='Exterior')  # type: ignore
+    for_new_walls: BoolProperty(
+        name="New Walls", default=True,
+        description="Walls drawn of this type are made with this assembly")  # type: ignore
+    layers: CollectionProperty(type=HB_WallLayer)  # type: ignore
+    active_layer_index: IntProperty(name="Active Layer")  # type: ignore
+
+
 class HB_House_Props(PropertyGroup):
     levels: CollectionProperty(type=HB_Level)  # type: ignore
+
+    assemblies: CollectionProperty(type=HB_WallAssembly)  # type: ignore
+    active_assembly_index: IntProperty(name="Active Assembly")  # type: ignore
+
+    # Eave trim and gutters (see hb_eaves)
+    eave_trim: BoolProperty(
+        name="Eave Trim", default=False,
+        description="Fascia, soffits and rake boards round the roofs, and gutters",
+        update=_eaves_changed)  # type: ignore
+    fascia_height: FloatProperty(
+        name="Fascia Height", default=inch(7.25), min=inch(3.5), max=inch(16),
+        subtype='DISTANCE', precision=4, update=_eaves_changed)  # type: ignore
+    fascia_thickness: FloatProperty(
+        name="Fascia Thickness", default=inch(1.0), min=inch(0.5), max=inch(2.5),
+        subtype='DISTANCE', precision=4, update=_eaves_changed)  # type: ignore
+    rake_boards: BoolProperty(
+        name="Rake Boards", default=True,
+        description="A board up each gable's edge",
+        update=_eaves_changed)  # type: ignore
+    soffit_style: EnumProperty(
+        name="Soffit",
+        items=[('BOXED', "Boxed", "A level board under the overhang, back to the wall"),
+               ('NONE', "Open", "No soffit: the roof's underside shows")],
+        default='BOXED', update=_eaves_changed)  # type: ignore
+    gutters: BoolProperty(
+        name="Gutters", default=True, update=_eaves_changed)  # type: ignore
+    gutter_style: EnumProperty(
+        name="Gutter Style",
+        items=[('K', "K-Style", "The ogee profile most houses have"),
+               ('HALF_ROUND', "Half Round", "A half-round trough")],
+        default='K', update=_eaves_changed)  # type: ignore
+    gutter_size: EnumProperty(
+        name="Gutter Size",
+        items=[('5', '5"', ""), ('6', '6"', "")],
+        default='5', update=_eaves_changed)  # type: ignore
+    gutters_on_dormers: BoolProperty(
+        name="Gutters on Dormers", default=False,
+        description="Gutters on the eaves of cross gables and dormers too",
+        update=_eaves_changed)  # type: ignore
+    downspouts: BoolProperty(
+        name="Downspouts", default=True, update=_eaves_changed)  # type: ignore
+
+    # The foundation (see hb_foundation)
+    ground_auto: BoolProperty(
+        name="Ground Auto",
+        description="The ground at the grid (Z 0) when the ground level stands above it, else "
+                    "Ground Below Floor under its floor",
+        default=True, update=lambda self, context: _ground_changed(self, context))  # type: ignore
+    ground_below_floor: FloatProperty(
+        name="Ground Below Floor",
+        description="How far the ground is below the ground level's floor: porch steps and posts go down to it",
+        default=inch(18), min=0.0, subtype='DISTANCE', precision=4,
+        update=lambda self, context: _ground_changed(self, context))  # type: ignore
+    foundation_type: EnumProperty(
+        name="Foundation",
+        items=[('NONE', "None", "No foundation drawn"),
+               ('SLAB', "Slab", "A concrete slab under the floor, its edge thickened into a footing"),
+               ('CRAWL', "Crawlspace", "Stem walls on footings, the floor framed over a crawlspace"),
+               ('BASEMENT', "Basement", "Full-height walls on footings: a level of its own to fit out")],
+        default='NONE', update=_foundation_changed)  # type: ignore
+    foundation_wall_thickness: FloatProperty(
+        name="Wall Thickness", default=inch(8), min=inch(4), max=inch(16),
+        subtype='DISTANCE', precision=4, update=_foundation_changed)  # type: ignore
+    crawl_height: FloatProperty(
+        name="Stem Wall Height", default=inch(32), min=inch(12), max=inch(72),
+        description="From the top of the footing to the sill",
+        subtype='DISTANCE', precision=4, update=_foundation_changed)  # type: ignore
+    basement_height: FloatProperty(
+        name="Basement Wall Height", default=inch(96), min=inch(72), max=inch(144),
+        description="From the top of the footing to the sill",
+        subtype='DISTANCE', precision=4, update=_foundation_changed)  # type: ignore
+    footing_width: FloatProperty(
+        name="Footing Width", default=inch(16), min=inch(8), max=inch(48),
+        subtype='DISTANCE', precision=4, update=_foundation_changed)  # type: ignore
+    footing_depth: FloatProperty(
+        name="Footing Depth", default=inch(8), min=inch(6), max=inch(24),
+        subtype='DISTANCE', precision=4, update=_foundation_changed)  # type: ignore
+    slab_thickness: FloatProperty(
+        name="Slab Thickness", default=inch(4), min=inch(3), max=inch(12),
+        subtype='DISTANCE', precision=4, update=_foundation_changed)  # type: ignore
+
+    # Beams and posts: what the next one placed is (see hb_members)
+    member_material: EnumProperty(
+        name="Material",
+        items=[('LUMBER', "Lumber", "Sawn boards, nailed up in plies"),
+               ('LVL', "LVL", "Laminated veneer lumber, 1-3/4\" plies"),
+               ('GLULAM', "Glulam", "Glued laminated timber"),
+               ('STEEL', "Steel", "A steel beam or column, drawn as its box")],
+        default='LUMBER')  # type: ignore
+    member_lumber: EnumProperty(
+        name="Size",
+        items=[('2X6', "2x6", ""), ('2X8', "2x8", ""), ('2X10', "2x10", ""),
+               ('2X12', "2x12", "")],
+        default='2X10')  # type: ignore
+    member_plies: IntProperty(
+        name="Plies", default=3, min=1, max=5,
+        description="Boards nailed side by side")  # type: ignore
+    member_depth: FloatProperty(
+        name="Depth", default=inch(11.875), min=inch(3.5), max=inch(36),
+        subtype='DISTANCE', precision=4)  # type: ignore
+    member_width: FloatProperty(
+        name="Width", default=inch(5.125), min=inch(1.5), max=inch(16),
+        subtype='DISTANCE', precision=4)  # type: ignore
+    beam_position: EnumProperty(
+        name="Position",
+        items=[('DROPPED', "Dropped", "Hanging below the ceiling"),
+               ('FLUSH', "Flush", "Up in the ceiling framing, its bottom at the ceiling")],
+        default='DROPPED')  # type: ignore
+    beam_end_posts: BoolProperty(
+        name="Posts at Ends", default=True,
+        description="A post under each end of a beam that doesn't land on a wall")  # type: ignore
+    post_size: EnumProperty(
+        name="Post",
+        items=[('4X4', "4x4", ""), ('4X6', "4x6", ""), ('6X6', "6x6", ""),
+               ('8X8', "8x8", "")],
+        default='6X6')  # type: ignore
+
+    # Interior trim (see hb_trim): the defaults by kind of room
+    trim_by_room: BoolProperty(
+        name="Interior Trim",
+        description="Baseboard, chair rail and crown round the rooms",
+        default=False, update=lambda self, context: _trim_changed(self, context))  # type: ignore
+    trim_base: BoolProperty(name="Baseboard", default=True,
+                            update=lambda self, context: _trim_changed(self, context))  # type: ignore
+    trim_base_height: FloatProperty(
+        name="Base Height", default=inch(5.25), min=inch(2), max=inch(12), subtype='DISTANCE',
+        precision=4, update=lambda self, context: _trim_changed(self, context))  # type: ignore
+    trim_shoe: BoolProperty(name="Shoe", default=False,
+                            update=lambda self, context: _trim_changed(self, context))  # type: ignore
+    trim_chair_height: FloatProperty(
+        name="Chair Rail", description="In rooms (not baths, laundry or garages); 0 for none",
+        default=0.0, min=0.0, max=inch(60), subtype='DISTANCE', precision=4,
+        update=lambda self, context: _trim_changed(self, context))  # type: ignore
+    trim_crown: BoolProperty(
+        name="Crown", description="In rooms with flat ceilings (not baths, laundry or garages)",
+        default=True, update=lambda self, context: _trim_changed(self, context))  # type: ignore
+    trim_color: FloatVectorProperty(
+        name="Trim Color", subtype='COLOR', size=3, min=0.0, max=1.0, default=(0.95, 0.95, 0.93),
+        update=lambda self, context: _trim_changed(self, context))  # type: ignore
+
+    # Wall coverings by room (see hb_wall_finish): the defaults by kind
+    walls_by_room: BoolProperty(
+        name="Wall Finishes",
+        description=("Paint and tile the walls and ceilings room by room. Off, the walls "
+                     "keep the scene's one wall material"),
+        default=False, update=lambda self, context: _walls_changed(self, context))  # type: ignore
+    walls_room_color: FloatVectorProperty(
+        name="Rooms", subtype='COLOR', size=3, min=0.0, max=1.0, default=(0.93, 0.92, 0.88),
+        update=lambda self, context: _walls_changed(self, context))  # type: ignore
+    walls_wet_color: FloatVectorProperty(
+        name="Baths & Laundry", subtype='COLOR', size=3, min=0.0, max=1.0, default=(0.90, 0.93, 0.94),
+        update=lambda self, context: _walls_changed(self, context))  # type: ignore
+    walls_wet_band: EnumProperty(
+        name="Bath Band", items=WALL_BAND_ITEMS, default='TILE',
+        update=lambda self, context: _walls_changed(self, context))  # type: ignore
+    walls_band_height: FloatProperty(
+        name="Band Height", default=inch(48), min=0.0, max=inch(120), subtype='DISTANCE',
+        precision=4, update=lambda self, context: _walls_changed(self, context))  # type: ignore
+    walls_band_color: FloatVectorProperty(
+        name="Band Color", subtype='COLOR', size=3, min=0.0, max=1.0, default=(0.96, 0.96, 0.95),
+        update=lambda self, context: _walls_changed(self, context))  # type: ignore
+    walls_garage_color: FloatVectorProperty(
+        name="Garages", subtype='COLOR', size=3, min=0.0, max=1.0, default=(0.84, 0.84, 0.82),
+        update=lambda self, context: _walls_changed(self, context))  # type: ignore
+    ceiling_color: FloatVectorProperty(
+        name="Ceilings", subtype='COLOR', size=3, min=0.0, max=1.0, default=(0.96, 0.96, 0.95),
+        update=lambda self, context: _walls_changed(self, context))  # type: ignore
+
+    # Light fixtures (see hb_lighting): all of them at once
+    fixture_lights: BoolProperty(
+        name="Lights in Renders", description="The light fixtures' lights light renders",
+        default=True, update=lambda self, context: _fixtures_changed(self, context))  # type: ignore
+    fixture_dimmer: FloatProperty(
+        name="Dimmer", description="Every fixture's lights, brighter or dimmer",
+        default=1.0, min=0.0, max=4.0, update=lambda self, context: _fixtures_changed(self, context))  # type: ignore
+    show_light_objects: BoolProperty(
+        name="Show Light Objects",
+        description="Draw Blender's light objects in the viewport (its Extras overlay, "
+                    "which also draws cameras and empties)",
+        get=_get_light_objects, set=_set_light_objects)  # type: ignore
+
+    # The stair tool: the next stair drawn (hb_stairs)
+    stair_type: EnumProperty(name="Type", items=[
+        ('STRAIGHT', "Straight", "One straight flight"),
+        ('L_SHAPE', "L-Shaped", "Two flights at a right angle, a landing at the turn"),
+        ('U_SHAPE', "U-Shaped", "Two flights side by side, a landing across both"),
+        ('CURVED', "Curved", "Treads round a curve, as deep as the tread depth along the middle"),
+        ('SPIRAL', "Spiral", "Pie-shaped treads round a centre pole")],
+        default='STRAIGHT')  # type: ignore
+    stair_winders: BoolProperty(name="Winders", default=False,
+                                description="Winder treads round the turn instead of a landing")  # type: ignore
+    stair_radius: FloatProperty(name="Inside Radius", default=inch(48), min=inch(12), max=inch(240),
+                                subtype='DISTANCE', precision=4)  # type: ignore
+    stair_diameter: FloatProperty(name="Diameter", default=inch(60), min=inch(48), max=inch(108),
+                                  subtype='DISTANCE', precision=4)  # type: ignore
+    stair_turn: EnumProperty(name="Turn", items=[
+        ('LEFT', "Left", "The second flight turns left"),
+        ('RIGHT', "Right", "The second flight turns right")], default='LEFT')  # type: ignore
+    stair_from: EnumProperty(name="Draw From", items=[
+        ('BOTTOM', "Bottom", "Click where the stair starts, on this level, and drag the way it climbs"),
+        ('TOP', "Top", "Click where the stair arrives, on this level, and drag the way it goes down")],
+        default='BOTTOM')  # type: ignore
+    stair_width: FloatProperty(name="Width", default=inch(36), min=inch(24), max=inch(96),
+                               subtype='DISTANCE', precision=4)  # type: ignore
+    stair_max_riser: FloatProperty(
+        name="Max Riser", description="The tallest a riser may be: a stair takes as few as climb its rise",
+        default=inch(7.75), min=inch(4), max=inch(9), subtype='DISTANCE', precision=4)  # type: ignore
+    stair_tread: FloatProperty(name="Tread Depth", default=inch(10.5), min=inch(8), max=inch(16),
+                               subtype='DISTANCE', precision=4)  # type: ignore
+    stair_risers: EnumProperty(name="Risers", items=[
+        ('CLOSED', "Closed", "A riser under every tread"),
+        ('OPEN', "Open", "No risers: open between the treads")], default='CLOSED')  # type: ignore
+    stair_stringer: EnumProperty(name="Stringers", items=[
+        ('CLOSED', "Closed", "Boards each side, the treads housed between them"),
+        ('OPEN', "Open", "Cut stringers under the treads, their ends showing"),
+        ('CENTER', "Center", "One stringer down the middle")], default='CLOSED')  # type: ignore
+    stair_railing: EnumProperty(name="Railings", items=[
+        ('AUTO', "Open Sides", "A railing on each side not along a wall"),
+        ('LEFT', "Left Side", "A railing on the left side going up only"),
+        ('RIGHT', "Right Side", "A railing on the right side going up only"),
+        ('NONE', "None", "No railings")], default='AUTO')  # type: ignore
+    stair_baluster: EnumProperty(name="Railing", items=[
+        ('SQUARE', "Square", "Square balusters"),
+        ('ROUND', "Round", "Turned (round) balusters"),
+        ('GLASS', "Glass", "Glass panels"),
+        ('SOLID', "Half Wall", "A half wall capped with a rail")], default='SQUARE')  # type: ignore
+
+    # The Furnish tool: what it places
+    furnish_item: EnumProperty(
+        name="Furnish", items=furnish_catalog.ENUM_ITEMS, default='TOILET',
+        update=lambda self, context: _furnish_changed(self, context))  # type: ignore
+
+    # Bay windows: what the next one placed is
+    bay_kind: EnumProperty(
+        name="Kind",
+        items=[('BAY', "Bay", "Angled sides and a front parallel to the wall"),
+               ('BOW', "Bow", "A curve of narrow sides"),
+               ('BOX', "Box", "Square sides")],
+        default='BAY')  # type: ignore
+    bay_width: FloatProperty(name="Width", default=inch(96), min=0.6, max=8.0,
+                             subtype='DISTANCE', precision=4)  # type: ignore
+    bay_projection: FloatProperty(name="Projection", default=inch(24), min=inch(8), max=inch(72),
+                                  subtype='DISTANCE', precision=4)  # type: ignore
+    bay_side_angle: FloatProperty(name="Side Angle", default=45.0, min=20.0, max=80.0)  # type: ignore
+    bay_segments: IntProperty(name="Segments", default=5, min=3, max=9)  # type: ignore
+    bay_base: EnumProperty(
+        name="Base",
+        items=[('FLOOR', "Floor", "The bay comes down to the floor"),
+               ('SEAT', "Seat", "The bay stands out above the floor, a seat inside it")],
+        default='FLOOR')  # type: ignore
+    bay_seat_height: FloatProperty(name="Seat Height", default=inch(18), min=inch(10), max=inch(42),
+                                   subtype='DISTANCE', precision=4)  # type: ignore
+    bay_head_height: FloatProperty(name="Head Height", default=inch(80), min=inch(48), max=inch(120),
+                                   subtype='DISTANCE', precision=4)  # type: ignore
+    bay_roof: EnumProperty(
+        name="Roof",
+        items=[('HIP', "Hip", "Slopes on every side away from the wall"),
+               ('SHED', "Shed", "One slope down from the wall"),
+               ('NONE', "None", "No roof of its own")],
+        default='HIP')  # type: ignore
+    bay_roof_pitch: FloatProperty(name="Roof Pitch", default=6.0, min=1.0, max=18.0,
+                                  precision=2)  # type: ignore
+
+    # Fireplaces: what the next one placed is
+    fireplace_width: FloatProperty(
+        name="Opening Width", default=inch(36), min=inch(18), max=inch(96),
+        subtype='DISTANCE', precision=4)  # type: ignore
+    fireplace_height: FloatProperty(
+        name="Opening Height", default=inch(30), min=inch(16), max=inch(60),
+        subtype='DISTANCE', precision=4)  # type: ignore
+    fireplace_chimney: EnumProperty(name="Chimney", items=FIREPLACE_CHIMNEY_ITEMS,
+                                    default='OUTSIDE')  # type: ignore
+    fireplace_style: EnumProperty(name="Chimney Style", items=FIREPLACE_STYLE_ITEMS,
+                                  default='MASONRY')  # type: ignore
+    fireplace_mantel: EnumProperty(name="Mantel", items=FIREPLACE_MANTEL_ITEMS,
+                                   default='SHELF')  # type: ignore
+
+    # Skylights: what the next one placed is
+    skylight_width: FloatProperty(
+        name="Width", description="Across the slope",
+        default=inch(22.5), min=inch(12), max=inch(72), subtype='DISTANCE', precision=4)  # type: ignore
+    skylight_length: FloatProperty(
+        name="Length", description="Up the slope",
+        default=inch(46.5), min=inch(12), max=inch(96), subtype='DISTANCE', precision=4)  # type: ignore
+    skylight_curb: EnumProperty(name="Mounting", items=[('CURB', "Curb-mounted", "On a curb standing up off the roof"),
+               ('DECK', "Deck-mounted", "Low, on the roof deck itself")],
+                                default='CURB')  # type: ignore
+    skylight_shaft: EnumProperty(name="Light Shaft", items=[('AUTO', "Auto", "A light shaft down to a flat ceiling under it"),
+               ('NONE', "None", "No shaft: the ceiling isn't opened")],
+                                 default='AUTO')  # type: ignore
+
+    # Windows: the shutters and exterior trim the next one placed gets
+    window_shutters: EnumProperty(
+        name="Shutters", items=SHUTTER_STYLE_ITEMS, default='NONE')  # type: ignore
+    window_ext_trim: EnumProperty(
+        name="Exterior Trim", items=EXT_TRIM_ITEMS, default='CASING')  # type: ignore
 
     tools_stay_on: BoolProperty(
         name="Tools Stay On",
@@ -1642,6 +2594,19 @@ class HB_House_Props(PropertyGroup):
         default=True,
         update=lambda self, context: _labels_shown_changed(self))  # type: ignore
 
+    show_window_cages: BoolProperty(
+        name="Show Window Cages",
+        description="Draw the door and window cages solid. Off, they are wire, so the "
+                    "doors and windows inside them show",
+        get=_cages_get, set=_cages_set)  # type: ignore
+
+    show_annotations: BoolProperty(
+        name="Show Annotations",
+        description="Show dimensions, labels and other drawing marks in the house view. "
+                    "The drawings keep them either way",
+        default=True,
+        update=lambda self, context: _annotations_shown_changed(self))  # type: ignore
+
     show_ceilings: BoolProperty(
         name="Show Ceilings",
         description="Show the rooms' ceilings in the viewport. They render either way",
@@ -1681,6 +2646,18 @@ class HB_House_Props(PropertyGroup):
         update=lambda self, context: _framing_changed(self))  # type: ignore
     framing_roofs: BoolProperty(
         name="Roofs", default=True,
+        update=lambda self, context: _framing_changed(self))  # type: ignore
+    framing_corners: BoolProperty(
+        name="Corner Studs", default=True,
+        description="A stud at each inside corner where walls meet, for the drywall",
+        update=lambda self, context: _framing_changed(self))  # type: ignore
+    framing_blocking: BoolProperty(
+        name="Blocking", default=True,
+        description="Fire blocking in walls over 10' tall, bridging in long joist spans",
+        update=lambda self, context: _framing_changed(self))  # type: ignore
+    framing_collar_ties: BoolProperty(
+        name="Collar Ties", default=True,
+        description="Ties across every other rafter pair, a third of the way down from the ridge",
         update=lambda self, context: _framing_changed(self))  # type: ignore
 
     @classmethod
@@ -1722,6 +2699,7 @@ def add_level(scene, name=None):
         level['applied_floor_to_floor'] = level.floor_to_floor
     level['elevation'] = elevation
     level['applied_elevation'] = elevation
+    level['applied_ceiling_height'] = level.ceiling_height
     ensure_level_collections(scene, level)
     return level
 
@@ -1800,6 +2778,7 @@ def import_room_as_level(house_scene, source_scene):
     level['applied_floor_to_floor'] = level.floor_to_floor
     level['elevation'] = elevation
     level['applied_elevation'] = elevation
+    level['applied_ceiling_height'] = level.ceiling_height
     ensure_level_collections(house_scene, level)
     level = None
 
@@ -2114,7 +3093,11 @@ class HOME_BUILDER_OT_set_active_level(bpy.types.Operator):
 
 classes = (
     HB_WallSiding,
+    HB_WindowExterior,
+    HB_WallLayer,
+    HB_WallAssembly,
     HB_Room,
+    HB_Skylight,
     HB_RoofPiece,
     HB_Roof,
     HB_Level,
@@ -2134,16 +3117,21 @@ def register():
         bpy.utils.register_class(cls)
     HB_House_Props.register()
     bpy.types.Object.hb_siding = PointerProperty(type=HB_WallSiding)
+    bpy.types.Object.hb_window_ext = PointerProperty(type=HB_WindowExterior)
     _ghost_handle = bpy.types.SpaceView3D.draw_handler_add(
         _draw_level_ghost, (), 'WINDOW', 'POST_VIEW')
     if _on_depsgraph_update not in bpy.app.handlers.depsgraph_update_post:
         bpy.app.handlers.depsgraph_update_post.append(_on_depsgraph_update)
+    if _remember_ceilings not in bpy.app.handlers.load_post:
+        bpy.app.handlers.load_post.append(_remember_ceilings)
 
 
 def unregister():
     global _ghost_handle
     if _on_depsgraph_update in bpy.app.handlers.depsgraph_update_post:
         bpy.app.handlers.depsgraph_update_post.remove(_on_depsgraph_update)
+    if _remember_ceilings in bpy.app.handlers.load_post:
+        bpy.app.handlers.load_post.remove(_remember_ceilings)
     if bpy.app.timers.is_registered(_adopt_timer):
         bpy.app.timers.unregister(_adopt_timer)
     if _ghost_handle is not None:
@@ -2152,5 +3140,7 @@ def unregister():
     HB_House_Props.unregister()
     if hasattr(bpy.types.Object, 'hb_siding'):
         del bpy.types.Object.hb_siding
+    if hasattr(bpy.types.Object, 'hb_window_ext'):
+        del bpy.types.Object.hb_window_ext
     for cls in reversed(classes):
         bpy.utils.unregister_class(cls)

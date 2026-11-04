@@ -49,7 +49,9 @@ event through. NEVER a persistent modal operator -- Blender skips
 autosave for as long as one is running.
 """
 
+import os
 import sys
+import time
 import bpy
 import gpu
 from gpu_extras.batch import batch_for_shader
@@ -58,10 +60,12 @@ from ..hb_gpu_draw import (
     get_visible_window_bounds,
     draw_rect,
     draw_rects,
+    draw_round_rect,
     draw_text,
     point_in_rect,
 )
 from ..hb_gpu_ui import draw_polyline
+from ..hb_icons import draw_icon
 from ..hb_gpu_ui import (
     Theme,
     ScrollList,
@@ -72,6 +76,10 @@ from ..hb_gpu_ui import (
     fit_text,
     draw_centered_text,
     paint_button,
+    paint_group_bar,
+    paint_pill,
+    FRAME_RADIUS,
+    BUTTON_RADIUS,
     glyph_chevron,
 )
 
@@ -123,6 +131,9 @@ _list = ScrollList(bar_width=4, bar_pad=4, min_rows=2, show_bar=False)
 
 _textures = {}           # (library, product key) -> GPUTexture or None
 _wanted = []             # names the draw pass asked for, most recent first
+# A saved group's picture is next to its .blend, not in the catalog's
+# folder, so the draw pass hands its path over with the request.
+_thumb_files = {}        # cache key -> png path (or None)
 _timer_running = False
 
 
@@ -136,7 +147,9 @@ _timer_running = False
 # thumbnail_path, place(), PROPS_GROUP, and the optional AUTO_JOIN /
 # SIZES_FORM / OPTION_FORMS
 # header controls. Products are dicts carrying at least 'key', 'label'
-# and 'section'.
+# and 'section'. A library that can save and place cabinet groups also
+# names USER_GROUPS and user_groups(), and gets the User section (see
+# "Saved cabinet groups" below).
 _CATALOGS = {}
 
 # (tab, what the picker segment says, what the panel is called).
@@ -245,13 +258,114 @@ def auto_join_on(context):
     return bool(getattr(prop[0], prop[1], False)) if prop else False
 
 
+# ---- Saved cabinet groups --------------------------------------------------
+# A cabinet group saved to the user library is a .blend on disk, not a
+# catalog product, so the User section is this panel's rather than each
+# library's: a catalog opts in by naming the operator namespace its
+# group operators live under (USER_GROUPS) and a user_groups() that
+# lists what is saved. Creating, saving and placing a group fire those
+# operators -- the ones the sidebar's User box fires.
+
+USER_SECTION = 'user'
+USER_CATEGORY = 'USER'
+USER_LABEL = "User"
+# The folder is read at most this often. Layout runs on every redraw,
+# and a listdir per frame is a cost paid for nothing; a group saved a
+# moment ago still shows within a couple of seconds.
+USER_SCAN_SECONDS = 2.0
+USER_EMPTY_NOTE = "Select cabinets, Create Group, then Save"
+
+_user_cache = {}         # library tab -> (scanned at, [products])
+
+
+def _user_ns(cat):
+    return getattr(cat, 'USER_GROUPS', None) if cat else None
+
+
+def _user_actions(ns):
+    """The User header's buttons: (label, operator, tip, tip when the
+    operator cannot run)."""
+    return (
+        ("Create Group", '%s.create_cabinet_group' % ns,
+         "Group the selected cabinets", "Group the selected cabinets"),
+        ("Save", '%s.save_cabinet_group_to_user_library' % ns,
+         "Save the selected group to the library",
+         "Select a cabinet group to save it"),
+    )
+
+
+def user_products(context=None):
+    """The saved cabinet groups as products of the User section."""
+    cat = active_catalog(context)
+    if not _user_ns(cat):
+        return []
+    tab = active_tab(context)
+    now = time.monotonic()
+    cached = _user_cache.get(tab)
+    if cached is not None and now - cached[0] < USER_SCAN_SECONDS:
+        return cached[1]
+    try:
+        items = cat.user_groups()
+    except Exception:
+        items = []
+    out = []
+    for item in items:
+        path = item['filepath']
+        thumb = item.get('thumbnail')
+        # The file's age is part of the key, so a group saved over an
+        # older one of the same name shows its new picture.
+        try:
+            stamp = int(os.path.getmtime(thumb or path))
+        except OSError:
+            stamp = 0
+        folder = os.path.basename(os.path.dirname(path))
+        out.append({
+            'key': 'USER:%s:%d' % (path, stamp),
+            'label': item['name'],
+            'title': item['name'],
+            'section': USER_SECTION,
+            'filepath': path,
+            'thumbnail': thumb,
+            'search': ' '.join((item['name'], folder, USER_LABEL,
+                                'saved group')).lower(),
+        })
+    _user_cache[tab] = (now, out)
+    return out
+
+
+def forget_user_groups():
+    """Read the folder again on the next layout."""
+    _user_cache.clear()
+
+
+def _section_by_key(cat, key):
+    if key == USER_SECTION and _user_ns(cat):
+        return {'key': USER_SECTION, 'label': USER_LABEL}
+    return cat.section_by_key(key)
+
+
+def category_items(cat):
+    """The category menu: the catalog's own, then User where it has one."""
+    items = list(cat.category_items()) if cat else []
+    if _user_ns(cat):
+        items.append((USER_CATEGORY, USER_LABEL, "Only saved cabinet groups"))
+    return items
+
+
 def visible_products():
     """Products passing the category + search filters. Empty when the
     scene's library has no catalog registered."""
     cat = active_catalog()
     if cat is None:
         return []
-    return cat.search_products(current_query(), current_category())
+    query, category = current_query(), current_category()
+    items = ([] if category == USER_CATEGORY
+             else list(cat.search_products(query, category)))
+    if category in ('ALL', USER_CATEGORY):
+        terms = query.lower().split()
+        items.extend(p for p in user_products()
+                     if all(term in p['search'] for term in terms))
+    return items
 
 
 def category_label():
@@ -259,7 +373,7 @@ def category_label():
     if cat is None:
         return "All Categories"
     key = current_category()
-    for ident, label, _desc in cat.category_items():
+    for ident, label, _desc in category_items(cat):
         if ident == key:
             return label
     return "All Categories"
@@ -286,7 +400,10 @@ def _load_one(cache_key):
     cat = _CATALOGS.get(tab)
     if cat is None:
         return None
-    path = cat.thumbnail_path(product_key)
+    if cache_key in _thumb_files:
+        path = _thumb_files[cache_key]
+    else:
+        path = cat.thumbnail_path(product_key)
     if not path:
         return None
     img = None
@@ -344,7 +461,9 @@ def _ensure_timer():
 def _drop_textures():
     _textures.clear()
     _wanted.clear()
+    _thumb_files.clear()
     _labels.clear()
+    forget_user_groups()
 
 
 # ---- Layout ----------------------------------------------------------------
@@ -387,25 +506,39 @@ def compute_layout(context, rect):
     # instead of one undifferentiated wall of tiles. Collapsing folds a
     # section to its header; searching leaves the headers in place so it
     # stays obvious WHERE the matches came from.
-    blocks = []          # ('header', section) | ('row', [products])
+    # ('header', section) | ('row', [products]) | ('note', text)
+    blocks = []
     order = [sec['key'] for sec in cat.SECTIONS] if cat else []
+    user_ns = _user_ns(cat)
+    if user_ns:
+        order.append(USER_SECTION)
     by_section = {}
     for product in items:
         by_section.setdefault(product['section'], []).append(product)
     for key in order:
         group = by_section.get(key)
-        if not group:
+        # The User header carries Create Group and Save, so it stays up
+        # with nothing saved yet -- that is exactly when it is needed. A
+        # search or another category still hides it like any other.
+        keep = (key == USER_SECTION and not current_query()
+                and current_category() in ('ALL', USER_CATEGORY))
+        if not group and not keep:
             continue
-        section = cat.section_by_key(key)
+        section = _section_by_key(cat, key)
+        actions = _user_actions(user_ns) if key == USER_SECTION else ()
         blocks.append(('header', (key, section['label'],
-                                  _section_toggle(context, section))))
+                                  _section_toggle(context, section),
+                                  actions)))
         if key in _collapsed:
+            continue
+        if not group:
+            blocks.append(('note', USER_EMPTY_NOTE))
             continue
         for i in range(0, len(group), COLS):
             blocks.append(('row', group[i:i + COLS]))
 
     def _block_h(block):
-        return sect_h if block[0] == 'header' else cell_h
+        return cell_h if block[0] == 'row' else sect_h
 
     content_h = sum(_block_h(b) for b in blocks)
 
@@ -450,12 +583,19 @@ def compute_layout(context, rect):
                                    content_h, cell_h)
 
     tiles = []
-    headers = []         # (key, label, rect, toggle_rect, toggle)
+    # (key, label, rect, toggle_rect, toggle,
+    #  [(label, operator, tip, off_tip, rect)])
+    headers = []
+    notes = []           # (text, rect)
     for block, block_top, _block_bottom in _list.visible(
             blocks, list_top, list_bottom, _block_h):
         kind, payload = block
+        if kind == 'note':
+            notes.append((payload, (content_x, block_top - sect_h,
+                                    content_w, sect_h)))
+            continue
         if kind == 'header':
-            key, label, toggle = payload
+            key, label, toggle, actions = payload
             hdr = (content_x, block_top - sect_h, content_w, sect_h)
             # The switch sits right-aligned on the header row, a pill
             # like Auto Join: a state you want to see, not hunt for.
@@ -464,7 +604,18 @@ def compute_layout(context, rect):
                 tw = text_width(0, FONT_LABEL * s, toggle[0]) + 12 * s
                 tog_rect = (content_x + content_w - 6 * s - tw,
                             hdr[1] + 2 * s, tw, sect_h - 4 * s)
-            headers.append((key, label, hdr, tog_rect, toggle))
+            # Buttons line up from the right edge the same way, last
+            # first, so the row reads left to right in workflow order.
+            action_rects = []
+            right = content_x + content_w - 6 * s
+            for a_label, op, tip, off_tip in reversed(actions):
+                aw = text_width(0, FONT_LABEL * s, a_label) + 12 * s
+                right -= aw
+                action_rects.insert(0, (a_label, op, tip, off_tip,
+                                        (right, hdr[1] + 2 * s,
+                                         aw, sect_h - 4 * s)))
+                right -= 4 * s
+            headers.append((key, label, hdr, tog_rect, toggle, action_rects))
             continue
         for col, product in enumerate(payload):
             tx = content_x + col * (tile + gap)
@@ -475,7 +626,7 @@ def compute_layout(context, rect):
     return (panel_rect, header_rect,
             (cat_rect, search_rect, autojoin_rect, sizes_rect, lib_rects),
             clip_rect,
-            tiles, track, thumb, len(items), headers)
+            tiles, track, thumb, len(items), headers, notes)
 
 def _hit_section_toggle(mx, my, layout):
     """(section key, toggle) for the header switch under the cursor, or
@@ -485,9 +636,23 @@ def _hit_section_toggle(mx, my, layout):
         return None
     if not point_in_rect(mx, my, layout[3]):
         return None
-    for key, _label, _rect, tog_rect, toggle in layout[8]:
+    for key, _label, _rect, tog_rect, toggle, _actions in layout[8]:
         if tog_rect is not None and point_in_rect(mx, my, tog_rect):
             return key, toggle
+    return None
+
+
+def _hit_section_action(mx, my, layout):
+    """(label, operator, tip, off_tip, rect) for the header button under
+    the cursor, or None. Like the switch, asked before the header."""
+    if layout is None:
+        return None
+    if not point_in_rect(mx, my, layout[3]):
+        return None
+    for header in layout[8]:
+        for action in header[5]:
+            if point_in_rect(mx, my, action[4]):
+                return action
     return None
 
 
@@ -499,10 +664,42 @@ def _hit_section(mx, my, layout):
         return None
     if _hit_section_toggle(mx, my, layout) is not None:
         return None
-    for key, _label, rect, _tog_rect, _toggle in layout[8]:
+    if _hit_section_action(mx, my, layout) is not None:
+        return None
+    for key, _label, rect, _tog_rect, _toggle, _actions in layout[8]:
         if point_in_rect(mx, my, rect):
             return key
     return None
+
+
+def _operator(idname):
+    """The bpy.ops callable for 'module.name', or None."""
+    mod, _sep, name = idname.partition('.')
+    try:
+        return getattr(getattr(bpy.ops, mod), name)
+    except AttributeError:
+        return None
+
+
+def _can_run(idname):
+    op = _operator(idname)
+    try:
+        return bool(op and op.poll())
+    except Exception:
+        return False
+
+
+def _run(idname, **props):
+    """Invoke an operator the way a sidebar button would. True if it ran."""
+    op = _operator(idname)
+    if op is None or not _can_run(idname):
+        return False
+    try:
+        op('INVOKE_DEFAULT', **props)
+    except Exception as ex:
+        print('Home Builder: %s failed: %s' % (idname, ex))
+        return False
+    return True
 
 
 def _hit_tile(mx, my, layout):
@@ -658,6 +855,15 @@ def hit(context, mx, my, entries):
         setattr(props, name, not getattr(props, name))
         tag_redraw()
         return True
+    action = _hit_section_action(mx, my, layout)
+    if action is not None:
+        # A button whose operator cannot run is still ours: the footer
+        # already says why, and the click must not fall through to the
+        # viewport and deselect what was about to be grouped.
+        _run(action[1])
+        forget_user_groups()
+        tag_redraw()
+        return True
     key = _hit_section(mx, my, layout)
     if key is not None:
         if key in _collapsed:
@@ -679,7 +885,10 @@ def hit(context, mx, my, entries):
     if product is not None:
         # The panel stays up: picking from it does not dismiss it, so a
         # second cabinet is one click away rather than a reopen.
-        if cat is not None:
+        if product.get('filepath'):
+            _run('%s.load_cabinet_group_from_library' % _user_ns(cat),
+                 filepath=product['filepath'])
+        elif cat is not None:
             cat.place(context, product)
         return True
     return False
@@ -733,12 +942,13 @@ def _paint_grid(layout, mx, my):
     (panel_rect, header_rect,
      (cat_rect, search_rect, autojoin_rect, sizes_rect, lib_rects),
      clip_rect,
-     tiles, track, thumb, _total, headers) = layout
+     tiles, track, thumb, _total, headers, notes) = layout
 
     # Hover comes from the cursor the shell hands us, so this module
     # needs no listener of its own.
     _p = _hit_tile(mx, my, layout)
     hover = _p['key'] if _p else None
+    hover_action = _hit_section_action(mx, my, layout)
     _b = _hit_badge(mx, my, layout)
     hover_badge = _b['key'] if _b else None
     hover_ui = _hit_filter(mx, my, layout)
@@ -763,10 +973,14 @@ def _paint_grid(layout, mx, my):
     # A library switch is one click, and the picker says which one you
     # are looking at even when you are not switching.
     current = active_tab(context)
+    # One bar for the switch: it is one choice of three, not three
+    # buttons, and the one in use is the lit pill inside it.
+    paint_group_bar(shader, [r for _i, _l, r in lib_rects], pad=1.0,
+                    shadow=False, border=Theme.PANEL_BORDER)
     for ident, label, rect in lib_rects:
         on = ident == current
-        paint_button(shader, rect, hovered=hover_ui == 'LIB:%s' % ident,
-                     active=on)
+        paint_pill(shader, rect, hovered=hover_ui == 'LIB:%s' % ident,
+                   active=on)
         draw_centered_text(font_id, rect, FONT_LABEL * s,
                            Theme.TEXT_PRIMARY if on else Theme.TEXT_DIM,
                            fit_text(font_id, FONT_LABEL * s, label,
@@ -817,10 +1031,11 @@ def _paint_grid(layout, mx, my):
     try:
         # Section headers: a chevron and the name. Clicking one folds
         # the section away.
-        for key, label, rect, tog_rect, toggle in headers:
+        for key, label, rect, tog_rect, toggle, actions in headers:
             hx, hy, hw, hh = rect
             if key == hover_section:
-                draw_rects(shader, [rect], Theme.ROW_HOVER_BG)
+                draw_round_rect(shader, hx, hy + 1 * s, hw, hh - 1 * s,
+                                BUTTON_RADIUS * s, Theme.ROW_HOVER_BG)
             collapsed = key in _collapsed
             glyph_chevron(shader, hx + 6 * s, hy + hh / 2.0, 7 * s,
                           collapsed, Theme.GLYPH)
@@ -835,6 +1050,24 @@ def _paint_grid(layout, mx, my):
                 draw_centered_text(
                     font_id, tog_rect, FONT_LABEL * s,
                     Theme.TEXT_PRIMARY if on else Theme.TEXT_DIM, toggle[0])
+            # A button that cannot run now (Save, with no group
+            # selected) is drawn dim rather than hidden, so it is
+            # still there to find.
+            for a_label, op, _tip, _off_tip, a_rect in actions:
+                ready = _can_run(op)
+                hovered = (hover_action is not None
+                           and hover_action[1] == op)
+                paint_button(shader, a_rect, hovered=hovered and ready)
+                draw_centered_text(
+                    font_id, a_rect, FONT_LABEL * s,
+                    Theme.TEXT_PRIMARY if ready and hovered
+                    else Theme.TEXT_NORMAL if ready else Theme.TEXT_DIM,
+                    a_label)
+
+        for text, rect in notes:
+            draw_centered_text(font_id, rect, FONT_LABEL * s, Theme.TEXT_DIM,
+                               fit_text(font_id, FONT_LABEL * s, text,
+                                        rect[2] - 8 * s))
 
         # Only the hovered tile gets a chip behind it. A fill under
         # every thumbnail tiled the panel with light grey boxes, and the
@@ -844,13 +1077,14 @@ def _paint_grid(layout, mx, my):
         # chip becomes what it should have been, the hover state.
         # Still one batch rather than one draw per tile (see draw_rects),
         # which matters at 48 products and would matter more at 500.
-        lit = [r for p, r, _i in tiles if p['key'] == hover]
-        if lit:
-            draw_rects(shader, lit, Theme.BTN_HOVER_BG)
+        for r in (r for p, r, _i in tiles if p['key'] == hover):
+            draw_round_rect(shader, *r, FRAME_RADIUS * s, Theme.BTN_HOVER_BG)
         for product, _tile_rect, img_rect in tiles:
             ck = _cache_key(product)
             tex = _textures.get(ck)
             if tex is None:
+                if product.get('filepath'):
+                    _thumb_files[ck] = product.get('thumbnail')
                 _want(ck)
                 continue
             gpu.state.blend_set('ALPHA')
@@ -865,10 +1099,10 @@ def _paint_grid(layout, mx, my):
             on_mark = product['key'] == hover_badge
             rect = _badge_rect(img_rect, s)
             paint_button(shader, rect, hovered=on_mark)
-            _glyph_path(shader, rect, s,
-                        Theme.GLYPH_HOVER if on_mark else (
-                            Theme.GLYPH if product['key'] == hover
-                            else Theme.TEXT_DIM))
+            color = (Theme.GLYPH_HOVER if on_mark else (
+                Theme.GLYPH if product['key'] == hover else Theme.TEXT_DIM))
+            if not draw_icon('path', rect, color):
+                _glyph_path(shader, rect, s, color)
         for product, tile_rect, _img in tiles:
             lx, ly, lw, _lh = tile_rect
             label = _label_for(product, font_id, FONT_LABEL * s, lw - 2 * s)
@@ -881,13 +1115,19 @@ def _paint_grid(layout, mx, my):
         end_clip(prev)
 
     # Footer: the hovered product's full name, which the tile label
-    # usually had to truncate.
+    # usually had to truncate -- or what the hovered header button does.
+    footer = None
     if hover is not None:
+        name = _p.get('title') or hover
+        footer = ('Draw %s through points' % name
+                  if hover_badge == hover else name)
+    elif hover_action is not None:
+        footer = (hover_action[2] if _can_run(hover_action[1])
+                  else hover_action[3])
+    if footer is not None:
         px, py, pw, _ph = panel_rect
         frect = (px + PAD_X * s, py + PAD_Y * s, pw - PAD_X * s * 2,
                  FOOTER_H * s)
-        footer = ('Draw %s through points' % hover
-                  if hover_badge == hover else hover)
         shader.bind()
         draw_centered_text(font_id, frect, FONT_LABEL * s, Theme.TEXT_DIM,
                            fit_text(font_id, FONT_LABEL * s, footer,
@@ -942,7 +1182,7 @@ class HB_MT_library_category(bpy.types.Menu):
         layout = self.layout
         current = current_category()
         cat = active_catalog(context)
-        for ident, label, _desc in (cat.category_items() if cat else ()):
+        for ident, label, _desc in category_items(cat):
             row = layout.row()
             op = row.operator('home_builder.library_set_category',
                               text=label,
