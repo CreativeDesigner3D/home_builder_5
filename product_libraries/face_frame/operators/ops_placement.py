@@ -3094,7 +3094,7 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
                 self._preview_cage.set_input('Dim Y', self._cabinet_depth)
 
         # Sink + cursor on a Range -> island layout (sink facing the
-        # range across a 48" aisle). Checked before wall detection: a
+        # range across the island aisle). Checked before wall detection: a
         # direct raycast hit on the range is a stronger signal than the
         # nearest-wall floor-projection fallback, which would otherwise
         # grab the wall the range sits against.
@@ -3118,7 +3118,7 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
         # Standard-cabinet facing-bay (island-style). Once the user has
         # rotated the cage with R (_free_rotation_z != 0), a hit on the
         # FRONT face of an existing face-frame cabinet places this cabinet
-        # across a 48" aisle facing that bay - the same snap the Sink gets
+        # across the island aisle facing that bay - the same snap the Sink gets
         # for free, now opt-in for any cabinet. Gated on rotation so it
         # never changes default placement; checked BEFORE wall detection
         # for the same reason as the Sink block (a front-face hit would
@@ -3925,7 +3925,7 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
             cage_obj.parent = None
             cage_obj.matrix_world = world
 
-        gap = units.inch(48.0)
+        gap = context.scene.hb_face_frame.island_aisle_width
         sink_w = self._cabinet_width
         sink_d = self._cabinet_depth
 
@@ -3954,7 +3954,7 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
             context.area.tag_redraw()
 
     def _position_facing_range(self, context, range_obj):
-        """Place the sink facing a Range across a 48" aisle, centered on
+        """Place the sink facing a Range across the island aisle, centered on
         the range's width. range_obj is the Range appliance under the
         cursor.
         """
@@ -3970,7 +3970,7 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
             range_obj.matrix_world.translation.z)
 
     def _position_facing_bay(self, context, cab_obj, bay_obj):
-        """Place the cage facing a face frame cabinet across a 48"
+        """Place the cage facing a face frame cabinet across the island
         aisle, centered on bay_obj. bay_obj is the bay cage under the
         cursor, or None to center on the cabinet as a whole. Used by the
         Sink (automatic) and by any cabinet once rotated with R (opt-in,

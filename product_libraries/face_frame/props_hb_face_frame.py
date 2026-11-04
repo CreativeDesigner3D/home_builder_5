@@ -12653,6 +12653,18 @@ class Face_Frame_Scene_Props(PropertyGroup):
         precision=4,
     )  # type: ignore
 
+    island_aisle_width: FloatProperty(
+        name="Island Aisle Width",
+        description=(
+            "Clear space between an island cabinet and the range or "
+            "cabinet front it faces when it is placed facing one"
+        ),
+        default=units.inch(48.0),
+        min=0.0,
+        unit='LENGTH',
+        precision=4,
+    )  # type: ignore
+
     # ---- Cabinet sizes ----
     default_top_cabinet_clearance: FloatProperty(
         name="Default Top Cabinet Clearance",
@@ -13125,6 +13137,11 @@ class Face_Frame_Scene_Props(PropertyGroup):
         row = layout.row()
         row.label(text="Hold Off From Ends & Windows:")
         row.prop(self, 'cabinet_placement_holdoff', text="")
+        row.label(text="", icon='BLANK1')
+
+        row = layout.row()
+        row.label(text="Island Aisle Width:")
+        row.prop(self, 'island_aisle_width', text="")
         row.label(text="", icon='BLANK1')
 
         row = layout.row()
