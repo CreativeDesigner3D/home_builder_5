@@ -9189,10 +9189,60 @@ def recalculate_closet_starter(obj):
     clear_hamper_shelves(root)
     _wrap_starter(root).recalculate()
     hide_removed_parts(root)
+    paint_new_parts(root)
     mark_parts(root)
     stamp_part_menus(root)
     stamp_panel_limits(root)
     stamp_bay_width_limits(root)
+
+
+def _is_cut_part(obj):
+    if obj.type != 'MESH':
+        return False
+    hb = getattr(obj, 'home_builder', None)
+    mod = obj.modifiers.get(hb.mod_name) if hb and hb.mod_name else None
+    return (mod is not None and mod.type == 'NODES'
+            and mod.node_group is not None
+            and 'GeoNodeCutpart' in mod.node_group.name)
+
+
+# Parts apply_to_starter leaves as they are - never "missing" a finish.
+_UNPAINTED_ROLES = (PART_ROLE_ACCESSORY_BLOCK, PART_ROLE_ACCESSORY_MODEL)
+
+
+def paint_new_parts(root):
+    """Give a finished unit's new parts its finish.
+
+    A recalc builds parts a prompt asked for (a bridge or accent shelf, a
+    double partition, a bottom cleat, a backsplash, more L shelves) with
+    no material, and only the add operators repaint afterwards - a part
+    added from the starter or bay prompts stayed bare and dropped off
+    the cut list. Once the unit has been painted, any bare part sends
+    the whole unit through apply_to_starter, the same finish the add
+    operators apply. A unit not painted yet is left alone."""
+    bare = painted = False
+    for c in root.children_recursive:
+        if (c.get('hb_preview') or c.get('hb_drawer_box_type')
+                or c.get('hb_part_role') in _UNPAINTED_ROLES
+                or not _is_cut_part(c)):
+            continue
+        try:
+            has = GeoNodeCutpart(c).get_input('Top Surface') is not None
+        except Exception:
+            continue
+        if has:
+            painted = True
+        else:
+            bare = True
+        if bare and painted:
+            break
+    if not (bare and painted):
+        return
+    try:
+        from . import materials_closets
+        materials_closets.apply_to_starter(root)
+    except Exception:
+        pass
 
 
 # Largest partition the stock allows. Depth: a wall-hung panel has only
