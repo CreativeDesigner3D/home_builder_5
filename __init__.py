@@ -248,6 +248,20 @@ class Home_Builder_AddonPreferences(bpy.types.AddonPreferences):
         update=_update_use_viewport_hud,
     ) # type: ignore
 
+    mode_bar_position: bpy.props.EnumProperty(
+        name="Selection Modes",
+        description="Where the row of selection modes (Cabinets, Bays, "
+                    "Openings...) sits in the viewport. At the bottom it "
+                    "keeps clear of the top row on a narrow window; hidden "
+                    "leaves the view clear for a presentation",
+        items=[('TOP', "Top", "Along the top of the viewport"),
+               ('BOTTOM', "Bottom", "Along the bottom of the viewport"),
+               ('HIDDEN', "Hidden", "Not shown; the selection mode "
+                                    "shortcuts still work")],
+        default='TOP',
+        update=_update_use_viewport_hud,
+    ) # type: ignore
+
     palette_expanded: bpy.props.BoolProperty(
         name="Expanded Tool Bar",
         description="Name every tool, head each group with a caption, and "
@@ -424,6 +438,7 @@ class Home_Builder_AddonPreferences(bpy.types.AddonPreferences):
         sub = col.column(align=True)
         sub.enabled = self.use_viewport_hud
         sub.prop(self, "show_mode_names")
+        sub.prop(self, "mode_bar_position")
         col.prop(self, "use_room_palette")
         sub = col.column(align=True)
         sub.enabled = self.use_room_palette

@@ -119,6 +119,12 @@ def _mode_names():
     return bool(getattr(p, "show_mode_names", True)) if p else True
 
 
+def _mode_bar_position():
+    """'TOP', 'BOTTOM' or 'HIDDEN': where the selection-mode row goes."""
+    p = _get_prefs()
+    return getattr(p, "mode_bar_position", 'TOP') if p else 'TOP'
+
+
 def _hud_enabled():
     if _suspended:
         return False
@@ -1888,7 +1894,16 @@ def compute_layout(context, area):
             _note_group(rects, caption)
 
     cursor_y = top_y
-    for row in rows:
+    # The selection modes (the first row) can sit along the bottom, out
+    # of the way of the tabs and the view strip on a narrow window, or be
+    # left out for a presentation. The sheet row below them moves up into
+    # the top spot either way, as it does on a layout view.
+    mode_bar = _mode_bar_position()
+    for ri, row in enumerate(rows):
+        at_bottom = ri == 0 and mode_bar == 'BOTTOM'
+        if ri == 0 and mode_bar == 'HIDDEN':
+            continue
+        row_y = y_min + margin_y if at_bottom else cursor_y
         groups = []
         for g in row:
             caption, widgets = _group_parts(g)
@@ -1908,12 +1923,13 @@ def compute_layout(context, area):
             for wi, w in enumerate(group):
                 if wi > 0:
                     cursor_x += btn_gap
-                rect = (cursor_x, cursor_y, w.width, btn_h)
+                rect = (cursor_x, row_y, w.width, btn_h)
                 placed.append((w, rect))
                 rects.append(rect)
                 cursor_x += w.width
             _note_group(rects, caption)
-        cursor_y -= btn_h + row_gap + caption_h
+        if not at_bottom:
+            cursor_y -= btn_h + row_gap + caption_h
     return placed
 
 
