@@ -436,7 +436,8 @@ def _apply_wood_to_front_panels(cab_style, context):
             base = _NAME_SUFFIX_RE.sub("", ds.name)
             if base in _auto_front_style_names(_front_is_drawer(ds)):
                 base = _auto_front_style_name(ds.front_series,
-                                              ds.front_shape, panel)
+                                              ds.front_shape, panel,
+                                              _front_is_drawer(ds))
             else:
                 base = "%s %s" % (ds.name, panel)
             twin = pool.add()
@@ -1058,7 +1059,7 @@ def ensure_default_styles(context):
     if len(ff.drawer_front_styles) == 0:
         ds = ff.drawer_front_styles.add()
         _apply_default_front_style(ds)
-        ds.name = _auto_front_style_name(*_DEFAULT_FRONT)
+        ds.name = _auto_front_style_name(*_DEFAULT_FRONT, drawer=True)
         ff.active_drawer_front_style_index = 0
 
 
@@ -1290,20 +1291,51 @@ _AUTO_FRONT_NAMES_CACHE = {}
 _NAME_SUFFIX_RE = re.compile(r"\.\d{3}$")
 
 
-def _auto_front_style_name(series, shape, panel):
+def _joined_front_style_name(series, shape, panel):
+    """The name a pick used to get: its three choices run together. Still
+    counted as an automatic name, so a style named that way follows its
+    pick onto the catalog name."""
     return " ".join(part for part in (series, shape, panel) if part)
+
+
+def _auto_front_style_name(series, shape, panel, drawer=False):
+    """The name a style takes from its catalog pick: the catalog's own
+    description for it (what the written orders call it), or the three
+    choices run together for a pick the catalog has no description for."""
+    return (style_options.door_description(series, shape, panel, drawer)
+            or _joined_front_style_name(series, shape, panel))
 
 
 def _auto_front_style_names(in_drawer):
     names = _AUTO_FRONT_NAMES_CACHE.get(bool(in_drawer))
     if names is None:
         table = _DRAWER_PANEL_ITEMS if in_drawer else _DOOR_PANEL_ITEMS
-        names = {_auto_front_style_name(series, shape, panel[0])
-                 for (series, shape), panels in table.items()
-                 for panel in panels}
+        names = set()
+        for (series, shape), panels in table.items():
+            for panel in panels:
+                names.add(_joined_front_style_name(series, shape, panel[0]))
+                names.add(_auto_front_style_name(series, shape, panel[0],
+                                                 in_drawer))
         names |= _LEGACY_AUTO_FRONT_NAMES
         _AUTO_FRONT_NAMES_CACHE[bool(in_drawer)] = names
     return names
+
+
+def upgrade_joined_front_style_name(ds):
+    """A style still carrying the old run-together name of its own pick
+    takes the catalog's name for it. The name update de-duplicates and
+    re-tags the fronts, and cabinet styles follow by index. Returns True
+    when the style was renamed."""
+    base = _NAME_SUFFIX_RE.sub("", ds.name or "")
+    if base != _joined_front_style_name(ds.front_series, ds.front_shape,
+                                        ds.front_panel):
+        return False
+    new = _auto_front_style_name(ds.front_series, ds.front_shape,
+                                 ds.front_panel, _front_is_drawer(ds))
+    if new == base:
+        return False
+    ds.name = new
+    return True
 
 
 def _refresh_auto_front_style_name(self):
@@ -1314,7 +1346,7 @@ def _refresh_auto_front_style_name(self):
     if base not in _auto_front_style_names(_front_is_drawer(self)):
         return
     new = _auto_front_style_name(self.front_series, self.front_shape,
-                                 self.front_panel)
+                                 self.front_panel, _front_is_drawer(self))
     if base == new:
         return
     # The name update callback de-duplicates within the pool and re-tags

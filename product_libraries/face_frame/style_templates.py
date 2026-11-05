@@ -336,6 +336,11 @@ def apply_template(context, data):
             if pg.name != sdata['name']:
                 pg.name = sdata['name']
                 pg.rename_anchor = pg.name
+        # A template saved while front styles were named by running the
+        # pick's three choices together hands those styles the catalog's
+        # name instead; a name typed in the template is left alone.
+        for ds in loaded_fronts:
+            props.upgrade_joined_front_style_name(ds)
         active = data.get('active_cabinet_style')
         for i, cs in enumerate(ff.cabinet_styles):
             if cs.name == active:

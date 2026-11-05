@@ -507,6 +507,16 @@ class hb_face_frame_OT_remove_drawer_front_style(_RemoveFrontStyle, Operator):
 # New from the catalog, and the matching drawer front
 # ---------------------------------------------------------------------------
 
+def _front_pick_name(kind, series, shape, panel):
+    """What a style made from this pick is called: the catalog's name for
+    it, as the pick's own renames use. A shape or panel left out names
+    the style by what was given."""
+    if not (series and shape and panel):
+        return " ".join(x for x in (series, shape, panel) if x)
+    from ..props_hb_face_frame import _auto_front_style_name
+    return _auto_front_style_name(series, shape, panel, kind == 'DRAWER')
+
+
 def new_front_style(context, kind, series, shape=None, panel=None):
     """Add a front style built from a catalog pick and make it the
     pick. Other settings (profiles, material) come from the style that
@@ -519,8 +529,7 @@ def new_front_style(context, kind, series, shape=None, panel=None):
     existing = [ds.name for ds in pool]
     style = pool.add()
     style.name = _next_unique_name(
-        " ".join(x for x in (series, shape, panel) if x) or "Style",
-        existing)
+        _front_pick_name(kind, series, shape, panel) or "Style", existing)
     if src is not None:
         _copy_door_style(src, style)
     # The cascade settles each level before the next is set.
