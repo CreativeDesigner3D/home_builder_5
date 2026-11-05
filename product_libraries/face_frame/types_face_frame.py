@@ -98,6 +98,10 @@ _DISTRIBUTING_WIDTHS = set()
 POST_RECALC_HOOKS = []
 _RECALC_SUSPEND_DEPTH = 0
 _PENDING_RECALC_NAMES = set()
+# Names of host cabinets whose applied panels are being reconciled right
+# now. Panel prop edits that route a recalc to the host skip it while the
+# host is in here (see recalc_applied_panel_host).
+_RECONCILING_PANEL_HOSTS = set()
 
 
 def _style_box_construction(obj):
@@ -10032,6 +10036,19 @@ class FaceFrameCabinet(GeoNodeCage):
     # Applied finished-end panels (parented panel roots covering a side)
     # =====================================================================
     def _reconcile_applied_panels(self, layout):
+        """Reconcile the applied panels with the host marked as busy, so
+        the panel prop writes made here don't call back into a nested
+        host recalc that would rebuild a panel while it is being built."""
+        name = self.obj.name
+        nested = name in _RECONCILING_PANEL_HOSTS
+        _RECONCILING_PANEL_HOSTS.add(name)
+        try:
+            self._reconcile_applied_panels_inner(layout)
+        finally:
+            if not nested:
+                _RECONCILING_PANEL_HOSTS.discard(name)
+
+    def _reconcile_applied_panels_inner(self, layout):
         """Sync applied panel children to the cabinet's three side
         finished-end conditions. For each side whose condition is in
         APPLIED_PANEL_END_TYPES, ensure a panel root exists, parented
@@ -22244,6 +22261,18 @@ def _reconcile_standalone_panel(root):
                 part['MENU_ID'] = 'HOME_BUILDER_MT_face_frame_part_commands'
     finally:
         _RECONCILING_STANDALONE.discard(id(root))
+
+
+def recalc_applied_panel_host(host):
+    """Recalc an applied panel's host cabinet after an edit on the panel.
+
+    Skipped while the host is reconciling its panels: the edit came from
+    that reconcile, which applies the result itself, and a nested host
+    recalc would rebuild the panel out from under it (a new cabinet with
+    applied ends failed to create that way)."""
+    if host is None or host.name in _RECONCILING_PANEL_HOSTS:
+        return
+    recalculate_face_frame_cabinet(host)
 
 
 def recalculate_face_frame_cabinet(obj):

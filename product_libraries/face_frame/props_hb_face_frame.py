@@ -6555,7 +6555,7 @@ def _update_bottom_rail(self, context):
     if (root is not None
             and root.get(types_face_frame.TAG_APPLIED_PANEL_SIDE)
             and root.parent is not None):
-        types_face_frame.recalculate_face_frame_cabinet(root.parent)
+        types_face_frame.recalc_applied_panel_host(root.parent)
 
 def _update_unlock_back_thickness(self, context):
     """Lock toggle for the carcass back thickness. Unlocking keeps the
@@ -6862,7 +6862,7 @@ def _update_panel_split_auto(self, context):
     if obj is None:
         return
     if obj.get(types_face_frame.TAG_APPLIED_PANEL_SIDE) and obj.parent is not None:
-        types_face_frame.recalculate_face_frame_cabinet(obj.parent)
+        types_face_frame.recalc_applied_panel_host(obj.parent)
     else:
         types_face_frame.recalculate_face_frame_cabinet(obj)
 
