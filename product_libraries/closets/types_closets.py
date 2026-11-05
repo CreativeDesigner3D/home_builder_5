@@ -9266,8 +9266,24 @@ def bay_width_warning(width):
     return ""
 
 
+def corner_width_warning(width, depth):
+    """Why a corner unit is too wide, or ''. Its L shelves run out
+    along both walls, so each wing is held to the same 30" a bay is."""
+    msgs = []
+    for label, size in (("Width", width), ("Depth", depth)):
+        if size > const.BAY_MAX_WIDTH + 0.0005:
+            msgs.append("Corner %s exceeds 30 Inches; this one is %s"
+                        % (label, _in_str(size)))
+    return "; ".join(msgs)
+
+
 def stamp_bay_width_limits(root):
-    """Warn on every bay of the run wider than the span limit."""
+    """Warn on every bay of the run wider than the span limit, and on a
+    corner unit with a wing past it."""
+    if isinstance(_wrap_starter(root), LShelfClosetStarter):
+        sp = root.hb_closet_starter
+        _stamp_warning(root, corner_width_warning(sp.width, sp.depth))
+        return
     for bay in root.children:
         if not bay.get(TAG_BAY_CAGE):
             continue
