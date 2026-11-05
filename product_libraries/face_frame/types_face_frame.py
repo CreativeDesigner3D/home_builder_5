@@ -22944,6 +22944,7 @@ def break_cabinet_at_gap(cabinet, gap_index, shrink_side='AUTO'):
             'panel_bottom_rail_width', 'panel_stile_width',
             'default_top_overlay', 'default_bottom_overlay',
             'default_left_overlay', 'default_right_overlay',
+            'default_door_inset_amount',
             'material_thickness', 'face_frame_thickness',
             # Lock toggles ahead of their values: a toggle's update
             # rewrites the value, and the copied value must win.
