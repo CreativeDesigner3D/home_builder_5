@@ -603,8 +603,12 @@ class _PanelTabButton:
 
     def visible(self, context):
         # A tab that means nothing here is not shown at all -- better
-        # than a tab that opens to a panel with nothing to do.
-        return scene_navigator.tab_available(self.tab, context.scene)
+        # than a tab that opens to a panel with nothing to do. One the
+        # user hid stays off the strip, unless it is the one open (it
+        # can open itself), so it can still be closed.
+        if not scene_navigator.tab_available(self.tab, context.scene):
+            return False
+        return not scene_navigator.tab_hidden(self.tab) or self._showing()
 
     def _showing(self):
         """True when the panel is open on this tab."""
@@ -621,8 +625,12 @@ class _PanelTabButton:
         _paint_btn(shader, rx, ry, rw, rh, bg)
         color = TEXT_ACTIVE if active else TEXT_NORMAL
         icon = self._icon()
+        # The user's colour for the icon; not on the open tab, whose
+        # accent background a blue or green icon would sink into.
+        tint = None if active else scene_navigator.tab_color(self.tab)
         if icon and not active:
-            draw_icon(icon[0], rect, color, icon_dir=icon[1])
+            draw_icon(icon[0], rect, (*tint, 1.0) if tint else color,
+                      icon_dir=icon[1])
             shader.bind()
             return
         font_sz = FONT_SIZE * s
@@ -646,6 +654,44 @@ class _PanelTabButton:
             return                      # already up; just switched tabs
         anchor_x, anchor_top = _nav_anchor(context, area)
         scene_navigator.open_panel(anchor_x, anchor_top)
+
+
+class _TabSettingsButton:
+    """The three dots ending the tab strip: how the tabs are arranged
+    (order, which show, coloured icons -- see panel_tabs). Dots, not a
+    gear, so it does not read as the Options tab beside it."""
+
+    @property
+    def width(self):
+        return int(BTN_HEIGHT * _s() * 0.75)
+
+    def hover_label(self):
+        return "Arrange Tabs"
+
+    def visible(self, context):
+        return True
+
+    def draw(self, shader, font_id, rect, context, mouse):
+        rx, ry, rw, rh = rect
+        s = _s()
+        hovered = point_in_rect(mouse[0], mouse[1], rect)
+        if hovered:
+            _paint_btn(shader, rx, ry, rw, rh, BTN_HOVER_BG)
+        color = TEXT_ACTIVE if hovered else TEXT_NORMAL
+        dot = 2.5 * s
+        cx = rx + rw / 2.0 - dot / 2.0
+        for i in (-1, 0, 1):
+            draw_rect(shader, cx, ry + rh / 2.0 - dot / 2.0 + i * 5 * s,
+                      dot, dot, color)
+
+    def on_click(self, context, area, region):
+        # On the release: a popup opened under the held press would
+        # close as the click lets go.
+        from . import options_panel
+        options_panel._run_on_release('home_builder.panel_tabs_settings', {})
+
+
+_TAB_SETTINGS = _TabSettingsButton()
 
 class _ModeButton:
     """One selection-mode pick. Sets the scene enum on click; the enum's
@@ -1841,6 +1887,8 @@ def compute_layout(context, area):
     # has to do it too, or a tab that does not apply here still gets a
     # button.
     tab_buttons = [b for b in _tab_buttons() if b.visible(context)]
+    # The tabs' own settings close the strip, inside its frame.
+    tab_buttons.append(_TAB_SETTINGS)
     # Back TRAILS the tabs. It comes and goes with where you are, and
     # leading the strip meant every tab slid sideways as it appeared --
     # the one part of the interface that should hold still while you move
@@ -2341,6 +2389,14 @@ class home_builder_OT_hud_click(bpy.types.Operator):
 
         for widget, rect in compute_layout(context, area):
             if point_in_rect(mx, my, rect):
+                from . import panel_tabs
+                if (isinstance(widget, _PanelTabButton)
+                        and not panel_tabs.locked()):
+                    # Unlocked, a tab can be picked up: the drag decides
+                    # on the release whether this was a click.
+                    bpy.ops.home_builder.panel_tab_drag(
+                        'INVOKE_DEFAULT', tab=widget.tab)
+                    return {'FINISHED'}
                 widget.on_click(context, area, region)
                 area.tag_redraw()
                 return {'FINISHED'}
@@ -2391,6 +2447,72 @@ class home_builder_OT_hud_click(bpy.types.Operator):
             self._area.tag_redraw()
             return {'CANCELLED'}
 
+        return {'RUNNING_MODAL'}
+
+
+TAB_DRAG_THRESHOLD = 6      # unscaled px along the strip before a tab moves
+
+
+class home_builder_OT_panel_tab_drag(bpy.types.Operator):
+    """Move a panel tab along the strip while the tab order is unlocked.
+    Released where it was pressed, it is the ordinary click on the tab;
+    dragged, the tab takes the place of the one under the cursor as it
+    goes, and the order is saved at the release. Lives only from press
+    to release."""
+    bl_idname = "home_builder.panel_tab_drag"
+    bl_label = "Move Panel Tab"
+    bl_options = {'INTERNAL'}
+
+    tab: bpy.props.StringProperty()  # type: ignore
+
+    def invoke(self, context, event):
+        self._area, self._region = context.area, context.region
+        self._x = event.mouse_region_x
+        self._dragging = False
+        context.window_manager.modal_handler_add(self)
+        return {'RUNNING_MODAL'}
+
+    def _under(self, context, mx):
+        """The tab key the cursor is over along the strip, or None."""
+        tabs = [(w, r) for w, r in compute_layout(context, self._area)
+                if isinstance(w, _PanelTabButton)]
+        for w, r in tabs:
+            if r[0] <= mx <= r[0] + r[2]:
+                return w.tab
+        if tabs and mx < tabs[0][1][0]:
+            return tabs[0][0].tab
+        if tabs and mx > tabs[-1][1][0] + tabs[-1][1][2]:
+            return tabs[-1][0].tab
+        return None
+
+    def modal(self, context, event):
+        from . import panel_tabs
+        mx = event.mouse_region_x
+        if event.type == 'MOUSEMOVE':
+            if not self._dragging and abs(mx - self._x) > TAB_DRAG_THRESHOLD * _s():
+                self._dragging = True
+            if self._dragging:
+                with context.temp_override(area=self._area, region=self._region):
+                    over = self._under(context, mx)
+                if over is not None and over != self.tab:
+                    order = scene_navigator.tabs()
+                    panel_tabs.move(self.tab, order.index(over), order)
+                self._area.tag_redraw()
+            return {'RUNNING_MODAL'}
+        if event.type == 'LEFTMOUSE' and event.value == 'RELEASE':
+            if self._dragging:
+                panel_tabs.save()
+            else:
+                with context.temp_override(area=self._area, region=self._region):
+                    _PanelTabButton(self.tab).on_click(
+                        context, self._area, self._region)
+            self._area.tag_redraw()
+            return {'FINISHED'}
+        if event.type in {'RIGHTMOUSE', 'ESC'} and event.value == 'PRESS':
+            # Put it back: the saved order is the one from before.
+            panel_tabs.revert()
+            self._area.tag_redraw()
+            return {'CANCELLED'}
         return {'RUNNING_MODAL'}
 
 
@@ -2506,6 +2628,7 @@ def ensure_listener():
 
 classes = (
     home_builder_OT_hud_click,
+    home_builder_OT_panel_tab_drag,
     home_builder_OT_hud_scroll,
     home_builder_OT_hud_hover,
 )

@@ -186,10 +186,13 @@ _extra_tabs = []         # (order, key, label, available_fn)
 # icons, else the folder of baked PNGs the contributing add-on ships.
 _tab_icons = {TAB_ROOMS: ('rooms', None), TAB_LIBRARY: ('library', None),
               TAB_OPTIONS: ('settings', None)}
+# Each tab's colour, for its icon when the user colours them (see
+# panel_tabs): the Rooms tab's list colours, so the strip reads like it.
+_tab_colors = {TAB_ROOMS: COLOR_ROOMS}
 
 
 def register_tab(key, module, label=None, order=100, available=None,
-                 prefer=None, icon=None, icon_dir=None):
+                 prefer=None, icon=None, icon_dir=None, color=None):
     """Add a tab and the provider that draws it.
 
     `label` is what the tab button says (the key, if omitted) -- a key
@@ -202,6 +205,8 @@ def register_tab(key, module, label=None, order=100, available=None,
     `icon` names the tab's icon, from `icon_dir` (a folder of baked PNGs)
     when the icon is the contributing add-on's own. With an icon the tab
     shows only it until opened; without one it keeps its label.
+    `color` (rgb) tints the icon when the user has the tab icons
+    coloured -- COLOR_LAYOUTS / COLOR_DETAILS for drawings and details.
     Sorted by (order, key); built-ins take an implicit order from their
     position, spaced so a contribution can land between two of them.
     Re-registering a key replaces it, so a reloaded add-on cannot stack
@@ -215,6 +220,8 @@ def register_tab(key, module, label=None, order=100, available=None,
         _preferred[key] = prefer
     if icon is not None:
         _tab_icons[key] = (icon, icon_dir)
+    if color is not None:
+        _tab_colors[key] = tuple(color)
 
 
 def unregister_tab(key):
@@ -222,6 +229,7 @@ def unregister_tab(key):
     _preferred.pop(key, None)
     if key not in TABS:
         _tab_icons.pop(key, None)
+        _tab_colors.pop(key, None)
     for i, tab in enumerate(list(_extra_tabs)):
         if tab[1] == key:
             del _extra_tabs[i]
@@ -231,12 +239,34 @@ def unregister_tab(key):
             return
 
 
-def tabs():
-    """Every tab, built-in and contributed, in display order."""
+def default_tabs():
+    """Every tab, built-in and contributed, in the order they register."""
     rows = [(i * 10, t) for i, t in enumerate(TABS)]
     rows.extend((t[0], t[1]) for t in _extra_tabs)
     rows.sort(key=lambda row: (row[0], row[1]))
     return tuple(row[1] for row in rows)
+
+
+def tabs():
+    """Every tab in display order: the user's, where they have moved
+    tabs along the strip (panel_tabs)."""
+    from . import panel_tabs
+    return panel_tabs.arrange(default_tabs())
+
+
+def tab_color(tab):
+    """The rgb to tint the tab's icon with, or None: only while the user
+    has the icons coloured, and only for a tab that has a colour."""
+    from . import panel_tabs
+    if not panel_tabs.colored():
+        return None
+    return _tab_colors.get(tab)
+
+
+def tab_hidden(tab):
+    """True when the user took the tab off the strip."""
+    from . import panel_tabs
+    return panel_tabs.hidden(tab)
 
 
 def tab_label(tab):
@@ -1761,6 +1791,8 @@ classes = (
 def register():
     for cls in classes:
         bpy.utils.register_class(cls)
+    from . import panel_tabs
+    panel_tabs.register()
     # New Room heads the Rooms list, where you look for it; at the
     # bottom it sat under Layout Views' own create button.
     register_section_action('ROOMS', "New Room", 'home_builder.create_room')
@@ -1779,5 +1811,7 @@ def register():
 def unregister():
     unregister_room_action('linked_rooms')
     unregister_section_action('ROOMS')
+    from . import panel_tabs
+    panel_tabs.unregister()
     for cls in reversed(classes):
         bpy.utils.unregister_class(cls)
