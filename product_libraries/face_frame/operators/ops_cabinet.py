@@ -4280,6 +4280,11 @@ def _build_recipe_into(recipe, parent_obj, child_index,
         # Add / Remove Shelf Behind Mid Rail covers the rest per member.
         if axis == 'H' and _recipe_is_drawer_stack(('split', axis, children)):
             sp.add_backing = False
+        # A preset can say outright (slot 4), as the vanities do for the
+        # open space round the sink.
+        backing = recipe[4] if len(recipe) > 4 else None
+        if backing is not None:
+            sp.add_backing = backing
         apply_size_role(sp)
         for i, child_recipe in enumerate(children):
             _build_recipe_into(child_recipe, split_obj, i,

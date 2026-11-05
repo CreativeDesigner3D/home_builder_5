@@ -38,14 +38,17 @@ def L(config, size_role=None, **overrides):
     return ('leaf', config, overrides, size_role)
 
 
-def H(*children, size_role=None):
-    """Horizontal split: children stacked vertically (mid rails between)."""
-    return ('split', 'H', list(children), size_role)
+def H(*children, size_role=None, backing=None):
+    """Horizontal split: children stacked vertically (mid rails between).
+    backing=False leaves out the shelf behind its mid rails; None lets
+    the builder decide (a drawer bank has none, anything else does)."""
+    return ('split', 'H', list(children), size_role, backing)
 
 
-def V(*children, size_role=None):
-    """Vertical split: children side by side (mid stiles between)."""
-    return ('split', 'V', list(children), size_role)
+def V(*children, size_role=None, backing=None):
+    """Vertical split: children side by side (mid stiles between).
+    backing=False leaves out the division behind its mid stiles."""
+    return ('split', 'V', list(children), size_role, backing)
 
 
 # ---------------------------------------------------------------------------
@@ -93,23 +96,29 @@ BASE_PRESETS = {
     # (VANITY_COMBINATION_SINK_WIDTH); the flanking drawers absorb width
     # changes. The top row height pins to top_drawer_opening_height via
     # the V node.
+    # The sink sits behind that top row, so it is built wide open: no
+    # shelf behind the mid rail under it and no divisions between the
+    # false front and the drawers beside it (backing=False).
     'VANITY_COMBINATION':      H(V(L('DRAWER'),
                                    L('FALSE_FRONT',
                                      size_role='VANITY_COMBINATION_SINK_WIDTH'),
                                    L('DRAWER'),
-                                   size_role='TOP_DRAWER'),
-                                 L('DOUBLE_DOOR', no_shelves=True)),
+                                   size_role='TOP_DRAWER', backing=False),
+                                 L('DOUBLE_DOOR', no_shelves=True),
+                                 backing=False),
     # Vanity Deluxe: the Combination's drawer / sink false front / drawer
     # top row over a bottom row of a door beside a stack of two drawers.
-    # Its sink false front comes in at the same 17" opening.
+    # Its sink false front comes in at the same 17" opening, and its top
+    # row is as open as the Combination's.
     'VANITY_DELUXE':           H(V(L('DRAWER'),
                                    L('FALSE_FRONT',
                                      size_role='VANITY_COMBINATION_SINK_WIDTH'),
                                    L('DRAWER'),
-                                   size_role='TOP_DRAWER'),
+                                   size_role='TOP_DRAWER', backing=False),
                                  V(L('LEFT_DOOR', size_role='VANITY_DOOR',
                                      no_shelves=True),
-                                   H(L('DRAWER'), L('DRAWER')))),
+                                   H(L('DRAWER'), L('DRAWER'))),
+                                 backing=False),
     'TWO_DRAWERS_DOUBLE_DOOR': H(V(L('DRAWER'), L('DRAWER'),
                                    size_role='TOP_DRAWER'),
                                  L('DOUBLE_DOOR')),
