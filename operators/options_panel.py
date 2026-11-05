@@ -103,6 +103,9 @@ from ..hb_gpu_ui import (
 )
 
 PREFERRED_WIDTH = 300       # unscaled
+# An 'actions' row reads a fifth item on each button as its width weight.
+# Hosted pages check for this before passing one.
+ACTION_WEIGHTS = True
 
 # ---- Layout (unscaled px) --------------------------------------------------
 ROW_H = 22
@@ -413,9 +416,10 @@ def _main_group(name, context):
 def _norm_action(action):
     """(label, operator, prop, value) from a catalog's (label, operator)
     pair or its four-tuple naming one operator property and its value.
-    A dict in the prop slot is the operator's keyword arguments whole."""
+    A dict in the prop slot is the operator's keyword arguments whole,
+    and a fifth item, when given, weights the button's width in its row."""
     if len(action) >= 4:
-        return tuple(action[:4])
+        return tuple(action[:5])
     label, op = action[0], action[1]
     return (label, op, None, None)
 
@@ -1185,10 +1189,18 @@ def build_page(rect, context, blocks_fn, lst):
             entries.append(('style_row', i, name, rect, is_active,
                             gear_rect, up_rect, down_rect, pool))
         elif kind == 'actions':
+            # An optional fifth item weights a button's share of the row
+            # (default 1), so a long label can take room from a short one.
             n = len(payload)
-            bw = (row_w - gap * (n - 1)) / n
-            for j, (label, op_id, prop, value) in enumerate(payload):
-                rect = (x + j * (bw + gap), block_top - row_h, bw, row_h)
+            weights = [max(float(a[4]), 0.1) if len(a) > 4 else 1.0
+                       for a in payload]
+            unit = (row_w - gap * (n - 1)) / sum(weights)
+            bx = x
+            for j, action in enumerate(payload):
+                label, op_id, prop, value = action[:4]
+                bw = unit * weights[j]
+                rect = (bx, block_top - row_h, bw, row_h)
+                bx += bw + gap
                 if callable(op_id):
                     # A menu of commands in the row: the ones used less.
                     entries.append(('pick_btn', label, op_id, rect))
@@ -1812,10 +1824,15 @@ def paint(entries, mx, my):
                                        Theme.TEXT_DIM if not enabled else Theme.TEXT_HEADER, label)
                     continue
                 paint_button(shader, rect, hovered=hovered)
+                # A label longer than its button is cut short; the tip
+                # shows it whole.
+                shown = fit_text(font_id, FONT * s, label, rect[2] - 12 * s)
                 draw_centered_text(font_id, rect, FONT * s,
                                    Theme.TEXT_DIM if not enabled
                                    else Theme.TEXT_PRIMARY if hovered
-                                   else Theme.TEXT_NORMAL, label)
+                                   else Theme.TEXT_NORMAL, shown)
+                if hovered:
+                    note_tip_if_cut(rect, shown, label)
             elif kind == 'form_row':
                 _, label, _method, rect = entry
                 hovered = point_in_rect(mx, my, rect)
