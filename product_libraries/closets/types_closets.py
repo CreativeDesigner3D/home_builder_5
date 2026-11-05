@@ -6101,7 +6101,7 @@ class ClosetStarter(GeoNodeCage):
             # above it. A row that is divided, or an opening that was
             # already standing there, is left as it was.
             for (c_side, cut), (source, n_below, n_above,
-                                held) in carry.items():
+                                held, rods) in carry.items():
                 if c_side != side:
                     continue
                 k = sum(1 for c in cuts if c <= cut + 1e-6)
@@ -6109,32 +6109,44 @@ class ClosetStarter(GeoNodeCage):
                 if upper is None or row_cuts[min(k, rows - 1)]:
                     continue
                 op = source.hb_closet_opening
-                set_adj_shelf_qty(op, n_below)
-                if n_below:
-                    op.unlock_adj_qty = True
                 up = upper.hb_closet_opening
-                set_adj_shelf_qty(up, n_above)
-                if n_above:
-                    up.unlock_adj_qty = True
+                if n_above or held:
+                    set_adj_shelf_qty(op, n_below)
+                    if n_below:
+                        op.unlock_adj_qty = True
+                    set_adj_shelf_qty(up, n_above)
+                    if n_above:
+                        up.unlock_adj_qty = True
                 for shelf, z in held:
                     shelf.parent = upper
                     shelf['hb_z_offset'] = max(0.0, z - (cut + st))
                     shelf['hb_anchor_top'] = 0
+                if rods:
+                    # The opening says where its rod sits front to back
+                    # and how much shorter it is cut, so those go up with it.
+                    for name in ('rod_set_from_front', 'rod_from_front',
+                                 'rod_from_rear', 'rod_width_deduction'):
+                        setattr(up, name, getattr(op, name))
+                for rod, z in rods:
+                    rod.parent = upper
+                    if not rod.get('hb_anchor_top'):
+                        rod['hb_z_offset'] = max(0.0, z - (cut + st))
 
     def _carry_shelves_above(self, opening, shelf, carry):
         """Note what a fixed shelf about to split an opening leaves
         above it: the count of the opening's dealt clip shelves on each
         side of the cut, and the held ones above it at their bay-interior
-        heights. The shelves' heights are the last solve's, which is
-        where they are standing now. Nothing is noted when no clip shelf
-        stands above the cut - the opening keeps everything anyway."""
+        heights, plus the rods hanging above the cut. The heights are the
+        last solve's, which is where things are standing now. Nothing is
+        noted when no clip shelf or rod stands above the cut - the
+        opening keeps everything anyway."""
         seg_bottom = float(opening.get('hb_seg_bottom', 0.0))
         z_off = float(shelf.get('hb_z_offset', 0.0))
+        try:
+            seg_h = float(GeoNodeCage(opening).get_input('Dim Z'))
+        except Exception:
+            seg_h = 0.0
         if shelf.get('hb_anchor_top'):
-            try:
-                seg_h = GeoNodeCage(opening).get_input('Dim Z')
-            except Exception:
-                seg_h = 0.0
             z_off = max(0.0, seg_h - z_off)
         clips = [c for c in opening.children
                  if c.get('hb_part_role') == PART_ROLE_ADJ_SHELF]
@@ -6142,11 +6154,26 @@ class ClosetStarter(GeoNodeCage):
         n_above = sum(1 for c in dealt if c.location.z > z_off)
         held = [(c, seg_bottom + float(c.location.z)) for c in clips
                 if c.get(PROP_SHELF_HELD) and c.location.z > z_off]
-        if not n_above and not held:
+        # Rods are measured from the top of their opening, which the cut
+        # lowers to the new shelf. A rod over the cut goes up into the
+        # new opening, whose top is the one it hung from; one under the
+        # cut stays, held at the height it hangs at now.
+        rods = []
+        for c in opening.children:
+            if (c.get('hb_part_role') != PART_ROLE_ROD
+                    or c.get('hb_preview')):
+                continue
+            off = float(c.get('hb_z_offset', const.ROD_TOP_OFFSET))
+            z = seg_h - off if c.get('hb_anchor_top') else off
+            if z > z_off:
+                rods.append((c, seg_bottom + z))
+            elif c.get('hb_anchor_top'):
+                c['hb_z_offset'] = max(0.0, z_off - z)
+        if not n_above and not held and not rods:
             return
         side = opening.get(PROP_OPENING_SIDE, 'FRONT')
         carry[(side, seg_bottom + z_off)] = (
-            opening, len(dealt) - n_above, n_above, held)
+            opening, len(dealt) - n_above, n_above, held, rods)
 
     def _layout_bottom_cleats(self, layout, scene_props, sp):
         """Bottom Cleat: one continuous cleat hung under the bottom shelf
