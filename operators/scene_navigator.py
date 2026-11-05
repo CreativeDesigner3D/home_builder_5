@@ -292,7 +292,7 @@ def resolve_active_tab(scene=None):
     with its add-on -- otherwise the panel would open on a tab that no
     longer has a provider, and draw nothing at all.
     """
-    global _active_tab, _seen_scene, _auto_opened_for, _open
+    global _active_tab, _seen_scene, _auto_opened_for, _open, _return_tab
     if scene is None:
         scene = bpy.context.scene
     name = scene.name if scene is not None else None
@@ -303,14 +303,25 @@ def resolve_active_tab(scene=None):
         _seen_scene = name
         preferred = _preferred_tab(scene)
         if preferred is not None:
+            if _active_tab != preferred and _return_tab is None:
+                _return_tab = _active_tab
             _active_tab = preferred
             if not _open:
                 _open = True
                 _auto_opened_for = preferred
-        elif _auto_opened_for is not None:
-            _open = False
-            _auto_opened_for = None
+        else:
+            if _auto_opened_for is not None:
+                _open = False
+                _auto_opened_for = None
+            # Back on a scene the tab the user was working in applies
+            # to: return to it rather than leaving them on the fallback.
+            if (_return_tab is not None and _return_tab in tabs()
+                    and tab_available(_return_tab, scene)):
+                _active_tab = _return_tab
+                _return_tab = None
     if _active_tab not in tabs() or not tab_available(_active_tab, scene):
+        if _return_tab is None and _active_tab != TAB_ROOMS:
+            _return_tab = _active_tab
         _active_tab = TAB_ROOMS
     return _active_tab
 
@@ -335,6 +346,7 @@ _providers = {}          # tab key -> provider module
 _preferred = {}          # tab key -> callable(scene) -> bool
 _seen_scene = None       # scene name the last resolve ran on
 _auto_opened_for = None  # tab the panel opened itself for, else None
+_return_tab = None       # tab to go back to once it applies again, else None
 
 
 # Room actions: extra buttons on the ROOMS tab, contributed by whoever
@@ -513,12 +525,13 @@ def active_tab():
 
 
 def set_active_tab(tab):
-    global _active_tab, _auto_opened_for
+    global _active_tab, _auto_opened_for, _return_tab
     if tab in tabs():
         _active_tab = tab
         # A tab picked by hand makes the open panel the user's own; it
         # no longer closes itself when the scene moves on.
         _auto_opened_for = None
+        _return_tab = None
 
 
 # ---- Scale ------------------------------------------------------------------
