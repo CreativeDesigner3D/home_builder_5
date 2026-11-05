@@ -61,6 +61,12 @@ _hud_shutdown = False      # set by unregister(); gates the draw + keymap ops
 _mouse = (-1, -1)          # last cursor pos, region-local
 _mouse_region = None       # region _mouse was measured in (hover is per-region)
 _last_hover_key = None     # layout index of the widget under the cursor
+# (scene name, selected names, active name) as it stood while the cursor
+# was on HUD surface. The active tool's click-select sees a press before
+# the HUD does, so a press on a HUD button has already cleared the
+# selection (or picked whatever sits behind the button) by the time the
+# button runs; the click puts this back first.
+_surface_selection = None
 _addon_keymaps = []        # [(keymap, keymap_item), ...] for cleanup
 _last_room = None          # name of the last room scene the HUD drew in
 _room_views = {}           # room name -> how that room was last being looked at
@@ -2070,6 +2076,12 @@ def click_hits_widget(context, area, region_x, region_y):
     for _widget, rect in compute_layout(context, area):
         if point_in_rect(region_x, region_y, rect):
             return True
+    return _hits_panel_or_inspector(context, area, region_x, region_y)
+
+
+def _hits_panel_or_inspector(context, area, region_x, region_y):
+    """The non-widget HUD surface: the pinned navigator panel and the
+    selection inspector."""
     # The pinned navigator panel is HUD surface too, so external modals
     # (grab / placement) pass its clicks through rather than consuming them.
     if scene_navigator.panel_open():
@@ -2084,6 +2096,48 @@ def click_hits_widget(context, area, region_x, region_y):
     if box is not None and point_in_rect(region_x, region_y, box):
         return True
     return False
+
+
+def _grab_surface_selection(context):
+    try:
+        active = context.view_layer.objects.active
+        return (context.scene.name,
+                [o.name for o in context.selected_objects],
+                active.name if active is not None else None)
+    except Exception:
+        return None
+
+
+def _restore_surface_selection(context):
+    """Undo what the active tool's click-select did to the selection on a
+    press that landed on HUD surface. A press on the HUD never means to
+    select through it, so the selection from before the press stands."""
+    snap = _surface_selection
+    if snap is None:
+        return
+    scene_name, names, active_name = snap
+    try:
+        if context.scene.name != scene_name:
+            return
+        current = _grab_surface_selection(context)
+        if current is not None and (sorted(current[1]) == sorted(names)
+                                    and current[2] == active_name):
+            return
+        objects = context.view_layer.objects
+        for o in list(context.selected_objects):
+            o.select_set(False)
+        for name in names:
+            o = objects.get(name)
+            if o is not None:
+                try:
+                    o.select_set(True)
+                except RuntimeError:
+                    pass
+        active = objects.get(active_name) if active_name else None
+        if active is not None:
+            objects.active = active
+    except Exception:
+        pass
 
 
 def pinned_panel_rect(context, area):
@@ -2359,10 +2413,23 @@ class home_builder_OT_hud_click(bpy.types.Operator):
         return _hud_event_poll(context)
 
     def invoke(self, context, event):
+        global _surface_selection
         area = context.area
         region = context.region
         mx, my = event.mouse_region_x, event.mouse_region_y
 
+        if click_hits_widget(context, area, mx, my):
+            _restore_surface_selection(context)
+            try:
+                return self._route(context, event, area, region, mx, my)
+            finally:
+                # The button may change the selection itself (or the
+                # scene); a second press without a mouse move must not
+                # put back the selection from before the first.
+                _surface_selection = _grab_surface_selection(context)
+        return self._route(context, event, area, region, mx, my)
+
+    def _route(self, context, event, area, region, mx, my):
         # The inspector is drawn on top, so it is asked first.
         got = selection_inspector.hit(context, area, region, mx, my)
         if got == 'drag':
@@ -2587,7 +2654,7 @@ class home_builder_OT_hud_hover(bpy.types.Operator):
         return _hud_event_poll(context)
 
     def invoke(self, context, event):
-        global _mouse, _mouse_region, _last_hover_key
+        global _mouse, _mouse_region, _last_hover_key, _surface_selection
         _mouse = (event.mouse_region_x, event.mouse_region_y)
         _mouse_region = context.region
 
@@ -2597,6 +2664,11 @@ class home_builder_OT_hud_hover(bpy.types.Operator):
             if point_in_rect(_mouse[0], _mouse[1], rect):
                 hover_key = i
                 break
+        if hover_key is not None or _hits_panel_or_inspector(
+                context, context.area, _mouse[0], _mouse[1]):
+            _surface_selection = _grab_surface_selection(context)
+        else:
+            _surface_selection = None
         if (hover_key != _last_hover_key or scene_navigator.panel_open()
                 or selection_inspector.showing(context)):
             _last_hover_key = hover_key
