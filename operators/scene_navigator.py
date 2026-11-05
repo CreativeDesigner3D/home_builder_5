@@ -531,7 +531,13 @@ def set_active_tab(tab):
         # A tab picked by hand makes the open panel the user's own; it
         # no longer closes itself when the scene moves on.
         _auto_opened_for = None
-        _return_tab = None
+        # Rooms picked on a card or sheet where the tab being worked in
+        # does not apply is the way back to a room, not a change of
+        # work: arriving there, that tab comes back (resolve_active_tab),
+        # as it does through the Back button.
+        if not (tab == TAB_ROOMS and _return_tab is not None
+                and not tab_available(_return_tab)):
+            _return_tab = None
 
 
 # ---- Scale ------------------------------------------------------------------
