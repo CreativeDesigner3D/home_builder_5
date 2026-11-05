@@ -256,8 +256,8 @@ class Home_Builder_AddonPreferences(bpy.types.AddonPreferences):
                     "leaves the view clear for a presentation",
         items=[('TOP', "Top", "Along the top of the viewport"),
                ('BOTTOM', "Bottom", "Along the bottom of the viewport"),
-               ('HIDDEN', "Hidden", "Not shown; the selection mode "
-                                    "shortcuts still work")],
+               ('HIDDEN', "Hidden", "Not shown; double-clicking a "
+                                    "cabinet still steps through the modes")],
         default='TOP',
         update=_update_use_viewport_hud,
     ) # type: ignore
