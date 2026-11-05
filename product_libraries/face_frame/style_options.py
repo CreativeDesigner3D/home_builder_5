@@ -4992,7 +4992,11 @@ _OVERLAY_LABEL = {
 # carried "Let Down" paints). Computed once at import so it self-heals if the
 # color filter changes.
 _WOOD_HIDE_BASE = {'Profile Rift Sawn White Oak'}
-_WOOD_LABEL = {}
+# Display names only, as _OVERLAY_LABEL: the identifier is the partner
+# site's text, which the catalog, pricing and the cascades key on.
+_WOOD_LABEL = {
+    '*Standard (no upcharge specie)': "*Standard (no upcharge species)",
+}
 
 
 def overlays_for_ui():
