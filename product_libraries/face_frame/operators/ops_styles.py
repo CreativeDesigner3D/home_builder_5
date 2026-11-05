@@ -2196,10 +2196,14 @@ class hb_face_frame_OT_paint_part_material(bpy.types.Operator):
                     if host is not None:
                         host._apply_materials_to_cabinet(root)
             # Non-cabinet objects have no automatic material; leave as-is,
-            # but drop the paint stamp so a regenerated object stops
-            # re-applying it.
-            elif 'hb_paint_material' in obj:
-                del obj['hb_paint_material']
+            # but drop the paint stamps so a regenerated object stops
+            # re-applying them, and it takes its cabinet's colour again.
+            else:
+                for k in ('hb_paint_material',
+                          props_hb_face_frame.PAINT_STYLE_KEY):
+                    if k in obj:
+                        del obj[k]
+                self._recolor(context, obj)
         else:
             if self.brush == 'FINISH':
                 mat, edge = style.get_finish_material()
@@ -2266,11 +2270,30 @@ class hb_face_frame_OT_paint_part_material(bpy.types.Operator):
                 # (e.g. a molding sweep refit) can re-apply it.
                 if mat is not None:
                     obj['hb_paint_material'] = mat.name
+                # And the style, so the piece wears that style's colour
+                # on screen and on the drawings, not its cabinet's.
+                obj[props_hb_face_frame.PAINT_STYLE_KEY] = style.name
+                self._recolor(context, obj)
 
         if context.area is not None:
             context.area.tag_redraw()
         self._painted.add(obj.name)
         self._status(context, count=True)
+
+    @staticmethod
+    def _recolor(context, obj):
+        """Show a painted piece's style colour now, when style colours
+        are on, rather than at the next full repaint."""
+        try:
+            if not get_style_props(context).show_style_colors:
+                return
+        except Exception:
+            return
+        colour = props_hb_face_frame.style_color_for_object(obj, context)
+        if colour is None:
+            # No stamp, no cabinet style: what an untinted part shows.
+            colour = (1.0, 1.0, 1.0, 1.0)
+        obj.color = colour
 
     def _status(self, context, count=False):
         tail = (f" - {len(self._painted)} painted" if count else "")

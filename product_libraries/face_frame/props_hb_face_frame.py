@@ -1499,6 +1499,25 @@ def _style_tint_for_cabinet(cabinet_obj, styles):
     return None
 
 
+# Paint Part's stamp on a piece it painted that is not a cabinet part
+# (a run of crown, a light rail): the style whose material it now wears.
+# The piece wears that style's colour too, here and on the drawings,
+# rather than the colour of the cabinet it hangs from.
+PAINT_STYLE_KEY = 'hb_paint_style'
+
+
+def _painted_style_tint(obj, styles):
+    """The viewport RGB for the style Paint Part stamped on ``obj``, or
+    None when it carries no stamp (or names a style since removed)."""
+    name = obj.get(PAINT_STYLE_KEY)
+    if not name:
+        return None
+    for index, style in enumerate(styles):
+        if style.name == name:
+            return style_viewport_color(style_palette_color(index))
+    return None
+
+
 def _is_styled_bare_part(obj):
     """True for a bare part (Misc Part, Wood Top) with a style stamped on
     it and no cabinet above it. Those sit outside every cabinet's walk,
@@ -1562,7 +1581,10 @@ def apply_style_colors(context):
             elif _is_cage(child):
                 _paint_cage(child, tint, context)
             else:
-                child.color = part_colour
+                painted = (_painted_style_tint(child, styles) if on
+                           else None)
+                child.color = (part_colour if painted is None
+                               else (painted[0], painted[1], painted[2], 1.0))
         if tint is not None:
             tinted += 1
 
@@ -1645,6 +1667,9 @@ def style_color_for_object(obj, context=None, highlight=None):
         return None
     if not props.show_style_colors:
         return None
+    painted = _painted_style_tint(obj, props.cabinet_styles)
+    if painted is not None:
+        return (painted[0], painted[1], painted[2], 1.0)
     root = obj
     while root is not None and not root.get('IS_FACE_FRAME_CABINET_CAGE'):
         root = root.parent
