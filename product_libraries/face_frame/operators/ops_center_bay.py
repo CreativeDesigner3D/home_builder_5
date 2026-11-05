@@ -23,16 +23,89 @@ from .. import types_face_frame
 MIN_OPENING = 0.0762        # 3": narrowest bay the shift may leave
 
 
-def _raycast(context, event):
+def _ray(context, event):
     region, rv3d = context.region, context.region_data
     if region is None or rv3d is None:
         return None
     coord = (event.mouse_region_x, event.mouse_region_y)
     direction = view3d_utils.region_2d_to_vector_3d(region, rv3d, coord)
     origin = view3d_utils.region_2d_to_origin_3d(region, rv3d, coord)
+    return origin, direction
+
+
+def _raycast(context, event):
+    ray = _ray(context, event)
+    if ray is None:
+        return None
     hit, _loc, _n, _i, obj, _m = context.scene.ray_cast(
-        context.evaluated_depsgraph_get(), origin, direction)
+        context.evaluated_depsgraph_get(), ray[0], ray[1])
     return obj if hit else None
+
+
+def _cage_dims(obj):
+    from .... import hb_types
+    try:
+        cage = hb_types.GeoNodeCage(obj)
+        return tuple(cage.get_input(k) for k in ('Dim X', 'Dim Y', 'Dim Z'))
+    except Exception:
+        return None
+
+
+def _ray_box(origin, direction, dims):
+    """Distance along the ray (in the cage's own space) to the box from
+    its origin to ``dims``, or None. A dim may be negative: cages grow
+    toward -Y."""
+    t_near, t_far = -1e30, 1e30
+    for k in range(3):
+        lo, hi = sorted((0.0, dims[k]))
+        o, d = origin[k], direction[k]
+        if abs(d) < 1e-12:
+            if o < lo or o > hi:
+                return None
+            continue
+        t1, t2 = sorted(((lo - o) / d, (hi - o) / d))
+        t_near, t_far = max(t_near, t1), min(t_far, t2)
+        if t_near > t_far or t_far < 0.0:
+            return None
+    return max(t_near, 0.0)
+
+
+def _pick_cage(context, event, cab_root):
+    """The appliance or bay whose cage the cursor is over, nearest first,
+    drawn or not. With the appliance models turned off there is nothing
+    for the scene's ray to hit but the label, so the cages are tried
+    themselves."""
+    ray = _ray(context, event)
+    if ray is None:
+        return None
+    best, best_t = None, None
+    for obj in context.view_layer.objects:
+        if not (obj.get('IS_APPLIANCE')
+                or obj.get(types_face_frame.TAG_BAY_CAGE)):
+            continue
+        if target_for(obj, cab_root) is not obj:
+            continue
+        dims = _cage_dims(obj)
+        if not dims or not all(dims):
+            continue
+        inv = obj.matrix_world.inverted()
+        o = inv @ ray[0]
+        d = (inv.to_3x3() @ ray[1])
+        t = _ray_box(o, d, dims)
+        if t is None:
+            continue
+        # Compare in world units: the cage's scale can differ.
+        t_world = (obj.matrix_world @ (o + d * t) - ray[0]).length
+        if best_t is None or t_world < best_t:
+            best, best_t = obj, t_world
+    return best
+
+
+def _target_under(context, event, cab_root):
+    hit = _raycast(context, event)
+    target = target_for(hit, cab_root) if hit is not None else None
+    return target if target is not None else _pick_cage(
+        context, event, cab_root)
 
 
 def _cage_width(obj):
@@ -175,16 +248,14 @@ class hb_face_frame_OT_center_bay_over(bpy.types.Operator):
             self._end(context)
             return {'CANCELLED'}
         if event.type == 'MOUSEMOVE':
-            hit = _raycast(context, event)
-            self._hover = target_for(hit, cab) if hit is not None else None
+            self._hover = _target_under(context, event, cab)
             self._header(context)
             return {'RUNNING_MODAL'}
         if event.type in {'ESC', 'RIGHTMOUSE'} and event.value == 'PRESS':
             self._end(context)
             return {'CANCELLED'}
         if event.type == 'LEFTMOUSE' and event.value == 'PRESS':
-            hit = _raycast(context, event)
-            target = target_for(hit, cab) if hit is not None else None
+            target = _target_under(context, event, cab)
             if target is None:
                 return {'RUNNING_MODAL'}
             self._end(context)
