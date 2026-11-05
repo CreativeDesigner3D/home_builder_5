@@ -8685,8 +8685,16 @@ class FaceFrameCabinet(GeoNodeCage):
                     outer, inner = (x0 + notch, x1), (x0, x0 + notch)
                 if outer[1] > outer[0]:
                     yield (outer[0], outer[1], -dim_y, back_y, 0.0, height)
-                yield (inner[0], inner[1], -dim_y, back_y - rabbet_w,
-                       0.0, height)
+                # Below a raised back the side is not rabbeted.
+                notch_z = solver.back_notch_bottom_z(layout, side)
+                split_z = (0.0 if notch_z is None
+                           else min(height, max(0.0, notch_z)))
+                if split_z > 0.0:
+                    yield (inner[0], inner[1], -dim_y, back_y, 0.0,
+                           split_z)
+                if split_z < height:
+                    yield (inner[0], inner[1], -dim_y, back_y - rabbet_w,
+                           split_z, height)
         # Backs and bay floors, clipped to the inside of the sides so a
         # notched back does not double up on the end columns.
         for seg in solver.carcass_back_segments(layout):
@@ -13686,11 +13694,19 @@ class FaceFrameCabinet(GeoNodeCage):
             offset = max(0.0, side_obj.location.y - back_y)
             y1 = max(0.0, width - offset)
             y0 = max(0.0, y1 - solver.back_thickness(layout))
-        else:
-            length = y0 = y1 = depth = 0.0
+            # A raised back (refrigerator cabinet) stops the rabbet at
+            # its bottom edge; below it the side runs full depth.
+            x0 = 0.0
+            notch_z = solver.back_notch_bottom_z(layout, side)
+            if notch_z is not None:
+                x0 = min(length, max(0.0, notch_z - side_obj.location.z))
+            if x0 >= length:
+                active = False
+        if not active:
+            length = x0 = y0 = y1 = depth = 0.0
         ng = mod.node_group
         for input_name, value in (
-            ('X', 0.0),
+            ('X', x0),
             ('End X', length),
             ('Y', y0),
             ('End Y', y1),

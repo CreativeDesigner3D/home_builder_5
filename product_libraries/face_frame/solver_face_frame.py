@@ -778,6 +778,26 @@ def back_notch_depth(layout, side):
     return thickness / 2.0
 
 
+def back_notch_bottom_z(layout, side):
+    """Cabinet Z the back rabbet in a FINISHED side starts at, or None
+    when it runs the full length of the side.
+
+    A back raised off the floor (back_bottom_inset - a refrigerator
+    cabinet's back spans only the box above the appliance opening) has
+    nothing to land in below its bottom edge, so the side runs full
+    depth to the wall there and the rabbet stops at the back.
+    """
+    if layout.back_bottom_inset <= 0.0 or not getattr(layout, 'bays', None):
+        return None
+    end_bay = 0 if side == 'LEFT' else layout.bay_count - 1
+    for seg in carcass_back_segments(layout):
+        if seg['start_bay'] <= end_bay <= seg['end_bay']:
+            if _epsilon_eq(seg['z'], layout.back_bottom_inset):
+                return seg['z']
+            return None
+    return None
+
+
 def side_behind_back(layout, side):
     """How far an end side stops short of the cabinet back so the
     carcass back runs ACROSS its back edge instead of between the sides.
