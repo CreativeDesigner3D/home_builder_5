@@ -6542,6 +6542,21 @@ def _update_cabinet_dim(self, context):
     types_face_frame.recalculate_face_frame_cabinet(obj)
 
 
+def _update_bottom_rail(self, context):
+    """Bottom rail width / lock change. On an applied panel the opening
+    above the bottom rail is sized off the host cabinet's mid rail, but
+    only the host's recalc rebuilds that split; the panel's own recalc
+    just moves the opening up with the rail. Recalc the host as well so
+    the mid rail holds its height and the bottom opening shrinks or
+    grows instead."""
+    _update_cabinet_dim(self, context)
+    from . import types_face_frame
+    root = types_face_frame.find_cabinet_root(self.id_data)
+    if (root is not None
+            and root.get(types_face_frame.TAG_APPLIED_PANEL_SIDE)
+            and root.parent is not None):
+        types_face_frame.recalculate_face_frame_cabinet(root.parent)
+
 def _update_unlock_back_thickness(self, context):
     """Lock toggle for the carcass back thickness. Unlocking keeps the
     back the cabinet builds today (a floating vanity's 3/4 included) and
@@ -9245,7 +9260,7 @@ class Face_Frame_Cabinet_Props(PropertyGroup):
     )  # type: ignore
     bottom_rail_width: FloatProperty(
         name="Bottom Rail Width", default=units.inch(1.5), unit='LENGTH', precision=4,
-        update=_update_cabinet_dim,
+        update=_update_bottom_rail,
     )  # type: ignore
     unlock_top_rail: BoolProperty(name="Unlock Top Rail (Cabinet)", default=False, update=update_cabinet_frame_lock)  # type: ignore
     unlock_bottom_rail: BoolProperty(name="Unlock Bottom Rail (Cabinet)", default=False, update=update_cabinet_frame_lock)  # type: ignore
@@ -10597,7 +10612,7 @@ class Face_Frame_Bay_Props(PropertyGroup):
     )  # type: ignore
     bottom_rail_width: FloatProperty(
         name="Bottom Rail Width", default=units.inch(1.5), unit='LENGTH', precision=4,
-        update=_update_cabinet_dim,
+        update=_update_bottom_rail,
     )  # type: ignore
 
     remove_bottom: BoolProperty(
@@ -10805,7 +10820,7 @@ class Face_Frame_Bay_Props(PropertyGroup):
     )  # type: ignore
     unlock_bottom_rail: BoolProperty(
         name="Unlock Bottom Rail", default=False,
-        update=_update_cabinet_dim,
+        update=_update_bottom_rail,
     )  # type: ignore
 
     # ---- Under-cabinet appliance (uppers) ----
