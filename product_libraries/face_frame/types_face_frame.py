@@ -21904,6 +21904,81 @@ def find_cabinet_root(obj):
     return None
 
 
+def _lock_group(obj):
+    """(members in order, props attr, lock flag) for the row or stack
+    `obj` shares its space with: a cabinet's bays side by side, or the
+    openings and splits of one split node. None for anything else."""
+    if obj.get(TAG_BAY_CAGE):
+        root = find_cabinet_root(obj)
+        if root is None:
+            return None
+        members = sorted((c for c in root.children if c.get(TAG_BAY_CAGE)),
+                         key=lambda c: c.get('hb_bay_index', 0))
+        return members, 'face_frame_bay', 'unlock_width'
+    if obj.get(TAG_OPENING_CAGE) or obj.get(TAG_SPLIT_NODE):
+        parent = obj.parent
+        if parent is None or not parent.get(TAG_SPLIT_NODE):
+            return None
+        members = sorted((c for c in parent.children
+                          if c.get(TAG_OPENING_CAGE) or c.get(TAG_SPLIT_NODE)),
+                         key=lambda c: c.get('hb_split_child_index', 0))
+        return members, None, 'unlock_size'
+    return None
+
+
+def _lock_props(obj, attr):
+    if attr is not None:
+        return getattr(obj, attr)
+    return (obj.face_frame_opening if obj.get(TAG_OPENING_CAGE)
+            else obj.face_frame_split)
+
+
+def free_a_locked_neighbor(edited):
+    """Keep a row or stack from being locked all the way across.
+
+    With every bay of a cabinet (or every opening of a split) holding
+    its size, nothing is left to take up a change, and the cabinet opens
+    a gap. After a user sizes one, a member that is now the last to lock
+    sends its neighbor back to filling the remaining space: the one
+    beside the first member edited that was not itself edited, else the
+    last edited. Called from user edits only (a Grab drag, a typed size)
+    -- the programmatic writers set these flags in sequences that pass
+    through such a state on the way. Returns whether one was freed.
+    """
+    names = {o.name for o in edited if o is not None}
+    freed = False
+    seen = set()
+    for obj in edited:
+        if obj is None:
+            continue
+        group = _lock_group(obj)
+        if group is None:
+            continue
+        members, attr, flag = group
+        key = tuple(m.name for m in members)
+        if len(members) < 2 or key in seen:
+            continue
+        seen.add(key)
+        if not all(getattr(_lock_props(m, attr), flag) for m in members):
+            continue
+        hit = [i for i, m in enumerate(members) if m.name in names]
+        free = None
+        for i in hit:
+            for j in (i + 1, i - 1):
+                if 0 <= j < len(members) and members[j].name not in names:
+                    free = members[j]
+                    break
+            if free is not None:
+                break
+        if free is None and len(hit) > 1:
+            free = members[hit[-1]]
+        if free is None:
+            continue
+        setattr(_lock_props(free, attr), flag, False)
+        freed = True
+    return freed
+
+
 def default_front_type_for_root(root):
     """Default front_type for a freshly created opening under `root`.
 

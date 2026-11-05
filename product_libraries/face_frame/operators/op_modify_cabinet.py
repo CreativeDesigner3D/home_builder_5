@@ -1810,6 +1810,15 @@ class _GrabBaseMixin:
         # boundaries, whose group layout caches the cage size.
         if dragged is not None and _refit_cabinet_group_of(dragged):
             self._boundaries = self._collect()
+        # A drag that leaves a row or stack locked all the way across
+        # frees a neighbor, so a later resize has somewhere to go.
+        if commit:
+            edited = [bpy.data.objects.get(st['name'])
+                      for st in (self._drag_snapshot or [])
+                      if st['kind'] == 'TREE_CHILD'
+                      or (st['kind'] == 'BAY' and st.get('attr') == 'width')]
+            if types_face_frame.free_a_locked_neighbor(edited):
+                self._boundaries = self._collect()
         self._drag_active = False
         self._drag_boundary = None
         self._drag_layout = None

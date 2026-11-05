@@ -1358,6 +1358,7 @@ def _commit(obj, kind, value):
         if not props.unlock_size:
             props.unlock_size = True
         props.size = value
+        types_face_frame.free_a_locked_neighbor([obj])
         return True
     if kind == 'PART':
         role = obj.get('hb_part_role')

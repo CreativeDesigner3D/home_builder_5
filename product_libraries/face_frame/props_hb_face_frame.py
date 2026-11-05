@@ -7267,6 +7267,8 @@ def _update_bay_width(self, context):
         # Auto-lock. Setting unlock_width fires _update_cabinet_dim
         # which triggers recalc, so we don't call recalc directly here.
         self.unlock_width = True
+        # Never the last bay to lock: a neighbor goes back to filling.
+        types_face_frame.free_a_locked_neighbor([self.id_data])
     else:
         # Already locked - user is just nudging the value. Run recalc
         # so other unlocked bays redistribute around the new locked value.
