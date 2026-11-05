@@ -200,6 +200,12 @@ class FaceFrameLayout:
                                 if self.has_toe_kick else 0.0)
         self.kick_inset_right = (cab.inset_toe_kick_right
                                  if self.has_toe_kick else 0.0)
+        # An end inset beside a run neighbour that covers the end back to
+        # the kick line has nothing to recess: drop it so the side runs
+        # to the floor and the kick closes against the neighbour instead
+        # of leaving a void between the two cabinets.
+        if self.kick_inset_left > 0 or self.kick_inset_right > 0:
+            self._drop_covered_end_insets(cabinet_obj, cab)
         # Rear inset: the kick recessed at the back as well (an island's
         # seating side). Only the kicks that build a sub-base - NOTCH and
         # the loose ladders - have a back to recess.
@@ -379,6 +385,26 @@ class FaceFrameLayout:
                     'division_location': 'CENTERED',
                     'division_offset': 0.0,
                 })
+
+    def _drop_covered_end_insets(self, cabinet_obj, cab):
+        """Zero kick_inset_left / _right where exposure finds the end
+        covered by a run neighbour back to the toe kick line."""
+        try:
+            from . import exposure
+        except Exception:
+            return
+        setback = getattr(cab, 'toe_kick_setback', 0.0)
+        for side in ('left', 'right'):
+            attr = 'kick_inset_' + side
+            if getattr(self, attr) <= 0:
+                continue
+            try:
+                covered = exposure.end_kick_inset_covered(
+                    cabinet_obj, side, setback)
+            except Exception:
+                covered = False
+            if covered:
+                setattr(self, attr, 0.0)
 
     def _read_bay(self, bay_obj):
         bp = bay_obj.face_frame_bay

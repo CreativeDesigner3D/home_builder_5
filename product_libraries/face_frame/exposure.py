@@ -531,6 +531,49 @@ def kick_continues_past_end(cab_obj, side):
     return False
 
 
+def end_kick_inset_covered(cab_obj, side, setback):
+    """True when a floor-standing run neighbour on the same wall covers
+    cab_obj's given end ('left' / 'right') back to within ``setback`` of
+    the cabinet front - i.e. nothing of that end shows behind the toe
+    kick line, so an end inset there would only open a void between the
+    two cabinets. A shallower neighbour that leaves more of the end
+    showing than the setback does not count; the inset still applies.
+    """
+    if not _is_face_frame_carcass(cab_obj):
+        return False
+    parent = cab_obj.parent
+    if parent is None or _is_corner_cabinet(cab_obj):
+        return False
+    cab = cab_obj.face_frame_cabinet
+    kick_h = getattr(cab, 'toe_kick_height', 0.0)
+    cab_x = cab_obj.location.x
+    cab_z = cab_obj.location.z
+    target_x = cab_x if side == 'left' else cab_x + cab.width
+    own_front = _side_front_y(cab_obj, side)
+    other_side = 'right' if side == 'left' else 'left'
+    for sib in parent.children:
+        if sib is cab_obj or not _is_face_frame_carcass(sib):
+            continue
+        if _is_corner_cabinet(sib):
+            continue
+        xspan = _neighbor_xspan(sib)
+        if xspan is None:
+            continue
+        sib_near_x = xspan[1] if side == 'left' else xspan[0]
+        if abs(sib_near_x - target_x) > EPS:
+            continue
+        zspan = _neighbor_zspan(sib)
+        if zspan is None or not _reaches_kick_band(
+                cab_z, kick_h, zspan[0], zspan[1]):
+            continue
+        # Fronts are at negative Y; how far the neighbour's front sits
+        # behind ours is the part of our end left showing.
+        showing = _side_front_y(sib, other_side) - own_front
+        if showing <= setback + EPS:
+            return True
+    return False
+
+
 def finish_kick_reach_stale(cab_obj):
     """True when a neighbour change since the cabinet last built moves
     where its finish kick should end. The solver records, per end it
