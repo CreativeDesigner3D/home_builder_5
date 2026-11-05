@@ -28,11 +28,46 @@ from ...hb_types import (GeoNodeCage, GeoNodeCutpart, GeoNodeObject,
 from mathutils import Matrix, Vector
 
 from ...units import inch, millimeter
-from ..frameless.types_frameless import CabinetPart
+from ..frameless.types_frameless import CabinetPart as _FramelessPart
 from . import solver_closets as solver
 from . import const_closets as const
 
 from types import SimpleNamespace
+
+
+# Parts built since the last recalc finished. A part's role - and so
+# its finish (closet, front, countertop, bought hardware) - is set just
+# after it is created, so each one gets its material as the recalc that
+# built it finishes (finish_new_parts), not left for a later repaint.
+_NEW_PARTS = []
+
+
+class CabinetPart(_FramelessPart):
+    """A closet cut part: the frameless part, remembered when built so it
+    takes the room's finish as soon as it is in place."""
+
+    def create(self, name):
+        super().create(name)
+        _NEW_PARTS.append(self.obj)
+
+
+def finish_new_parts():
+    """Give every part built since the last call the room's finish."""
+    objs = []
+    while _NEW_PARTS:
+        obj = _NEW_PARTS.pop()
+        try:
+            if obj.name in bpy.data.objects:
+                objs.append(obj)
+        except ReferenceError:
+            continue        # removed again before it was finished
+    if not objs:
+        return
+    try:
+        from . import materials_closets
+        materials_closets.finish_parts(objs)
+    except Exception:
+        pass
 
 
 # ---------------------------------------------------------------------------
@@ -9187,6 +9222,7 @@ def recalculate_closet_starter(obj):
     clear_hamper_shelves(root)
     _wrap_starter(root).recalculate()
     hide_removed_parts(root)
+    finish_new_parts()
     mark_parts(root)
     stamp_part_menus(root)
     stamp_panel_limits(root)
