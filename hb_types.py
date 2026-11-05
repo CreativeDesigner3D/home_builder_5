@@ -1063,6 +1063,106 @@ def ensure_dimension_text_offset_basis(ng):
     ng.links.new(add.outputs['Vector'], sp4.inputs['Offset'])
 
 
+ADDITIONAL_TEXT_S2C = 'String to Curves.001'
+ADDITIONAL_TEXT_SHIFT_NODE = 'Additional Text Line Shift'
+
+
+def ensure_dimension_additional_lines(ng):
+    """Let a dimension's additional text run to several lines.
+
+    String to Curves already breaks the text at newline characters, but
+    its Line Spacing was fixed and a multi-line block is centred on the
+    anchor, so extra lines pushed the first one up. Adds the input
+    'Additional Text Line Spacing' (wired to the node's Line Spacing)
+    and, right after the node, a reading-frame Y translate of
+    -(lines - 1) / 2 * size * spacing, counted from the text itself, so
+    the first line stays where a single line sits and the rest stack
+    below it. Idempotent versioning fixup; leaves an unexpected topology
+    alone.
+    """
+    if ng is None or ng.nodes.get(ADDITIONAL_TEXT_SHIFT_NODE):
+        return
+    s2c = ng.nodes.get(ADDITIONAL_TEXT_S2C)
+    if s2c is None or s2c.bl_idname != 'GeometryNodeStringToCurves':
+        return
+    src = s2c.inputs['String'].links
+    size_src = s2c.inputs['Size'].links
+    if (not src or not size_src
+            or getattr(src[0].from_socket, 'name', '') != 'Additional Text'):
+        return
+    text_out = src[0].from_socket
+    size_out = size_src[0].from_socket
+    gi = next((n for n in ng.nodes if n.type == 'GROUP_INPUT'), None)
+    if gi is None:
+        return
+    names = {it.name for it in ng.interface.items_tree
+             if getattr(it, 'in_out', '') == 'INPUT'}
+    if 'Additional Text Line Spacing' not in names:
+        sock = ng.interface.new_socket('Additional Text Line Spacing',
+                                       in_out='INPUT',
+                                       socket_type='NodeSocketFloat')
+        sock.default_value = 1.0
+        sock.min_value = 0.1
+    spacing_out = gi.outputs['Additional Text Line Spacing']
+    ng.links.new(spacing_out, s2c.inputs['Line Spacing'])
+    x0, y0 = s2c.location.x, s2c.location.y - 400
+
+    def node(kind, dx, dy, **attrs):
+        n = ng.nodes.new(kind)
+        n.location = (x0 + dx, y0 + dy)
+        for k, v in attrs.items():
+            setattr(n, k, v)
+        return n
+
+    # Line breaks = length of the text minus its length without them.
+    strip = node('FunctionNodeReplaceString', -600, 0)
+    ng.links.new(text_out, strip.inputs['String'])
+    strip.inputs['Find'].default_value = "\n"
+    strip.inputs['Replace'].default_value = ""
+    full_len = node('FunctionNodeStringLength', -400, 80)
+    ng.links.new(text_out, full_len.inputs['String'])
+    bare_len = node('FunctionNodeStringLength', -400, -80)
+    ng.links.new(strip.outputs['String'], bare_len.inputs['String'])
+    breaks = node('ShaderNodeMath', -200, 0, operation='SUBTRACT')
+    ng.links.new(full_len.outputs['Length'], breaks.inputs[0])
+    ng.links.new(bare_len.outputs['Length'], breaks.inputs[1])
+    per_line = node('ShaderNodeMath', -200, -200, operation='MULTIPLY')
+    ng.links.new(size_out, per_line.inputs[0])
+    ng.links.new(spacing_out, per_line.inputs[1])
+    shift = node('ShaderNodeMath', 0, 0, operation='MULTIPLY')
+    ng.links.new(breaks.outputs[0], shift.inputs[0])
+    ng.links.new(per_line.outputs[0], shift.inputs[1])
+    half = node('ShaderNodeMath', 200, 0, operation='MULTIPLY')
+    ng.links.new(shift.outputs[0], half.inputs[0])
+    half.inputs[1].default_value = -0.5 * _S2C_LINE_HEIGHT
+    comb = node('ShaderNodeCombineXYZ', 400, 0)
+    ng.links.new(half.outputs[0], comb.inputs['Y'])
+    out = s2c.outputs[0]
+    consumers = [link.to_socket for link in out.links]
+    xform = node('GeometryNodeTransform', 600, 200)
+    xform.name = xform.label = ADDITIONAL_TEXT_SHIFT_NODE
+    ng.links.new(comb.outputs['Vector'], xform.inputs['Translation'])
+    for link in list(out.links):
+        ng.links.remove(link)
+    ng.links.new(out, xform.inputs['Geometry'])
+    for sock in consumers:
+        ng.links.new(xform.outputs['Geometry'], sock)
+    _invalidate_input_cache(ng)
+
+
+# Distance between baselines of String to Curves text, per unit of Size
+# at Line Spacing 1.0 (measured on the dimension font).
+_S2C_LINE_HEIGHT = 1.0
+
+
+def set_dimension_additional_lines(dim, text, spacing):
+    """Write multi-line additional text (lines joined by newlines) and
+    its line spacing to a GeoNodeDimension."""
+    dim.set_input('Additional Text', text)
+    if dim.has_input('Additional Text Line Spacing'):
+        dim.set_input('Additional Text Line Spacing', spacing)
+
+
 def ensure_dimension_leader_extras(ng):
     """Give GeoNodeDimension a separate extra length for each leader arm.
 

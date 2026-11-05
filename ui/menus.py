@@ -537,6 +537,13 @@ class HOME_BUILDER_OT_show_dimension_properties(bpy.types.Operator):
     flip_text: bpy.props.BoolProperty(name="Flip Text")  # type: ignore
     text_x_offset_amount: bpy.props.FloatProperty(name="Text X Offset Amount", default=0, subtype='DISTANCE')  # type: ignore
     additional_text: bpy.props.StringProperty(name="Additional Text")  # type: ignore
+    # Extra lines under the additional text (joined with newlines into the
+    # dimension's single Additional Text input) and the spacing between them.
+    additional_text_line_2: bpy.props.StringProperty(name="Additional Text Line 2")  # type: ignore
+    additional_text_line_3: bpy.props.StringProperty(name="Additional Text Line 3")  # type: ignore
+    additional_text_line_spacing: bpy.props.FloatProperty(
+        name="Line Spacing", default=1.0, min=0.1, soft_max=3.0,
+        description="Space between the lines of additional text (1.0 is normal)")  # type: ignore
     additional_text_offset_y_amount: bpy.props.FloatProperty(name="Additional Text Offset Y Amount", default=0, subtype='DISTANCE')  # type: ignore
     additional_text_offset_x_amount: bpy.props.FloatProperty(name="Additional Text Offset X Amount", default=0, subtype='DISTANCE')  # type: ignore
     additional_text_size: bpy.props.FloatProperty(name="Additional Text Size", default=units.inch(2), subtype='DISTANCE')  # type: ignore
@@ -613,7 +620,9 @@ class HOME_BUILDER_OT_show_dimension_properties(bpy.types.Operator):
         d.set_input('Flip Arrows', self.flip_arrows)
         d.set_input('Flip Text', self.flip_text)
         d.set_input('Decimals', self.decimals)
-        d.set_input('Additional Text', self.additional_text)
+        hb_types.set_dimension_additional_lines(
+            d, self._joined_additional_text(),
+            self.additional_text_line_spacing)
         d.set_input('Additional Text Y Offset', self.additional_text_offset_y_amount)
         d.set_input('Additional Text X Offset', self.additional_text_offset_x_amount)
         d.set_input('Additional Text Size', self.additional_text_size)
@@ -623,11 +632,22 @@ class HOME_BUILDER_OT_show_dimension_properties(bpy.types.Operator):
             context.area.tag_redraw()
         return True
 
+    def _joined_additional_text(self):
+        """The additional text lines joined with newlines, dropping empty
+        trailing lines (an empty middle line is kept as a blank line)."""
+        lines = [self.additional_text, self.additional_text_line_2,
+                 self.additional_text_line_3]
+        while len(lines) > 1 and not lines[-1]:
+            lines.pop()
+        return "\n".join(lines)
+
     def invoke(self, context, event):
-        # Files from before the per-arm leader extras get them here, the
-        # one place they are set (no-op once present).
-        hb_types.ensure_dimension_leader_extras(
-            bpy.data.node_groups.get('GeoNodeDimension'))
+        # Files from before the per-arm leader extras / multi-line
+        # additional text get them here, the one place they are set
+        # (no-op once present).
+        ng = bpy.data.node_groups.get('GeoNodeDimension')
+        hb_types.ensure_dimension_leader_extras(ng)
+        hb_types.ensure_dimension_additional_lines(ng)
         self.dimension = hb_types.GeoNodeDimension(context.object)
         d = self.dimension
         if d.has_input("Leader Extra Start"):
@@ -645,7 +665,14 @@ class HOME_BUILDER_OT_show_dimension_properties(bpy.types.Operator):
         self.flip_arrows = d.get_input("Flip Arrows")
         self.flip_text = d.get_input("Flip Text")
         self.decimals = d.get_input("Decimals")
-        self.additional_text = d.get_input("Additional Text") or ""
+        text_lines = (d.get_input("Additional Text") or "").split("\n")
+        self.additional_text = text_lines[0]
+        self.additional_text_line_2 = text_lines[1] if len(text_lines) > 1 else ""
+        # Anything past the third line folds into the third.
+        self.additional_text_line_3 = " ".join(text_lines[2:])
+        if d.has_input("Additional Text Line Spacing"):
+            self.additional_text_line_spacing = (
+                d.get_input("Additional Text Line Spacing") or 1.0)
         self.additional_text_offset_y_amount = d.get_input("Additional Text Y Offset")
         self.additional_text_offset_x_amount = d.get_input("Additional Text X Offset")
         self.additional_text_size = d.get_input("Additional Text Size")
@@ -742,6 +769,16 @@ class HOME_BUILDER_OT_show_dimension_properties(bpy.types.Operator):
             row = box.row()
             row.label(text="Size")
             row.prop(self, 'additional_text_size', text="")
+            row = box.row()
+            row.label(text="Line 2")
+            row.prop(self, 'additional_text_line_2', text="")
+            if self.additional_text_line_2 or self.additional_text_line_3:
+                row = box.row()
+                row.label(text="Line 3")
+                row.prop(self, 'additional_text_line_3', text="")
+                row = box.row()
+                row.label(text="Line Spacing")
+                row.prop(self, 'additional_text_line_spacing', text="")
 
         box = layout.box()
         row = box.row()
