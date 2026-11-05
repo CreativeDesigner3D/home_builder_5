@@ -9,13 +9,15 @@ show on the right. A user can put it where it suits the way they work:
   viewport controls and beside the navigation gizmo.
 * **Floating** -- wherever its header was dragged to. Dropped near the
   right side it docks there again.
-* **In the panel** -- back on the panel's SELECTED tab, for anyone who
-  would rather have one box on screen.
+
+It used to go back on the panel's SELECTED tab too, but there it took
+the panel over at every pick, turning it away from the library or the
+drawings it was on; a layout saved that way now opens docked right.
 
 Its header carries the commands: drag it by the title (a click on the
 title, without dragging, folds it to just the header and back), fold it
-with the chevron, and send it back to the panel with the arrow. Each
-button names itself on hover. Where it is, and whether it is folded, is remembered for the
+with the chevron, and dock it again with the bar. Each button names
+itself on hover. Where it is, and whether it is folded, is remembered for the
 user rather than the file, so everyone keeps their own layout and
 nobody else's changes.
 
@@ -56,7 +58,7 @@ from ..hb_gpu_ui import (
 )
 
 
-MODE_PANEL = 'PANEL'        # on the panel's SELECTED tab
+MODE_PANEL = 'PANEL'        # retired: was the panel's SELECTED tab
 MODE_RIGHT = 'RIGHT'        # docked down the right side (the default)
 MODE_FLOAT = 'FLOAT'        # wherever it was dragged
 
@@ -68,12 +70,14 @@ MARGIN = 8
 BTN = 18                    # header button
 BTN_GAP = 4
 TITLE_FONT = 11
-# Clear of the HUD's top row of buttons (its margin, a button, a gap).
-TOP_RESERVE = 12 + 24 + 8
+# Below the HUD's top row of buttons: how far down it reaches is read
+# from the HUD (_top_reserve); this is the gap left under it.
+TOP_GAP = 8
 # Clear of the corner icons drawn at the bottom right of the viewport.
 BOTTOM_RESERVE = 44
-# How near the docked spot a dropped box has to land to dock again.
-SNAP = 60
+# How near the docked spot a dropped box has to land to dock again. Small,
+# so a box nudged a little way off the dock stays where it was put.
+SNAP = 16
 
 _STATE_FILE = 'selection_inspector.json'
 
@@ -97,7 +101,7 @@ def _load():
         try:
             with open(_state_path(), encoding='utf-8') as fh:
                 saved = json.load(fh)
-            if saved.get('mode') in (MODE_PANEL, MODE_RIGHT, MODE_FLOAT):
+            if saved.get('mode') in (MODE_RIGHT, MODE_FLOAT):
                 _state['mode'] = saved['mode']
             _state['collapsed'] = bool(saved.get('collapsed', False))
             pos = saved.get('float')
@@ -130,6 +134,8 @@ def collapsed():
 
 
 def set_mode(new_mode):
+    if new_mode == MODE_PANEL:
+        new_mode = MODE_RIGHT
     state = _load()
     if new_mode == state['mode']:
         return
@@ -173,12 +179,20 @@ def showing(context):
     return selected_tab.has_selection(context)
 
 
+def _top_reserve():
+    """Unscaled px from the top the HUD's top row takes: its margin, the
+    groups' headings, a button and the bar round it."""
+    from . import viewport_hud as hud
+    return (hud.HUD_MARGIN_Y + hud.CAPTION_H + hud.BTN_HEIGHT
+            + hud.GROUP_PAD + TOP_GAP)
+
+
 def _limits(area):
     """(x_min, x_max, bottom, top) the box has to stay inside."""
     s = _s()
     x_min, x_max, y_min, y_max = get_visible_window_bounds(area)
     return (x_min + MARGIN * s, x_max - MARGIN * s,
-            y_min + BOTTOM_RESERVE * s, y_max - TOP_RESERVE * s)
+            y_min + BOTTOM_RESERVE * s, y_max - _top_reserve() * s)
 
 
 def _docked_xy(area, w):
@@ -285,13 +299,11 @@ def layout(context, area, region):
     rect = (x, top - h, w, h)
     header = (x, top - header_h, w, header_h)
 
-    # Header buttons, right to left: fold, then where it goes.
+    # Header buttons, right to left: fold, then dock when floating.
     bsz = BTN * s
     by = top - header_h + (header_h - bsz) / 2.0
     bx = x + w - pad / 2.0 - bsz
     buttons = [('collapse', (bx, by, bsz, bsz))]
-    bx -= bsz + BTN_GAP * s
-    buttons.append(('panel', (bx, by, bsz, bsz)))
     if mode() == MODE_FLOAT:
         bx -= bsz + BTN_GAP * s
         buttons.append(('dock', (bx, by, bsz, bsz)))
@@ -324,7 +336,6 @@ def rect(context, area):
 # ---- Drawing ------------------------------------------------------------------
 
 _TIPS = {
-    'panel': "Put back in the left panel",
     'dock': "Dock on the right",
 }
 
@@ -349,9 +360,6 @@ def _paint_glyph(shader, action, rect, color):
             draw_lines(shader, [(cx - half, cy - half / 2.0), (cx, cy + half / 2.0),
                                 (cx, cy + half / 2.0), (cx + half, cy - half / 2.0)],
                        color)
-    elif action == 'panel':
-        # Back to the panel, which sits at the left.
-        glyph_chevron(shader, cx, cy, size, False, color, left=True)
     elif action == 'dock':
         # A bar at the right edge with a chevron pointing at it.
         glyph_chevron(shader, cx - size * 0.15, cy, size, True, color)
@@ -438,8 +446,6 @@ def hit(context, area, region, mx, my):
         if point_in_rect(mx, my, brect):
             if action == 'collapse':
                 toggle_collapsed()
-            elif action == 'panel':
-                set_mode(MODE_PANEL)
             elif action == 'dock':
                 set_mode(MODE_RIGHT)
             return True
@@ -511,7 +517,7 @@ def end_drag(context, area, cancelled=False):
         w = WIDTH * s
         dx, dtop = _docked_xy(area, w)
         fx, ftop = _float_xy(area, w)
-        if abs(fx - dx) <= SNAP * s and abs(ftop - dtop) <= SNAP * s * 3:
+        if abs(fx - dx) <= SNAP * s and abs(ftop - dtop) <= SNAP * s * 2:
             state['mode'] = MODE_RIGHT
     _save()
     _tag()
