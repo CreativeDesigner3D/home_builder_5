@@ -8656,12 +8656,37 @@ class FaceFrameCabinet(GeoNodeCage):
         inner_r = solver.carcass_inner_right_x(layout)
         bays = layout.bays or []
         # The two ends: side panel plus any kick return under it, taken as
-        # one so the cut reads as a single seam down the end.
+        # one so the cut reads as a single seam down the end. A side
+        # rabbeted for the back has no board in the rabbet, so the inner
+        # strip of the offcut stops at the rabbet face.
         if bays:
-            yield (solver.left_scribe_offset(layout), inner_l,
-                   -dim_y, -dim_y + bays[0]['depth'], 0.0, height)
-            yield (inner_r, dim_x - solver.right_scribe_offset(layout),
-                   -dim_y, -dim_y + bays[-1]['depth'], 0.0, height)
+            cab = self.obj.face_frame_cabinet
+            splayed = bool(layout.is_angled
+                           or getattr(cab, 'extend_back_left', 0.0)
+                           or getattr(cab, 'extend_back_right', 0.0))
+            rabbet_w = solver.back_thickness(layout)
+            ends = (
+                ('LEFT', solver.left_scribe_offset(layout), inner_l,
+                 bays[0]['depth']),
+                ('RIGHT', inner_r,
+                 dim_x - solver.right_scribe_offset(layout),
+                 bays[-1]['depth']),
+            )
+            for side, x0, x1, depth in ends:
+                back_y = -dim_y + depth
+                notch = 0.0 if splayed else solver.back_notch_depth(layout, side)
+                notch = min(notch, x1 - x0)
+                if notch <= 0.0 or rabbet_w <= 0.0:
+                    yield (x0, x1, -dim_y, back_y, 0.0, height)
+                    continue
+                if side == 'LEFT':
+                    outer, inner = (x0, x1 - notch), (x1 - notch, x1)
+                else:
+                    outer, inner = (x0 + notch, x1), (x0, x0 + notch)
+                if outer[1] > outer[0]:
+                    yield (outer[0], outer[1], -dim_y, back_y, 0.0, height)
+                yield (inner[0], inner[1], -dim_y, back_y - rabbet_w,
+                       0.0, height)
         # Backs and bay floors, clipped to the inside of the sides so a
         # notched back does not double up on the end columns.
         for seg in solver.carcass_back_segments(layout):
