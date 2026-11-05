@@ -130,6 +130,10 @@ def add_joint(part_a, part_b, mode='EVEN'):
     apply_root(root_a)
     if root_b is not root_a:
         apply_root(root_b)
+    # The side behind a mitered end stile follows the joint.
+    _rescribe(root_a)
+    if root_b is not root_a:
+        _rescribe(root_b)
     return True
 
 
@@ -409,42 +413,51 @@ def _undo(part):
     _drop_cutter(part, None)
 
 
+def _cut_line(a, b, mode):
+    """(p, q): the plan line board a is cut on for its joint with b, from
+    face to face across a's thickness, or None when the boards don't
+    cross. It depends only on the boards' faces, so a's growth doesn't
+    move it."""
+    if mode == 'EVEN':
+        O, I = _joint_points(a, b)
+        if O is None or I is None:
+            return None
+        return O, I
+    a_out, a_in = a.faces(b.centre())
+    b_out, b_in = b.faces(a.centre())
+    if mode == 'LONG_SELF':
+        # Run past the corner to where my inner face meets the other
+        # board's outer face, and end square there.
+        p = _cross(*a.line(a_in), *b.line(b_out))
+        if p is None:
+            return None
+        return p, p + a.n * (a_out - a_in)
+    # LONG_OTHER: a is the short board, cut at the angle along the long
+    # board's inner face.
+    p = _cross(*a.line(a_out), *b.line(b_in))
+    q = _cross(*a.line(a_in), *b.line(b_in))
+    if p is None or q is None:
+        return None
+    return p, q
+
+
 def _apply_pair(me, other, mode):
     """Grow + cut `me` for its joint with `other` (other is only read)."""
     _undo_growth(me)
     a = _Board(me)
     b = _Board(other)
-    O, I = _joint_points(a, b)
-    if O is None or I is None:
+    line = _cut_line(a, b, mode)
+    if line is None:
         return
+    p, q = line
     z_lo = min(a.mw.translation.z, b.mw.translation.z) - units.inch(2.0)
     z_hi = z_lo + units.inch(200.0)
-    if mode == 'EVEN':
-        _grow_to(a, [O, I])
-        a = _Board(me)
-        quads = [_half_plane(O, I, b.centre())]
+    _grow_to(a, [p, q])
+    a = _Board(me)
+    if mode == 'LONG_SELF':
+        quads = [_half_plane(p, q, _toward_end(a, p))]
     else:
-        a_out, a_in = a.faces(b.centre())
-        b_out, b_in = b.faces(a.centre())
-        if mode == 'LONG_SELF':
-            # Run past the corner to where my inner face meets the other
-            # board's outer face, and end square there.
-            p = _cross(*a.line(a_in), *b.line(b_out))
-            if p is None:
-                return
-            q = p + a.n * (a_out - a_in)
-            _grow_to(a, [p, q])
-            a = _Board(me)
-            quads = [_half_plane(p, q, _toward_end(a, p))]
-        else:   # LONG_OTHER: me is the short board
-            # Cut at the angle along the long board's inner face.
-            p = _cross(*a.line(a_out), *b.line(b_in))
-            q = _cross(*a.line(a_in), *b.line(b_in))
-            if p is None or q is None:
-                return
-            _grow_to(a, [p, q])
-            a = _Board(me)
-            quads = [_half_plane(p, q, b.centre())]
+        quads = [_half_plane(p, q, b.centre())]
     _set_cuts(me, quads, z_lo, z_hi)
 
 
@@ -468,9 +481,171 @@ def apply_root(root):
             print(f"Home Builder: miter joint {j.get('id')} skipped ({exc})")
 
 
+# ---------------------------------------------------------------------------
+# Scribe behind a mitered end stile
+# ---------------------------------------------------------------------------
+#
+# The carcass side behind an end stile sits in from the cabinet's edge by
+# the scribe. Mitering the stile cuts its back face short of the edge
+# (by the most on the short part of a one-sided joint), and a side left
+# at its usual scribe would hang past the cut into the void behind the
+# joint. While a side is auto-managed and unfinished, its scribe is
+# raised until the side lands on the stile with at least MIN_BEARING of
+# stile beyond it, never so far that the side passes the stile's inner
+# edge into the opening. A side already that far in is left where it is.
+#
+# The scribe the side had before is kept on the cabinet, next to the
+# value written, under SCRIBE_KEY ({side: [base, written]}). Taking the
+# miter off puts the base back. A scribe typed by hand turns the side's
+# auto flag off, and from then on the typed value stands.
+
+SCRIBE_KEY = 'HB_MITER_SCRIBE'
+MIN_BEARING = units.inch(0.25)
+_STILE_SIDES = {
+    types_face_frame.PART_ROLE_LEFT_STILE: 'left',
+    types_face_frame.PART_ROLE_RIGHT_STILE: 'right',
+}
+_SIDE_ROLES = {
+    'left': types_face_frame.PART_ROLE_LEFT_SIDE,
+    'right': types_face_frame.PART_ROLE_RIGHT_SIDE,
+}
+# Cabinets whose scribe-driven rebuild is running (by name).
+_SCRIBING = set()
+
+
+def _scribe_stamps(root):
+    try:
+        data = json.loads(root.get(SCRIBE_KEY, '{}'))
+    except (TypeError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _side_thickness(root, side):
+    for child in root.children_recursive:
+        if child.get('hb_part_role') == _SIDE_ROLES[side]:
+            t = GeoNodeCutpart(child).get_input('Thickness')
+            if t:
+                return t
+    return getattr(root.face_frame_cabinet, 'material_thickness',
+                   units.inch(0.5))
+
+
+def _scribe_needed(root, stile, other, mode, side):
+    """Least scribe that puts the side behind `stile` on solid stile,
+    capped where the side would pass the stile's inner edge. None when
+    the joint doesn't cross."""
+    a = _Board(stile)
+    b = _Board(other)
+    line = _cut_line(a, b, mode)
+    if line is None:
+        return None
+    p, q = line
+    inv = root.matrix_world.inverted()
+    z = a.mw.translation.z
+
+    def local(pt):
+        return inv @ Vector((pt.x, pt.y, z))
+
+    # The back face is the one toward the carcass (greater local Y: the
+    # frame is at the front, -Y).
+    mid = (a.a0 + a.a1) / 2.0
+    back_t = max((a.t0, a.t1), key=lambda t: local(a.point(mid, t)).y)
+    end = _cross(*a.line(back_t), p, q - p)
+    if end is None:
+        return None
+    ends = [local(a.point(a.a0, back_t)).x, local(a.point(a.a1, back_t)).x]
+    width = root.face_frame_cabinet.width
+    if side == 'left':
+        reach = local(end).x
+        inner = max(ends)
+    else:
+        reach = width - local(end).x
+        inner = width - min(ends)
+    need = reach + MIN_BEARING
+    cap = inner - _side_thickness(root, side)
+    return max(min(need, cap), 0.0)
+
+
+def sync_scribes(root):
+    """Set the scribe of each auto-managed, unfinished side whose end
+    stile is mitered (see above). Returns True when a scribe changed, so
+    the caller rebuilds the cabinet."""
+    cab = getattr(root, 'face_frame_cabinet', None)
+    if cab is None:
+        return False
+    wanted = {}
+    for j in joints(root):
+        me = find_part(root, j['self'])
+        side = _STILE_SIDES.get(me.get('hb_part_role')) if me else None
+        if side is None:
+            continue
+        other_root = bpy.data.objects.get(j.get('other_root', ''))
+        other = find_part(other_root, j['other']) if other_root else None
+        if other is None:
+            continue
+        need = _scribe_needed(root, me, other, j.get('mode', 'EVEN'), side)
+        if need is not None:
+            wanted[side] = need
+    stamps = _scribe_stamps(root)
+    if not wanted and not stamps:
+        return False
+    changed = False
+    for side in ('left', 'right'):
+        prop = f'{side}_scribe'
+        cur = getattr(cab, prop)
+        auto = getattr(cab, f'{side}_finish_end_auto')
+        stamp = stamps.get(side)
+        if stamp is not None and abs(cur - stamp[1]) > 1e-6:
+            if not auto:
+                # Typed by hand: that value stands.
+                del stamps[side]
+                continue
+            # The exposure pass re-derived the scribe: that is the new
+            # base.
+            stamp = [cur, cur]
+        managed = (auto and getattr(cab, f'{side}_finished_end_condition')
+                   == 'UNFINISHED')
+        if side not in wanted or not managed:
+            if stamp is not None:
+                if abs(cur - stamp[0]) > 1e-6:
+                    cab[prop] = stamp[0]     # no update callback
+                    changed = True
+                del stamps[side]
+            continue
+        base = stamp[0] if stamp is not None else cur
+        target = max(base, wanted[side])
+        if abs(target - cur) > 1e-6:
+            cab[prop] = target
+            changed = True
+        stamps[side] = [base, target]
+    if stamps:
+        root[SCRIBE_KEY] = json.dumps(stamps)
+    elif SCRIBE_KEY in root:
+        del root[SCRIBE_KEY]
+    return changed
+
+
+def _rescribe(root):
+    """sync_scribes, then rebuild root once if a scribe moved."""
+    if root is None or root.name in _SCRIBING:
+        return
+    if not sync_scribes(root):
+        return
+    _SCRIBING.add(root.name)
+    try:
+        types_face_frame.recalculate_face_frame_cabinet(root)
+    finally:
+        _SCRIBING.discard(root.name)
+
+
 def _on_recalc(root):
-    if root is not None and root.get(JOINTS_KEY):
+    if root is None:
+        return
+    if root.get(JOINTS_KEY):
         apply_root(root)
+    if root.get(JOINTS_KEY) or root.get(SCRIBE_KEY):
+        _rescribe(root)
 
 
 # ---------------------------------------------------------------------------
