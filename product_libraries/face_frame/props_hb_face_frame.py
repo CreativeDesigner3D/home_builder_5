@@ -8345,6 +8345,47 @@ def _set_height_above_floor(self, value):
     self.id_data.location.z = value
 
 
+# The cabinet's style section as a field: it reads the STYLE_NAME the
+# cabinet carries, and picking one assigns that style the way Assign
+# Style does. Stores nothing. A style's value is its place in the pool
+# plus one, so 0 is free for "None" -- listed only while the cabinet has
+# no style, since picking it would undo nothing.
+_cabinet_style_items_cache = []
+
+
+def _cabinet_style_index(self):
+    name = self.id_data.get('STYLE_NAME')
+    for i, cs in enumerate(get_style_props().cabinet_styles):
+        if cs.name == name:
+            return i
+    return -1
+
+
+def _cabinet_style_items(self, context):
+    global _cabinet_style_items_cache
+    items = [(cs.name, cs.name, "", i + 1)
+             for i, cs in enumerate(get_style_props(context).cabinet_styles)]
+    if self is None or _cabinet_style_index(self) < 0:
+        items.insert(0, ('NONE', "None", "", 0))
+    _cabinet_style_items_cache = items
+    return _cabinet_style_items_cache
+
+
+def _get_cabinet_style_section(self):
+    return _cabinet_style_index(self) + 1
+
+
+def _set_cabinet_style_section(self, value):
+    styles = get_style_props().cabinet_styles
+    if not 0 < value <= len(styles):
+        return
+    if value == _get_cabinet_style_section(self):
+        return
+    styles[value - 1].assign_style_to_cabinet(self.id_data)
+    if get_style_props().show_style_colors:
+        apply_style_colors(bpy.context)
+
+
 class Face_Frame_Cabinet_Props(PropertyGroup):
     """Cabinet-level face frame state. Attached to the cabinet's root object
     as bpy.types.Object.face_frame_cabinet.
@@ -8396,6 +8437,13 @@ class Face_Frame_Cabinet_Props(PropertyGroup):
         description="Distance from the floor to the bottom of the cabinet",
         unit='LENGTH', precision=4,
         get=_get_height_above_floor, set=_set_height_above_floor,
+    )  # type: ignore
+
+    style_section: EnumProperty(
+        name="Style",
+        description="The cabinet style this cabinet carries; picking one assigns it",
+        items=_cabinet_style_items,
+        get=_get_cabinet_style_section, set=_set_cabinet_style_section,
     )  # type: ignore
 
     # Width lock - consulted by the Grab Cabinet Group operator when

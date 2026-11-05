@@ -1726,6 +1726,24 @@ def paint(entries, mx, my):
                         thumb_picker.draw_texture(
                             tex, (vx + 5 * s, vy + 4 * s, side, side))
                         shader.bind()
+                elif fkind == 'enum' and options.get('color'):
+                    # A flat colour chip before the pick's name -- what
+                    # it is drawn in (a cabinet style's colour).
+                    try:
+                        rgb = options['color'](owner)
+                    except Exception:
+                        rgb = None
+                    vx, vy, vw, vh = value_rect
+                    side = vh - 8 * s
+                    inset = (side + 6 * s) if rgb is not None else 0.0
+                    paint_field(shader, font_id, rect, FONT * s, label,
+                                str(value), hot, label_frac=frac,
+                                text_inset=inset)
+                    if rgb is not None:
+                        draw_rect(shader, vx + 5 * s, vy + 4 * s, side, side,
+                                  (rgb[0], rgb[1], rgb[2], 1.0))
+                        draw_rect_outline(shader, vx + 5 * s, vy + 4 * s,
+                                          side, side, Theme.BTN_BORDER)
                 elif fkind == 'file':
                     paint_field(shader, font_id, rect, FONT * s, label,
                                 str(value), hot, label_frac=frac,
@@ -1767,6 +1785,14 @@ def paint(entries, mx, my):
                 else:
                     paint_field(shader, font_id, rect, FONT * s, label,
                                 str(value), hot, label_frac=frac)
+                # More about the value than its name fits, on hover.
+                if options.get('tip') and point_in_rect(mx, my, rect):
+                    try:
+                        tip = options['tip'](owner)
+                    except Exception:
+                        tip = None
+                    if tip:
+                        note_tip(rect, tip)
             elif kind == 'toggle_chip':
                 _, _owner, _prop, rect, on, glyph = entry
                 c_hot = point_in_rect(mx, my, rect)

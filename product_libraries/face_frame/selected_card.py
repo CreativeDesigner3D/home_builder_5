@@ -270,6 +270,49 @@ def _accessories(_op):
     return accessory_registry.available()
 
 
+def _cabinet_style(cab):
+    """(index, style) of the cabinet style the cabinet carries, or
+    (-1, None)."""
+    from . import props_hb_face_frame
+    name = cab.id_data.get('STYLE_NAME')
+    for i, cs in enumerate(props_hb_face_frame.get_style_props().cabinet_styles):
+        if cs.name == name:
+            return i, cs
+    return -1, None
+
+
+def _has_styles(_cab):
+    from . import props_hb_face_frame
+    return len(props_hb_face_frame.get_style_props().cabinet_styles) > 0
+
+
+def _style_color(cab):
+    """The colour the style paints its cabinets with Style Colors on."""
+    from . import props_hb_face_frame as pf
+    i, cs = _cabinet_style(cab)
+    if cs is None:
+        return None
+    return pf.style_viewport_color(pf.style_palette_color(i))
+
+
+def _style_details(cab):
+    """What the style is, read on hover: species and finish, then the
+    door and drawer fronts it puts on."""
+    cs = _cabinet_style(cab)[1]
+    if cs is None:
+        return "No style assigned"
+    from .library_catalog import _join, _value
+    parts = [_join(_value(cs, 'finish_wood', 'ss_wood'),
+                   _value(cs, 'finish_color', 'ss_color'))]
+    door = _value(cs, 'door_style')
+    drawer = _value(cs, 'drawer_front_style')
+    if door:
+        parts.append("Door: " + door)
+    if drawer:
+        parts.append("Drawer: " + drawer)
+    return " · ".join(p for p in parts if p)
+
+
 def _menu(icon, label, menu_id, when=None):
     """An icon that drops down one of the right-click menu's own preset
     lists."""
@@ -462,6 +505,13 @@ def blocks(context, item):
         out = [('head', (" \u203a ".join([root.name] + trail[1:]), False, None))]
 
     _fold_for(context, kind)
+
+    # The style section leads, whatever part is picked: it is the
+    # cabinet's, and switching it here saves a trip to Options.
+    out.extend(options_panel.field_blocks(context, (
+        ('enum', 'style_section', "Style",
+         {'when': _has_styles, 'color': _style_color, 'tip': _style_details}),
+    ), cab))
 
     if n_cab > 1:
         types = {r.face_frame_cabinet.cabinet_type
