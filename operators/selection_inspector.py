@@ -21,10 +21,8 @@ itself on hover. Where it is, and whether it is folded, is remembered for the
 user rather than the file, so everyone keeps their own layout and
 nobody else's changes.
 
-It shows only while something with a page is picked, and the page is
-the SELECTED tab's own (``selected_tab._blocks``), laid out by the
-Options tab's widgets -- popping it out changes where it is drawn,
-never what it offers.
+It shows only while something with a page is picked; the page is
+``selected_tab._blocks``, laid out by the Options tab's widgets.
 
 Like the rest of the HUD it adds no persistent modal operator: the
 viewport HUD's keymap operators route presses, hover and the wheel to
@@ -78,6 +76,9 @@ BOTTOM_RESERVE = 44
 # How near the docked spot a dropped box has to land to dock again. Small,
 # so a box nudged a little way off the dock stays where it was put.
 SNAP = 16
+# A page that draws itself asks for this much height, less where the
+# viewport is shorter; it scrolls within what it gets.
+PROVIDER_H = 620
 
 _STATE_FILE = 'selection_inspector.json'
 
@@ -139,14 +140,8 @@ def set_mode(new_mode):
     state = _load()
     if new_mode == state['mode']:
         return
-    was_detached = detached()
     state['mode'] = new_mode
     _save()
-    from . import selected_tab
-    if detached() and not was_detached:
-        selected_tab.hand_off()
-    elif not detached() and was_detached:
-        selected_tab.take_back()
     _tag()
 
 
@@ -224,8 +219,13 @@ def _page_blocks(context):
     return blocks
 
 
-def _title(context):
+def _title(context, provider=None):
     from . import selected_tab
+    if provider is not None:
+        try:
+            return str(provider.title(context))
+        except Exception:
+            return "Selected"
     blocks = selected_tab._blocks(context)
     for block in blocks:
         if block[0] == 'head':
@@ -275,12 +275,15 @@ def layout(context, area, region):
     'entries'}. Shared by draw and hit-testing so they cannot drift."""
     if area is None or region is None or not showing(context):
         return None
-    from . import options_panel
+    from . import options_panel, selected_tab
     s = _s()
     w = WIDTH * s
     header_h = HEADER_H * s
     pad = PAD * s
-    blocks = _page_blocks(context)
+    # A page that draws itself (an appliance's panel run) instead of
+    # blocks: it fills the room it is given, and scrolls within it.
+    provider = selected_tab.page_provider(context)
+    blocks = [] if provider is not None else _page_blocks(context)
     folded = collapsed()
 
     if mode() == MODE_FLOAT:
@@ -292,7 +295,10 @@ def layout(context, area, region):
     if folded:
         h = header_h
     else:
-        content_h = sum(options_panel._block_h(b, s) for b in blocks)
+        if provider is not None:
+            content_h = PROVIDER_H * s
+        else:
+            content_h = sum(options_panel._block_h(b, s) for b in blocks)
         h = header_h + content_h + pad * 2
         h = min(h, top - bottom)
     h = max(h, header_h)
@@ -313,14 +319,19 @@ def layout(context, area, region):
     if not folded:
         body = (x + pad, rect[1] + pad, w - pad * 2, h - header_h - pad * 2)
         try:
-            entries = options_panel.build_page(
-                body, context, _page_blocks, _scroll_list())
+            if provider is not None:
+                entries = provider.build(body, context)
+            else:
+                entries = options_panel.build_page(
+                    body, context, _page_blocks, _scroll_list())
         except Exception as ex:
             print('Home Builder: the inspector failed to build: %s' % ex)
-    return {'rect': rect, 'header': header, 'title': _title(context),
+    return {'rect': rect, 'header': header,
+            'title': _title(context, provider),
             'buttons': buttons, 'body': body, 'entries': entries,
-            'title_right': bx,
-            'crumbs': _crumb_rects(context, header, bx)}
+            'title_right': bx, 'provider': provider,
+            'crumbs': (None if provider is not None
+                       else _crumb_rects(context, header, bx))}
 
 
 def rect(context, area):
@@ -420,7 +431,7 @@ def draw(context, area, region, mx, my):
         draw_text(font_id, tx, baseline, size, Theme.TEXT_PRIMARY, title)
     gpu.state.blend_set('NONE')
     if lay['entries']:
-        options_panel.paint(lay['entries'], mx, my)
+        (lay['provider'] or options_panel).paint(lay['entries'], mx, my)
     # Name the header button under the cursor, after the page so the
     # chip sits over it.
     for action, brect in lay['buttons']:
@@ -463,7 +474,7 @@ def hit(context, area, region, mx, my):
         return 'drag'
     if lay['entries']:
         from . import options_panel
-        options_panel.hit(context, mx, my, lay['entries'])
+        (lay['provider'] or options_panel).hit(context, mx, my, lay['entries'])
     _tag()
     return True
 
@@ -473,9 +484,12 @@ def scroll(context, area, region, mx, my, rows):
     if lay is None or not point_in_rect(mx, my, lay['rect']):
         return False
     if lay['entries']:
-        from . import options_panel
-        options_panel.scroll_page(mx, my, lay['entries'], rows,
-                                  _scroll_list())
+        if lay['provider'] is not None:
+            lay['provider'].scroll(mx, my, lay['entries'], rows)
+        else:
+            from . import options_panel
+            options_panel.scroll_page(mx, my, lay['entries'], rows,
+                                      _scroll_list())
     return True             # the wheel over the box never zooms the view
 
 

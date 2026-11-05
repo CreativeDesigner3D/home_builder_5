@@ -1,4 +1,4 @@
-"""PANELS tab -- the appliance panel layout, edited on a picture of it.
+"""The appliance panel layout, edited on a picture of it, edited on a picture of it.
 
 A panelled appliance is a run of faces: doors, drawer fronts and fixed
 panels, in columns, each with a size it either holds or shares. The
@@ -6,7 +6,7 @@ dialog listed them as rows of numbers and locks, which reads as a form
 about a fridge rather than as the fridge -- you had to hold the layout
 in your head to work out which row was the face you meant.
 
-This tab draws the front instead. Every face is where it will be, at
+The inspector draws the front instead. Every face is where it will be, at
 the size it will be; clicking one selects it, and what is below the
 picture acts on THAT face: what it is, what it is called, how tall,
 its backer, and the commands that change the shape of the run --
@@ -22,14 +22,16 @@ Two ideas carry most of the clarity:
 * **Split, rather than add.** A face is cut in two where you are
   looking, instead of a face being appended to a column and then moved.
 
-The tab appears whenever a panel-ready appliance is selected and is the
-way the Appliance Panels command opens while the viewport panel is on;
-the dialog stays for anyone running without it.
+This is the inspector's page whenever a panel-ready appliance is
+selected, and is where the Appliance Panels command opens while the
+viewport panel is on; the dialog stays for anyone running without it.
+It used to be a PANELS tab of its own, which said nothing the
+selection had not already said.
 
-Pattern, as with the other hosted tabs: this is a provider for the
-scene navigator (build / paint / hit / scroll), so the panel owns the
-chrome and the keymap, and nothing here is a persistent modal -- the
-one modal is the few seconds a value is being typed.
+Pattern: this is a page provider for the inspector (build / paint /
+hit / scroll / title, ``selected_tab.register_page``), so the box owns
+the chrome and the keymap, and nothing here is a persistent modal --
+the one modal is the few seconds a value is being typed.
 """
 
 import sys
@@ -68,11 +70,7 @@ from ..product_libraries.face_frame import appliance_panels as ap
 
 PREFERRED_WIDTH = 300       # unscaled
 
-TAB_KEY = 'PANELS'
-TAB_LABEL = 'PANELS'
-# After the built-in three (Rooms 0, Library 10, Options 20): it is the
-# tab you want while an appliance is selected, not the one you start on.
-TAB_ORDER = 25
+TAB_KEY = 'PANELS'          # the inspector page's key
 
 # The appliances that take panels -- the same set the panel operator polls
 # on, so the tab and the command cannot disagree about what is panelable.
@@ -136,7 +134,7 @@ _edit_key = None
 def target(context=None):
     """The appliance this tab edits: the selected object's appliance
     root, when that appliance takes panels. None otherwise -- which is
-    also what hides the tab."""
+    also what leaves the inspector to the appliance's ordinary page."""
     from .. import hb_utils
     if context is None:
         context = bpy.context
@@ -153,12 +151,18 @@ def target(context=None):
 
 
 def available(scene):
-    """The tab shows only while a panel-ready appliance is selected in a
+    """The page shows only while a panel-ready appliance is selected in a
     room -- a 2D sheet or a detail card cannot build anything."""
     from . import scene_navigator
     if not scene_navigator.is_room(scene):
         return False
     return target(bpy.context) is not None
+
+
+def title(context):
+    """The inspector's header: the appliance's name."""
+    bp = target(context)
+    return bp.name if bp is not None else "Appliance Panels"
 
 
 def _props(bp):
@@ -1412,16 +1416,15 @@ classes = (
 def register():
     for cls in classes:
         bpy.utils.register_class(cls)
-    from . import scene_navigator
-    scene_navigator.register_tab(TAB_KEY, sys.modules[__name__],
-                                 label=TAB_LABEL, order=TAB_ORDER,
-                                 available=available, icon='panels')
+    from . import selected_tab
+    selected_tab.register_page(TAB_KEY, lambda context: available(context.scene),
+                               sys.modules[__name__])
 
 
 def unregister():
-    from . import scene_navigator
+    from . import selected_tab
     try:
-        scene_navigator.unregister_tab(TAB_KEY)
+        selected_tab.unregister_page(TAB_KEY)
     except Exception:
         pass
     for cls in reversed(classes):

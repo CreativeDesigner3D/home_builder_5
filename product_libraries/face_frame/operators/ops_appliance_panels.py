@@ -81,31 +81,31 @@ def _fmt(v):
 
 
 def _open_in_viewport(context, bp):
-    """Show the run in the viewport panel instead of this dialog, when
-    that panel is switched on. True when it took the job.
+    """Show the run in the viewport's inspector instead of this dialog,
+    when the viewport panel is switched on. True when it took the job.
 
-    The panel draws the appliance front and is edited on the picture;
+    The inspector draws the appliance front and is edited on the picture;
     this dialog is the same model as a list of rows. One command opens
     whichever the user has, so there is no second menu entry and no
     choice to make.
     """
     try:
-        from ....operators import (scene_navigator, appliance_panel_tab,
-                                   viewport_hud)
+        from ....operators import (appliance_panel_tab, selected_tab,
+                                   selection_inspector, viewport_hud)
     except ImportError:
         return False
     if not viewport_hud.enabled() or appliance_panel_tab.target(context) is None:
         return False
-    if appliance_panel_tab.TAB_KEY not in scene_navigator.available_tabs(
-            context.scene):
+    # The run is the inspector's page while the appliance is picked.
+    if selected_tab.page_provider(context) is not appliance_panel_tab:
         return False
     if not bp.appliance_panels.sections:
         ap.seed_preset(bp, appliance_panel_tab.default_config(bp),
                        keep_options=False)
         ap.rebuild(bp)
     appliance_panel_tab.select(bp, 0)
-    scene_navigator.set_active_tab(appliance_panel_tab.TAB_KEY)
-    scene_navigator.open_panel()
+    if selection_inspector.collapsed():
+        selection_inspector.toggle_collapsed()
     appliance_panel_tab.tag_redraw()
     return True
 

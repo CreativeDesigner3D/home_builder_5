@@ -525,7 +525,7 @@ def register():
     ops_room_dressing.register()  # same: registers the lights option form
     library_panel.register()
     options_panel.register()
-    appliance_panel_tab.register()   # after the navigator: it adds a tab
+    appliance_panel_tab.register()   # adds the inspector's appliance page
     house_panel_tab.register()       # after the navigator: it adds a tab
     tool_session.register()          # same
     selected_tab.register()          # same
@@ -608,7 +608,7 @@ def unregister():
     style_editor.unregister()
     thumb_picker.unregister()
     house_panel_tab.unregister()       # before the navigator: empties its tab
-    appliance_panel_tab.unregister()   # before the navigator: empties its tab
+    appliance_panel_tab.unregister()   # removes the inspector's appliance page
     options_panel.unregister()
     library_panel.unregister()
     ops_room_dressing.unregister()
