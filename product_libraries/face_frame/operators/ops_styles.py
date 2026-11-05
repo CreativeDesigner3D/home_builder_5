@@ -732,6 +732,42 @@ def _apply_style_finish_to_bare_part(style, part_obj):
     return True
 
 
+def _seated_wood_top_for(obj):
+    """The wood top `obj` belongs to (the board or one of its edge
+    bands) when that top sits on a cabinet, else None."""
+    from .. import types_face_frame
+    cur = obj
+    while cur is not None and not cur.get(types_face_frame.TAG_CABINET_CAGE):
+        if cur.get(types_face_frame.WOOD_TOP_TAG):
+            if types_face_frame.find_cabinet_root(cur) is not None:
+                return cur
+            return None
+        cur = cur.parent
+    return None
+
+
+def _apply_style_to_seated_wood_top(style, top):
+    """Give a seated wood top a style of its own, apart from the cabinet
+    under it. The finish is stored as the top's paint override, which
+    the cabinet's material pass honours on every rebuild (its edge bands
+    follow the board), so the top keeps it when the cabinet recalcs."""
+    top['STYLE_NAME'] = style.name
+    top['hb_part_material_override'] = 'FINISH'
+    top['hb_part_material_style'] = style.name
+    if not style.rename_anchor:
+        style.rename_anchor = style.name
+    fin, fin_rot = style.get_finish_material()
+    if fin is None:
+        return True
+    for part in [top] + [c for c in top.children_recursive
+                         if c.get('CABINET_PART')]:
+        style._set_part_surfaces(part, fin, fin_rot)
+        if part.get('HB_STATIC_TEXTURED') or part.get('IS_MANUAL_PART'):
+            hb_face_frame_OT_paint_part_material._paint_manual_part_slots(
+                part, fin, fin_rot)
+    return True
+
+
 def _standalone_panel_appliance(obj):
     """The appliance `obj` belongs to when it carries a built panel run
     and stands on its own (not housed in a cabinet, whose style its
@@ -974,6 +1010,11 @@ class hb_face_frame_OT_paint_assign_cabinet_style(bpy.types.Operator):
         app = _standalone_panel_appliance(obj)
         if app is not None:
             return app
+        # A wood top seated on a cabinet takes the style on its own (an
+        # island top in another species), not the cabinet under it.
+        top = _seated_wood_top_for(obj)
+        if top is not None:
+            return top
         root = types_face_frame.find_cabinet_root(obj)
         if root is not None:
             return root
@@ -993,6 +1034,9 @@ class hb_face_frame_OT_paint_assign_cabinet_style(bpy.types.Operator):
             return
         if root.get('IS_FACE_FRAME_CABINET_CAGE'):
             style.assign_style_to_cabinet(root)
+            _refresh_style_colors(context)
+        elif _seated_wood_top_for(root) is root:
+            _apply_style_to_seated_wood_top(style, root)
             _refresh_style_colors(context)
         elif _standalone_panel_appliance(root) is root:
             _assign_style_to_appliance(style, root)

@@ -3495,6 +3495,13 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
         the paint entirely.
         """
         override = part_obj.get('hb_part_material_override')
+        if (override is None
+                and part_obj.get('hb_part_role') == 'WOOD_TOP_EDGE'
+                and part_obj.parent is not None):
+            # A top's edge bands are rebuilt with it and carry no stamp
+            # of their own; they follow the paint on their board.
+            part_obj = part_obj.parent
+            override = part_obj.get('hb_part_material_override')
         if override not in ('FINISH', 'INTERIOR'):
             return None, None
         ov_style = self
