@@ -54,6 +54,7 @@ class HOME_BUILDER_MT_main_menu(bpy.types.Menu):
         layout.prop(prefs, "use_viewport_hud")
         layout.prop(prefs, "show_mode_names")
         layout.prop_menu_enum(prefs, "mode_bar_position")
+        layout.prop(prefs, "viewport_controls_size")
         layout.prop(prefs, "use_room_palette")
         layout.prop(prefs, "palette_expanded")
         layout.operator("home_builder.set_recommended_settings",

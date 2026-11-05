@@ -140,12 +140,19 @@ def _texture(name, size, icon_dir):
 
 
 def scale():
-    """Blender's UI scale. hb_gpu_ui has the same, but it imports this
-    module, so this one cannot import it back."""
+    """Blender's UI scale times the add-on's Controls Size. hb_gpu_ui's
+    scale() hands off to this one: it imports this module, so this one
+    cannot import it back, and the icons have to grow with the rest."""
     try:
-        return bpy.context.preferences.system.ui_scale
+        prefs = bpy.context.preferences
+        s = prefs.system.ui_scale
     except AttributeError:
         return 1.0
+    try:
+        size = prefs.addons[__package__].preferences.viewport_controls_size
+    except (KeyError, AttributeError):
+        size = 1.0
+    return s * size
 
 
 def has_icon(name, icon_dir=None):

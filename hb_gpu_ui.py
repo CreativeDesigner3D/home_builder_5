@@ -22,7 +22,7 @@ import bpy
 import blf
 import gpu
 
-from .hb_icons import icon_glyph
+from .hb_icons import icon_glyph, scale as _icon_scale
 from .hb_gpu_draw import (
     draw_rect,
     draw_rect_outline,
@@ -40,17 +40,17 @@ from .hb_gpu_draw import (
 # ---- Scale ------------------------------------------------------------------
 
 def scale():
-    """Global UI scale (Resolution Scale x DPI).
+    """Global UI scale (Resolution Scale x DPI) times the add-on's
+    Controls Size preference.
 
     Viewport panels are drawn in raw device pixels, so every dimension
     and font size has to be multiplied by this to track Blender's UI --
     otherwise the panel stays device-pixel sized and reads as a postage
-    stamp on a high-DPI or scaled display.
+    stamp on a high-DPI or scaled display. Controls Size lets a user
+    grow the viewport controls past Blender's own menus on a screen
+    where the icons and headings still read small.
     """
-    try:
-        return bpy.context.preferences.system.ui_scale
-    except AttributeError:
-        return 1.0
+    return _icon_scale()
 
 
 # ---- Theme ------------------------------------------------------------------

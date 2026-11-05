@@ -81,8 +81,8 @@ GROUP_GAP       = 16
 GROUP_PAD       = 2       # a group's bar round its buttons
 GROUP_RADIUS    = 6
 PILL_RADIUS     = 4       # the lit or hovered button inside a bar
-CAPTION_H       = 13      # a group's heading above its bar
-CAPTION_FONT    = 8
+CAPTION_H       = 14      # a group's heading above its bar
+CAPTION_FONT    = 9
 FONT_SIZE       = 11
 
 BTN_BG          = Theme.BTN_BG
@@ -1911,6 +1911,11 @@ def compute_layout(context, area):
         tab_x += tab_btn.width + btn_gap
     _note_group(tab_rects, "Panels")
     _note_group(back_rects, None)
+    # What a centered row on the top line has to stay between. Tabs
+    # dropped under the overlay text leave the top line's left free.
+    top_left = (tab_x - btn_gap + GROUP_PAD * s + group_gap
+                if tab_top == top_y else x_min + margin_x)
+    top_right = x_max - margin_x
 
     # Blender's own viewport controls, right-anchored on that same top
     # row. Inset past the navigation gizmo: the gizmo is drawn INTO the
@@ -1928,6 +1933,7 @@ def compute_layout(context, area):
             strip_w += sum(w.width for w in g) + btn_gap * (len(g) - 1)
         strip_x = (x_max - margin_x - GROUP_PAD * s
                    - navigation_gizmo_reserve(area)[0] - strip_w)
+        top_right = strip_x - GROUP_PAD * s - group_gap
         for gi, (caption, group) in enumerate(strip_groups):
             if gi > 0:
                 strip_x += group_gap
@@ -1964,6 +1970,21 @@ def compute_layout(context, area):
         for _c, g in groups:
             row_w += sum(w.width for w in g) + btn_gap * (len(g) - 1)
         cursor_x = x_min + (visible_w - row_w) / 2.0
+        if not at_bottom and row_y == top_y:
+            # The top line also carries the panel tabs on the left and
+            # the view strip on the right. Centered between them when it
+            # fits. Otherwise (a large Controls Size, or a narrow window)
+            # the selection modes go along the bottom, where the Bottom
+            # setting puts them, and any other row drops a line, rather
+            # than either running under the tabs or the strip.
+            if row_w <= top_right - top_left:
+                cursor_x = min(max(cursor_x, top_left), top_right - row_w)
+            elif ri == 0:
+                at_bottom = True
+                row_y = y_min + margin_y
+            else:
+                cursor_y -= btn_h + row_gap + caption_h
+                row_y = cursor_y
         for gi, (caption, group) in enumerate(groups):
             if gi > 0:
                 cursor_x += group_gap

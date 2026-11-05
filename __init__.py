@@ -262,6 +262,18 @@ class Home_Builder_AddonPreferences(bpy.types.AddonPreferences):
         update=_update_use_viewport_hud,
     ) # type: ignore
 
+    viewport_controls_size: bpy.props.FloatProperty(
+        name="Controls Size",
+        description="Size of the controls drawn in the 3D viewport (panel "
+                    "tabs, panels, selection modes, tool palette), on top "
+                    "of Blender's Resolution Scale. Raise it when they read "
+                    "small on a high resolution screen; Blender's own "
+                    "menus are left as they are",
+        default=1.0, min=0.5, max=3.0, soft_min=0.75, soft_max=2.0,
+        step=10, precision=2, subtype='FACTOR',
+        update=_update_use_viewport_hud,
+    ) # type: ignore
+
     palette_expanded: bpy.props.BoolProperty(
         name="Expanded Tool Bar",
         description="Name every tool, head each group with a caption, and "
@@ -439,6 +451,7 @@ class Home_Builder_AddonPreferences(bpy.types.AddonPreferences):
         sub.enabled = self.use_viewport_hud
         sub.prop(self, "show_mode_names")
         sub.prop(self, "mode_bar_position")
+        col.prop(self, "viewport_controls_size")
         col.prop(self, "use_room_palette")
         sub = col.column(align=True)
         sub.enabled = self.use_room_palette
