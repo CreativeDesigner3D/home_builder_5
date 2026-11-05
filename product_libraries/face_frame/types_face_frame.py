@@ -20930,6 +20930,17 @@ def apply_active_finish_to_product(product_obj):
     if not (0 <= idx < len(ff.cabinet_styles)):
         return
     cs = ff.cabinet_styles[idx]
+    if cs.get_finish_material()[0] is None:
+        return
+    apply_style_finish_to_product(cs, product_obj)
+
+
+def apply_style_finish_to_product(cs, product_obj):
+    """Put cabinet style `cs` on a face-frame PRODUCT (a Half Wall, a
+    Support Frame): its finish on every cutpart, and STYLE_NAME. The
+    style is stamped even before it has a finish picked, so the product
+    still wears the style's viewport colour like a cabinet would."""
+    product_obj['STYLE_NAME'] = cs.name
     finish_mat, finish_mat_rotated = cs.get_finish_material()
     if finish_mat is None:
         return
@@ -20944,7 +20955,6 @@ def apply_active_finish_to_product(product_obj):
         # material on its own mesh; keep it following the cutpart input.
         if child.get(turned_leg.STATIC_TAG):
             turned_leg.sync_static_material(child)
-    product_obj['STYLE_NAME'] = cs.name
 
 
 # A loose drawer front's box is sized as if the front overlaid its

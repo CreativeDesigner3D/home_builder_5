@@ -561,7 +561,9 @@ def _part_blocks(context, tag, part):
         key, label, fields = 'ff_door_part', "Door Part", DOOR_PART_FIELDS
         owner = prop_proxy.owner(part, DOOR_PART_SCHEMA)
     _open_once(context, key)
+    from . import selected_card
     out = [('head', (part.name, False, None))]
+    out.extend(selected_card.style_blocks(context, part, 'hb_style_section'))
     out.extend(options_panel.field_blocks(context, (
         ('group', key, label, {'icon': 'cab_parts', 'fields': fields}),
     ), owner))
@@ -592,6 +594,8 @@ def blocks(context, item):
         if others:
             n = len(others)
             out.append(('label', f"Linked with {n} other shel{'f' if n == 1 else 'ves'}"))
+    from . import selected_card
+    out.extend(selected_card.style_blocks(context, cab))
     out.extend(options_panel.field_blocks(context, (
         ('group', size_key, "Size", {'icon': 'cab_cabinet',
                                      'summary': _size_summary, 'fields': size}),

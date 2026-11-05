@@ -758,7 +758,6 @@ class hb_face_frame_OT_assign_style_to_selected_cabinets(Operator):
         return len(ff.cabinet_styles) > 0 and len(context.selected_objects) > 0
 
     def execute(self, context):
-        from .. import types_face_frame
         ff = get_style_props(context)
         idx = ff.active_cabinet_style_index
         if idx < 0 or idx >= len(ff.cabinet_styles):
@@ -766,55 +765,97 @@ class hb_face_frame_OT_assign_style_to_selected_cabinets(Operator):
             return {'CANCELLED'}
         style = ff.cabinet_styles[idx]
 
-        # Resolve every selected object up to its cabinet root OR wood-hood
-        # cage; dedupe across both pools.
-        from ...common import wood_hoods
-        cab_roots = []
-        hood_roots = []
-        bare_parts = []
-        appliances = []
-        seen = set()
+        # Resolve every selected object up to what the style goes on (a
+        # cabinet, product, wood hood, bare part or panelled appliance);
+        # dedupe, so five parts of one cabinet assign it once.
+        targets = {}
         for obj in context.selected_objects:
-            app = _standalone_panel_appliance(obj)
-            if app is not None:
-                if app.name not in seen:
-                    seen.add(app.name)
-                    appliances.append(app)
-                continue
-            root = types_face_frame.find_cabinet_root(obj)
-            if root is not None:
-                if root.name not in seen:
-                    seen.add(root.name)
-                    cab_roots.append(root)
-                continue
-            hood = wood_hoods.find_hood_root(obj)
-            if hood is not None and hood.name not in seen:
-                seen.add(hood.name)
-                hood_roots.append(hood)
-                continue
-            part = _bare_part_for(obj)
-            if part is not None and part.name not in seen:
-                seen.add(part.name)
-                bare_parts.append(part)
+            target = props_hb_face_frame.style_target(obj)
+            if target is not None:
+                targets.setdefault(target[1].name, target[1])
 
-        if not cab_roots and not hood_roots and not bare_parts and not appliances:
+        if not targets:
             self.report({'WARNING'}, "No face frame cabinets or wood hoods in selection")
             return {'CANCELLED'}
 
-        for root in cab_roots:
-            style.assign_style_to_cabinet(root)
-        for hood in hood_roots:
-            # Stamp the style first, then rebuild a built wood hood so its
-            # static doors pick up the new style's door construction.
-            style.assign_style_to_hood(hood)
-            wood_hoods.rebuild_built_hood(hood)
-        for part in bare_parts:
-            _apply_style_finish_to_bare_part(style, part)
-        for app in appliances:
-            _assign_style_to_appliance(style, app)
-        n = len(cab_roots) + len(hood_roots) + len(bare_parts) + len(appliances)
+        for obj in targets.values():
+            props_hb_face_frame.assign_style_to_object(style, obj)
+        n = len(targets)
         _refresh_style_colors(context)
         self.report({'INFO'}, f"Applied '{style.name}' to {n} item(s)")
+        return {'FINISHED'}
+
+
+def _style_named(context, name):
+    for i, cs in enumerate(get_style_props(context).cabinet_styles):
+        if cs.name == name:
+            return i, cs
+    return -1, None
+
+
+class hb_face_frame_OT_style_quick_settings(Operator):
+    """The settings of this style reached for most, without going to Options"""
+    bl_idname = "hb_face_frame.style_quick_settings"
+    bl_label = "Style Settings"
+    bl_options = {'INTERNAL'}
+
+    style_name: bpy.props.StringProperty()  # type: ignore
+
+    def invoke(self, context, event):
+        if _style_named(context, self.style_name)[1] is None:
+            self.report({'WARNING'}, "No style to edit")
+            return {'CANCELLED'}
+        return context.window_manager.invoke_popup(self, width=320)
+
+    def execute(self, context):
+        return {'FINISHED'}
+
+    def draw(self, context):
+        from .. import style_options
+        layout = self.layout
+        _i, cs = _style_named(context, self.style_name)
+        if cs is None:
+            layout.label(text="This style was removed", icon='ERROR')
+            return
+        layout.label(text=cs.name, icon='MATERIAL')
+        col = layout.column(align=True)
+        cs._draw_toggle_field(col, "finish_wood", "Wood", "ss_wood")
+        cs._draw_toggle_field(col, "finish_color", "Color", "ss_color")
+        if style_options.is_custom_finish(cs.finish_color):
+            col.prop(cs, "custom_finish_color", text="Custom Color")
+        cs._draw_toggle_field(col, "finish_varnish", "Varnish", "ss_varnish")
+        cs._draw_toggle_field(col, "finish_glaze", "Glaze", "ss_glaze")
+        col.separator()
+        cs._draw_toggle_field(col, "interior_material_type", "Interior",
+                              "ss_interior")
+        cs._draw_toggle_field(col, "finish_overlay", "Overlay", "ss_overlay")
+        col.separator()
+        cs._draw_toggle_field(col, "door_style", "Door", "ss_door")
+        cs._draw_toggle_field(col, "drawer_front_style", "Drawer Front",
+                              "ss_drawer")
+        # A style is shared: say so where an edit to it is made.
+        layout.label(text="Changes reach everything using this style",
+                     icon='INFO')
+        layout.operator("hb_face_frame.style_open_full_settings",
+                        text="All Style Settings...",
+                        icon='PREFERENCES').style_name = cs.name
+
+
+class hb_face_frame_OT_style_open_full_settings(Operator):
+    """Open this style in the style editor, with every setting it has"""
+    bl_idname = "hb_face_frame.style_open_full_settings"
+    bl_label = "All Style Settings"
+    bl_options = {'INTERNAL'}
+
+    style_name: bpy.props.StringProperty()  # type: ignore
+
+    def execute(self, context):
+        i, cs = _style_named(context, self.style_name)
+        if cs is None:
+            return {'CANCELLED'}
+        # The editor edits the active style, so this style becomes it.
+        get_style_props(context).active_cabinet_style_index = i
+        bpy.ops.home_builder.style_editor_open(key='CABINET_STYLE')
         return {'FINISHED'}
 
 
@@ -2365,6 +2406,8 @@ classes = (
     hb_face_frame_OT_matching_drawer_front,
     hb_face_frame_OT_front_style_wizard,
     hb_face_frame_OT_assign_style_to_selected_cabinets,
+    hb_face_frame_OT_style_quick_settings,
+    hb_face_frame_OT_style_open_full_settings,
     hb_face_frame_OT_update_cabinets_from_style,
     hb_face_frame_OT_paint_assign_cabinet_style,
     hb_face_frame_OT_paint_part_material,

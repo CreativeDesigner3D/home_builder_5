@@ -270,20 +270,29 @@ def _accessories(_op):
     return accessory_registry.available()
 
 
-def _cabinet_style(cab):
-    """(index, style) of the cabinet style the cabinet carries, or
-    (-1, None)."""
+def _cabinet_style(owner):
+    """(index, style) of the cabinet style the owner's pick carries, or
+    (-1, None). The owner is a cabinet's face_frame_cabinet, or the
+    object itself for a styled pick that is not a cabinet."""
     from . import props_hb_face_frame
-    name = cab.id_data.get('STYLE_NAME')
+    name = props_hb_face_frame._style_holder(owner).get('STYLE_NAME')
     for i, cs in enumerate(props_hb_face_frame.get_style_props().cabinet_styles):
         if cs.name == name:
             return i, cs
     return -1, None
 
 
-def _has_styles(_cab):
-    from . import props_hb_face_frame
-    return len(props_hb_face_frame.get_style_props().cabinet_styles) > 0
+def _has_styles(owner):
+    """Styles to pick from, and a pick a style goes on."""
+    from . import props_hb_face_frame as pf
+    if not len(pf.get_style_props().cabinet_styles):
+        return False
+    if not isinstance(owner, bpy.types.Object):
+        return True             # a cabinet
+    # A part on a cabinet (a wood top on its base) takes the cabinet's
+    # style; its own page must not offer to restyle the cabinet.
+    target = pf.style_target(owner)
+    return target is not None and target[1] == owner
 
 
 def _style_color(cab):
@@ -311,6 +320,29 @@ def _style_details(cab):
     if drawer:
         parts.append("Drawer: " + drawer)
     return " · ".join(p for p in parts if p)
+
+
+def _style_settings(owner):
+    """The chip that opens the style's everyday settings."""
+    cs = _cabinet_style(owner)[1]
+    if cs is None:
+        return None
+    return ('hb_face_frame.style_quick_settings', {'style_name': cs.name},
+            'settings', "Style Settings")
+
+
+def style_blocks(context, owner, prop='style_section'):
+    """The style section row: which style the pick carries, switched in
+    place, with its everyday settings a click away. `owner` is a
+    cabinet's face_frame_cabinet (prop 'style_section') or a styled
+    object that is not a cabinet (prop 'hb_style_section'). Nothing
+    while the project has no styles."""
+    from ...operators import options_panel
+    return options_panel.field_blocks(context, (
+        ('enum', prop, "Style",
+         {'when': _has_styles, 'color': _style_color, 'tip': _style_details,
+          'action': _style_settings}),
+    ), owner)
 
 
 def _menu(icon, label, menu_id, when=None):
@@ -508,10 +540,7 @@ def blocks(context, item):
 
     # The style section leads, whatever part is picked: it is the
     # cabinet's, and switching it here saves a trip to Options.
-    out.extend(options_panel.field_blocks(context, (
-        ('enum', 'style_section', "Style",
-         {'when': _has_styles, 'color': _style_color, 'tip': _style_details}),
-    ), cab))
+    out.extend(style_blocks(context, cab))
 
     if n_cab > 1:
         types = {r.face_frame_cabinet.cabinet_type

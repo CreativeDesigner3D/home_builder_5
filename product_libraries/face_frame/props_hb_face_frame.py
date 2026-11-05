@@ -8345,16 +8345,80 @@ def _set_height_above_floor(self, value):
     self.id_data.location.z = value
 
 
-# The cabinet's style section as a field: it reads the STYLE_NAME the
-# cabinet carries, and picking one assigns that style the way Assign
-# Style does. Stores nothing. A style's value is its place in the pool
-# plus one, so 0 is free for "None" -- listed only while the cabinet has
-# no style, since picking it would undo nothing.
+def style_target(obj):
+    """(kind, obj) a cabinet style goes on when `obj` is picked, or
+    None: a cabinet (legs, shelves and end shelves are cabinets too), a
+    face frame product (a Half Wall, a Support Frame), a wood hood, a
+    part standing on its own (a Misc Part, a Wood Top) or a standalone
+    appliance with panels."""
+    from . import types_face_frame
+    from ..common import wood_hoods
+    from .operators import ops_styles
+    if obj is None:
+        return None
+    app = ops_styles._standalone_panel_appliance(obj)
+    if app is not None:
+        return ('APPLIANCE', app)
+    root = types_face_frame.find_cabinet_root(obj)
+    if root is not None:
+        return ('CABINET', root)
+    o = obj
+    while o is not None:
+        if o.get(types_face_frame.TAG_PRODUCT_CAGE):
+            return ('PRODUCT', o)
+        o = o.parent
+    hood = wood_hoods.find_hood_root(obj)
+    if hood is not None:
+        return ('HOOD', hood)
+    part = ops_styles._bare_part_for(obj)
+    if part is not None:
+        return ('PART', part)
+    return None
+
+
+def assign_style_to_object(style, obj):
+    """Put cabinet style `style` on what `obj` belongs to, the way
+    Assign Style does. False when no style goes on it."""
+    target = style_target(obj)
+    if target is None:
+        return False
+    kind, target = target
+    from .operators import ops_styles
+    if kind == 'CABINET':
+        style.assign_style_to_cabinet(target)
+    elif kind == 'PRODUCT':
+        from . import types_face_frame
+        types_face_frame.apply_style_finish_to_product(style, target)
+    elif kind == 'HOOD':
+        from ..common import wood_hoods
+        style.assign_style_to_hood(target)
+        wood_hoods.rebuild_built_hood(target)
+    elif kind == 'PART':
+        ops_styles._apply_style_finish_to_bare_part(style, target)
+    else:
+        ops_styles._assign_style_to_appliance(style, target)
+    return True
+
+
+# A pick's style section as a field: it reads the STYLE_NAME the pick
+# carries, and picking one assigns that style the way Assign Style does.
+# Stores nothing. On a cabinet it is face_frame_cabinet.style_section, so
+# several picked cabinets take it together; anything else styled carries
+# it on the object (Object.hb_style_section). A style's value is its
+# place in the pool plus one, so 0 is free for "None" -- listed only
+# while nothing is assigned, since picking it would undo nothing.
 _cabinet_style_items_cache = []
 
 
+def _style_holder(self):
+    """The object whose STYLE_NAME the field reads."""
+    obj = self if isinstance(self, bpy.types.Object) else self.id_data
+    target = style_target(obj)
+    return target[1] if target else obj
+
+
 def _cabinet_style_index(self):
-    name = self.id_data.get('STYLE_NAME')
+    name = _style_holder(self).get('STYLE_NAME')
     for i, cs in enumerate(get_style_props().cabinet_styles):
         if cs.name == name:
             return i
@@ -8381,9 +8445,19 @@ def _set_cabinet_style_section(self, value):
         return
     if value == _get_cabinet_style_section(self):
         return
-    styles[value - 1].assign_style_to_cabinet(self.id_data)
+    obj = self if isinstance(self, bpy.types.Object) else self.id_data
+    assign_style_to_object(styles[value - 1], obj)
     if get_style_props().show_style_colors:
         apply_style_colors(bpy.context)
+
+
+def _style_section_prop():
+    return EnumProperty(
+        name="Style",
+        description="The cabinet style this carries; picking one assigns it",
+        items=_cabinet_style_items,
+        get=_get_cabinet_style_section, set=_set_cabinet_style_section,
+    )
 
 
 class Face_Frame_Cabinet_Props(PropertyGroup):
@@ -8439,12 +8513,7 @@ class Face_Frame_Cabinet_Props(PropertyGroup):
         get=_get_height_above_floor, set=_set_height_above_floor,
     )  # type: ignore
 
-    style_section: EnumProperty(
-        name="Style",
-        description="The cabinet style this cabinet carries; picking one assigns it",
-        items=_cabinet_style_items,
-        get=_get_cabinet_style_section, set=_set_cabinet_style_section,
-    )  # type: ignore
+    style_section: _style_section_prop()  # type: ignore
 
     # Width lock - consulted by the Grab Cabinet Group operator when
     # distributing a delta across cabinets in a group. Locked cabinets
@@ -15094,6 +15163,8 @@ def register():
     # their state on the cage object directly. Only objects that get tagged
     # by the construction code populate these.
     bpy.types.Object.face_frame_cabinet = PointerProperty(type=Face_Frame_Cabinet_Props)
+    # The style section of a styled pick that is not a cabinet.
+    bpy.types.Object.hb_style_section = _style_section_prop()
     bpy.types.Object.leg_product = PointerProperty(type=Face_Frame_Leg_Props)
     bpy.types.Object.floating_shelf = PointerProperty(type=Face_Frame_Floating_Shelf_Props)
     bpy.types.Object.mantle_product = PointerProperty(type=Face_Frame_Mantle_Props)
@@ -15139,6 +15210,8 @@ def unregister():
         del bpy.types.Object.leg_product
     if hasattr(bpy.types.Object, 'face_frame_cabinet'):
         del bpy.types.Object.face_frame_cabinet
+    if hasattr(bpy.types.Object, 'hb_style_section'):
+        del bpy.types.Object.hb_style_section
 
     if _seed_style_rename_anchors in bpy.app.handlers.load_post:
         bpy.app.handlers.load_post.remove(_seed_style_rename_anchors)

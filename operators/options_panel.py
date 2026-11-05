@@ -1348,10 +1348,18 @@ def _field_entries(context, field, owner, x, top, row_w, row_h, s):
         fkind = 'distance'
         options['readonly'] = not getattr(owner, chip_prop, False)
     remove = options.get('remove')
+    # A command about the value, at the row's end: fn(owner) ->
+    # (operator, kwargs, icon, tip), or None while it has none.
+    action = options.get('action')
+    if action is not None:
+        try:
+            action = action(owner)
+        except Exception:
+            action = None
     # A file that has been set can be cleared again from its row.
     clear = fkind == 'file' and bool(getattr(owner, prop, ""))
     chip_room = ((CHIP + ARROW_GAP) * s
-                 if (chip_prop or remove or clear) else 0.0)
+                 if (chip_prop or remove or clear or action) else 0.0)
     rect = (x, top - row_h, row_w - chip_room, row_h)
     # The label column is measured on the full row, so a row that gives
     # up room to a chip still lines its value up with its neighbours.
@@ -1397,7 +1405,10 @@ def _field_entries(context, field, owner, x, top, row_w, row_h, s):
         out.append(('toggle_chip', owner, chip_prop, chip_rect,
                     bool(getattr(owner, chip_prop, False)), glyph))
     elif remove:
-        out.append(('op_chip', remove[0], remove[1], chip_rect))
+        out.append(('op_chip', remove[0], remove[1], chip_rect, None, None))
+    elif action:
+        op_id, kwargs, icon, tip = action
+        out.append(('op_chip', op_id, kwargs, chip_rect, icon, tip))
     elif clear:
         out.append(('clear_chip', owner, prop, chip_rect))
     return out
@@ -1813,12 +1824,19 @@ def paint(entries, mx, my):
                 glyph_delete(shader, rect,
                              Theme.GLYPH_HOVER if c_hot else Theme.GLYPH)
             elif kind == 'op_chip':
-                _, _op, _kwargs, rect = entry
+                _, _op, _kwargs, rect, icon, tip = entry
                 c_hot = point_in_rect(mx, my, rect)
-                if c_hot:
-                    paint_button(shader, rect, hovered=True)
-                glyph_delete(shader, rect,
-                             Theme.GLYPH_HOVER if c_hot else Theme.GLYPH)
+                color = Theme.GLYPH_HOVER if c_hot else Theme.GLYPH
+                if icon:
+                    paint_button(shader, rect, hovered=c_hot)
+                    draw_icon(icon, rect, color)
+                    shader.bind()
+                    if c_hot and tip:
+                        note_tip(rect, tip)
+                else:
+                    if c_hot:
+                        paint_button(shader, rect, hovered=True)
+                    glyph_delete(shader, rect, color)
             elif kind == 'pick_btn':
                 _, label, _fn, rect = entry
                 hovered = point_in_rect(mx, my, rect)
@@ -2394,7 +2412,12 @@ def hit(context, mx, my, entries):
             _tag()
             return True
         if kind == 'op_chip' and point_in_rect(mx, my, entry[3]):
-            _run(entry[1], **entry[2])
+            if entry[4]:
+                # A command chip may open a popup: on the release, so the
+                # click letting go does not close it again.
+                _run_on_release(entry[1], dict(entry[2] or {}))
+            else:
+                _run(entry[1], **entry[2])
             _tag()
             return True
         if kind == 'pick_btn' and point_in_rect(mx, my, entry[3]):

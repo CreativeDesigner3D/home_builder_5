@@ -296,6 +296,11 @@ def blocks(context, item):
     label = _type_label(root)
 
     if kind == 'product':
+        if root.get('IS_FACE_FRAME_PRODUCT_CAGE'):
+            # A face frame product built on frameless parts (a Half Wall,
+            # a Support Frame) wears the face frame cabinet styles.
+            from ..face_frame import selected_card as ff_card
+            out.extend(ff_card.style_blocks(context, root, 'hb_style_section'))
         schema = (MISC_PART_SCHEMA if root.get('IS_FRAMELESS_MISC_PART')
                   else PRODUCT_SCHEMA)
         out.extend(options_panel.field_blocks(context, (
