@@ -904,7 +904,8 @@ class _GrabPill:
         return int(BTN_HEIGHT * _s())        # square
 
     def hover_label(self):
-        return "Stop Moving" if self._active() else "Move"
+        # Not "Move": that is the stock Move tool beside it in the strip.
+        return "Stop Grabbing" if self._active() else "Grab"
 
     def visible(self, context):
         if not _face_frame_ui_visible(context):
