@@ -1560,23 +1560,24 @@ def draw_opening_properties(layout, opening_obj):
             if (op.hinge_side == 'DOUBLE'
                     or op.door_look_direction == 'STACKED'):
                 fcol.prop(op, 'door_look_top_height', text="Top Door Height")
-            if op.drawer_look_divisions != 'NONE':
-                heights_box = fcol.box()
-                heights_box.label(text="Drawer Opening Heights (top to bottom)")
-                for idx in range(len(op.drawer_look_openings) - 1, -1, -1):
-                    item = op.drawer_look_openings[idx]
-                    hrow = heights_box.row(align=True)
-                    field = hrow.row(align=True)
-                    field.enabled = item.unlock_size
-                    field.prop(item, 'size', text="Opening " + str(idx + 1))
-                    hrow.prop(item, 'unlock_size', text="",
-                              icon='UNLOCKED' if item.unlock_size else 'LOCKED')
-                    if idx > 0:
-                        # The faux rail between this front and the next
-                        # one down.
-                        below = op.drawer_look_openings[idx - 1]
-                        heights_box.prop(below, 'no_rail_above',
-                                         text="Remove Rail")
+        # Row heights for a drawer-look stack (door or drawer front).
+        if op.drawer_look_divisions != 'NONE':
+            heights_box = fcol.box()
+            heights_box.label(text="Drawer Opening Heights (top to bottom)")
+            for idx in range(len(op.drawer_look_openings) - 1, -1, -1):
+                item = op.drawer_look_openings[idx]
+                hrow = heights_box.row(align=True)
+                field = hrow.row(align=True)
+                field.enabled = item.unlock_size
+                field.prop(item, 'size', text="Opening " + str(idx + 1))
+                hrow.prop(item, 'unlock_size', text="",
+                          icon='UNLOCKED' if item.unlock_size else 'LOCKED')
+                if idx > 0:
+                    # The faux rail between this front and the next
+                    # one down.
+                    below = op.drawer_look_openings[idx - 1]
+                    heights_box.prop(below, 'no_rail_above',
+                                     text="Remove Rail")
 
         # Tilt-out flag (false fronts only): label-only -- the 2D elevation
         # prints TILT-OUT instead of FALSE. No geometry change.
