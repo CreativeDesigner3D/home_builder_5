@@ -101,7 +101,17 @@ def _rebuild(scene):
 
 # ---- Gating -------------------------------------------------------------
 
+SHOW_PROP = "hb_show_door_hardware_marks"
+
+
+def marks_shown(context):
+    """The user's on/off switch for the marks (on unless turned off)."""
+    return bool(getattr(context.window_manager, SHOW_PROP, True))
+
+
 def _should_draw(context):
+    if not marks_shown(context):
+        return False
     scene = context.scene
     if scene is None or scene.get('IS_LAYOUT_VIEW') or scene.get('IS_DETAIL_VIEW'):
         return False
@@ -203,6 +213,11 @@ def register():
     global _draw_handle, _shutdown, _dirty
     _shutdown = False
     _dirty = True
+    setattr(bpy.types.WindowManager, SHOW_PROP, bpy.props.BoolProperty(
+        name="Show Door Hardware Marks",
+        description=("Show the restrictor clip / touch latch / finger rout "
+                     "letters on doors in the 3D view"),
+        default=True, update=lambda self, context: invalidate()))
     _draw_handle = bpy.types.SpaceView3D.draw_handler_add(
         _draw, (), 'WINDOW', 'POST_PIXEL')
     if _on_depsgraph_update not in bpy.app.handlers.depsgraph_update_post:
@@ -225,3 +240,7 @@ def unregister():
         except Exception:
             pass
         _draw_handle = None
+    try:
+        delattr(bpy.types.WindowManager, SHOW_PROP)
+    except AttributeError:
+        pass
