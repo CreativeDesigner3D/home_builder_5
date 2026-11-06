@@ -9302,23 +9302,42 @@ def bay_width_warning(width):
     return ""
 
 
-def corner_width_warning(width, depth):
+def corner_width_warning(width, depth, width_span=None, depth_span=None):
     """Why a corner unit is too wide, or ''. Its L shelves run out
-    along both walls, so each wing is held to the same 30" a bay is."""
+    along both walls, and each wing's shelf is held to the same 30"
+    clear span a bay is - measured between the panels that carry it,
+    not across the unit's overall size."""
     msgs = []
-    for label, size in (("Width", width), ("Depth", depth)):
-        if size > const.BAY_MAX_WIDTH + 0.0005:
-            msgs.append("Corner %s exceeds 30 Inches; this one is %s"
-                        % (label, _in_str(size)))
+    for label, size, span in (("Width", width, width_span),
+                              ("Depth", depth, depth_span)):
+        if span is None:
+            span = size
+        if span > const.BAY_MAX_WIDTH + 0.0005:
+            msgs.append("Corner %s shelf span exceeds 30 Inches; "
+                        "this one is %s (%s overall)"
+                        % (label, _in_str(span), _in_str(size)))
     return "; ".join(msgs)
+
+
+def corner_shelf_spans(root):
+    """Clear shelf span along each wing of a corner unit: its overall
+    size less the end panel at the wing's end (none when that panel is
+    turned off) and the panel thickness at the corner it bears on."""
+    sp = root.hb_closet_starter
+    pt = run_sizes(root).panel_thickness
+    r_pt = 0.0 if sp.turn_off_right_panel else pt
+    l_pt = 0.0 if sp.turn_off_left_panel else pt
+    return sp.width - r_pt - pt, sp.depth - l_pt - pt
 
 
 def stamp_bay_width_limits(root):
     """Warn on every bay of the run wider than the span limit, and on a
-    corner unit with a wing past it."""
+    corner unit with a wing shelf spanning past it."""
     if isinstance(_wrap_starter(root), LShelfClosetStarter):
         sp = root.hb_closet_starter
-        _stamp_warning(root, corner_width_warning(sp.width, sp.depth))
+        w_span, d_span = corner_shelf_spans(root)
+        _stamp_warning(root, corner_width_warning(
+            sp.width, sp.depth, w_span, d_span))
         return
     for bay in root.children:
         if not bay.get(TAG_BAY_CAGE):
