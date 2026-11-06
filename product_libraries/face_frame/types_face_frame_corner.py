@@ -151,9 +151,7 @@ def corner_opening_root(obj):
     if cab is None:
         return None
     ctype = getattr(cab.face_frame_cabinet, 'corner_type', 'NONE')
-    if ctype == 'DIAGONAL':
-        return cab
-    if ctype == 'PIE_CUT' and cab.get('CABINET_TYPE') == 'UPPER':
+    if ctype in ('DIAGONAL', 'PIE_CUT'):
         return cab
     return None
 
@@ -1679,9 +1677,12 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
         n = len(sections)
         noun = ('Drawer Front' if front_role == ff.PART_ROLE_DRAWER_FRONT
                 else 'Door')
-        # One door per arm per section. Orientation matches the arm's
-        # stile so the slab lies in that face frame plane.
+        # One door per arm per section (none for an OPEN section).
+        # Orientation matches the arm's stile so the slab lies in that
+        # face frame plane.
         for i in range(n):
+            if sections[i].content == 'OPEN':
+                continue
             left_door = CabinetPart()
             left_door.create('Left %s %d' % (noun, i + 1))
             left_door.obj.parent = self.obj
@@ -1935,6 +1936,10 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
         cab_props = self.obj.face_frame_cabinet
         if not cab_props.corner_sections:
             props_hb.populate_corner_sections(cab_props)
+        # Remove Bottom: no carcass bottom or FF bottom rails; the backs
+        # and the lowest opening drop to the carcass floor (same as the
+        # diagonal).
+        open_base = bool(cab_props.corner_remove_bottom)
         width = cab_props.width
         depth = cab_props.depth
         height = cab_props.height
@@ -1967,6 +1972,8 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
         r_scribe = self._corner_panel_reserve(cab_props, 'RIGHT')
 
         z_back_floor = (kick_height + brw) if has_kick else brw
+        if open_base:
+            z_back_floor = kick_height if has_kick else 0.0
         z_bottom = (kick_height + brw - t) if has_kick else (brw - t)
         # Top scribe holds the carcass top down from the cabinet top,
         # leaving the face frame top rail to be trimmed on site. Sides
@@ -1989,6 +1996,9 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
         parts = _children_by_corner_role(self.obj)
 
         bottom = parts.get(PART_ROLE_CORNER_BOTTOM)
+        if bottom is not None:
+            bottom.hide_viewport = open_base
+            bottom.hide_render = open_base
         if bottom is not None:
             # Backs and walls don't move with scribe - origin stays at
             # (0, 0). Length axis is along Y so l_scribe (Left Side's
@@ -2322,6 +2332,11 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
                 ('Thickness', fft),
             ))
 
+        for side in ('LEFT', 'RIGHT'):
+            rail = _find_ff_part(self.obj, ff.PART_ROLE_BOTTOM_RAIL, side)
+            if rail is not None:
+                rail.hide_viewport = open_base
+                rail.hide_render = open_base
         left_bot_rail = _find_ff_part(self.obj, ff.PART_ROLE_BOTTOM_RAIL, 'LEFT')
         if left_bot_rail is not None:
             left_bot_rail.location = (ld - fft, -depth + lsw, z_ff_floor)
@@ -2396,10 +2411,17 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
         # Vertical section layout: opening from the top of the bottom
         # rail to the underside of the top rail, split per the section
         # heights (unlocked sections share the remainder equally).
-        z_open_bot = z_ff_floor + brw_eff
+        z_open_bot = z_back_floor if open_base else z_ff_floor + brw_eff
         z_open_top = height - trw
+        # Remove Bottom hands the reclaimed bottom-rail band to the
+        # lowest section only (see _recalculate_diagonal).
+        reclaimed = 0.0
+        if open_base:
+            reclaimed = max((z_ff_floor + brw_eff) - z_open_bot, 0.0)
         sec_heights = _solve_section_heights(
-            sections, z_open_top - z_open_bot, n_sec - 1, mrw)
+            sections, z_open_top - z_open_bot - reclaimed, n_sec - 1, mrw)
+        if reclaimed > 0.0 and sec_heights:
+            sec_heights[n_sec - 1] += reclaimed
 
         ext = cab_props.exterior_option
         # Upper pie-cut corners get adjustable shelves behind their doors
@@ -2426,15 +2448,20 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
             # mirrored into the section prop so the greyed field reads
             # the live value; unlocked = the section's own value).
             sec = sections[i]
+            # Remove Bottom: the lowest doors lift clear of whatever the
+            # cabinet sits on instead of overlaying a rail that's gone.
+            sec_bot_default = bot_ov
+            if open_base and i == n_sec - 1:
+                sec_bot_default = OPEN_BASE_BOTTOM_OVERLAY
             if (not sec.unlock_top_overlay
                     and abs(sec.top_overlay - top_ov) > 1e-7):
                 sec.top_overlay = top_ov
             if (not sec.unlock_bottom_overlay
-                    and abs(sec.bottom_overlay - bot_ov) > 1e-7):
-                sec.bottom_overlay = bot_ov
+                    and abs(sec.bottom_overlay - sec_bot_default) > 1e-7):
+                sec.bottom_overlay = sec_bot_default
             sec_top_ov = sec.top_overlay if sec.unlock_top_overlay else top_ov
             sec_bot_ov = (sec.bottom_overlay
-                          if sec.unlock_bottom_overlay else bot_ov)
+                          if sec.unlock_bottom_overlay else sec_bot_default)
             if inset:
                 r = INSET_DOOR_REVEAL
                 door_length = sec_h - 2.0 * r
@@ -2491,7 +2518,8 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
                 else:
                     self._clear_door_pull(door)
 
-            if build_shelves:
+            # An open section always gets its shelves.
+            if build_shelves or sec.content == 'OPEN':
                 # Adjustable shelves behind the doors; L-shaped to match
                 # the Top / Bottom panels. Auto by section height while
                 # the section's qty is locked (synced into shelf_qty so
@@ -2501,7 +2529,6 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
                 # shelf depth, and a 24" inside-corner size put uppers
                 # in the deep bracket (fewer shelves than the 12"-deep
                 # uppers beside them).
-                sec = sections[i]
                 auto_qty = solver.auto_shelf_qty(sec_h, min(ld, rd))
                 if not sec.unlock_shelf_qty and sec.shelf_qty != auto_qty:
                     # System write; the _RECALCULATING guard short-

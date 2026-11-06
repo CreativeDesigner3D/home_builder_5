@@ -125,15 +125,13 @@ def draw_dimensions(layout, root):
         if cab_props.corner_type == 'PIE_CUT':
             col.label(text="Pie Cut Options")
             col.prop(cab_props, 'exterior_option',  text="Door Swing")
-            # Stacked-door config is upper pie cut only; base pie cut is
-            # full-height door and has no config choice to make.
             is_upper = root.get('CABINET_TYPE') == 'UPPER'
-            if is_upper:
-                col.prop(cab_props, 'exterior_config', text="Config")
+            col.prop(cab_props, 'exterior_config', text="Config")
             col.prop(cab_props, 'interior_option',  text="Interior")
             if not is_upper:
                 _draw_corner_adjustable_shelves(col, cab_props)
             col.prop(cab_props, 'corner_finish_interior', text="Finish Interior")
+            col.prop(cab_props, 'corner_remove_bottom', text="Remove Bottom")
             col.prop(cab_props, 'tray_compartment', text="Tray Compartment")
             if cab_props.tray_compartment != 'NONE':
                 col.prop(cab_props, 'tray_compartment_width', text="Tray Comp. Width")

@@ -7899,8 +7899,12 @@ _EXTERIOR_CONFIG_ITEMS = {
 # a config splits both arms together. Base pie cut is full-height door
 # only; upper pie cut adds a two-section stacked option.
 _PIE_CUT_CONFIG_ITEMS = {
+    # New choices go at the END of each list: the enum is dynamic, so a
+    # saved cabinet stores its pick by position.
     'BASE': [
         ('DOORS', "Full Height Doors", "One full-height door per arm"),
+        ('OPEN_SHELVES', "Open with Shelves",
+         "No doors; open shelf section"),
     ],
     'UPPER': [
         ('DOORS',         "Full Height Doors", "One full-height door per arm"),
@@ -7908,6 +7912,8 @@ _PIE_CUT_CONFIG_ITEMS = {
         ('DOORS_GARAGE',  "Doors + Appliance Garage",
          "Doors above an appliance garage; the cabinet extends down to "
          "the countertop"),
+        ('HUTCH',         "Hutch",             "Doors on top, open below"),
+        ('OPEN_SHELVES',  "Open with Shelves", "No doors; open shelf section"),
     ],
 }
 
@@ -7935,6 +7941,7 @@ _CORNER_SECTION_PRESETS = {
     ('UPPER', 'DOORS_GARAGE'):      ('DOORS', 'GARAGE'),
     ('UPPER', 'HUTCH'):             ('DOORS', 'OPEN'),
     ('UPPER', 'OPEN_SHELVES'):      ('OPEN',),
+    ('BASE',  'OPEN_SHELVES'):      ('OPEN',),
     ('TALL',  'HUTCH'):             ('DOORS', 'OPEN', 'DOORS'),
     ('TALL',  'BOOKCASE'):          ('OPEN', 'DOORS'),
 }

@@ -610,6 +610,8 @@ def _cabinet_fields(root, cab):
             ('enum', 'exterior_option', "Door Swing", {'when': _pie_cut}),
             ('enum', 'diag_door_swing', "Door Swing", {'when': _diagonal}),
             ('enum', 'interior_option', "Interior", {'when': _corner_interior}),
+            ('bool', 'corner_remove_bottom', "Remove Bottom", {'when': _corner_interior}),
+            ('bool', 'corner_finish_interior', "Finish Interior", {'when': _corner_interior}),
         )}),
         ('group', 'ff_cab_construction', "Construction", {
             'icon': 'cab_construction', 'summary': _construction_summary, 'fields': (
