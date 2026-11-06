@@ -319,8 +319,8 @@ def frame_wall(boards, wall_obj, step, tree=None, gables=None, extra=(), blockin
     wall over 10' tall."""
     from .operators import walls as hb_walls
     wall = hb_types.GeoNodeWall(wall_obj)
-    if not wall.has_modifier():
-        return
+    if not wall.has_modifier() or hb_types.is_curved_wall(wall_obj):
+        return              # curved walls aren't framed yet
     length = wall.get_input('Length')
     t = wall.get_input('Thickness')
     height = wall.get_input('Height')

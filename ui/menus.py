@@ -75,6 +75,7 @@ class HOME_BUILDER_MT_wall_commands(bpy.types.Menu):
         layout = self.layout
         layout.operator("home_builder_walls.wall_prompts", text="Wall Prompts")
         layout.operator("home_builder_walls.change_room_size", text="Change Room Size", icon='ARROW_LEFTRIGHT')
+        layout.operator("home_builder_walls.curve_wall", text="Curve Wall", icon='SPHERECURVE')
         layout.separator()
         layout.operator("home_builder_walls.update_wall_miters", text="Recalculate Wall Corners", icon='FILE_REFRESH')
         layout.separator()

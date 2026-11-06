@@ -531,6 +531,138 @@ def ensure_wall_extensions(node_group):
     return True
 
 
+WALL_ARC_INPUT = 'Arc Angle'
+WALL_ARC_STEP = math.radians(6.0)      # about one facet per 6 degrees of arc
+
+
+def ensure_wall_arc(node_group):
+    """Give a GeoNodeWall node group its Arc Angle input.
+
+    The wall is built straight as ever - extensions, end angles, slope,
+    UVs - and then, only when the angle isn't zero, subdivided and bent
+    so its reference line runs on a circular arc through (0, 0) and
+    (Length, 0). Length stays the CHORD: the wall's end, its obj_x and
+    everything chained to it don't move. Positive angles bow the wall
+    away from its body (to -Y), negative towards it. The body keeps its
+    thickness radially, and x is spread evenly along the arc, so the end
+    tangents turn -angle/2 at the start and +angle/2 at the end.
+
+    Patched in at runtime like the extensions. Returns True when the
+    group was changed."""
+    if node_group is None or node_group.library is not None:
+        return False
+    nodes, links = node_group.nodes, node_group.links
+    iface = node_group.interface
+    if WALL_ARC_INPUT in iface.items_tree:
+        if 'Arc Bend' in nodes:
+            return False
+        iface.remove(iface.items_tree[WALL_ARC_INPUT])
+    if 'Length' not in iface.items_tree:
+        return False
+    out = next((n for n in nodes if n.bl_idname == 'NodeGroupOutput'), None)
+    feed = next((l for l in links if out is not None and l.to_node == out
+                 and l.to_socket.name == 'Geometry'), None)
+    if feed is None:
+        return False
+
+    item = iface.new_socket(name=WALL_ARC_INPUT, in_out='INPUT',
+                            socket_type='NodeSocketFloat')
+    item.subtype = 'ANGLE'
+    after = iface.items_tree.get('Right Extension') or iface.items_tree.get('Right Angle')
+    if after is not None:
+        iface.move(item, after.position + 1)
+
+    x0, y0 = out.location.x - 1400, out.location.y - 500
+    col = [0]
+
+    def node(kind, **props):
+        n = nodes.new(kind)
+        for k, v in props.items():
+            setattr(n, k, v)
+        n.location = (x0 + 160 * (col[0] // 4), y0 - 160 * (col[0] % 4))
+        col[0] += 1
+        return n
+
+    def math_node(op, a, b=None):
+        n = node('ShaderNodeMath', operation=op)
+        for i, v in enumerate((a, b)):
+            if v is None:
+                continue
+            if isinstance(v, (int, float)):
+                n.inputs[i].default_value = float(v)
+            else:
+                links.new(v, n.inputs[i])
+        return n.outputs[0]
+
+    gi = node('NodeGroupInput')
+    length, theta = gi.outputs['Length'], gi.outputs[WALL_ARC_INPUT]
+    pos = node('GeometryNodeInputPosition')
+    sep = node('ShaderNodeSeparateXYZ')
+    links.new(pos.outputs[0], sep.inputs[0])
+
+    half = math_node('MULTIPLY', theta, 0.5)
+    sin_h = math_node('SINE', half)
+    cos_h = math_node('COSINE', half)
+    radius = math_node('DIVIDE', length, math_node('MULTIPLY', sin_h, 2.0))
+    cy = math_node('MULTIPLY', radius, cos_h)
+    frac = math_node('SUBTRACT', math_node('DIVIDE', sep.outputs['X'], length), 0.5)
+    phi = math_node('MULTIPLY', theta, frac)
+    r = math_node('SUBTRACT', radius, sep.outputs['Y'])
+    bx = math_node('ADD', math_node('MULTIPLY', length, 0.5),
+                   math_node('MULTIPLY', r, math_node('SINE', phi)))
+    by = math_node('SUBTRACT', cy, math_node('MULTIPLY', r, math_node('COSINE', phi)))
+    comb = node('ShaderNodeCombineXYZ')
+    links.new(bx, comb.inputs['X'])
+    links.new(by, comb.inputs['Y'])
+    links.new(sep.outputs['Z'], comb.inputs['Z'])
+
+    # Facets: 2^level along the arc, about one per WALL_ARC_STEP. Subdivide
+    # splits every face, so the level stays low (5 = 6144 faces at most).
+    abs_t = math_node('ABSOLUTE', theta)
+    level = math_node('ROUND', math_node('LOGARITHM',
+                                        math_node('DIVIDE', abs_t, WALL_ARC_STEP), 2.0))
+    level = math_node('MINIMUM', math_node('MAXIMUM', level, 1.0), 5.0)
+    curved = node('FunctionNodeCompare', data_type='FLOAT', operation='GREATER_THAN')
+    links.new(abs_t, curved.inputs[0])
+    curved.inputs[1].default_value = 1e-5
+
+    sub = node('GeometryNodeSubdivideMesh')
+    links.new(level, sub.inputs['Level'])
+    bend = node('GeometryNodeSetPosition')
+    bend.name = bend.label = 'Arc Bend'
+    links.new(comb.outputs[0], bend.inputs['Position'])
+    switch = node('GeometryNodeSwitch', input_type='GEOMETRY')
+    switch.name = switch.label = 'Arc Switch'
+
+    src = feed.from_socket
+    links.remove(feed)
+    links.new(src, sub.inputs['Mesh'])
+    links.new(sub.outputs['Mesh'], bend.inputs['Geometry'])
+    links.new(src, switch.inputs['False'])
+    links.new(bend.outputs['Geometry'], switch.inputs['True'])
+    links.new(curved.outputs['Result'], switch.inputs['Switch'])
+    links.new(switch.outputs[0], out.inputs['Geometry'])
+    return True
+
+
+def wall_arc_angle(obj):
+    """A wall object's arc angle (radians), 0.0 for a straight wall or
+    one whose node predates the input."""
+    if obj is None or not obj.get('IS_WALL_BP'):
+        return 0.0
+    try:
+        node = GeoNodeObject(obj)
+        if not node.has_input(WALL_ARC_INPUT):
+            return 0.0
+        return float(node.get_input(WALL_ARC_INPUT))
+    except Exception:
+        return 0.0
+
+
+def is_curved_wall(obj):
+    return abs(wall_arc_angle(obj)) > 1e-5
+
+
 def ensure_all_wall_extensions():
     """Patch every wall node group in the file (called on load)."""
     changed = False
@@ -538,6 +670,7 @@ def ensure_all_wall_extensions():
         if ng.name.startswith('GeoNodeWall') and ng.bl_idname == 'GeometryNodeTree':
             try:
                 changed |= ensure_wall_extensions(ng)
+                changed |= ensure_wall_arc(ng)
             except Exception:
                 # One odd group must not stop the file loading
                 import traceback
@@ -563,6 +696,7 @@ class GeoNodeWall(GeoNodeObject):
         mod = self.obj.modifiers.get(self.obj.home_builder.mod_name)
         if mod is not None:
             ensure_wall_extensions(mod.node_group)
+            ensure_wall_arc(mod.node_group)
         hb_props = bpy.context.window_manager.home_builder
         add_on_prefs = hb_props.get_user_preferences(bpy.context)        
         self.obj['IS_WALL_BP'] = True
@@ -602,6 +736,10 @@ class GeoNodeWall(GeoNodeObject):
         constraint.target = wall.obj_x
 
         wall.obj_x.home_builder.connected_object = self.obj
+
+    def arc_angle(self):
+        """The wall's arc (radians, 0 = straight); see ensure_wall_arc."""
+        return wall_arc_angle(self.obj)
 
     def get_connected_wall(self, direction='left', include_loop_seam=False):
         """

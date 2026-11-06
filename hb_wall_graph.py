@@ -26,6 +26,7 @@ from collections import namedtuple
 JOIN_TOL = 0.01                 # endpoints closer than this meet (m)
 COLLINEAR_EPS = 1e-6            # |cross| of unit vectors below this is parallel
 MAX_CUT_RATIO = 8.0             # a cut longer than this many thicknesses is a spike
+ARC_PIECE = math.radians(6.0)   # a curved wall in a room outline: a chord per 6 deg
 
 FREE, STRAIGHT, L_CORNER, TEE, MULTI = 'FREE', 'STRAIGHT', 'L', 'T', 'MULTI'
 START, END = 'start', 'end'
@@ -40,6 +41,23 @@ def _dot(a, b): return a[0] * b[0] + a[1] * b[1]
 def _cross(a, b): return a[0] * b[1] - a[1] * b[0]
 def _len(a): return math.hypot(a[0], a[1])
 def _left(a): return (-a[1], a[0])
+
+
+def _rot(a, r):
+    c, s = math.cos(r), math.sin(r)
+    return (a[0] * c - a[1] * s, a[0] * s + a[1] * c)
+
+
+def bend(x, y, length, arc):
+    """A point (x, y) in a wall's own straight frame - x along the chord,
+    y towards the thickness - where it lands once the wall is bent through
+    `arc` (hb_types.ensure_wall_arc does the same in the node)."""
+    if abs(arc) < 1e-5 or length < 1e-9:
+        return (x, y)
+    r = length / (2.0 * math.sin(arc / 2.0))
+    phi = arc * (x / length - 0.5)
+    return (length / 2.0 + (r - y) * math.sin(phi),
+            r * math.cos(arc / 2.0) - (r - y) * math.cos(phi))
 
 
 def intersect(p, d, q, e):
@@ -57,10 +75,17 @@ class Seg:
     """One wall's reference line."""
 
     __slots__ = ('id', 'start', 'end', 'thickness', 'level', 'wall_type',
-                 'length', 'dir', 'normal')
+                 'length', 'dir', 'normal', 'arc', '_ends')
 
-    def __init__(self, id, start, end, thickness, level='', wall_type=''):
+    def __init__(self, id, start, end, thickness, level='', wall_type='',
+                 arc=0.0):
         self.id = id
+        # A curved wall's reference line is a circular arc from start to
+        # end turning through `arc` radians (see hb_types.ensure_wall_arc):
+        # positive bows to the right, away from the thickness. start, end,
+        # length, dir and normal stay the CHORD's.
+        self.arc = float(arc) if abs(arc) > 1e-5 else 0.0
+        self._ends = None
         self.start = (float(start[0]), float(start[1]))
         self.end = (float(end[0]), float(end[1]))
         self.thickness = float(thickness)
@@ -81,6 +106,53 @@ class Seg:
     def face_point(self, w):
         """A point on the face line offset `w` from the reference line."""
         return _add(self.start, _mul(self.normal, w))
+
+    def at(self, which):
+        """The wall as it leaves one end: itself when straight; for an arc,
+        a straight stand-in through that end along the arc's tangent there,
+        so corner and T cuts are worked out as for a straight wall."""
+        if not self.arc:
+            return self
+        if self._ends is None:
+            h = self.arc / 2.0
+            ds, de = _rot(self.dir, -h), _rot(self.dir, h)
+            self._ends = {
+                START: Seg(self.id, self.start, _add(self.start, _mul(ds, self.length)),
+                           self.thickness, self.level, self.wall_type),
+                END: Seg(self.id, _sub(self.end, _mul(de, self.length)), self.end,
+                         self.thickness, self.level, self.wall_type),
+            }
+        return self._ends[which]
+
+    def stretch(self, w):
+        """Distance along the face `w` off the reference line per unit of
+        the wall's own x (which runs 0..length along the chord)."""
+        if not self.arc:
+            return 1.0
+        return (self.arc / (2.0 * math.sin(self.arc / 2.0))
+                - w * self.arc / self.length)
+
+    def arc_point(self, u, w=0.0):
+        """The point a fraction `u` along the wall, `w` off its reference
+        line towards the thickness."""
+        if not self.arc:
+            return _add(_add(self.start, _mul(self.dir, u * self.length)),
+                        _mul(self.normal, w))
+        x, y = bend(u * self.length, w, self.length, self.arc)
+        return _add(_add(self.start, _mul(self.dir, x)), _mul(self.normal, y))
+
+    def arc_length(self, w=0.0):
+        return self.stretch(w) * self.length
+
+    def pieces(self):
+        """A curved wall as straight Segs along its arc - ids (id, k, n) -
+        for the room outlines; [self] when straight."""
+        if not self.arc:
+            return [self]
+        n = max(2, int(math.ceil(abs(self.arc) / ARC_PIECE)))
+        pts = [self.arc_point(k / n) for k in range(n + 1)]
+        return [Seg((self.id, k, n), pts[k], pts[k + 1], self.thickness,
+                    self.level, self.wall_type) for k in range(n)]
 
 
 Host = namedtuple('Host', 'seg_id t side')   # side: 'REF' or 'FAR'
@@ -172,7 +244,7 @@ def _level_nodes(segs, tol):
 def _find_corner(seg, point, segs, node_of, tol):
     best, best_d = None, None
     for host in segs:
-        if host.id == seg.id:
+        if host.id == seg.id or host.arc:
             continue
         rel = _sub(point, host.start)
         w = _dot(rel, host.normal)
@@ -201,9 +273,10 @@ def _find_host(seg, which, point, segs, tol):
     the host's span, on or between the host's two faces."""
     best = None
     best_d = None
+    seg = seg.at(which)
     for host in segs:
-        if host.id == seg.id:
-            continue
+        if host.id == seg.id or host.arc:
+            continue                    # a T on a curved wall isn't cut yet
         if abs(_cross(seg.dir, host.dir)) < 1e-3:
             continue                    # parallel walls don't tee
         rel = _sub(point, host.start)
@@ -227,7 +300,7 @@ def _kind(node, by_id):
         return TEE if node.host is not None else FREE
     if n == 2:
         (ia, wa), (ib, wb) = node.ends
-        ua, ub = by_id[ia].away(wa), by_id[ib].away(wb)
+        ua, ub = by_id[ia].at(wa).away(wa), by_id[ib].at(wb).away(wb)
         if abs(_cross(ua, ub)) < COLLINEAR_EPS and _dot(ua, ub) < 0:
             return STRAIGHT
         return L_CORNER
@@ -255,7 +328,7 @@ def tee_inside_corners(graph):
     out = []
     for node in graph.tees():
         seg_id, which = node.ends[0]
-        seg = graph.segs[seg_id]
+        seg = graph.segs[seg_id].at(which)
         host = graph.segs[node.host.seg_id]
         # The host face the wall lands on is the one on the wall's side
         u = seg.away(which)
@@ -289,7 +362,7 @@ def solve(graph):
             cuts[ea], cuts[eb] = _corner_cut(graph, ea, eb, node.point)
         elif node.kind == TEE:
             end = node.ends[0]
-            cuts[end] = _tee_cut(graph.segs[end[0]], end[1],
+            cuts[end] = _tee_cut(graph.segs[end[0]].at(end[1]), end[1],
                                  graph.segs[node.host.seg_id])
         else:
             cuts.update(_multi_cuts(graph, node))
@@ -325,7 +398,7 @@ def _corner_cut(graph, ea, eb, point):
     """Two wall ends meeting at one point. The cut joins where their inner
     faces cross to where their outer faces cross; 'inner' is the face of
     each wall on the side the other wall turns towards."""
-    x, y = graph.segs[ea[0]], graph.segs[eb[0]]
+    x, y = graph.segs[ea[0]].at(ea[1]), graph.segs[eb[0]].at(eb[1])
     ux, uy = x.away(ea[1]), y.away(eb[1])
     if abs(_cross(ux, uy)) < COLLINEAR_EPS:
         return (0.0, 0.0), (0.0, 0.0)
@@ -381,7 +454,7 @@ def _multi_cuts(graph, node):
     best, best_score = None, None
     for i in range(len(ends)):
         for j in range(i + 1, len(ends)):
-            si, sj = segs[ends[i][0]], segs[ends[j][0]]
+            si, sj = segs[ends[i][0]].at(ends[i][1]), segs[ends[j][0]].at(ends[j][1])
             score = -_dot(si.away(ends[i][1]), sj.away(ends[j][1]))
             if si.wall_type == 'Exterior' and sj.wall_type == 'Exterior':
                 score += 0.5
@@ -389,7 +462,7 @@ def _multi_cuts(graph, node):
                 best, best_score = (i, j), score
     ea, eb = ends[best[0]], ends[best[1]]
     cuts = {}
-    sa, sb = segs[ea[0]], segs[eb[0]]
+    sa, sb = segs[ea[0]].at(ea[1]), segs[eb[0]].at(eb[1])
     if abs(_cross(sa.away(ea[1]), sb.away(eb[1]))) < COLLINEAR_EPS:
         cuts[ea] = cuts[eb] = (0.0, 0.0)
     else:
@@ -397,11 +470,12 @@ def _multi_cuts(graph, node):
     for k, end in enumerate(ends):
         if k in best:
             continue
-        seg = segs[end[0]]
+        seg = segs[end[0]].at(end[1])
         # The through wall that runs out from the node towards this
         # wall's body is the one it sits against.
-        host_end = max((ea, eb), key=lambda e: _dot(segs[e[0]].away(e[1]), seg.normal))
-        cuts[end] = _tee_cut(seg, end[1], segs[host_end[0]])
+        host_end = max((ea, eb), key=lambda e: _dot(segs[e[0]].at(e[1]).away(e[1]),
+                                                     seg.normal))
+        cuts[end] = _tee_cut(seg, end[1], segs[host_end[0]].at(host_end[1]))
     return cuts
 
 
@@ -417,6 +491,10 @@ def to_inputs(seg, which, cut, has_extension=True):
     so the far corner alone is placed."""
     a, b = cut
     t = seg.thickness
+    if seg.arc:
+        # The node extends and shears the wall in its own x before bending
+        # it: a true distance along each face is x times that face's stretch
+        a, b = a / seg.stretch(0.0), b / seg.stretch(t)
     if not has_extension:
         return 0.0, math.atan2(b, t) if t else 0.0
     angle = math.atan2(b - a, t) if t else 0.0
@@ -542,16 +620,50 @@ def find_rooms(segs, tol=JOIN_TOL):
     divide rooms; room dividers do, as lines with no thickness, so the
     rooms either side meet on the line."""
     walls = [s for s in segs if s.length > 1e-9 and s.wall_type not in NOT_ROOM_WALLS]
-    walls = [Seg(s.id, s.start, s.end, 0.0, s.level, s.wall_type)
+    walls = [Seg(s.id, s.start, s.end, 0.0, s.level, s.wall_type, s.arc)
              if s.wall_type in ROOM_ONLY_WALLS else s for s in walls]
+    chords = {s.id: s.length for s in walls}
+    walls = [p for s in walls for p in s.pieces()]
+    pieces = {s.id: s.length for s in walls if isinstance(s.id, tuple)}
     by_level = {}
     for s in walls:
         by_level.setdefault(s.level, []).append(s)
     rooms = []
     for level, level_segs in by_level.items():
         for poly, floor, types, faces in _level_room_polygons(level_segs, tol):
-            rooms.append(RoomArea(level, poly, polygon_area(poly), floor, types, faces))
+            rooms.append(RoomArea(level, poly, polygon_area(poly), floor, types,
+                                  _whole_wall_spans(faces, chords, pieces)))
     return rooms
+
+
+def _whole_wall_spans(faces, chords, pieces):
+    """Room face spans found on a curved wall's pieces, put back on the
+    wall: stations in the wall's own x (0..chord), runs merged. Each
+    piece covers an equal share of the arc, and so of x."""
+    if not any(isinstance(f[0], tuple) for f in faces):
+        return faces
+    spans, gap = {}, {}
+    for sid, side, t0, t1 in faces:
+        if isinstance(sid, tuple):
+            pid, k, n = sid
+            share, plen = chords[pid] / n, pieces[sid]
+            t0, t1 = (k + t0 / plen) * share, (k + t1 / plen) * share
+            sid = pid
+            # the inside outline cuts each piece's corner a little short:
+            # pieces' runs that nearly meet are one run
+            gap[sid] = share * 0.25
+        spans.setdefault((sid, side), []).append([t0, t1])
+    out = []
+    for (sid, side), runs in spans.items():
+        runs.sort()
+        merged = [runs[0]]
+        for r in runs[1:]:
+            if r[0] <= merged[-1][1] + gap.get(sid, 1e-4):
+                merged[-1][1] = max(merged[-1][1], r[1])
+            else:
+                merged.append(r)
+        out.extend((sid, side, t0, t1) for t0, t1 in merged)
+    return tuple(out)
 
 
 def level_outlines(segs, tol=JOIN_TOL):
@@ -559,6 +671,7 @@ def level_outlines(segs, tol=JOIN_TOL):
     (no half, fake, divider, porch or railing walls), the polygon round
     their outside faces. [Outline], counter-clockwise."""
     walls = [s for s in segs if s.length > 1e-9 and s.wall_type not in NOT_OUTLINE_WALLS]
+    walls = [p for s in walls for p in s.pieces()]
     by_level = {}
     for s in walls:
         by_level.setdefault(s.level, []).append(s)

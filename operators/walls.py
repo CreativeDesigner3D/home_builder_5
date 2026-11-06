@@ -62,7 +62,8 @@ def wall_seg(wall_obj):
     end = (start.x + math.cos(rot) * length, start.y + math.sin(rot) * length)
     return hb_wall_graph.Seg(wall_obj.name, (start.x, start.y), end, thickness,
                              hb_house.level_of(wall_obj),
-                             wall_obj.get('WALL_TYPE', 'Exterior'))
+                             wall_obj.get('WALL_TYPE', 'Exterior'),
+                             hb_types.wall_arc_angle(wall_obj))
 
 
 def level_wall_segs(scene, level=None):
@@ -427,12 +428,15 @@ def wall_plan_corners(wall_obj):
     if ext is None:
         return []
     m = wall_obj.matrix_world
-    t = hb_types.GeoNodeWall(wall_obj).get_input('Thickness')
+    wall = hb_types.GeoNodeWall(wall_obj)
+    t = wall.get_input('Thickness')
+    length, arc = wall.get_input('Length'), hb_types.wall_arc_angle(wall_obj)
     out = []
     for face, y in (('back', 0.0), ('front', t)):
         x0, x1 = ext[face]
-        out.append(('start', face, (m @ Vector((x0, y, 0.0))).to_2d()))
-        out.append(('end', face, (m @ Vector((x1, y, 0.0))).to_2d()))
+        for end, x in (('start', x0), ('end', x1)):
+            bx, by = hb_wall_graph.bend(x, y, length, arc)
+            out.append((end, face, (m @ Vector((bx, by, 0.0))).to_2d()))
     return out
 
 
@@ -1519,6 +1523,13 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
     
     # Free rotation mode (Alt toggles, snaps to 15° increments)
     free_rotation: bool = False
+
+    # Curved walls: A makes the next wall an arc. Its end is placed as for
+    # a straight wall; then, while `bowing`, the arc follows the cursor
+    # (through it) until a click drops it or a typed bow sets it.
+    arc_next: bool = False
+    bowing: bool = False
+    _bow_sign: float = 1.0
     
     # Endpoint snapping state
     snap_wall = None  # Wall we're snapping to
@@ -2129,8 +2140,39 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
         self.start_point = connect_location
         self.has_start_point = True
 
+    def _set_bow(self, bow):
+        chord = self.current_wall.get_input('Length')
+        self.current_wall.set_input(hb_types.WALL_ARC_INPUT, arc_from_bow(chord, bow))
+        self.current_wall.obj.update_tag()
+
+    def _bow_from_mouse(self):
+        """Bend the wall in hand so its arc runs through the cursor."""
+        if not self.hit_location or self.current_wall is None:
+            return
+        chord = self.current_wall.get_input('Length')
+        if chord < 1e-6:
+            return
+        local = self.current_wall.obj.matrix_world.inverted() @ Vector(self.hit_location)
+        px = min(max(local.x, 0.02 * chord), 0.98 * chord)
+        py = local.y
+        if abs(py) < 1e-4:
+            self._set_bow(0.0)
+            return
+        # Circle through both ends and the cursor: centre (chord/2, k)
+        k = (px * px - px * chord + py * py) / (2.0 * py)
+        r = math.hypot(chord / 2.0, k)
+        bow = (r - k) if py < 0 else -(r + k)
+        self._bow_sign = 1.0 if bow >= 0 else -1.0
+        self._set_bow(bow)
+
     def on_typed_value_changed(self):
         """Update dimension display as user types."""
+        if self.bowing:
+            parsed = self.parse_typed_distance() if self.typed_value else None
+            if parsed is not None:
+                self._set_bow(self._bow_sign * abs(parsed))
+            self.update_header(bpy.context)
+            return
         # First-point placement via tracking anchor + typed distance:
         # preview the first-point location by moving the hidden wall origin.
         if (not self.has_start_point
@@ -2159,6 +2201,13 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
 
     def apply_typed_value(self):
         """Apply typed length and advance to next wall."""
+        if self.bowing:
+            parsed = self.parse_typed_distance()
+            if parsed is not None:
+                self._set_bow(self._bow_sign * abs(parsed))
+                self.confirm_current_wall()
+            self.stop_typing()
+            return
         # First-point placement via tracking anchor + typed distance:
         # place the first point and transition to wall-drawing mode.
         if (not self.has_start_point
@@ -2799,6 +2848,10 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
         # Auto-clear track points after each wall is confirmed
         self.clear_track_points()
 
+        # One curved wall per A: the next is straight again
+        self.arc_next = False
+        self.bowing = False
+
         self.create_wall(bpy.context)
 
     def _run_in_progress(self):
@@ -2848,6 +2901,8 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
         self._last_surface_wall = None
         self._last_surface_face = None
         self.close_snap_active = False
+        self.arc_next = False
+        self.bowing = False
 
         # A fresh wall, hidden until the next first point goes down: the same
         # state execute() leaves the tool in.
@@ -2895,6 +2950,14 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
                         f"Esc to cancel typing")
             else:
                 text = f"Wall Length: {self.typed_value}_ | Enter to confirm | Esc to cancel typing"
+        elif self.bowing:
+            chord = self.current_wall.get_input('Length')
+            arc = hb_types.wall_arc_angle(self.current_wall.obj)
+            us = context.scene.unit_settings
+            text = ("Curved wall | Bow: %s | Radius: %s | Move to bend, or type the bow | "
+                    "Click to place | Esc: straight" % (
+                        units.unit_to_string(us, abs(bow_from_arc(chord, arc))),
+                        units.unit_to_string(us, radius_from_arc(chord, arc))))
         elif self.has_start_point:
             length = self.current_wall.get_input('Length')
             length_str = units.unit_to_string(context.scene.unit_settings, length)
@@ -2909,7 +2972,8 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
             track_hint = f" [Track: {tp_count}]" if tp_count else ""
             if self._active_track_lines:
                 track_hint += " [TRACKING]"
-            text = f"Length: {length_str} | Angle: {angle_deg}°{snap_hint}{fine_hint}{track_hint} | {rotation_mode} | Shift: fine | Alt: rotation | T: track | Click to place{close_hint}"
+            arc_hint = " [ARC]" if self.arc_next else ""
+            text = f"Length: {length_str} | Angle: {angle_deg}°{arc_hint}{snap_hint}{fine_hint}{track_hint} | {rotation_mode} | Shift: fine | Alt: rotation | T: track | A: curved | Click to place{close_hint}"
         else:
             tp_count = len(self.track_points)
             track_hint = f" [Track: {tp_count}]" if tp_count else ""
@@ -3100,7 +3164,10 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
 
         # Update position if not typing
         if self.placement_state != hb_placement.PlacementState.TYPING:
-            self.set_wall_position_from_mouse()
+            if self.bowing:
+                self._bow_from_mouse()
+            else:
+                self.set_wall_position_from_mouse()
 
         self.update_header(context)
 
@@ -3126,6 +3193,9 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
                     self.has_start_point = True
                     self._show_wall_objects()
             else:
+                if self.bowing:
+                    self.confirm_current_wall()
+                    return {'RUNNING_MODAL'}
                 # If close-snap is active, close the room instead of confirming
                 if self.close_snap_active and self.confirmed_wall_count >= 2 and self.first_wall is not None:
                     closed = self.close_room(context)
@@ -3142,8 +3212,26 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
                 commit_error = self._wall_commit_error()
                 if commit_error:
                     self.report({'WARNING'}, commit_error)
+                elif self.arc_next:
+                    # The end is down: now bend it
+                    self.bowing = True
+                    self._bow_from_mouse()
                 else:
                     self.confirm_current_wall()
+            return {'RUNNING_MODAL'}
+
+        # Right click / Escape while bending: back to a straight wall
+        if (self.bowing and event.type in {'RIGHTMOUSE', 'ESC'}
+                and event.value == 'PRESS'):
+            self.bowing = False
+            self._set_bow(0.0)
+            self.update_header(context)
+            return {'RUNNING_MODAL'}
+
+        # A - the next wall is curved (press again for straight)
+        if event.type == 'A' and event.value == 'PRESS' and not self.bowing:
+            self.arc_next = not self.arc_next
+            self.update_header(context)
             return {'RUNNING_MODAL'}
 
         # Right click - end the current run, or finish drawing
@@ -3304,6 +3392,154 @@ class home_builder_walls_OT_wall_prompts(bpy.types.Operator):
         row = box.row()
         row.label(text='Rotation Z:')
         row.prop(self.wall.obj,'rotation_euler',index=2,text="")  
+
+# ---- Curved walls --------------------------------------------------------------
+# A curved wall keeps its Length as the chord between its ends and bends
+# through its Arc Angle (hb_types.ensure_wall_arc). The bow - how far the
+# middle stands off the chord - and the radius are worked out from those.
+
+def arc_from_bow(chord, bow):
+    """Arc angle for a wall bowed `bow` off its chord (signed; positive
+    bows away from the thickness). tan(angle / 4) = 2 bow / chord holds for
+    any arc, half circles and beyond included."""
+    if chord < 1e-9:
+        return 0.0
+    return 4.0 * math.atan(2.0 * bow / chord)
+
+
+def bow_from_arc(chord, arc):
+    return chord / 2.0 * math.tan(arc / 4.0)
+
+
+def arc_from_radius(chord, radius, sign=1.0):
+    """Arc angle for the minor arc of `radius` over the chord; 0 when the
+    radius is too small to span it."""
+    if radius < chord / 2.0 or radius < 1e-9:
+        return 0.0
+    return math.copysign(2.0 * math.asin(chord / (2.0 * radius)), sign)
+
+
+def radius_from_arc(chord, arc):
+    if abs(arc) < 1e-5:
+        return 0.0
+    return abs(chord / (2.0 * math.sin(arc / 2.0)))
+
+
+def arc_length(chord, arc):
+    if abs(arc) < 1e-5:
+        return chord
+    return radius_from_arc(chord, arc) * abs(arc)
+
+
+def set_wall_arc(wall_obj, arc):
+    """Bend a wall (0 straightens it) and re-cut the corners round it."""
+    wall = hb_types.GeoNodeWall(wall_obj)
+    mod = wall_obj.modifiers.get(wall_obj.home_builder.mod_name)
+    if mod is not None and not wall.has_input(hb_types.WALL_ARC_INPUT):
+        hb_types.ensure_wall_arc(mod.node_group)
+    if not wall.has_input(hb_types.WALL_ARC_INPUT):
+        return False
+    wall.set_input(hb_types.WALL_ARC_INPUT, float(arc))
+    wall_obj.update_tag()
+    calculate_wall_miter_angles(wall_obj)
+    return True
+
+
+class home_builder_walls_OT_curve_wall(bpy.types.Operator):
+    bl_idname = "home_builder_walls.curve_wall"
+    bl_label = "Curve Wall"
+    bl_description = ("Bend the wall into an arc between its ends, by how far its "
+                      "middle bows out or by its radius")
+    bl_options = {'UNDO'}
+
+    curve_by: bpy.props.EnumProperty(
+        name="Curve By",
+        items=(('BOW', "Bow", "How far the middle of the wall stands off the "
+                              "straight line between its ends"),
+               ('RADIUS', "Radius", "The radius of the arc"),
+               ('STRAIGHT', "Straight", "No curve")),
+        default='BOW')  # type: ignore
+    bow: bpy.props.FloatProperty(name="Bow", unit='LENGTH', min=0.0,
+                                 precision=4)  # type: ignore
+    radius: bpy.props.FloatProperty(name="Radius", unit='LENGTH', min=0.0,
+                                    precision=4)  # type: ignore
+    side: bpy.props.EnumProperty(
+        name="Bow Side",
+        items=(('OUT', "Out", "Bow away from the wall's thickness side"),
+               ('IN', "In", "Bow towards the wall's thickness side")),
+        default='OUT')  # type: ignore
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.object
+        return (obj is not None and 'IS_WALL_BP' in obj
+                and obj.get('WALL_TYPE') not in hb_wall_graph.MODULE_WALL_TYPES)
+
+    def _chord(self, context):
+        return hb_types.GeoNodeWall(context.object).get_input('Length')
+
+    def _arc(self, context):
+        chord = self._chord(context)
+        sign = 1.0 if self.side == 'OUT' else -1.0
+        if self.curve_by == 'BOW':
+            return arc_from_bow(chord, sign * self.bow)
+        if self.curve_by == 'RADIUS':
+            return arc_from_radius(chord, self.radius, sign)
+        return 0.0
+
+    def invoke(self, context, event):
+        chord = self._chord(context)
+        arc = hb_types.wall_arc_angle(context.object)
+        self.side = 'OUT' if arc >= 0 else 'IN'
+        if abs(arc) > 1e-5:
+            self.curve_by = 'BOW'
+            self.bow = abs(bow_from_arc(chord, arc))
+            self.radius = radius_from_arc(chord, arc)
+        else:
+            # A gentle starting bow so the first look shows a curve
+            self.curve_by = 'BOW'
+            self.bow = chord / 8.0
+            self.radius = chord
+        set_wall_arc(context.object, self._arc(context))
+        return context.window_manager.invoke_props_dialog(self, width=320)
+
+    def check(self, context):
+        set_wall_arc(context.object, self._arc(context))
+        return True
+
+    def execute(self, context):
+        set_wall_arc(context.object, self._arc(context))
+        return {'FINISHED'}
+
+    def cancel(self, context):
+        # The dialog previews as it goes; Cancel leaves the preview, the
+        # same as Wall Prompts. Ctrl+Z takes it back.
+        pass
+
+    def draw(self, context):
+        layout = self.layout
+        layout.prop(self, 'curve_by', expand=True)
+        col = layout.column(align=True)
+        col.use_property_split = True
+        if self.curve_by == 'BOW':
+            col.prop(self, 'bow')
+        elif self.curve_by == 'RADIUS':
+            col.prop(self, 'radius')
+        if self.curve_by != 'STRAIGHT':
+            row = col.row(align=True)
+            row.prop(self, 'side', expand=True)
+        chord = self._chord(context)
+        arc = self._arc(context)
+        us = context.scene.unit_settings
+        box = layout.box()
+        box.label(text="Ends apart: " + units.unit_to_string(us, chord))
+        if abs(arc) > 1e-5:
+            box.label(text="Along the arc: " + units.unit_to_string(us, arc_length(chord, arc)))
+            box.label(text="Radius: " + units.unit_to_string(us, radius_from_arc(chord, arc))
+                      + "   Angle: %.1f°" % math.degrees(abs(arc)))
+        elif self.curve_by == 'RADIUS':
+            box.label(text="The radius must be at least half the length", icon='ERROR')
+
 
 # Module-level helper: re-uses HB5's typed-distance parser (scene units,
 # feet/inches, fractions, explicit units, negatives). We don't want the full
@@ -6791,6 +7027,7 @@ classes = (
     home_builder_walls_OT_delete_wall,
     home_builder_walls_OT_draw_walls,
     home_builder_walls_OT_wall_prompts,
+    home_builder_walls_OT_curve_wall,
     home_builder_walls_OT_change_room_size,
     home_builder_walls_OT_add_floor,
     home_builder_walls_OT_draw_floor_cutter,

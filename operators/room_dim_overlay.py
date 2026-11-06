@@ -36,6 +36,8 @@ is the only gate -- no labels draw unless a wall / opening is part of
 the selection.
 """
 
+import math
+
 import bpy
 import blf
 import gpu
@@ -412,12 +414,21 @@ def _wall_label_targets(wall_obj):
         height = wall.get_input('Height')
     except Exception:
         return []
-    return [
+    rows = [
         ('WALL_LEN', length, "L ",
          Vector((length / 2.0, 0.0, height + inch(3.0)))),
         ('WALL_H', height, "H ",
          Vector((0.0, 0.0, height / 2.0))),
     ]
+    # A curved wall's L is the distance between its ends; its radius sits
+    # over the middle of the arc, and typing one re-bends it.
+    arc = hb_types.wall_arc_angle(wall_obj)
+    if abs(arc) > 1e-5 and length > 1e-9:
+        from .. import hb_wall_graph
+        mx, my = hb_wall_graph.bend(length / 2.0, 0.0, length, arc)
+        radius = abs(length / (2.0 * math.sin(arc / 2.0)))
+        rows.append(('WALL_ARC', radius, "R ", Vector((mx, my, height + inch(9.0)))))
+    return rows
 
 
 def _resolve_overlap(rect, existing, gap):
@@ -679,6 +690,12 @@ def _commit(obj, kind, value):
     if kind == 'WALL_H':
         hb_types.GeoNodeWall(obj).set_input('Height', max(value, inch(6.0)))
         return True
+    if kind == 'WALL_ARC':
+        from . import walls
+        chord = hb_types.GeoNodeWall(obj).get_input('Length')
+        sign = 1.0 if hb_types.wall_arc_angle(obj) >= 0 else -1.0
+        arc = walls.arc_from_radius(chord, max(value, chord / 2.0), sign)
+        return walls.set_wall_arc(obj, arc)
     if kind in _OBSTACLE_KINDS:
         return _commit_obstacle(obj, kind, value)
 
@@ -780,7 +797,8 @@ class home_builder_OT_edit_room_dim_label(bpy.types.Operator):
                ('OBS_B', "Obstacle From Floor", ""),
                ('OBS_T', "Obstacle From Top", ""),
                ('WALL_LEN', "Wall Length", ""),
-               ('WALL_H', "Wall Height", "")],
+               ('WALL_H', "Wall Height", ""),
+               ('WALL_ARC', "Wall Radius", "")],
         options={'HIDDEN'})  # type: ignore
 
     def invoke(self, context, event):

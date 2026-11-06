@@ -463,8 +463,8 @@ class WallObjectPlacementMixin(hb_placement.PlacementMixin):
         placed = self.get_placed_object()
         space = getattr(bpy.context, 'space_data', None)
         for obj in bpy.context.view_layer.objects:
-            if 'IS_WALL_BP' not in obj:
-                continue
+            if 'IS_WALL_BP' not in obj or hb_types.is_curved_wall(obj):
+                continue        # nothing goes in a curved wall yet
             # A door or window is not cut into a wall nobody can see.
             if not hb_placement.object_shown(obj, space):
                 continue
