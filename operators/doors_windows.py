@@ -220,6 +220,7 @@ class WallObjectPlacementMixin(hb_placement.PlacementMixin):
     selected_wall = None
     wall_length: float = 0
     placement_x: float = 0
+    PLACES_ON_CURVED_WALLS = False  # see set_position_on_curved_wall
     
     # Gap boundaries for offset calculations
     gap_left_boundary: float = 0
@@ -463,8 +464,11 @@ class WallObjectPlacementMixin(hb_placement.PlacementMixin):
         placed = self.get_placed_object()
         space = getattr(bpy.context, 'space_data', None)
         for obj in bpy.context.view_layer.objects:
-            if 'IS_WALL_BP' not in obj or hb_types.is_curved_wall(obj):
-                continue        # nothing goes in a curved wall yet
+            if 'IS_WALL_BP' not in obj:
+                continue
+            curved = hb_types.is_curved_wall(obj)
+            if curved and not self.PLACES_ON_CURVED_WALLS:
+                continue
             # A door or window is not cut into a wall nobody can see.
             if not hb_placement.object_shown(obj, space):
                 continue
@@ -472,6 +476,16 @@ class WallObjectPlacementMixin(hb_placement.PlacementMixin):
             if not wall.has_modifier():
                 continue
             wall_length = wall.get_input('Length')
+            if curved:
+                # Measured to the arc, not its chord
+                from . import walls as hb_walls
+                station, off = hb_walls.curved_wall_station(
+                    obj, Vector((cursor_xy.x, cursor_xy.y, 0.0)))
+                dist = abs(off)
+                if 0.0 < station < wall_length and dist < best_dist:
+                    best_dist = dist
+                    best_wall = obj
+                continue
             wm = obj.matrix_world
             wall_origin = Vector((wm[0][3], wm[1][3]))
             wall_dir_2d = Vector((wm[0][0], wm[1][0]))
@@ -659,6 +673,10 @@ class WallObjectPlacementMixin(hb_placement.PlacementMixin):
 
     def handle_two_point_d_key(self, event) -> bool:
         """D key toggles two-point width mode. Returns True if handled."""
+        if (event.type == 'D' and event.value == 'PRESS'
+                and self.selected_wall is not None
+                and hb_types.is_curved_wall(self.selected_wall)):
+            return True         # a width picked along an arc: not yet
         if event.type == 'D' and event.value == 'PRESS':
             if self.placement_state != hb_placement.PlacementState.TYPING:
                 self.define_width_mode = not self.define_width_mode
@@ -786,6 +804,17 @@ def place_wall_object(context, wall_obj, kind, x, width=None, height=None, z=Non
     placed.obj.parent = wall_obj
     placed.obj.location = (x, 0.0, z)
     placed.obj.rotation_euler = (0.0, 0.0, 0.0)
+    curved = (hb_types.is_curved_wall(wall_obj)
+              and spec.BP_FLAG not in ('IS_FIREPLACE_BP', 'IS_BAY_BP'))
+    if curved:
+        # x is the left end's station along the chord; the opening
+        # stands square to the arc at its middle
+        from . import walls as hb_walls
+        loc, rot = hb_walls.curved_wall_pose(
+            wall_obj, x + placed.get_input('Dim X') / 2.0,
+            placed.get_input('Dim X'), centred=True)
+        placed.obj.location = (loc.x, loc.y, z)
+        placed.obj.rotation_euler = (0.0, 0.0, rot)
     placed.set_input('Dim Y', wall.get_input('Thickness'))
     if spec.BP_FLAG == 'IS_FIREPLACE_BP':
         from .. import hb_fireplaces
@@ -802,7 +831,7 @@ def place_wall_object(context, wall_obj, kind, x, width=None, height=None, z=Non
         hb_bays.place(context, placed.obj)
         return placed.obj
     cutting_obj = placed.obj
-    if spec.BUILD_GEO:
+    if spec.BUILD_GEO or curved:
         cutting_obj = door_window_geo.update_reveal_cutter(placed.obj)
     cut_wall(wall_obj, cutting_obj)
     if spec.BUILD_GEO:
@@ -836,6 +865,7 @@ class _PlaceWallObjectBase(bpy.types.Operator, WallObjectPlacementMixin):
     INITIAL_SWING_INPUTS = None      # dict of initial inputs to set on the swing object
     RESET_Z_WHEN_FREE = True         # set z=0 when off-wall (False for window)
     BUILD_GEO = True                 # build 3D geometry on drop (False = cage only)
+    PLACES_ON_CURVED_WALLS = True    # fireplaces and bays stay on straight walls
 
     # ===== Continuous placement state =====
     continuous: bool = False   # keep placing until right-click / Escape
@@ -951,8 +981,36 @@ class _PlaceWallObjectBase(bpy.types.Operator, WallObjectPlacementMixin):
 
     # ===== Position helpers =====
 
+    def set_position_on_curved_wall(self):
+        """Stand the opening in a curved wall where the cursor is, square
+        to the arc at its middle and set into it (its middle on the
+        wall's face), kept clear of what is already on the arc at its
+        height. Offsets and two-point widths are straight-wall ideas."""
+        from . import walls as hb_walls
+        wall_obj = self.selected_wall
+        obj = self.placed_obj.obj
+        wall = hb_types.GeoNodeWall(wall_obj)
+        self.wall_length = wall.get_input('Length')
+        width = self.get_placed_object_width()
+        height = self.get_placed_object_height()
+        z = self.get_two_point_z_offset(bpy.context)
+        half = hb_walls.curved_wall_half_span(wall_obj, width, 0.0)
+        station, _off = hb_walls.curved_wall_station(wall_obj, self.hit_location)
+        station = hb_walls.curved_wall_fit_station(
+            wall_obj, station, half, z, height, (obj,))
+        self.placement_x = station - width / 2.0
+        loc, rot = hb_walls.curved_wall_pose(wall_obj, station, width, centred=True)
+        obj.parent = wall_obj
+        obj.location = (loc.x, loc.y, z)
+        obj.rotation_euler = (0.0, 0.0, rot)
+        self.placed_obj.set_input("Dim Y", wall.get_input('Thickness'))
+        self.hide_placement_dimensions()
+
     def set_position_on_wall(self):
         if not self.selected_wall or not self.placed_obj:
+            return
+        if hb_types.is_curved_wall(self.selected_wall):
+            self.set_position_on_curved_wall()
             return
 
         # Two-point width mode, phase 2: anchored to a captured start point
@@ -1121,7 +1179,13 @@ class _PlaceWallObjectBase(bpy.types.Operator, WallObjectPlacementMixin):
 
         # Check if we're over a wall
         self.selected_wall = None
-        if self.hit_object and 'IS_WALL_BP' in self.hit_object:
+        curved = getattr(self, 'curved_wall_hit', None)
+        if curved is not None and self.PLACES_ON_CURVED_WALLS:
+            candidate = hb_types.GeoNodeWall(curved)
+            if candidate.has_modifier():
+                self.selected_wall = curved
+                self.wall_length = candidate.get_input('Length')
+        elif self.hit_object and 'IS_WALL_BP' in self.hit_object:
             # Only accept the wall if its geo node modifier still exists.
             # Applied walls are static meshes and cannot host doors/windows
             # parametrically.
@@ -1181,7 +1245,7 @@ class _PlaceWallObjectBase(bpy.types.Operator, WallObjectPlacementMixin):
                     self.placement_objects.remove(self.placed_obj.obj)
                 self.delete_placement_dimensions()
                 cutting_obj = self.placed_obj.obj
-                if self.BUILD_GEO:
+                if self.BUILD_GEO or hb_types.is_curved_wall(self.selected_wall):
                     # Shaped separately from the cage so the reveal can be
                     # splayed without baking that into the cage's own
                     # GeoNodes asset - see door_window_geo.update_reveal_cutter.
@@ -1316,6 +1380,7 @@ class home_builder_doors_windows_OT_place_fireplace(_PlaceWallObjectBase):
     HEIGHT_PROP_NAME = "window_height"
     TEXT_KIND = None
     BUILD_GEO = False
+    PLACES_ON_CURVED_WALLS = False
 
     def create_placed_object(self, context):
         super().create_placed_object(context)
@@ -1346,6 +1411,7 @@ class home_builder_doors_windows_OT_place_bay(_PlaceWallObjectBase):
     HEIGHT_PROP_NAME = "window_height"
     TEXT_KIND = None
     BUILD_GEO = False
+    PLACES_ON_CURVED_WALLS = False
 
     def create_placed_object(self, context):
         super().create_placed_object(context)

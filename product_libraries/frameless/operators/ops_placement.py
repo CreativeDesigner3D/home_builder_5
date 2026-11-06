@@ -1515,7 +1515,6 @@ class PlaceCabinetBase(WallObjectPlacementMixin):
         first cabinet, which the preview shows; the cabinets keep their
         width, and offsets are straight-wall ideas."""
         from ....operators import walls as hb_walls
-        from ...face_frame.operators.ops_placement import _curved_wall_station
         wall_obj = self.selected_wall
         cage = self.preview_cage.obj
         if cage.parent is not wall_obj:
@@ -1536,7 +1535,8 @@ class PlaceCabinetBase(WallObjectPlacementMixin):
         unit = hb_walls.curved_wall_half_span(wall_obj, width, depth)
         half = unit * self.cabinet_quantity
         station, _off = hb_walls.curved_wall_station(wall_obj, self.hit_location)
-        station = _curved_wall_station(wall_obj, station, half, z, height, (cage,))
+        station = hb_walls.curved_wall_fit_station(
+            wall_obj, station, half, z, height, (cage,))
         self.arc_first_station = station - half + unit
         self.arc_unit = unit
         loc, rot = hb_walls.curved_wall_pose(wall_obj, self.arc_first_station, width)

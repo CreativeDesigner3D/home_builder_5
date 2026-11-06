@@ -622,62 +622,6 @@ def _detect_wall(op, context):
     return _find_nearest_wall_from_cursor(op, context)
 
 
-_ARC_SNAP_DISTANCE = units.inch(4.0)
-
-
-def _curved_wall_station(wall, station, half, z, height, exclude):
-    """Station on a curved wall for a cabinet taking `half` either side
-    of it: kept on the wall, pulled to its ends when close, and butted
-    up to the products already standing on the arc at its height - each
-    measured the same way, so fanned neighbours meet at their back
-    corners (bowed into the room) or front corners (bowed away). Where
-    the cursor is over a neighbour it goes to the nearer free side."""
-    from ....operators import walls as hb_walls
-    length = hb_types.GeoNodeWall(wall).get_input('Length')
-    lo, hi = half, length - half
-    if hi <= lo:
-        return length / 2.0
-    spans = []
-    for child in wall.children:
-        if child in exclude:
-            continue
-        try:
-            cage = hb_types.GeoNodeCage(child)
-            w = cage.get_input('Dim X')
-            d = abs(cage.get_input('Dim Y'))
-            h = cage.get_input('Dim Z')
-        except Exception:
-            continue
-        if not w or child.location.z >= z + height - 1e-4                 or child.location.z + h <= z + 1e-4:
-            continue
-        back = (wall.matrix_world @ child.matrix_parent_inverse
-                @ child.matrix_basis @ Vector((w / 2.0, 0.0, 0.0)))
-        centre, _off = hb_walls.curved_wall_station(wall, back)
-        spans.append((centre, hb_walls.curved_wall_half_span(wall, w, d)))
-    s = min(max(station, lo), hi)
-    # Stations left free between the neighbours (touching is allowed);
-    # with none - the arc is full - the cabinet follows the cursor.
-    free = []
-    start = lo
-    for a, b in sorted((c - half - o, c + half + o) for c, o in spans):
-        if a > start:
-            free.append((start, min(a, hi)))
-        start = max(start, b)
-        if start > hi:
-            break
-    if start <= hi:
-        free.append((start, hi))
-    if not free:
-        return s
-    a, b = min(free, key=lambda ab: abs(min(max(s, ab[0]), ab[1]) - s))
-    s = min(max(s, a), b)
-    if s - a < _ARC_SNAP_DISTANCE:
-        s = a
-    elif b - s < _ARC_SNAP_DISTANCE:
-        s = b
-    return s
-
-
 def _find_nearest_wall_from_cursor(op, context):
     """Project cursor onto floor plane and find nearest wall within snap.
 
@@ -3433,7 +3377,7 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
         z = cage_obj.location.z
         half = hb_walls.curved_wall_half_span(wall, width, depth)
         station, _off = hb_walls.curved_wall_station(wall, self.hit_location)
-        station = _curved_wall_station(
+        station = hb_walls.curved_wall_fit_station(
             wall, station, half, z, height,
             self._placement_exclusions(cage_obj))
         loc, rot = hb_walls.curved_wall_pose(wall, station, width)

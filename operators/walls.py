@@ -3469,12 +3469,13 @@ def curved_wall_station(wall_obj, world_point):
     return min(max(x, 0.0), length), y
 
 
-def curved_wall_pose(wall_obj, x, width):
+def curved_wall_pose(wall_obj, x, width, centred=False):
     """Wall-local (location, rotation z) of a box `width` wide - origin
     at its back left, depth toward -Y - standing square to a curved wall
     with its back centre at station x. Where the wall bows into the room
     its back touches the face at its middle; where it bows away, at its
-    two back corners."""
+    two back corners. `centred` keeps the back centre on the face either
+    way (a door or window set into the wall)."""
     length = hb_types.GeoNodeWall(wall_obj).get_input('Length')
     arc = hb_types.wall_arc_angle(wall_obj)
     phi = arc * (x / length - 0.5) if length > 1e-9 else 0.0
@@ -3483,7 +3484,7 @@ def curved_wall_pose(wall_obj, x, width):
     normal = Vector((math.sin(phi), -math.cos(phi), 0.0))     # into the room
     half = width / 2.0
     back = 0.0
-    if arc < 0.0:
+    if arc < 0.0 and not centred:
         radius = radius_from_arc(length, arc)
         back = radius - math.sqrt(max(radius * radius - half * half, 0.0))
     return Vector((px, py, 0.0)) + normal * back - tangent * half, phi
@@ -3505,6 +3506,63 @@ def curved_wall_half_span(wall_obj, width, depth):
         inner = math.sqrt(max(radius * radius - half * half, 0.0)) - depth
         dphi = math.atan2(half, inner) if inner > 1e-6 else math.pi / 2.0
     return length * dphi / abs(arc)
+
+
+ARC_SNAP_DISTANCE = units.inch(4.0)
+
+
+def curved_wall_fit_station(wall, station, half, z, height, exclude):
+    """Station on a curved wall for a cabinet taking `half` either side
+    of it: kept on the wall, pulled to its ends when close, and butted
+    up to the products already standing on the arc at its height - each
+    measured the same way, so fanned neighbours meet at their back
+    corners (bowed into the room) or front corners (bowed away). Where
+    the cursor is over a neighbour it goes to the nearer free side."""
+    length = hb_types.GeoNodeWall(wall).get_input('Length')
+    lo, hi = half, length - half
+    if hi <= lo:
+        return length / 2.0
+    spans = []
+    for child in wall.children:
+        if child in exclude:
+            continue
+        try:
+            cage = hb_types.GeoNodeCage(child)
+            w = cage.get_input('Dim X')
+            d = abs(cage.get_input('Dim Y'))
+            h = cage.get_input('Dim Z')
+        except Exception:
+            continue
+        if child.get('IS_ENTRY_DOOR_BP') or child.get('IS_WINDOW_BP'):
+            d = 0.0             # set into the wall, nothing toward the room
+        if not w or child.location.z >= z + height - 1e-4                 or child.location.z + h <= z + 1e-4:
+            continue
+        back = (wall.matrix_world @ child.matrix_parent_inverse
+                @ child.matrix_basis @ Vector((w / 2.0, 0.0, 0.0)))
+        centre, _off = curved_wall_station(wall, back)
+        spans.append((centre, curved_wall_half_span(wall, w, d)))
+    s = min(max(station, lo), hi)
+    # Stations left free between the neighbours (touching is allowed);
+    # with none - the arc is full - the cabinet follows the cursor.
+    free = []
+    start = lo
+    for a, b in sorted((c - half - o, c + half + o) for c, o in spans):
+        if a > start:
+            free.append((start, min(a, hi)))
+        start = max(start, b)
+        if start > hi:
+            break
+    if start <= hi:
+        free.append((start, hi))
+    if not free:
+        return s
+    a, b = min(free, key=lambda ab: abs(min(max(s, ab[0]), ab[1]) - s))
+    s = min(max(s, a), b)
+    if s - a < ARC_SNAP_DISTANCE:
+        s = a
+    elif b - s < ARC_SNAP_DISTANCE:
+        s = b
+    return s
 
 
 def set_wall_arc(wall_obj, arc):

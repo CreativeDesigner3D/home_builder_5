@@ -1003,6 +1003,65 @@ def _build_reveal_cutter_mesh(mesh, width, height, thickness, opts):
     bm.free()
 
 
+def _curved_wall_parent(cage_obj):
+    wall = cage_obj.parent
+    if wall is not None and wall.get('IS_WALL_BP') and hb_types.is_curved_wall(wall):
+        return wall
+    return None
+
+
+def _stretch_cutter_for_curved_wall(cutter, cage_obj, thickness):
+    """An opening stands straight in a curved wall, so the wall's faces
+    bend away from the opening's toward its sides. Deepen the cutter's
+    front and back to where the wall's two faces actually cross its
+    sides (with a margin) so the hole still goes clean through."""
+    wall = _curved_wall_parent(cage_obj)
+    verts = cutter.data.vertices
+    if wall is None or not len(verts):
+        return
+    length = hb_types.GeoNodeWall(wall).get_input('Length')
+    arc = hb_types.wall_arc_angle(wall)
+    r = length / (2.0 * math.sin(arc / 2.0))          # signed, as in bend()
+    centre = Vector((length / 2.0, r * math.cos(arc / 2.0)))
+    # Cutter in the cage's frame, the cage in the wall's
+    basis = cutter.matrix_basis.copy()
+    inv = basis.inverted()
+    cos = [basis @ v.co for v in verts]
+    place = cage_obj.matrix_parent_inverse @ cage_obj.matrix_basis
+    origin = place.translation.to_2d()
+    ax = (place.to_3x3() @ Vector((1.0, 0.0, 0.0))).to_2d().normalized()
+    ay = (place.to_3x3() @ Vector((0.0, 1.0, 0.0))).to_2d().normalized()
+
+    def crossing(x, rho, near):
+        """Cage-local y where the cage's line at x meets the circle of
+        radius rho (the root nearest `near`), or None."""
+        dv = origin + ax * x - centre
+        b = dv.dot(ay)
+        disc = b * b - dv.length_squared + rho * rho
+        if disc < 0.0:
+            return None
+        root = math.sqrt(disc)
+        return min((-b - root, -b + root), key=lambda s: abs(s - near))
+
+    margin = inch(0.5)
+    y0 = min(c.y for c in cos)
+    y1 = max(c.y for c in cos)
+    front, back = y0, y1
+    for x in (min(c.x for c in cos), max(c.x for c in cos)):
+        for y, near in ((0.0, 0.0), (thickness, thickness)):
+            s = crossing(x, abs(r - y), near)
+            if s is not None:
+                front = min(front, s - margin)
+                back = max(back, s + margin)
+    for v, c in zip(verts, cos):
+        if c.y <= y0 + 1e-6:
+            c.y = front
+        elif c.y >= y1 - 1e-6:
+            c.y = back
+        v.co = inv @ c
+    cutter.data.update()
+
+
 def update_reveal_cutter(cage_obj):
     """Create/refresh the boolean-cutter child used to cut the wall
     opening, shaped from the cage's current Dim X/Y/Z plus the
@@ -1052,6 +1111,7 @@ def update_reveal_cutter(cage_obj):
         _unmirror(cutter)
     else:
         cutter.matrix_basis = Matrix.Identity(4)
+    _stretch_cutter_for_curved_wall(cutter, cage_obj, T)
 
     # Retrofit doors/windows placed before the reveal-cutter system
     # existed: their wall's boolean modifier still targets the cage
@@ -1076,6 +1136,11 @@ def remove_reveal_cutter(cage_obj):
     with Dim X/Z, a cutter mesh is rebuilt when something remembers to
     rebuild it, and the hole stops matching the opening the moment one
     is resized without the other."""
+    if _curved_wall_parent(cage_obj) is not None:
+        # The cage is too shallow to cut through a curved wall on its
+        # own: the cutter stays, rebuilt to the cage as it is now
+        update_reveal_cutter(cage_obj)
+        return
     cutter = _reveal_cutter_child(cage_obj)
     if cutter is None:
         return
