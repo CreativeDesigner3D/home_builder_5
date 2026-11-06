@@ -616,7 +616,10 @@ def _expanded_sections():
         try:
             with open(_state_path(), encoding='utf-8') as fh:
                 saved = json.load(fh).get('expanded')
-            _expanded = {(str(tab), str(method)) for tab, method in saved}
+            # A field group ('group:...') starts folded in every
+            # session: only the library's sections are remembered.
+            _expanded = {(str(tab), str(method)) for tab, method in saved
+                         if not str(method).startswith('group:')}
         except Exception:
             pass        # no file yet, or one that cannot be read
     return _expanded
@@ -626,8 +629,9 @@ def _save_expanded():
     import json
     try:
         with open(_state_path(create=True), 'w', encoding='utf-8') as fh:
-            json.dump({'expanded': sorted(_expanded_sections())}, fh,
-                      indent=1)
+            json.dump({'expanded': sorted(
+                key for key in _expanded_sections()
+                if not key[1].startswith('group:'))}, fh, indent=1)
     except Exception as ex:
         print('Home Builder: could not save the options layout: %s' % ex)
 
