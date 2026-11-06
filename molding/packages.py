@@ -86,7 +86,7 @@ def profile_enum_items(category):
 
 # (identifier, label, description, stack)
 CROWN_PACKAGES = [
-    ('SIMPLE', "Simple Crown",
+    ('SIMPLE', "Single Crown",
      "One crown profile along the cabinet tops",
      [('Crown Molding/51 Crown', 'crown_simple', 0.0, 0.0)]),
     ('STACKED', "Stacked w/ Spacer",
@@ -110,7 +110,7 @@ FURNITURE_CAP_STACK = [
 ]
 
 BASE_PACKAGES = [
-    ('SIMPLE', "Simple Base",
+    ('SIMPLE', "Single Base",
      "One base profile along the toe kicks",
      [('Base Molding/Standard Base', 'base_simple', 0.0, 0.0)]),
 ]
@@ -122,7 +122,7 @@ BASE_SHOE_REF = 'Base Molding/Base Shoe'
 BASE_SHOE_FALLBACK = 'base_shoe'
 
 LIGHT_RAIL_PACKAGES = [
-    ('SIMPLE', "Simple Light Rail",
+    ('SIMPLE', "Single Light Rail",
      "One light-rail profile under the upper cabinet fronts",
      [('Light Rail/Cove Cut LR', 'light_rail_simple', 0.0, 0.0)]),
 ]
