@@ -7,10 +7,12 @@ picked -- Cabinet > Bay 2 > Opening 1 -- and the part picked is the
 section that starts open; the ones above it fold under a header
 summarising them.
 
-Only the settings reached for most are fields here, edited in place.
-Everything else stays in the dialogs, which already draw it all: each
-section ends with the commands that open them, so the page is the
-quick way in and the dialogs remain the whole form.
+Tabs under the style move between the cabinet and the bay, opening and
+part picked inside it. Each level's page leads with its size and its
+quick actions, labelled rather than drawn as icons; the rest of its
+settings fold under headers that say what is set. Every command of the
+level's right-click menu is a click away under All Actions, and
+Properties opens the full dialog.
 """
 
 import bpy
@@ -27,7 +29,7 @@ CABINET_GROUP = 'ff_cabinet'
 BAY_GROUP = 'ff_bay'
 OPENING_GROUP = 'ff_opening'
 
-_last_kind = None       # the part the page last opened on
+PART_MENU = 'HOME_BUILDER_MT_face_frame_part_commands'
 
 # Products with their own forms (and no cabinet carcass) keep them:
 # their pages are selected_products'.
@@ -39,10 +41,12 @@ _OWN_FORMS = ('IS_LEG_PRODUCT', 'IS_FLOATING_SHELF', 'IS_END_SHELVES',
 # ---- Finding what is picked -------------------------------------------------
 
 def find(context):
-    """(kind, root, bay_obj, opening_obj) for a picked face frame
-    cabinet or part of one, or None. `kind` is the part the page opens
-    on: 'cabinet', 'bay' or 'opening'."""
+    """(kind, root, bay_obj, opening_obj, part_obj) for a picked face
+    frame cabinet or part of one, or None. `kind` is the level the page
+    is on: 'cabinet', 'bay', 'opening' or 'part' -- a door, a stile, a
+    rail, anything inside with a right-click menu of its own."""
     from . import ui_face_frame
+    from ...operators import generic_page
     sel = ui_face_frame.find_active_selection(context)
     kind = sel[0]
     if kind == 'none':
@@ -51,11 +55,16 @@ def find(context):
     if root is None or any(root.get(tag) for tag in _OWN_FORMS):
         return None
     if kind == 'bay':
-        return ('bay', root, sel[1], None)
+        return ('bay', root, sel[1], None, None)
     if kind in ('opening', 'interior_region'):
         opening = sel[1] if kind == 'opening' else sel[2]
-        return ('opening', root, _owning_bay(opening), opening)
-    return ('cabinet', root, None, None)
+        return ('opening', root, _owning_bay(opening), opening, None)
+    if kind != 'cabinet':
+        part = sel[1]
+        if generic_page.menu_id(part) == PART_MENU:
+            opening = _owning(part, types_face_frame.TAG_OPENING_CAGE)
+            return ('part', root, _owning_bay(part), opening, part)
+    return ('cabinet', root, None, None, None)
 
 
 # ---- Several picked at once -------------------------------------------------
@@ -345,26 +354,101 @@ def style_blocks(context, owner, prop='style_section'):
     ), owner)
 
 
-def _menu(icon, label, menu_id, when=None):
-    """An icon that drops down one of the right-click menu's own preset
-    lists."""
-    return (icon, label, 'wm.call_menu', {'name': menu_id}, when)
+def _menu(label, menu_id):
+    """A button that drops down one of the right-click menu's own
+    lists, the way the menu's submenu does."""
+    from ...operators import generic_page
+    return (label + "  ›", generic_page._opener(menu_id, label), None, None)
+
+
+def _act(label, op_id, kwargs=None):
+    return (label, op_id, dict(kwargs or {}), None)
+
+
+def _quick(owner, candidates, limit=6):
+    """The quick actions a page leads with: the first `limit` of
+    (action, when) that apply, two to a row so each reads in full.
+    Every one is also on the right-click menu, and so in All Actions."""
+    picked = []
+    for action, when in candidates:
+        try:
+            if when is not None and not when(owner):
+                continue
+        except Exception:
+            continue
+        picked.append(action)
+        if len(picked) == limit:
+            break
+    rows = [('actions', tuple(picked[i:i + 2]), None)
+            for i in range(0, len(picked), 2)]
+    return (('label', None, "Quick Actions"),) + tuple(rows) if rows else ()
+
+
+# ---- Summaries of the folded groups ----------------------------------------
+
+def _label_of(owner, prop):
+    value = getattr(owner, prop, '')
+    return next((label for ident, label in _enum_pairs(owner, prop)
+                 if ident == value), str(value))
+
+
+def _construction_summary(cab):
+    parts = []
+    if _has_kick(cab):
+        parts.append(f"{_dist(cab.toe_kick_height)} kick")
+    if cab.existing_cabinet:
+        parts.append("Existing")
+    return " · ".join(parts)
+
+
+def _ends_summary(cab):
+    ends = [side for side, prop in (("Left", 'left_finished_end_condition'),
+                                    ("Right", 'right_finished_end_condition'),
+                                    ("Back", 'back_finished_end_condition'))
+            if getattr(cab, prop, 'UNFINISHED') != 'UNFINISHED']
+    return ", ".join(ends) + " finished" if ends else "Unfinished"
+
+
+def _frame_summary(cab):
+    return f"{_dist(cab.left_stile_width)} stiles"
+
+
+def _bay_details_summary(bp):
+    return _label_of(bp, 'toe_kick_type') if _has_kick(bp) else ""
 
 
 # ---- Fields -----------------------------------------------------------------
-# Each section: the settings changed on nearly every cabinet, then the
-# rest of the everyday ones under folds of their own, then a row of
-# icon commands. Anything destructive or rare stays on the right-click
-# menu, and the last icon opens the full dialog.
+# Each scope: its size, then the quick actions, then everything else in
+# folds that say what is set in them. Every command -- the quick ones and
+# the rest -- is in All Actions at the foot of the page.
 
-def _cabinet_fields(root):
+def _cabinet_fields(root, cab):
     name = root.name
+    quick = _quick(cab, (
+        (_act("Duplicate", 'hb_face_frame.place_cabinet',
+              {'source_cabinet_name': name}), _one_plain),
+        (_act("Duplicate Mirror", 'hb_face_frame.place_cabinet',
+              {'source_cabinet_name': name, 'mirror': True}), _one_plain),
+        (_act("Join Cabinets", 'hb_face_frame.join_cabinets'), _cabinets_selected),
+        (_menu("Change Opening", 'HOME_BUILDER_MT_face_frame_corner_change_opening'),
+         _corner_opening),
+        (_act("Blind Corner", 'hb_face_frame.edit_blind_corner'), _blind),
+        (_act("Swap Blind", 'hb_face_frame.swap_blind_corner'), _blind),
+        (_act("Copy Cabinet", 'home_builder.copy_cabinet'), _one_plain),
+        (_act("Equalize Bays", 'hb_face_frame.equalize_bays'), None),
+        (_act("Wedge Calculator", 'hb_face_frame.add_refrigerator_wedge'), _wedge),
+        (_act("Hide Cabinet", 'hb_general.hide',
+              {'scope': 'PRODUCT', 'isolate': False}), None),
+    ))
     return (
         ('distance', 'width', "Width"),
         ('distance', 'height', "Height"),
         ('distance', 'depth', "Depth"),
         ('distance', 'height_above_floor', "Above Floor", {'when': _raised}),
         ('choices', 'anchor_side', "Anchor", {'cols': 3, 'when': _no_corner}),
+        ('gap', None, None),
+    ) + quick + (
+        ('gap', None, None),
         ('group', 'ff_cab_corner', "Corner", {'icon': 'cab_corner', 'when': _corner, 'fields': (
             ('locked', 'left_depth', "Left Depth", {'unlock': 'unlock_left_depth'}),
             ('locked', 'right_depth', "Right Depth", {'unlock': 'unlock_right_depth'}),
@@ -372,91 +456,83 @@ def _cabinet_fields(root):
             ('enum', 'diag_door_swing', "Door Swing", {'when': _diagonal}),
             ('enum', 'interior_option', "Interior", {'when': _corner_interior}),
         )}),
-        ('group', 'ff_cab_construction', "Construction", {'icon': 'cab_construction', 'fields': (
-            ('enum', 'toe_kick_type', "Toe Kick", {'when': _has_kick}),
-            ('distance', 'toe_kick_height', "Kick Height", {'when': _has_kick}),
-            ('distance', 'toe_kick_setback', "Kick Setback", {'when': _has_kick}),
-            ('enum', 'left_finished_end_condition', "Left End"),
-            ('enum', 'right_finished_end_condition', "Right End"),
-            ('enum', 'back_finished_end_condition', "Back"),
-            ('bool', 'existing_cabinet', "Existing (on site)"),
-        )}),
-        ('group', 'ff_cab_face_frame', "Face Frame", {'icon': 'cab_face_frame', 'fields': (
-            ('locked', 'top_rail_width', "Top Rail", {'unlock': 'unlock_top_rail'}),
-            ('locked', 'bottom_rail_width', "Bottom Rail", {'unlock': 'unlock_bottom_rail'}),
-            ('locked', 'left_stile_width', "Left Stile", {'unlock': 'unlock_left_stile'}),
-            ('locked', 'right_stile_width', "Right Stile", {'unlock': 'unlock_right_stile'}),
-            ('distance', 'left_scribe', "Left Scribe", {'when': _scribes}),
-            ('distance', 'right_scribe', "Right Scribe", {'when': _scribes}),
-            ('distance', 'top_scribe', "Top Scribe", {'when': _scribes}),
-            ('bool', 'extend_left_stile_to_floor', "Left Stile to Floor", {'when': _has_kick}),
-            ('bool', 'extend_right_stile_to_floor', "Right Stile to Floor", {'when': _has_kick}),
-        )}),
-        ('icons', (
-            ('duplicate', "Duplicate", 'hb_face_frame.place_cabinet',
-             {'source_cabinet_name': name}, _one_plain),
-            ('cab_mirror', "Duplicate Mirror", 'hb_face_frame.place_cabinet',
-             {'source_cabinet_name': name, 'mirror': True}, _one_plain),
-            ('cab_equalize_bays', "Equalize Bays", 'hb_face_frame.equalize_bays'),
-            ('cab_join', "Join Cabinets", 'hb_face_frame.join_cabinets',
-             None, _cabinets_selected),
-            _menu('cab_change_opening', "Change Opening",
-                  'HOME_BUILDER_MT_face_frame_corner_change_opening', _corner_opening),
-            ('cab_blind', "Blind Corner", 'hb_face_frame.edit_blind_corner',
-             None, _blind),
-            ('cab_swap_blind', "Swap Blind", 'hb_face_frame.swap_blind_corner',
-             None, _blind),
-            ('cab_wedge', "Wedge Calculator", 'hb_face_frame.add_refrigerator_wedge',
-             None, _wedge),
-            ('settings', "All Cabinet Settings", 'hb_face_frame.cabinet_prompts'),
-        ), ""),
+        ('group', 'ff_cab_construction', "Construction", {
+            'icon': 'cab_construction', 'summary': _construction_summary, 'fields': (
+                ('enum', 'toe_kick_type', "Toe Kick", {'when': _has_kick}),
+                ('distance', 'toe_kick_height', "Kick Height", {'when': _has_kick}),
+                ('distance', 'toe_kick_setback', "Kick Setback", {'when': _has_kick}),
+                ('bool', 'existing_cabinet', "Existing (on site)"),
+            )}),
+        ('group', 'ff_cab_ends', "Finished Ends & Back", {
+            'summary': _ends_summary, 'fields': (
+                ('enum', 'left_finished_end_condition', "Left End"),
+                ('enum', 'right_finished_end_condition', "Right End"),
+                ('enum', 'back_finished_end_condition', "Back"),
+            )}),
+        ('group', 'ff_cab_face_frame', "Face Frame", {
+            'icon': 'cab_face_frame', 'summary': _frame_summary, 'fields': (
+                ('locked', 'top_rail_width', "Top Rail", {'unlock': 'unlock_top_rail'}),
+                ('locked', 'bottom_rail_width', "Bottom Rail", {'unlock': 'unlock_bottom_rail'}),
+                ('locked', 'left_stile_width', "Left Stile", {'unlock': 'unlock_left_stile'}),
+                ('locked', 'right_stile_width', "Right Stile", {'unlock': 'unlock_right_stile'}),
+                ('distance', 'left_scribe', "Left Scribe", {'when': _scribes}),
+                ('distance', 'right_scribe', "Right Scribe", {'when': _scribes}),
+                ('distance', 'top_scribe', "Top Scribe", {'when': _scribes}),
+                ('bool', 'extend_left_stile_to_floor', "Left Stile to Floor", {'when': _has_kick}),
+                ('bool', 'extend_right_stile_to_floor', "Right Stile to Floor", {'when': _has_kick}),
+            )}),
     )
 
 
-def _bay_fields(bay_obj, picked):
-    index = bay_obj.face_frame_bay.bay_index
-    fields = [
+def _bay_fields(bay_obj, bp):
+    index = bp.bay_index
+    quick = _quick(bp, (
+        (_menu("Change Bay", 'HOME_BUILDER_MT_face_frame_change_bay'),
+         _has_bay_presets),
+        (_act("Insert Bay Before", 'hb_face_frame.insert_bay',
+              {'bay_index': index, 'direction': 'BEFORE'}), None),
+        (_act("Insert Bay After", 'hb_face_frame.insert_bay',
+              {'bay_index': index, 'direction': 'AFTER'}), None),
+        (_act("Equal Door Width", 'hb_face_frame.set_equal_door_width'), None),
+        (_act("Finish Bay", 'hb_face_frame.finish_bay_prompts'), None),
+        (_act("Flush Toe Kick", 'hb_face_frame.toggle_flush_toe_kick'),
+         _is_type('BASE', 'TALL')),
+    ))
+    return (
         ('locked', 'width', "Width", {'unlock': 'unlock_width'}),
         ('locked', 'height', "Height", {'unlock': 'unlock_height'}),
         ('locked', 'depth', "Depth", {'unlock': 'unlock_depth'}),
         ('locked', 'kick_height', "Kick Height",
          {'unlock': 'unlock_kick_height', 'when': _has_kick}),
         ('enum', 'back_condition', "Back"),
-        ('group', 'ff_bay_more', "More", {'fields': (
-            ('enum', 'toe_kick_type', "Toe Kick", {'when': _has_kick}),
-            ('distance', 'top_offset', "Top Offset", {'when': _is_type('UPPER')}),
-            ('bool', 'appliance_garage', "Appliance Garage", {'when': _is_type('UPPER')}),
-            ('distance', 'front_drop', "Front Drop", {'when': _is_type('BASE', 'LAP_DRAWER')}),
-            ('bool', 'bread_board', "Bread Board", {'when': _is_type('BASE')}),
-            ('enum', 'bottom_rail_profile', "Bottom Rail",
-             {'when': _is_type('BASE', 'UPPER')}),
-            ('bool', 'remove_bottom', "Remove Bottom"),
-            ('bool', 'remove_carcass', "Remove Carcass"),
-        )}),
-    ]
-    icons = [
-        ('cab_insert_before', "Insert Bay Before", 'hb_face_frame.insert_bay',
-         {'bay_index': index, 'direction': 'BEFORE'}),
-        ('cab_insert_after', "Insert Bay After", 'hb_face_frame.insert_bay',
-         {'bay_index': index, 'direction': 'AFTER'}),
-    ]
-    # The bay's own commands act on the active object, so they are only
-    # offered when the bay itself is what is picked.
-    if picked:
-        icons.extend((
-            _menu('cab_change_bay', "Change Bay",
-                  'HOME_BUILDER_MT_face_frame_change_bay', _has_bay_presets),
-            ('cab_equal_doors', "Equal Door Width", 'hb_face_frame.set_equal_door_width'),
-            ('cab_flush_kick', "Flush Toe Kick", 'hb_face_frame.toggle_flush_toe_kick',
-             None, _is_type('BASE', 'TALL')),
-            ('brush', "Finish Bay", 'hb_face_frame.finish_bay_prompts'),
-            ('settings', "All Bay Settings", 'hb_face_frame.bay_prompts'),
-        ))
-    fields.append(('icons', tuple(icons), ""))
-    return tuple(fields)
+        ('gap', None, None),
+    ) + quick + (
+        ('gap', None, None),
+        ('group', 'ff_bay_more', "Bay Details", {
+            'summary': _bay_details_summary, 'fields': (
+                ('enum', 'toe_kick_type', "Toe Kick", {'when': _has_kick}),
+                ('distance', 'top_offset', "Top Offset", {'when': _is_type('UPPER')}),
+                ('bool', 'appliance_garage', "Appliance Garage", {'when': _is_type('UPPER')}),
+                ('distance', 'front_drop', "Front Drop", {'when': _is_type('BASE', 'LAP_DRAWER')}),
+                ('bool', 'bread_board', "Bread Board", {'when': _is_type('BASE')}),
+                ('enum', 'bottom_rail_profile', "Bottom Rail",
+                 {'when': _is_type('BASE', 'UPPER')}),
+                ('bool', 'remove_bottom', "Remove Bottom"),
+                ('bool', 'remove_carcass', "Remove Carcass"),
+            )}),
+    )
 
 
-def _opening_fields():
+def _opening_fields(op):
+    quick = _quick(op, (
+        (_menu("Change Opening", 'HOME_BUILDER_MT_face_frame_change_opening'), None),
+        (_act("Interior Options", 'hb_face_frame.interior_options'), None),
+        (_act("Split Horizontal", 'hb_face_frame.split_opening', {'axis': 'H'}), None),
+        (_act("Split Vertical", 'hb_face_frame.split_opening', {'axis': 'V'}), None),
+        (_act("Equalize Heights", 'hb_face_frame.equalize_opening_heights'), None),
+        (_act("Accessories", 'hb_face_frame.accessory_menu'), _accessories),
+        (_act("Finish Opening", 'hb_face_frame.finish_opening_prompts'), None),
+    ))
     return (
         ('value', _opening_root_size, "Size"),
         ('locked', 'size', "Size",
@@ -464,118 +540,217 @@ def _opening_fields():
         ('enum', 'front_type', "Front"),
         ('enum', 'hinge_side', "Hinge Side", {'when': _hinged}),
         ('enum', 'door_mechanism', "Mechanism", {'when': _is_door}),
-        ('group', 'ff_opening_more', "More", {'fields': (
-            ('bool', 'add_apron', "Add Apron", {'when': _is_door}),
-            ('distance', 'apron_height', "Apron Height", {'when': _apron}),
-            ('enum', 'drawer_look_divisions', "Drawer-Look", {'when': _drawer_look}),
-            ('enum', 'door_look_divisions', "Door-Look", {'when': _is_door}),
-            ('bool', 'is_tilt_out', "Tilt-Out", {'when': _false_front}),
-            ('bool', 'false_front_pull', "Add Pull", {'when': _false_front}),
-            ('enum', 'inset_panel_type', "Panel Type", {'when': _inset_panel}),
-        )}),
-        ('icons', (
-            _menu('cab_change_opening', "Change Opening",
-                  'HOME_BUILDER_MT_face_frame_change_opening'),
-            ('cab_equalize_heights', "Equalize Heights",
-             'hb_face_frame.equalize_opening_heights'),
-            ('cab_split_h', "Split Horizontal", 'hb_face_frame.split_opening',
-             {'axis': 'H'}),
-            ('cab_split_v', "Split Vertical", 'hb_face_frame.split_opening',
-             {'axis': 'V'}),
-            ('cab_interior', "Interior", 'hb_face_frame.interior_options'),
-            ('brush', "Finish", 'hb_face_frame.finish_opening_prompts'),
-            ('cab_accessories', "Accessories", 'hb_face_frame.accessory_menu',
-             None, _accessories),
-            ('settings', "All Opening Settings", 'hb_face_frame.opening_prompts'),
-        ), ""),
+        ('gap', None, None),
+    ) + quick + (
+        ('gap', None, None),
+        ('group', 'ff_opening_more', "Front Details", {
+            'summary': _opening_summary, 'fields': (
+                ('bool', 'add_apron', "Add Apron", {'when': _is_door}),
+                ('distance', 'apron_height', "Apron Height", {'when': _apron}),
+                ('enum', 'drawer_look_divisions', "Drawer-Look", {'when': _drawer_look}),
+                ('enum', 'door_look_divisions', "Door-Look", {'when': _is_door}),
+                ('bool', 'is_tilt_out', "Tilt-Out", {'when': _false_front}),
+                ('bool', 'false_front_pull', "Add Pull", {'when': _false_front}),
+                ('enum', 'inset_panel_type', "Panel Type", {'when': _inset_panel}),
+            )}),
     )
+
+
+def _part_blocks(context, part_obj):
+    """A picked face frame part (a door, a stile, a rail): its size, and
+    the first commands of its own right-click menu as quick actions. The
+    rest are in All Actions."""
+    from ...operators import generic_page
+    out = []
+    size = generic_page._size_text(context, part_obj)
+    if not size and any(part_obj.dimensions):
+        us = context.scene.unit_settings
+        size = "  x  ".join(units.unit_to_string(us, d)
+                            for d in part_obj.dimensions)
+    if size:
+        out.append(('value', ("Size (W x D x H)", size)))
+    picked = []
+    for rec in generic_page._record(context, generic_page.menu_id(part_obj)):
+        if rec[0] == 'op':
+            label = (rec[1] or generic_page._op_label(rec[2])).rstrip('.')
+            picked.append((label, rec[2], dict(rec[3]._values), None))
+        elif rec[0] == 'menu':
+            picked.append(_menu(rec[1] or generic_page._menu_label(rec[2]),
+                                rec[2]))
+        if len(picked) == 6:
+            break
+    if picked:
+        if out:
+            out.append(('gap', None))
+        out.append(('label', "Quick Actions"))
+        for i in range(0, len(picked), 2):
+            out.append(('actions', tuple(picked[i:i + 2])))
+    return out
+
+
+# ---- Scope: which level of the cabinet the page is on ----------------------
+# The tabs under the style move between the cabinet and the bay, opening
+# and part last picked inside it, selecting that level the way the
+# breadcrumb does -- so a bay's page is one click from its cabinet's and
+# back, without finding the bay in the viewport again.
+
+LEVELS = ('Cabinets', 'Bays', 'Openings', 'Parts')
+_chain = {}             # cabinet name -> {level: object name}
+_scope_now = 'Cabinets'
+
+
+def _owning(obj, tag):
+    while obj is not None:
+        if obj.get(tag):
+            return obj
+        obj = obj.parent
+    return None
+
+
+def _part_label(part_obj):
+    role = str(part_obj.get('hb_part_role', '') or '')
+    if 'DRAWER' in role:
+        return "Drawer"
+    if 'DOOR' in role:
+        return "Door"
+    return "Part"
+
+
+def _remember(root, bay_obj, opening_obj, part_obj):
+    """Note the levels picked inside `root`, dropping any remembered
+    below a level that has just changed. Returns the picked level."""
+    chain = _chain.setdefault(root.name, {})
+    picked = {'Cabinets': root, 'Bays': bay_obj, 'Openings': opening_obj,
+              'Parts': part_obj}
+    deepest = 0
+    for i, level in enumerate(LEVELS):
+        obj = picked[level]
+        if obj is None:
+            continue
+        deepest = i
+        if chain.get(level) != obj.name:
+            for lower in LEVELS[i + 1:]:
+                if picked[lower] is None:
+                    chain.pop(lower, None)
+        chain[level] = obj.name
+    # What is remembered must still be in this cabinet.
+    for level in LEVELS[1:]:
+        name = chain.get(level)
+        obj = bpy.data.objects.get(name) if name else None
+        if obj is None or types_face_frame.find_cabinet_root(obj) != root:
+            chain.pop(level, None)
+    return LEVELS[deepest]
+
+
+def _scope_schema(levels, labels):
+    from ...operators import prop_proxy
+    key = 'FF_SCOPE_' + '_'.join(levels) + '_' + labels[-1]
+
+    def get(_obj):
+        return _scope_now
+
+    def set(obj, value):
+        name = _chain.get(obj.name, {}).get(value)
+        if name:
+            bpy.ops.hb_face_frame.select_level(name=name, level=value)
+    if key not in prop_proxy._schemas:
+        prop_proxy.register(key, {
+            'scope': prop_proxy.computed(
+                get, set, type='ENUM', items=list(zip(levels, labels))),
+        })
+    return key
+
+
+def _scope_blocks(context, root, current):
+    """The level tabs: Cabinet, then each level picked inside it."""
+    from ...operators import options_panel, prop_proxy
+    global _scope_now
+    chain = _chain.get(root.name, {})
+    levels = [level for level in LEVELS if chain.get(level)]
+    if len(levels) < 2:
+        return []
+    labels = [_part_label(bpy.data.objects[chain[level]]) if level == 'Parts'
+              else level[:-1] for level in levels]
+    _scope_now = current
+    key = _scope_schema(levels, labels)
+    return options_panel.field_blocks(context, (
+        ('choices', 'scope', "", {'cols': len(levels)}),
+    ), prop_proxy.owner(root, key))
+
+
+def _footer(out, prompts_op):
+    row = [("All Actions", 'home_builder.all_actions', None, None)]
+    if prompts_op:
+        row.append(("Properties…", prompts_op, None, None))
+    if out and out[-1] != ('gap', None):
+        out.append(('gap', None))
+    out.append(('actions', tuple(row)))
 
 
 # ---- The page ---------------------------------------------------------------
 
-def _fold_for(context, kind):
-    """Open the picked part's section and fold the others, each time the
-    page moves to a different kind of part. While the same kind stays
-    picked, whatever the user opened or folded stays that way."""
-    global _last_kind
-    if kind == _last_kind:
-        return
-    _last_kind = kind
-    from ...operators import options_panel
-    primary = {'cabinet': CABINET_GROUP, 'bay': BAY_GROUP,
-               'opening': OPENING_GROUP}[kind]
-    for key in (CABINET_GROUP, BAY_GROUP, OPENING_GROUP):
-        method = 'group:' + key
-        if bool(options_panel.section_expanded(context, method)) != (key == primary):
-            options_panel.toggle_section(context, method)
-
-
 def blocks(context, item):
     from ...operators import options_panel
-    kind, root, bay_obj, opening_obj = item
+    kind, root, bay_obj, opening_obj, part_obj = item
     cab = root.face_frame_cabinet
     _gather(context)
     n_cab = _count('face_frame_cabinet')
     n_part = _count({'bay': 'face_frame_bay',
                      'opening': 'face_frame_opening'}.get(kind, ''))
+    level = _remember(root, bay_obj, opening_obj, part_obj)
 
-    trail = ["Cabinet"]
+    trail = [root.name]
     if bay_obj is not None:
         trail.append(f"Bay {bay_obj.face_frame_bay.bay_index + 1}")
     if opening_obj is not None:
         trail.append(f"Opening {opening_obj.face_frame_opening.opening_index + 1}")
+    if part_obj is not None:
+        trail.append(part_obj.name)
 
     # Several picked: the page says how many, and that an edit is to all.
     # One picked: the head is where it sits, said once.
-    if kind == 'cabinet' and n_cab > 1:
+    several = (n_cab > 1 if kind == 'cabinet'
+               else kind in ('bay', 'opening') and n_part > 1)
+    if kind == 'cabinet' and several:
         out = [('head', (f"{n_cab} Cabinets", False, None)),
                ('label', f"Changes apply to all {n_cab}")]
-    elif kind in ('bay', 'opening') and n_part > 1:
+    elif several:
         out = [('head', (f"{n_part} {kind.title()}s", False, None)),
                ('label', f"Changes apply to all {n_part}")]
     else:
-        out = [('head', (" \u203a ".join([root.name] + trail[1:]), False, None))]
+        out = [('head', (" › ".join(trail), False, None))]
 
-    _fold_for(context, kind)
-
-    # The style section leads, whatever part is picked: it is the
-    # cabinet's, and switching it here saves a trip to Options.
+    # The style leads, whatever part is picked: it is the cabinet's, and
+    # switching it here saves a trip to Options.
     out.extend(style_blocks(context, cab))
+    if not several:
+        out.extend(_scope_blocks(context, root, level))
+    out.append(('gap', None))
 
-    if n_cab > 1:
-        types = {r.face_frame_cabinet.cabinet_type
-                 for r in _picked['face_frame_cabinet']}
-        cab_label = (f"{n_cab} Cabinets  ({cab.cabinet_type.title()})"
-                     if len(types) == 1 else f"{n_cab} Cabinets  (Mixed)")
-    else:
-        cab_label = f"Cabinet  ({cab.cabinet_type.title()})"
-    out.extend(options_panel.field_blocks(context, (
-        ('group', CABINET_GROUP, cab_label,
-         {'icon': 'cab_cabinet', 'summary': _cabinet_summary, 'fields': _cabinet_fields(root)}),
-    ), cab))
-    if bay_obj is not None:
+    if kind == 'cabinet':
+        out.extend(options_panel.field_blocks(
+            context, _cabinet_fields(root, cab), cab))
+        _footer(out, 'hb_face_frame.cabinet_prompts')
+    elif kind == 'bay':
         bp = bay_obj.face_frame_bay
-        label = f"{n_part} Bays" if kind == 'bay' and n_part > 1 else trail[1]
-        out.extend(options_panel.field_blocks(context, (
-            ('group', BAY_GROUP, label,
-             {'icon': 'cab_bay', 'summary': _bay_summary,
-              'fields': _bay_fields(bay_obj, kind == 'bay')}),
-        ), bp))
-    if opening_obj is not None:
+        out.extend(options_panel.field_blocks(
+            context, _bay_fields(bay_obj, bp), bp))
+        _footer(out, 'hb_face_frame.bay_prompts')
+    elif kind == 'opening':
         op = opening_obj.face_frame_opening
-        label = (f"{n_part} Openings" if kind == 'opening' and n_part > 1
-                 else trail[-1])
-        out.extend(options_panel.field_blocks(context, (
-            ('group', OPENING_GROUP, label,
-             {'icon': 'cab_opening', 'summary': _opening_summary, 'fields': _opening_fields()}),
-        ), op))
+        out.extend(options_panel.field_blocks(context, _opening_fields(op), op))
+        _footer(out, 'hb_face_frame.opening_prompts')
+    else:
+        out.extend(_part_blocks(context, part_obj))
+        _footer(out, None)
     return out
 
 
 def crumbs(context, item):
-    """Cabinet, bay, opening: each step above the pick selects that
-    level. None while several are picked -- the head says how many."""
-    kind, root, bay_obj, opening_obj = item
+    """Cabinet, bay, opening, part: each step above the pick selects
+    that level. None while several are picked -- the head says how
+    many."""
+    kind, root, bay_obj, opening_obj, part_obj = item
     _gather(context)
     if _count('face_frame_cabinet') > 1 or (
             kind in ('bay', 'opening') and _count(
@@ -589,6 +764,8 @@ def crumbs(context, item):
     if opening_obj is not None:
         out.append((f"Opening {opening_obj.face_frame_opening.opening_index + 1}",
                     (op, {'name': opening_obj.name, 'level': 'Openings'})))
+    if part_obj is not None:
+        out.append((part_obj.name, None))
     # The last is the pick itself: named, not a click.
     out[-1] = (out[-1][0], None)
     return out
