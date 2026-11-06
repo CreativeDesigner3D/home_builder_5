@@ -184,3 +184,83 @@ def field_blocks(context, bay_obj):
     return options_panel.field_blocks(context, (
         ('enum', 'config', "Configuration"),
     ), o)
+
+
+# ---- Openings ---------------------------------------------------------------
+# The same for one opening: its front read against the Change Opening
+# presets. Left and right doors are told apart here, and a door's
+# mechanism (retracting, bi-fold) is part of what it is.
+
+def opening_entries():
+    from .menus_face_frame import HOME_BUILDER_MT_face_frame_change_opening
+    return [(e[0], e[1]) for e in HOME_BUILDER_MT_face_frame_change_opening.ENTRIES
+            if e[0] != 'SEP']
+
+
+def _opening_preset_sig(config):
+    from .operators import ops_cabinet
+    preset = ops_cabinet._OPENING_PRESETS.get(config)
+    if preset is None:
+        return None
+    front = preset['front_type']
+    return (_recipe_sig(bay_presets.L(config), False),
+            preset.get('mechanism', 'NONE') if front == 'DOOR' else '')
+
+
+def detect_opening(opening_obj):
+    op = opening_obj.face_frame_opening
+    sig = (_tree_sig(opening_obj, False),
+           op.door_mechanism if op.front_type == 'DOOR' else '')
+    for config, _label in opening_entries():
+        if _opening_preset_sig(config) == sig:
+            return config
+    return CUSTOM
+
+
+def opening_label(opening_obj):
+    config = detect_opening(opening_obj)
+    return next((l for c, l in opening_entries() if c == config), "Custom")
+
+
+OPENING_KEY = 'FF_OPENING_CONFIG'
+
+
+def _opening_of(obj):
+    while obj is not None:
+        if obj.get(types_face_frame.TAG_OPENING_CAGE):
+            return obj
+        obj = obj.parent
+    return None
+
+
+def opening_owner(opening_obj):
+    """The opening seen as a 'config' enum; setting it runs Change
+    Opening on the picked openings (or the openings of the picked
+    doors and fronts)."""
+    from ...operators import prop_proxy
+    if OPENING_KEY not in prop_proxy._schemas:
+        items = [(CUSTOM, "Custom")] + opening_entries()
+
+        def set_config(obj, value):
+            if value == CUSTOM or value == detect_opening(obj):
+                return
+            targets = [obj]
+            for sel in bpy.context.selected_objects:
+                o = _opening_of(sel)
+                if o is not None and o not in targets:
+                    targets.append(o)
+            with bpy.context.temp_override(active_object=obj,
+                                           selected_objects=targets):
+                bpy.ops.hb_face_frame.change_opening(config=value)
+        prop_proxy.register(OPENING_KEY, {
+            'config': prop_proxy.computed(detect_opening, set_config,
+                                          type='ENUM', items=items),
+        })
+    return prop_proxy.owner(opening_obj, OPENING_KEY)
+
+
+def opening_field_blocks(context, opening_obj):
+    from ...operators import options_panel
+    return options_panel.field_blocks(context, (
+        ('enum', 'config', "Configuration"),
+    ), opening_owner(opening_obj))

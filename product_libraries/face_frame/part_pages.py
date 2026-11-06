@@ -483,6 +483,8 @@ def _front_page(context, part_obj, root):
     opening = _opening_of(part_obj)
     if opening is not None:
         op = opening.face_frame_opening
+        from . import bay_config
+        out.extend(bay_config.opening_field_blocks(context, opening))
         out.extend(options_panel.field_blocks(
             context, selected_card.front_fields(), op))
     actions = [_act("Set Pull", 'hb_face_frame.set_front_pull')]

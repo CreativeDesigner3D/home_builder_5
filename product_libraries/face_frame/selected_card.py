@@ -821,19 +821,17 @@ def _bay_fields(bay_obj, bp):
 
 def _opening_fields(op):
     quick = _quick(op, (
-        ((_menu("Change Opening", 'HOME_BUILDER_MT_face_frame_change_opening',
-                'cab_change_opening'), None),
-         (_act("Interior Options", 'hb_face_frame.interior_options', None,
-               'cab_interior'), None)),
         ((_act("Split Horizontal", 'hb_face_frame.split_opening', {'axis': 'H'},
                'cab_split_h'), None),
          (_act("Split Vertical", 'hb_face_frame.split_opening', {'axis': 'V'},
                'cab_split_v'), None)),
-        ((_act("Equalize Heights", 'hb_face_frame.equalize_opening_heights',
-               None, 'cab_equalize_heights'), None),
-         (_act("Accessories", 'hb_face_frame.accessory_menu', None,
-               'cab_accessories'), _accessories)),
-        ((_act("Finish Opening", 'hb_face_frame.finish_opening_prompts'), None),),
+        ((_act("Interior Options", 'hb_face_frame.interior_options', None,
+               'cab_interior'), None),
+         (_act("Equalize Heights", 'hb_face_frame.equalize_opening_heights',
+               None, 'cab_equalize_heights'), None)),
+        ((_act("Accessories", 'hb_face_frame.accessory_menu', None,
+               'cab_accessories'), _accessories),
+         (_act("Finish Opening", 'hb_face_frame.finish_opening_prompts'), None)),
     ))
     return (
         ('value', _opening_root_size, "Size"),
@@ -1101,6 +1099,8 @@ def blocks(context, item):
         _footer(out, 'hb_face_frame.bay_prompts')
     elif kind == 'opening':
         op = opening_obj.face_frame_opening
+        from . import bay_config
+        out.extend(bay_config.opening_field_blocks(context, opening_obj))
         out.extend(options_panel.field_blocks(context, _opening_fields(op), op))
         out.extend(opening_overlay_blocks(context, opening_obj))
         _footer(out, 'hb_face_frame.opening_prompts')
