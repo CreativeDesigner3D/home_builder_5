@@ -30,6 +30,7 @@ from .operators import wall_handles
 from .operators import tool_session
 from .operators import selected_tab
 from .operators import selected_pages
+from .operators import all_actions
 from .operators import doors_windows
 from .operators import layouts
 from .operators import rooms
@@ -543,6 +544,7 @@ def register():
     tool_session.register()          # same
     selected_tab.register()          # same
     selected_pages.register()
+    all_actions.register()
     thumb_picker.register()
     style_editor.register()
     room_dim_overlay.register()
@@ -608,6 +610,7 @@ def unregister():
     hb_snap_engine.unregister()
     hb_props_obstacles.unregister()
     ops_obstacles.unregister()
+    all_actions.unregister()
     selected_pages.unregister()
     selected_tab.unregister()
     tool_session.unregister()

@@ -169,7 +169,10 @@ def _generic(context):
 
 
 def _blocks(context):
-    from . import house_panel_tab as hpt, options_panel
+    from . import house_panel_tab as hpt, options_panel, all_actions
+    # The pick's whole right-click menu, opened from its page.
+    if all_actions.showing(context):
+        return all_actions.page_blocks(context)
     sourced = _source_item(context)
     if sourced is not None:
         blocks_fn, item = sourced
