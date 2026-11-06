@@ -280,6 +280,146 @@ def _has_bay_presets(bp):
     return _cab_type(bp) in bay_presets.MENU_ENTRIES
 
 
+def _several_bays(bp):
+    root = types_face_frame.find_cabinet_root(bp.id_data)
+    return root is not None and sum(
+        1 for c in root.children if c.get(types_face_frame.TAG_BAY_CAGE)) > 1
+
+
+def _mech(*kinds):
+    return lambda op: op.front_type == 'DOOR' and op.door_mechanism in kinds
+
+
+def _retract_partitions(op):
+    return (_mech('RETRACTING', 'RETRACTING_BIFOLD')(op)
+            and op.retracting_interior == 'PARTITIONS')
+
+
+def _retract_box(op):
+    return (_mech('RETRACTING', 'RETRACTING_BIFOLD')(op)
+            and op.retracting_interior != 'PARTITIONS')
+
+
+def _retract_shelf(op):
+    return (_mech('RETRACTING', 'RETRACTING_BIFOLD')(op)
+            and op.retracting_interior == 'COMPONENT_SHELF')
+
+
+def _swings(op):
+    return op.front_type not in ('NONE', 'INSET_PANEL', 'APPLIANCE')
+
+
+def _single_door(op):
+    return op.front_type == 'DOOR' and op.hinge_side in ('LEFT', 'RIGHT')
+
+
+def _drawer_look_ok(op):
+    return _single_door(op) or op.front_type == 'DRAWER_FRONT'
+
+
+def _door_look_ok(op):
+    return ((_single_door(op) and op.drawer_look_divisions == 'NONE')
+            or (op.front_type == 'DOOR' and op.hinge_side == 'DOUBLE'))
+
+
+def _door_look_on(op):
+    return (op.front_type == 'DOOR'
+            and op.hinge_side in ('LEFT', 'RIGHT', 'DOUBLE')
+            and op.door_look_divisions != 'NONE'
+            and op.drawer_look_divisions == 'NONE')
+
+
+def _door_look_layout(op):
+    return _door_look_on(op) and op.hinge_side != 'DOUBLE'
+
+
+def _door_look_top(op):
+    return _door_look_on(op) and (op.hinge_side == 'DOUBLE'
+                                  or op.door_look_direction == 'STACKED')
+
+
+def _chase(op):
+    if op.front_type not in ('DRAWER_FRONT', 'PULLOUT'):
+        return False
+    root = types_face_frame.find_cabinet_root(op.id_data)
+    return root is not None and getattr(root.face_frame_cabinet,
+                                        'chase_enabled', False)
+
+
+def _appliance(op):
+    return op.front_type == 'APPLIANCE'
+
+
+def _appliance_width_shown(op):
+    return _appliance(op) and (op.appliance_fit == 'NOTCH'
+                               or op.include_fillers)
+
+
+def _appliance_width_set(op):
+    return _appliance_width_shown(op) and op.set_appliance_width
+
+
+# An opening's overlays: locked, an overlay is the cabinet's default, so
+# the field reads what is built rather than the stored (ignored) value.
+OVERLAY_KEY = 'FF_OPENING_OVERLAYS'
+
+
+def _overlay_owner(opening_obj):
+    from ...operators import prop_proxy
+    if OVERLAY_KEY not in prop_proxy._schemas:
+        def getter(side):
+            def get(obj):
+                op = obj.face_frame_opening
+                if getattr(op, f'unlock_{side}_overlay'):
+                    return getattr(op, f'{side}_overlay')
+                from . import solver_face_frame
+                root = types_face_frame.find_cabinet_root(obj)
+                if root is None:
+                    return getattr(op, f'{side}_overlay')
+                return solver_face_frame.resolved_overlay(
+                    root.face_frame_cabinet, op, side)
+            return get
+
+        def setter(side):
+            def set(obj, value):
+                setattr(obj.face_frame_opening, f'{side}_overlay', value)
+            return set
+
+        def lock_get(side):
+            return lambda obj: getattr(obj.face_frame_opening,
+                                       f'unlock_{side}_overlay')
+
+        def lock_set(side):
+            def set(obj, value):
+                op = obj.face_frame_opening
+                if value and not getattr(op, f'unlock_{side}_overlay'):
+                    # Unlocking starts from what is built, not the
+                    # stored default.
+                    current = getter(side)(obj)
+                    setattr(op, f'unlock_{side}_overlay', True)
+                    setattr(op, f'{side}_overlay', current)
+                else:
+                    setattr(op, f'unlock_{side}_overlay', bool(value))
+            return set
+        props = {}
+        for side in ('top', 'bottom', 'left', 'right'):
+            props[side] = prop_proxy.computed(
+                getter(side), setter(side), unit='LENGTH', precision=4)
+            props['unlock_' + side] = prop_proxy.computed(
+                lock_get(side), lock_set(side), type='BOOLEAN')
+        prop_proxy.register(OVERLAY_KEY, props)
+    return prop_proxy.owner(opening_obj, OVERLAY_KEY)
+
+
+def opening_overlay_blocks(context, opening_obj):
+    from ...operators import options_panel
+    return options_panel.field_blocks(context, (
+        ('group', 'ff_opening_overlays', "Overlays", {'fields': tuple(
+            ('locked', side, side.title(), {'unlock': 'unlock_' + side})
+            for side in ('top', 'bottom', 'left', 'right'))}),
+    ), _overlay_owner(opening_obj))
+
+
 def _accessories(_op):
     from ... import accessory_registry
     return accessory_registry.available()
@@ -360,34 +500,36 @@ def style_blocks(context, owner, prop='style_section'):
     ), owner)
 
 
-def _menu(label, menu_id):
+def _menu(label, menu_id, icon=None):
     """A button that drops down one of the right-click menu's own
     lists, the way the menu's submenu does."""
     from ...operators import generic_page
-    return (label + "  ›", generic_page._opener(menu_id, label), None, None)
+    return (label + "  ›", generic_page._opener(menu_id, label), None, None,
+            1.0, icon)
 
 
-def _act(label, op_id, kwargs=None):
-    return (label, op_id, dict(kwargs or {}), None)
+def _act(label, op_id, kwargs=None, icon=None):
+    return (label, op_id, dict(kwargs or {}), None, 1.0, icon)
 
 
-def _quick(owner, candidates, limit=6):
-    """The quick actions a page leads with: the first `limit` of
-    (action, when) that apply, two to a row so each reads in full.
-    Every one is also on the right-click menu, and so in All Actions."""
-    picked = []
-    for action, when in candidates:
-        try:
-            if when is not None and not when(owner):
+def _quick(owner, rows):
+    """The quick actions a page leads with, a row at a time: each row is
+    (action, when) pairs and keeps the ones that apply, so a pair such
+    as Insert Before / Insert After always shares a row. Every one is
+    also on the right-click menu, and so in All Actions."""
+    out = []
+    for row in rows:
+        kept = []
+        for action, when in row:
+            try:
+                if when is not None and not when(owner):
+                    continue
+            except Exception:
                 continue
-        except Exception:
-            continue
-        picked.append(action)
-        if len(picked) == limit:
-            break
-    rows = [('actions', tuple(picked[i:i + 2]), None)
-            for i in range(0, len(picked), 2)]
-    return (('label', None, "Quick Actions"),) + tuple(rows) if rows else ()
+            kept.append(action)
+        if kept:
+            out.append(('actions', tuple(kept), None))
+    return (('label', None, "Quick Actions"),) + tuple(out) if out else ()
 
 
 # ---- Summaries of the folded groups ----------------------------------------
@@ -431,20 +573,27 @@ def _bay_details_summary(bp):
 def _cabinet_fields(root, cab):
     name = root.name
     quick = _quick(cab, (
-        (_act("Duplicate", 'hb_face_frame.place_cabinet',
-              {'source_cabinet_name': name}), _one_plain),
-        (_act("Duplicate Mirror", 'hb_face_frame.place_cabinet',
-              {'source_cabinet_name': name, 'mirror': True}), _one_plain),
-        (_act("Join Cabinets", 'hb_face_frame.join_cabinets'), _cabinets_selected),
-        (_menu("Change Opening", 'HOME_BUILDER_MT_face_frame_corner_change_opening'),
-         _corner_opening),
-        (_act("Blind Corner", 'hb_face_frame.edit_blind_corner'), _blind),
-        (_act("Swap Blind", 'hb_face_frame.swap_blind_corner'), _blind),
-        (_act("Copy Cabinet", 'home_builder.copy_cabinet'), _one_plain),
-        (_act("Equalize Bays", 'hb_face_frame.equalize_bays'), None),
-        (_act("Wedge Calculator", 'hb_face_frame.add_refrigerator_wedge'), _wedge),
-        (_act("Hide Cabinet", 'hb_general.hide',
-              {'scope': 'PRODUCT', 'isolate': False}), None),
+        ((_act("Duplicate", 'hb_face_frame.place_cabinet',
+               {'source_cabinet_name': name}, 'duplicate'), _one_plain),
+         (_act("Duplicate Mirror", 'hb_face_frame.place_cabinet',
+               {'source_cabinet_name': name, 'mirror': True}, 'cab_mirror'),
+          _one_plain)),
+        ((_act("Join Cabinets", 'hb_face_frame.join_cabinets', None,
+               'cab_join'), _cabinets_selected),
+         (_act("Equalize Bays", 'hb_face_frame.equalize_bays', None,
+               'cab_equalize_bays'), None)),
+        ((_act("Blind Corner", 'hb_face_frame.edit_blind_corner', None,
+               'cab_blind'), _blind),
+         (_act("Swap Blind", 'hb_face_frame.swap_blind_corner', None,
+               'cab_swap_blind'), _blind)),
+        ((_menu("Change Opening",
+                'HOME_BUILDER_MT_face_frame_corner_change_opening',
+                'cab_change_opening'), _corner_opening),
+         (_act("Wedge Calculator", 'hb_face_frame.add_refrigerator_wedge',
+               None, 'cab_wedge'), _wedge)),
+        ((_act("Copy Cabinet", 'home_builder.copy_cabinet'), _one_plain),
+         (_act("Hide Cabinet", 'hb_general.hide',
+               {'scope': 'PRODUCT', 'isolate': False}), None)),
     ))
     return (
         ('distance', 'width', "Width"),
@@ -465,8 +614,31 @@ def _cabinet_fields(root, cab):
         ('group', 'ff_cab_construction', "Construction", {
             'icon': 'cab_construction', 'summary': _construction_summary, 'fields': (
                 ('enum', 'toe_kick_type', "Toe Kick", {'when': _has_kick}),
+                ('enum', 'bun_foot_style', "Foot", {'when': _bun_feet}),
+                ('bool', 'bun_feet_open', "Open Underneath", {'when': _bun_square}),
+                ('enum', 'bun_foot_corner_mode', "Foot Corners", {'when': _bun_square}),
+                ('bool', 'bun_foot_front_left', "Front Left Foot", {'when': _bun_custom}),
+                ('bool', 'bun_foot_front_right', "Front Right Foot", {'when': _bun_custom}),
+                ('bool', 'bun_foot_back_left', "Back Left Foot", {'when': _bun_custom}),
+                ('bool', 'bun_foot_back_right', "Back Right Foot", {'when': _bun_custom}),
+                ('distance', 'bun_foot_offset_front', "Foot Offset Front", {'when': _bun_square}),
+                ('distance', 'bun_foot_offset_back', "Foot Offset Back", {'when': _bun_square}),
+                ('distance', 'bun_foot_offset_left', "Foot Offset Left", {'when': _bun_square}),
+                ('distance', 'bun_foot_offset_right', "Foot Offset Right", {'when': _bun_square}),
                 ('distance', 'toe_kick_height', "Kick Height", {'when': _has_kick}),
-                ('distance', 'toe_kick_setback', "Kick Setback", {'when': _has_kick}),
+                ('bool', 'floating_vanity', "Floating Vanity",
+                 {'when': lambda c: _has_kick(c) and c.toe_kick_type == 'FLOATING'}),
+                ('distance', 'toe_kick_setback', "Kick Setback", {'when': _kick_closed}),
+                ('distance', 'inset_toe_kick_left', "Left Inset", {'when': _kick_closed}),
+                ('distance', 'inset_toe_kick_right', "Right Inset", {'when': _kick_closed}),
+                ('distance', 'inset_toe_kick_rear', "Rear Inset", {'when': _kick_rear}),
+                ('distance', 'inset_toe_kick_back_left', "Back Left Inset",
+                 {'when': lambda c: _has_kick(c) and c.corner_type != 'NONE'}),
+                ('distance', 'inset_toe_kick_back_right', "Back Right Inset",
+                 {'when': lambda c: _has_kick(c) and c.corner_type != 'NONE'}),
+                ('bool', 'include_finish_toe_kick', "Finish Toe Kick", {'when': _kick_closed}),
+                ('enum', 'finish_toe_kick_type', "Finish Kick Type",
+                 {'when': lambda c: _kick_closed(c) and c.include_finish_toe_kick}),
                 ('bool', 'existing_cabinet', "Existing (on site)"),
             )}),
         ('group', 'ff_cab_ends', "Finished Ends & Back", {
@@ -476,6 +648,78 @@ def _cabinet_fields(root, cab):
                        + part_pages.end_fields('right', "Right End")
                        + (('gap', None, None),)
                        + part_pages.back_fields("Back"))}),
+        ('group', 'ff_cab_angled_back', "Angled Back", {
+            'summary': _angled_summary, 'when': _no_corner, 'fields': (
+                ('distance', 'extend_back_left', "Extend Back Left"),
+                ('bool', 'wing_attached_left', "Left as Wing",
+                 {'when': lambda c: c.extend_back_left != 0.0}),
+                ('bool', 'open_left_end', "Open Left into Corner",
+                 {'when': lambda c: c.extend_back_left > 0.0 and not c.wing_attached_left}),
+                ('distance', 'wing_width_left', "Left Wing Width",
+                 {'when': lambda c: c.wing_attached_left and c.extend_back_left != 0.0}),
+                ('distance', 'extend_back_right', "Extend Back Right"),
+                ('bool', 'wing_attached_right', "Right as Wing",
+                 {'when': lambda c: c.extend_back_right != 0.0}),
+                ('bool', 'open_right_end', "Open Right into Corner",
+                 {'when': lambda c: c.extend_back_right > 0.0 and not c.wing_attached_right}),
+                ('distance', 'wing_width_right', "Right Wing Width",
+                 {'when': lambda c: c.wing_attached_right and c.extend_back_right != 0.0}),
+            )}),
+        ('group', 'ff_cab_upper_ext', "Upper Extensions", {
+            'when': _is_type('UPPER'), 'fields': (
+                ('bool', 'hutch_finished_back', "Finished Back in Recess",
+                 {'when': lambda c: c.extend_left_end_down or c.extend_right_end_down}),
+                ('bool', 'extend_sides_down', "Extend Sides Down"),
+                ('distance', 'extend_sides_down_amount', "Sides Drop",
+                 {'when': lambda c: c.extend_sides_down}),
+                ('distance', 'overall_height', "Overall Height",
+                 {'when': lambda c: c.extend_sides_down}),
+                ('bool', 'side_front_profile', "Front Profile",
+                 {'when': lambda c: c.extend_sides_down}),
+                ('enum', 'overstool_accessory', "Accessory",
+                 {'when': lambda c: c.extend_sides_down}),
+                ('distance', 'extend_bottom_left', "Extend Bottom Left"),
+                ('distance', 'extend_bottom_right', "Extend Bottom Right"),
+                ('distance', 'extend_top_left', "Extend Top Left"),
+                ('distance', 'extend_top_right', "Extend Top Right"),
+            )}),
+        ('group', 'ff_cab_deco_corners', "Decorative Corners", {
+            'summary': lambda c: _label_of(c, 'decorative_corner_style'),
+            'when': _no_corner, 'fields': (
+                ('enum', 'decorative_corner_style', "Style"),
+                ('bool', 'decorative_corner_front_left', "Front Left", {'when': _deco}),
+                ('bool', 'decorative_corner_front_right', "Front Right", {'when': _deco}),
+                ('bool', 'decorative_corner_back_left', "Back Left", {'when': _deco}),
+                ('bool', 'decorative_corner_back_right', "Back Right", {'when': _deco}),
+                ('enum', 'decorative_corner_bottom', "Bottom", {'when': _deco}),
+                ('bool', 'decorative_corner_top_detail', "Top Transition", {'when': _deco}),
+                ('distance', 'decorative_corner_detail_height', "Transition Height",
+                 {'when': _deco}),
+                ('distance', 'decorative_corner_block_run', "Square Block Run",
+                 {'when': _deco}),
+            )}),
+        ('group', 'ff_cab_wood_top', "Furniture Top", {
+            'summary': lambda c: (_label_of(c, 'furniture_top_shape')
+                                  if c.furniture_top else "Off"),
+            'fields': (
+                ('bool', 'furniture_top', "Wood Top"),
+                ('distance', 'furniture_top_thickness', "Thickness", {'when': _wood_top}),
+                ('distance', 'furniture_top_overhang_front', "Overhang Front", {'when': _wood_top}),
+                ('distance', 'furniture_top_overhang_back', "Overhang Back", {'when': _wood_top}),
+                ('distance', 'furniture_top_overhang_left', "Overhang Left", {'when': _wood_top}),
+                ('distance', 'furniture_top_overhang_right', "Overhang Right", {'when': _wood_top}),
+                ('enum', 'furniture_top_shape', "Shape", {'when': _wood_top}),
+                ('distance', 'furniture_top_bow_altitude', "Bow Altitude",
+                 {'when': _top_shape('BOW_BACK')}),
+                ('distance', 'furniture_top_radius_front_left', "Radius Front Left",
+                 {'when': _top_shape('RADIUS')}),
+                ('distance', 'furniture_top_radius_front_right', "Radius Front Right",
+                 {'when': _top_shape('RADIUS')}),
+                ('distance', 'furniture_top_radius_back_left', "Radius Back Left",
+                 {'when': _top_shape('RADIUS')}),
+                ('distance', 'furniture_top_radius_back_right', "Radius Back Right",
+                 {'when': _top_shape('RADIUS')}),
+            )}),
         ('group', 'ff_cab_face_frame', "Face Frame", {
             'icon': 'cab_face_frame', 'summary': _frame_summary, 'fields': (
                 ('locked', 'top_rail_width', "Top Rail", {'unlock': 'unlock_top_rail'}),
@@ -487,23 +731,70 @@ def _cabinet_fields(root, cab):
                 ('distance', 'top_scribe', "Top Scribe", {'when': _scribes}),
                 ('bool', 'extend_left_stile_to_floor', "Left Stile to Floor", {'when': _has_kick}),
                 ('bool', 'extend_right_stile_to_floor', "Right Stile to Floor", {'when': _has_kick}),
+                ('enum', 'bottom_rail_profile', "Bottom Rail Profile",
+                 {'when': _is_type('BASE', 'TALL', 'UPPER')}),
             )}),
     )
+
+
+def _bun_feet(cab):
+    return _has_kick(cab) and cab.toe_kick_type == 'BUN_FEET'
+
+
+def _bun_square(cab):
+    return _bun_feet(cab) and cab.corner_type == 'NONE'
+
+
+def _bun_custom(cab):
+    return _bun_square(cab) and cab.bun_foot_corner_mode == 'CUSTOM'
+
+
+def _kick_closed(cab):
+    return _has_kick(cab) and not (_bun_square(cab) and cab.bun_feet_open)
+
+
+def _kick_rear(cab):
+    return (_kick_closed(cab) and cab.corner_type == 'NONE'
+            and cab.toe_kick_type in ('NOTCH', 'LOOSE', 'LOOSE_FLUSH',
+                                      'BUN_FEET'))
+
+
+def _angled_summary(cab):
+    sides = [s for s, v in (("Left", cab.extend_back_left),
+                            ("Right", cab.extend_back_right)) if v != 0.0]
+    return ", ".join(sides) if sides else ""
+
+
+def _deco(cab):
+    return cab.decorative_corner_style != 'NONE'
+
+
+def _wood_top(cab):
+    return cab.furniture_top
+
+
+def _top_shape(shape):
+    return lambda cab: cab.furniture_top and cab.furniture_top_shape == shape
 
 
 def _bay_fields(bay_obj, bp):
     index = bp.bay_index
     quick = _quick(bp, (
-        (_menu("Change Bay", 'HOME_BUILDER_MT_face_frame_change_bay'),
-         _has_bay_presets),
-        (_act("Insert Bay Before", 'hb_face_frame.insert_bay',
-              {'bay_index': index, 'direction': 'BEFORE'}), None),
-        (_act("Insert Bay After", 'hb_face_frame.insert_bay',
-              {'bay_index': index, 'direction': 'AFTER'}), None),
-        (_act("Equal Door Width", 'hb_face_frame.set_equal_door_width'), None),
-        (_act("Finish Bay", 'hb_face_frame.finish_bay_prompts'), None),
-        (_act("Flush Toe Kick", 'hb_face_frame.toggle_flush_toe_kick'),
-         _is_type('BASE', 'TALL')),
+        ((_menu("Change Bay", 'HOME_BUILDER_MT_face_frame_change_bay',
+                'cab_change_bay'), _has_bay_presets),
+         (_act("Equal Doors", 'hb_face_frame.set_equal_door_width', None,
+               'cab_equal_doors'), None)),
+        ((_act("Insert Before", 'hb_face_frame.insert_bay',
+               {'bay_index': index, 'direction': 'BEFORE'},
+               'cab_insert_before'), None),
+         (_act("Insert After", 'hb_face_frame.insert_bay',
+               {'bay_index': index, 'direction': 'AFTER'},
+               'cab_insert_after'), None)),
+        ((_act("Break Left", 'hb_face_frame.break_cabinet_left'), _several_bays),
+         (_act("Break Right", 'hb_face_frame.break_cabinet_right'), _several_bays)),
+        ((_act("Finish Bay", 'hb_face_frame.finish_bay_prompts'), None),
+         (_act("Flush Toe Kick", 'hb_face_frame.toggle_flush_toe_kick', None,
+               'cab_flush_kick'), _is_type('BASE', 'TALL'))),
     ))
     return (
         ('locked', 'width', "Width", {'unlock': 'unlock_width'}),
@@ -532,34 +823,76 @@ def _bay_fields(bay_obj, bp):
 
 def _opening_fields(op):
     quick = _quick(op, (
-        (_menu("Change Opening", 'HOME_BUILDER_MT_face_frame_change_opening'), None),
-        (_act("Interior Options", 'hb_face_frame.interior_options'), None),
-        (_act("Split Horizontal", 'hb_face_frame.split_opening', {'axis': 'H'}), None),
-        (_act("Split Vertical", 'hb_face_frame.split_opening', {'axis': 'V'}), None),
-        (_act("Equalize Heights", 'hb_face_frame.equalize_opening_heights'), None),
-        (_act("Accessories", 'hb_face_frame.accessory_menu'), _accessories),
-        (_act("Finish Opening", 'hb_face_frame.finish_opening_prompts'), None),
+        ((_menu("Change Opening", 'HOME_BUILDER_MT_face_frame_change_opening',
+                'cab_change_opening'), None),
+         (_act("Interior Options", 'hb_face_frame.interior_options', None,
+               'cab_interior'), None)),
+        ((_act("Split Horizontal", 'hb_face_frame.split_opening', {'axis': 'H'},
+               'cab_split_h'), None),
+         (_act("Split Vertical", 'hb_face_frame.split_opening', {'axis': 'V'},
+               'cab_split_v'), None)),
+        ((_act("Equalize Heights", 'hb_face_frame.equalize_opening_heights',
+               None, 'cab_equalize_heights'), None),
+         (_act("Accessories", 'hb_face_frame.accessory_menu', None,
+               'cab_accessories'), _accessories)),
+        ((_act("Finish Opening", 'hb_face_frame.finish_opening_prompts'), None),),
     ))
     return (
         ('value', _opening_root_size, "Size"),
         ('locked', 'size', "Size",
          {'unlock': 'unlock_size', 'when': _split_child}),
-        ('enum', 'front_type', "Front"),
-        ('enum', 'hinge_side', "Hinge Side", {'when': _hinged}),
-        ('enum', 'door_mechanism', "Mechanism", {'when': _is_door}),
+    ) + front_fields() + (
         ('gap', None, None),
     ) + quick + (
         ('gap', None, None),
         ('group', 'ff_opening_more', "Front Details", {
-            'summary': _opening_summary, 'fields': (
-                ('bool', 'add_apron', "Add Apron", {'when': _is_door}),
-                ('distance', 'apron_height', "Apron Height", {'when': _apron}),
-                ('enum', 'drawer_look_divisions', "Drawer-Look", {'when': _drawer_look}),
-                ('enum', 'door_look_divisions', "Door-Look", {'when': _is_door}),
-                ('bool', 'is_tilt_out', "Tilt-Out", {'when': _false_front}),
-                ('bool', 'false_front_pull', "Add Pull", {'when': _false_front}),
-                ('enum', 'inset_panel_type', "Panel Type", {'when': _inset_panel}),
-            )}),
+            'summary': _opening_summary, 'fields': front_detail_fields()}),
+    )
+
+
+def front_fields():
+    """An opening's front and how it opens: on the opening's page and
+    on the page of the door or drawer front in it."""
+    return (
+        ('enum', 'front_type', "Front"),
+        ('enum', 'hinge_side', "Hinge Side", {'when': _hinged}),
+        ('enum', 'door_mechanism', "Mechanism", {'when': _is_door}),
+        ('bool', 'lift_up_servo', "Servo Drive",
+         {'when': _mech('LIFT_UP_DELUXE', 'LIFT_UP_BIFOLD')}),
+        ('enum', 'bifold_fold_side', "Folds To", {'when': _mech('RETRACTING_BIFOLD')}),
+        ('enum', 'bifold_pull', "Bifold Pull",
+         {'when': _mech('RETRACTING_BIFOLD', 'BIFOLD_LEFT', 'BIFOLD_RIGHT')}),
+        ('enum', 'retracting_interior', "Pocket Interior",
+         {'when': _mech('RETRACTING', 'RETRACTING_BIFOLD')}),
+        ('enum', 'retracting_partitions', "Partitions", {'when': _retract_partitions}),
+        ('distance', 'retracting_box_setback', "Box Setback", {'when': _retract_box}),
+        ('distance', 'component_shelf_clearance', "Clearance Above",
+         {'when': _retract_shelf}),
+        ('number', 'swing_percent', "Open", {'when': _swings}),
+    )
+
+
+def front_detail_fields():
+    return (
+        ('bool', 'add_apron', "Add Apron", {'when': _is_door}),
+        ('distance', 'apron_height', "Apron Height", {'when': _apron}),
+        ('enum', 'drawer_look_divisions', "Drawer-Look", {'when': _drawer_look_ok}),
+        ('enum', 'door_look_divisions', "Door-Look", {'when': _door_look_ok}),
+        ('enum', 'door_look_direction', "Door-Look Layout", {'when': _door_look_layout}),
+        ('distance', 'door_look_top_height', "Top Door Height", {'when': _door_look_top}),
+        ('enum', 'chase_fit', "Chase Fit", {'when': _chase}),
+        ('bool', 'is_tilt_out', "Tilt-Out", {'when': _false_front}),
+        ('bool', 'false_front_pull', "Add Pull", {'when': _false_front}),
+        ('enum', 'inset_panel_type', "Panel Type", {'when': _inset_panel}),
+        ('enum', 'appliance_kind', "Appliance", {'when': _appliance}),
+        ('enum', 'appliance_fit', "Fit With", {'when': _appliance}),
+        ('bool', 'include_fillers', "Include Fillers",
+         {'when': lambda op: _appliance(op) and op.appliance_fit != 'NOTCH'}),
+        ('bool', 'set_appliance_width', "Set Appliance Width",
+         {'when': _appliance_width_shown}),
+        ('distance', 'appliance_width', "Appliance Width", {'when': _appliance_width_set}),
+        ('distance', 'left_filler_amount', "Left Filler", {'when': _appliance_width_set}),
+        ('distance', 'right_filler_amount', "Right Filler", {'when': _appliance_width_set}),
     )
 
 
@@ -768,6 +1101,7 @@ def blocks(context, item):
     elif kind == 'opening':
         op = opening_obj.face_frame_opening
         out.extend(options_panel.field_blocks(context, _opening_fields(op), op))
+        out.extend(opening_overlay_blocks(context, opening_obj))
         _footer(out, 'hb_face_frame.opening_prompts')
     elif kind == 'drawer':
         from . import accessory_place

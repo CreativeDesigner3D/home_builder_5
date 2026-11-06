@@ -305,6 +305,26 @@ def parse_number(text):
         return None
 
 
+def _paint_button_label(shader, font_id, s, rect, label, icon, color):
+    """A button's label, centred, led by its icon when it has one that
+    is baked. Returns the text shown (cut short to fit)."""
+    if not icon or not has_icon(icon):
+        shown = fit_text(font_id, FONT * s, label, rect[2] - 12 * s)
+        draw_centered_text(font_id, rect, FONT * s, color, shown)
+        return shown
+    isz = 16 * s
+    pad = 5 * s
+    shown = fit_text(font_id, FONT * s, label, rect[2] - 12 * s - isz - pad)
+    tw = text_width(font_id, FONT * s, shown)
+    rx, ry, rw, rh = rect
+    left = rx + max((rw - isz - pad - tw) / 2.0, 6 * s)
+    draw_icon(icon, (left, ry, isz, rh), color, size=16)
+    shader.bind()
+    draw_centered_text(font_id, (left + isz + pad, ry, tw, rh),
+                       FONT * s, color, shown)
+    return shown
+
+
 def _field_parts(field):
     """(kind, prop, label, options) from a field tuple, options being the
     optional trailing dict."""
@@ -425,9 +445,10 @@ def _norm_action(action):
     """(label, operator, prop, value) from a catalog's (label, operator)
     pair or its four-tuple naming one operator property and its value.
     A dict in the prop slot is the operator's keyword arguments whole,
-    and a fifth item, when given, weights the button's width in its row."""
+    a fifth item, when given, weights the button's width in its row, and
+    a sixth names an icon drawn before the label."""
     if len(action) >= 4:
-        return tuple(action[:5])
+        return tuple(action[:6])
     label, op = action[0], action[1]
     return (label, op, None, None)
 
@@ -1131,7 +1152,8 @@ def build_page(rect, context, blocks_fn, lst):
         ('style_row', index, name, rect, is_active, gear_rect,
                       up_rect, down_rect, pool)
         ('field_row', kind, prop, label, owner, value, rect, value_rect)
-        ('action_btn', label, op_id, prop, value, rect, enabled)
+        ('action_btn', label, op_id, prop, value, rect, enabled, icon)
+                      icon None, or an icon drawn before the label
         ('icon_btn', label, op_id, kwargs, rect, enabled, icon)
         ('form_row', label, method_name, rect)
         ('styles_clip', clip_rect, track, thumb)
@@ -1251,15 +1273,17 @@ def build_page(rect, context, blocks_fn, lst):
             bx = x
             for j, action in enumerate(payload):
                 label, op_id, prop, value = action[:4]
+                # A sixth item names an icon to lead the label.
+                icon = action[5] if len(action) > 5 else None
                 bw = unit * weights[j]
                 rect = (bx, block_top - row_h, bw, row_h)
                 bx += bw + gap
                 if callable(op_id):
                     # A menu of commands in the row: the ones used less.
-                    entries.append(('pick_btn', label, op_id, rect))
+                    entries.append(('pick_btn', label, op_id, rect, icon))
                     continue
                 entries.append(('action_btn', label, op_id, prop, value,
-                                rect, _can_run(op_id, polled)))
+                                rect, _can_run(op_id, polled), icon))
         elif kind == 'icon_actions':
             # Square buttons from the left, a row's height each.
             step = row_h + gap
@@ -1923,12 +1947,13 @@ def paint(entries, mx, my):
                         paint_button(shader, rect, hovered=True)
                     glyph_delete(shader, rect, color)
             elif kind == 'pick_btn':
-                _, label, _fn, rect = entry
+                _, label, _fn, rect = entry[:4]
+                icon = entry[4] if len(entry) > 4 else None
                 hovered = point_in_rect(mx, my, rect)
                 paint_button(shader, rect, hovered=hovered)
-                draw_centered_text(font_id, rect, FONT * s,
-                                   Theme.TEXT_PRIMARY if hovered
-                                   else Theme.TEXT_NORMAL, label)
+                _paint_button_label(shader, font_id, s, rect, label, icon,
+                                    Theme.TEXT_PRIMARY if hovered
+                                    else Theme.TEXT_NORMAL)
             elif kind == 'icon_btn':
                 _, label, _op, _kw, rect, enabled, icon = entry
                 hovered = point_in_rect(mx, my, rect)
@@ -1948,7 +1973,8 @@ def paint(entries, mx, my):
             elif kind == 'list_row':
                 _paint_list_row(shader, font_id, s, mx, my, entry)
             elif kind == 'action_btn':
-                _, label, _op, _prop, _val, rect, enabled = entry
+                _, label, _op, _prop, _val, rect, enabled = entry[:7]
+                icon = entry[7] if len(entry) > 7 else None
                 hovered = enabled and point_in_rect(mx, my, rect)
                 if _op in QUIET_OPS and not hovered:
                     draw_centered_text(font_id, rect, FONT * s,
@@ -1957,11 +1983,11 @@ def paint(entries, mx, my):
                 paint_button(shader, rect, hovered=hovered)
                 # A label longer than its button is cut short; the tip
                 # shows it whole.
-                shown = fit_text(font_id, FONT * s, label, rect[2] - 12 * s)
-                draw_centered_text(font_id, rect, FONT * s,
-                                   Theme.TEXT_DIM if not enabled
-                                   else Theme.TEXT_PRIMARY if hovered
-                                   else Theme.TEXT_NORMAL, shown)
+                shown = _paint_button_label(
+                    shader, font_id, s, rect, label, icon,
+                    Theme.TEXT_DIM if not enabled
+                    else Theme.TEXT_PRIMARY if hovered
+                    else Theme.TEXT_NORMAL)
                 if hovered:
                     note_tip_if_cut(rect, shown, label)
             elif kind == 'form_row':

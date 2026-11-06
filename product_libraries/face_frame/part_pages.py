@@ -483,11 +483,8 @@ def _front_page(context, part_obj, root):
     opening = _opening_of(part_obj)
     if opening is not None:
         op = opening.face_frame_opening
-        out.extend(options_panel.field_blocks(context, (
-            ('enum', 'front_type', "Front"),
-            ('enum', 'hinge_side', "Hinge Side", {'when': selected_card._hinged}),
-            ('enum', 'door_mechanism', "Mechanism", {'when': selected_card._is_door}),
-        ), op))
+        out.extend(options_panel.field_blocks(
+            context, selected_card.front_fields(), op))
     actions = [_act("Set Pull", 'hb_face_frame.set_front_pull')]
     styled = ops.has_door_style_modifier(part_obj)
     if styled:
