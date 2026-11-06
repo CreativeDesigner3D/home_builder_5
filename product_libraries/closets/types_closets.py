@@ -7271,6 +7271,87 @@ class LShelfClosetStarter(GeoNodeCage):
         shelf.add_part_modifier('CPM_CORNERNOTCH', 'Back Notch')
         return shelf.obj
 
+    def _layout_corner_accent(self, sp, W, D, H, LD, RD, st, use_radius,
+                              rad):
+        """The top accent shelf on a corner unit: one L-shaped piece
+        laid on the panel tops from the walls out, each wing projecting
+        past its front by the overhang and each end past a finished end
+        panel by it (or by its own figure when the ends are set
+        separately), so it carries on from the accent shelf of the run
+        beside it. The inner corner is cut the way the unit's top shelf
+        is - square, or rounded when the top is rounded."""
+        want = bool(sp.add_top_accent_shelf)
+        shelf = next((c for c in self.obj.children
+                      if c.get('hb_part_role') == PART_ROLE_ACCENT_SHELF),
+                     None)
+        if shelf is None:
+            if not want:
+                return
+            part = CabinetPart()
+            part.create('Top Accent Shelf')
+            part.obj.parent = self.obj
+            part.obj['hb_part_role'] = PART_ROLE_ACCENT_SHELF
+            part.obj['hb_accent_index'] = 0
+            part.obj['MENU_ID'] = 'HOME_BUILDER_MT_closet_part_commands'
+            part.set_input('Mirror Y', True)
+            part.add_part_modifier('CPM_CORNERNOTCH', 'L Notch')
+            part.add_part_modifier('CPM_RADIUSNOTCH', 'L Radius')
+            shelf = part.obj
+        if not want:
+            _set_part_hidden(shelf, True)
+            return
+        ovh = float(sp.top_accent_overhang)
+        if sp.top_accent_set_sides:
+            left = float(sp.top_accent_overhang_left)
+            right = float(sp.top_accent_overhang_right)
+        else:
+            left = ovh if (sp.left_finished_end
+                           and not sp.turn_off_left_panel) else 0.0
+            right = ovh if (sp.right_finished_end
+                            and not sp.turn_off_right_panel) else 0.0
+        length = W + right
+        width = D + left
+        shelf.location = (0.0, 0.0, H)
+        gp = GeoNodeCutpart(shelf)
+        gp.set_input('Length', max(length, 0.001))
+        gp.set_input('Width', max(width, 0.001))
+        gp.set_input('Thickness', st)
+        # Each wing reaches the overhang past the wing below it.
+        cut_x = max(length - (LD + ovh), 0.001)
+        cut_y = max(width - (RD + ovh), 0.001)
+        # Growing the shelf forward pulls its inside corner in toward
+        # the arc's center, so the arc is the overhang tighter.
+        acc_rad = min(rad - ovh, cut_x - const.L_CORNER_MIN_FLAT,
+                      cut_y - const.L_CORNER_MIN_FLAT)
+        round_it = (use_radius and bool(sp.l_radius_top)
+                    and acc_rad >= const.L_CORNER_RADIUS_MIN)
+        notch = shelf.modifiers.get('L Notch')
+        if notch is not None:
+            cpm = CabinetPartModifier(shelf)
+            cpm.mod = notch
+            cpm.set_input('X', cut_x)
+            cpm.set_input('Y', cut_y)
+            cpm.set_input('Route Depth', st + 0.001)
+            cpm.set_input('Flip X', True)
+            cpm.set_input('Flip Y', True)
+            notch.show_viewport = not round_it
+            notch.show_render = not round_it
+        lrad = shelf.modifiers.get('L Radius')
+        if lrad is not None:
+            cpm = CabinetPartModifier(shelf)
+            cpm.mod = lrad
+            cpm.set_input('X', cut_x)
+            cpm.set_input('Y', cut_y)
+            cpm.set_input('Route Depth', st + 0.001)
+            cpm.set_input('Radius', max(acc_rad, 0.0))
+            cpm.set_input('Resolution', const.L_CORNER_RADIUS_SEGMENTS)
+            cpm.set_input('Turn On', True)
+            cpm.set_input('Flip X', True)
+            cpm.set_input('Flip Y', False)
+            lrad.show_viewport = round_it
+            lrad.show_render = round_it
+        _set_part_hidden(shelf, False)
+
     def _l_shelf_parts(self):
         """The unit's L shelves other than the fixed ones set at a
         height of their own: bottom first, top last."""
@@ -7937,6 +8018,8 @@ class LShelfClosetStarter(GeoNodeCage):
                 self._corner_accessories(
                     opening, W, D, LD, RD, l_pt, r_pt, wo,
                     max(hi - lo, 0.001), scene_props)
+            self._layout_corner_accent(sp, W, D, H, LD, RD, st,
+                                       use_radius, rad)
 
             self.set_input('Dim X', W)
             self.set_input('Dim Y', D)
