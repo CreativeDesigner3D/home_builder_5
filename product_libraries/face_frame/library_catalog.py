@@ -711,6 +711,29 @@ def _crown_uses(p, category):
                                         category)
 
 
+def _package_label(p, prop):
+    from ...hb_gpu_ui import enum_label
+    return enum_label(p, prop) if getattr(p, prop, 'NONE') != 'NONE' else ""
+
+
+def _joined(*parts):
+    return " + ".join(x for x in parts if x) or "None"
+
+
+def _crown_summary(p):
+    return _joined(_package_label(p, 'molding_crown_package'),
+                   "Cap" if p.molding_crown_furniture_cap else "")
+
+
+def _base_summary(p):
+    return _joined(_package_label(p, 'molding_base_package'),
+                   "Shoe" if p.molding_base_shoe else "")
+
+
+def _light_rail_summary(p):
+    return _joined(_package_label(p, 'molding_light_rail_package'))
+
+
 # Sections drawn INSIDE the viewport panel rather than opened as a
 # dialog -- see the frameless catalog for the page contract. Where the
 # sidebar greys a field out, the page leaves it out.
@@ -1237,61 +1260,74 @@ OPTION_PAGES = {
         'title': "Molding",
         'props': 'home_builder',
         'scope': 'scene',
+        # One folding group per run, each saying what is set in it, so
+        # the page reads at a glance and opens where it is needed.
         'fields': (
-            ('label', None, "Crown"),
-            ('enum', 'molding_crown_package', "Package"),
-            ('distance', 'molding_crown_reveal', "Reveal",
-             {'when': lambda p: p.molding_crown_package != 'NONE'}),
-            ('bool', 'molding_crown_to_ceiling', "Molding to Ceiling",
-             {'when': lambda p: p.molding_crown_package != 'NONE'}),
-            ('distance', 'molding_spacer_height', "Spacer Height",
-             {'when': lambda p: (_crown_uses(p, 'Spacer')
-                                 and not p.molding_crown_to_ceiling)}),
-            ('enum', 'molding_crown_profile', "Profile",
-             {'when': lambda p: (_has_molding_pack()
-                                 and _crown_uses(p, 'Crown Molding'))}),
-            ('enum', 'molding_spacer_profile', "Spacer",
-             {'when': lambda p: (_has_molding_pack()
-                                 and _crown_uses(p, 'Spacer'))}),
-            ('bool', 'molding_crown_furniture_cap', "Furniture Cap"),
-            ('distance', 'molding_cap_offset', "Height Offset",
-             {'when': lambda p: p.molding_crown_furniture_cap}),
-            ('distance', 'molding_cap_overhang', "Overhang",
-             {'when': lambda p: p.molding_crown_furniture_cap}),
-            ('enum', 'molding_cap_profile', "Cap Profile",
-             {'when': lambda p: (_has_molding_pack()
-                                 and p.molding_crown_furniture_cap)}),
-            ('gap', None, None),
-            ('label', None, "Base"),
-            ('enum', 'molding_base_package', "Package"),
-            ('enum', 'molding_base_profile', "Profile",
-             {'when': lambda p: (_has_molding_pack()
-                                 and p.molding_base_package != 'NONE')}),
-            ('bool', 'molding_base_size_override', "Override Size",
-             {'when': lambda p: p.molding_base_package != 'NONE'}),
-            ('distance', 'molding_base_height', "Height",
-             {'when': lambda p: (p.molding_base_package != 'NONE'
-                                 and p.molding_base_size_override)}),
-            ('distance', 'molding_base_thickness', "Thickness",
-             {'when': lambda p: (p.molding_base_package != 'NONE'
-                                 and p.molding_base_size_override)}),
-            # The shoe is independent of the package: alone it runs at
-            # the kick face, with a package it applies to its front.
-            ('bool', 'molding_base_shoe', "Base Shoe"),
-            ('bool', 'molding_base_include_recessed',
-             "Include Recessed Toe Kicks",
-             {'when': lambda p: (p.molding_base_package != 'NONE'
-                                 or p.molding_base_shoe)}),
-            ('gap', None, None),
-            ('label', None, "Light Rail"),
-            ('enum', 'molding_light_rail_package', "Package"),
-            ('enum', 'molding_light_rail_profile', "Profile",
-             {'when': lambda p: (_has_molding_pack()
-                                 and p.molding_light_rail_package
-                                 != 'NONE')}),
-            ('distance', 'molding_light_rail_height', "Rail Height"),
-            ('bool', 'molding_light_rail_doors_cover', "Doors to Cover",
-             {'when': lambda p: p.molding_light_rail_height > 0.0}),
+            ('group', 'molding_crown', "Crown", {
+                'summary': _crown_summary,
+                'fields': (
+                    ('enum', 'molding_crown_package', "Package"),
+                    ('distance', 'molding_crown_reveal', "Reveal",
+                     {'when': lambda p: p.molding_crown_package != 'NONE'}),
+                    ('bool', 'molding_crown_to_ceiling', "Molding to Ceiling",
+                     {'when': lambda p: p.molding_crown_package != 'NONE'}),
+                    ('distance', 'molding_spacer_height', "Spacer Height",
+                     {'when': lambda p: (_crown_uses(p, 'Spacer')
+                                         and not p.molding_crown_to_ceiling)}),
+                    ('enum', 'molding_crown_profile', "Profile",
+                     {'when': lambda p: (_has_molding_pack()
+                                         and _crown_uses(p, 'Crown Molding'))}),
+                    ('enum', 'molding_spacer_profile', "Spacer",
+                     {'when': lambda p: (_has_molding_pack()
+                                         and _crown_uses(p, 'Spacer'))}),
+                    ('gap', None, None),
+                    ('bool', 'molding_crown_furniture_cap', "Furniture Cap"),
+                    ('distance', 'molding_cap_offset', "Height Offset",
+                     {'when': lambda p: p.molding_crown_furniture_cap}),
+                    ('distance', 'molding_cap_overhang', "Overhang",
+                     {'when': lambda p: p.molding_crown_furniture_cap}),
+                    ('enum', 'molding_cap_profile', "Cap Profile",
+                     {'when': lambda p: (_has_molding_pack()
+                                         and p.molding_crown_furniture_cap)}),
+                ),
+            }),
+            ('group', 'molding_base', "Base", {
+                'summary': _base_summary,
+                'fields': (
+                    ('enum', 'molding_base_package', "Package"),
+                    ('enum', 'molding_base_profile', "Profile",
+                     {'when': lambda p: (_has_molding_pack()
+                                         and p.molding_base_package != 'NONE')}),
+                    ('bool', 'molding_base_size_override', "Override Size",
+                     {'when': lambda p: p.molding_base_package != 'NONE'}),
+                    ('distance', 'molding_base_height', "Height",
+                     {'when': lambda p: (p.molding_base_package != 'NONE'
+                                         and p.molding_base_size_override)}),
+                    ('distance', 'molding_base_thickness', "Thickness",
+                     {'when': lambda p: (p.molding_base_package != 'NONE'
+                                         and p.molding_base_size_override)}),
+                    # The shoe is independent of the package: alone it runs at
+                    # the kick face, with a package it applies to its front.
+                    ('bool', 'molding_base_shoe', "Base Shoe"),
+                    ('bool', 'molding_base_include_recessed',
+                     "Include Recessed Toe Kicks",
+                     {'when': lambda p: (p.molding_base_package != 'NONE'
+                                         or p.molding_base_shoe)}),
+                ),
+            }),
+            ('group', 'molding_light_rail', "Light Rail", {
+                'summary': _light_rail_summary,
+                'fields': (
+                    ('enum', 'molding_light_rail_package', "Package"),
+                    ('enum', 'molding_light_rail_profile', "Profile",
+                     {'when': lambda p: (_has_molding_pack()
+                                         and p.molding_light_rail_package
+                                         != 'NONE')}),
+                    ('distance', 'molding_light_rail_height', "Rail Height"),
+                    ('bool', 'molding_light_rail_doors_cover', "Doors to Cover",
+                     {'when': lambda p: p.molding_light_rail_height > 0.0}),
+                ),
+            }),
         ),
         'actions': (
             (("Refresh Molding", 'home_builder.refresh_room_molding'),),
