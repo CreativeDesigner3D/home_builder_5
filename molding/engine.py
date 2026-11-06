@@ -103,7 +103,36 @@ def members_touch(a, b, tolerance=0.02, align='top'):
     if (min(p.y for p in fa) - tolerance > max(p.y for p in fb)
             or min(p.y for p in fb) - tolerance > max(p.y for p in fa)):
         return False
-    return True
+    # Boxes square to each other are their own bounds; turned ones (fanned
+    # along a curved wall, or meeting a run at an angle) are measured as
+    # they stand, or a cabinet near the corner of one reads as touching it.
+    return _quad_gap(fa, fb) <= tolerance
+
+
+def _quad_gap(fa, fb):
+    """Plan distance between two footprint_xy() boxes, 0 when they
+    overlap."""
+    fa = [fa[0], fa[1], fa[3], fa[2]]       # round the box, not BL BR FL FR
+    fb = [fb[0], fb[1], fb[3], fb[2]]
+    def _axes(poly):
+        for i in range(len(poly)):
+            e = poly[i - 1] - poly[i]
+            if e.length > 1e-9:
+                yield mathutils.Vector((-e.y, e.x)).normalized()
+
+    if all(max(min(p.dot(n) for p in fa), min(p.dot(n) for p in fb))
+           <= min(max(p.dot(n) for p in fa), max(p.dot(n) for p in fb))
+           for n in list(_axes(fa)) + list(_axes(fb))):
+        return 0.0
+
+    def _to_segment(p, a, b):
+        ab = b - a
+        t = 0.0 if ab.length_squared < 1e-12 else max(0.0, min(1.0, (p - a).dot(ab) / ab.length_squared))
+        return (p - (a + ab * t)).length
+
+    return min(_to_segment(p, q[i - 1], q[i])
+               for poly, q in ((fa, fb), (fb, fa))
+               for p in poly for i in range(len(q)))
 
 
 def connected_components(members, align='top'):
@@ -785,6 +814,7 @@ def _assemble_kick_spans(chain, facts):
     front polyline (inset to the kick face when recessed)."""
     spans = []
     terminals = [None, None]
+    bounds = []     # (straight member, index of its first span, chain index)
 
     def _center(obj):
         fp = footprint_xy(obj)
@@ -854,6 +884,7 @@ def _assemble_kick_spans(chain, facts):
                     'back': ends[exit_key][1],
                 }
         else:
+            bounds.append((obj, len(spans), i))
             cage_spans = [
                 ([_xy(mw @ mathutils.Vector((p.x, p.y, 0.0))) for p in pts],
                  kind)
@@ -887,7 +918,39 @@ def _assemble_kick_spans(chain, facts):
                                 'side': 'left' if reverse else 'right',
                                 'front': fl if reverse else fr,
                                 'back': bl if reverse else br}
+    _mitre_fanned_kicks(spans, bounds)
     return spans, terminals
+
+
+def _mitre_fanned_kicks(spans, bounds):
+    """Cabinets fanned along a curved wall stand at an angle to each
+    other, so their kick lines open a gap (wall bowed into the room) or
+    cross (bowed away) where they meet. Clip both to their intersection,
+    as _mitre_junctions does for the fronts."""
+    for (obj_a, _sa, ia), (obj_b, start_b, ib) in zip(bounds, bounds[1:]):
+        wall = obj_a.parent
+        if (ib != ia + 1 or wall is None or wall is not obj_b.parent
+                or not hb_types.is_curved_wall(wall) or start_b == 0
+                or start_b >= len(spans)):
+            continue
+        pa, pb = spans[start_b - 1][0], spans[start_b][0]
+        if len(pa) < 2 or len(pb) < 2:
+            continue
+        a0, a1, b0, b1 = pa[-2], pa[-1], pb[0], pb[1]
+        d1, d2 = a1 - a0, b1 - b0
+        if d1.length < 1e-6 or d2.length < 1e-6:
+            continue
+        d1.normalize()
+        d2.normalize()
+        cross = d1.x * d2.y - d1.y * d2.x
+        if abs(cross) < 1e-3:
+            continue
+        t = ((b0.x - a1.x) * d2.y - (b0.y - a1.y) * d2.x) / cross
+        if abs(t) > (b0 - a1).length + 0.1:
+            continue            # the lines meet far off: leave the join
+        hit = a1 + d1 * t
+        pa[-1] = hit
+        pb[0] = hit.copy()
 
 
 def _seam_open_loop(loop):

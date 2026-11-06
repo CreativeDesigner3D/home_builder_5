@@ -315,6 +315,11 @@ def create_wall_countertop(context, wall_obj, cabinets, has_left_conn, has_right
     overhang_back = props.countertop_overhang_back
     thickness = props.countertop_thickness
 
+    if hb_types.is_curved_wall(wall_obj):
+        return countertop_common.create_curved_countertop(
+            context, wall_obj, cabinets, overhang_front, overhang_sides,
+            overhang_back, thickness, has_left_conn, has_right_conn, 'FRAMELESS')
+
     # Detect if cabinets are on the back side of the wall
     first_cab_raw = cabinets[0]
     is_back_side = (abs(first_cab_raw.rotation_euler.z - math.pi) < 0.1 or

@@ -222,6 +222,69 @@ def create_group_countertop(context, members, overhang_front, overhang_sides,
     return obj
 
 
+# Degrees of arc per piece of a countertop following a curved wall.
+CURVED_STEP_DEG = 3.0
+
+
+def create_curved_countertop(context, wall_obj, cabinets, overhang_front,
+                             overhang_sides, overhang_back, thickness,
+                             has_left_conn, has_right_conn, library):
+    """A top over cabinets fanned along a curved wall. Its back follows
+    the wall face, its front a ring clear of the frontmost cabinet face,
+    and its ends run straight out from the circle's centre, square to the
+    arc like the cabinet sides. Stored as an outline like any other top,
+    so it can still be reshaped and cut for sinks. Ends meeting another
+    wall get no side overhang."""
+    from ... import hb_wall_graph
+    from ...operators import walls as hb_walls
+    if not cabinets:
+        return None
+    length = hb_types.GeoNodeWall(wall_obj).get_input('Length')
+    arc = hb_types.wall_arc_angle(wall_obj)
+    stations, fronts, top = [], [], None
+    for cab in cabinets:
+        cage = hb_types.GeoNodeCage(cab)
+        dim_x, dim_y = cage.get_input('Dim X'), cage.get_input('Dim Y')
+        m = cab.matrix_world
+        for x, y in ((0.0, 0.0), (dim_x, 0.0), (dim_x, -dim_y),
+                     (0.0, -dim_y), (dim_x / 2.0, -dim_y)):
+            s, off = hb_walls.curved_wall_station(wall_obj, m @ Vector((x, y, 0.0)))
+            stations.append(s)
+            if y:
+                fronts.append(off)
+        z = cab.location.z + cage.get_input('Dim Z')
+        top = z if top is None else max(top, z)
+    front_y = min(fronts) - overhang_front
+    back_y = overhang_back
+    # Side overhang measured along the front edge, the one a hand meets
+    r = length / (2.0 * math.sin(arc / 2.0))
+    per_station = abs(arc) / length * abs(r - front_y)
+    side = overhang_sides / per_station if per_station > 1e-9 else overhang_sides
+    s0 = min(stations) - (0.0 if has_left_conn else side)
+    s1 = max(stations) + (0.0 if has_right_conn else side)
+    count = max(1, int(math.ceil(abs(arc) * (s1 - s0) / length
+                                 / math.radians(CURVED_STEP_DEG))))
+    xs = [s0 + (s1 - s0) * i / count for i in range(count + 1)]
+    # The pieces between points cut across the arc; set the back that
+    # far into the wall so they never leave a sliver against its face
+    piece = abs(arc) * (s1 - s0) / length / count
+    back_y += abs(r - back_y) * (1.0 - math.cos(piece / 2.0))
+    back = [hb_wall_graph.bend(x, back_y, length, arc) for x in xs]
+    front = [hb_wall_graph.bend(x, front_y, length, arc) for x in reversed(xs)]
+
+    obj = hb_utils.new_object('Countertop', bpy.data.meshes.new('Countertop'))
+    obj.parent = wall_obj
+    obj['IS_COUNTERTOP'] = True
+    context.scene.collection.objects.link(obj)
+    obj[TOP_KEY] = float(top)
+    obj[THICKNESS_KEY] = float(thickness)
+    set_outline(obj, [tuple(p) for p in back + front])
+    obj['MENU_ID'] = MENU_ID
+    obj['HB_COUNTERTOP_LIB'] = library
+    rebuild(obj)
+    return obj
+
+
 def outline_of(obj):
     """The top's outline as a list of local (x, y) corners."""
     flat = obj.get(OUTLINE_KEY) or []
