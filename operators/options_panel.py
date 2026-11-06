@@ -446,6 +446,9 @@ class PoolSpec:
     shows (the item's name by default); `rename_prop` is what a second
     click on the active row types into, None for no rename; and
     `allow_empty` lets the last item be removed.
+    `move_every_row` puts the move arrows on every row rather than the
+    active one alone, for a list whose order is what it means (a press
+    on one moves that row).
     `row_dot(context, item)` gives a row a colour dot (an (r, g, b) or
     None), `row_count(context, item)` a number at its end, and
     `summary(context, item)` a card over the selected item's fields --
@@ -458,7 +461,8 @@ class PoolSpec:
                  fields=(), actions=(), scene_fields=(),
                  actions_first=False, scope='main', list_label="Styles",
                  row_text=None, rename_prop='name', allow_empty=False,
-                 row_dot=None, row_count=None, summary=None):
+                 row_dot=None, row_count=None, summary=None,
+                 move_every_row=False):
         self.title = title
         self.props = props
         self.collection = collection
@@ -480,6 +484,7 @@ class PoolSpec:
         self.row_dot = row_dot
         self.row_count = row_count
         self.summary = summary
+        self.move_every_row = move_every_row
 
     @property
     def key(self):
@@ -550,6 +555,7 @@ def _pool_from_spec(spec):
         row_dot=spec.get('row_dot'),
         row_count=spec.get('row_count'),
         summary=spec.get('summary'),
+        move_every_row=spec.get('move_every_row', False),
     )
 
 
@@ -1214,7 +1220,8 @@ def build_page(rect, context, blocks_fn, lst):
             # Both slots stay reserved at the ends of the list so the
             # remaining chip does not slide sideways.
             up_rect = down_rect = None
-            if pool.move_op and is_active and count > 1:
+            if (pool.move_op and (is_active or pool.move_every_row)
+                    and count > 1):
                 aw = ARROW * s
                 ay = block_top - row_h + (row_h - aw) / 2.0
                 dx = right - ARROW_GAP * s - aw
@@ -2343,6 +2350,9 @@ def hit(context, mx, my, entries):
             for a_rect, direction in ((entry[6], 'UP'), (entry[7], 'DOWN')):
                 if a_rect is not None and point_in_rect(mx, my, a_rect):
                     if pool.move_op:
+                        # Arrows on every row move the row they are on
+                        if pool.active_index(context) != entry[1]:
+                            pool.set_active(context, entry[1])
                         _run(pool.move_op, direction=direction)
                     _tag()
                     return True
