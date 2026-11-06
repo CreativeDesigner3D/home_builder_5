@@ -33,6 +33,11 @@ takes a blocks function and that tab's ScrollList, and
 A ``section`` block it builds may carry a fourth item, a callable that
 folds it, so the page keeps its own fold state.
 
+Another add-on can add rows to a library's form page without the
+catalog knowing it: ``register_page_extension(method, blocks_fn)``
+appends whatever ``blocks_fn(context)`` returns (built with
+``field_blocks``) under that page's fields, above its commands.
+
 Field kinds: ``enum`` (a dropdown), ``bool`` (a checkbox), ``distance``
 (a value you click into and type, in the placement typing grammar),
 ``number`` (a plain number typed the same way -- a scale, a count, an
@@ -798,9 +803,38 @@ def _item_blocks(context, field, owner):
     return blocks
 
 
-def _form_blocks(context, spec):
-    """The blocks of one form: its fields on the library's group, and
-    the commands under them."""
+# Rows other add-ons put on a form page: {draw method name: [blocks_fn]}.
+_page_extensions = {}
+
+
+def register_page_extension(method, blocks_fn):
+    """Add `blocks_fn(context)` -> blocks under the fields of the form
+    page drawn for `method`, on any library that has that page."""
+    fns = _page_extensions.setdefault(method, [])
+    if blocks_fn not in fns:
+        fns.append(blocks_fn)
+
+
+def unregister_page_extension(method, blocks_fn):
+    fns = _page_extensions.get(method, [])
+    if blocks_fn in fns:
+        fns.remove(blocks_fn)
+
+
+def _extension_blocks(context, method):
+    blocks = []
+    for fn in _page_extensions.get(method, ()):
+        try:
+            blocks.extend(fn(context) or ())
+        except Exception as ex:
+            print('Home Builder: page extension for %s failed: %s'
+                  % (method, ex))
+    return blocks
+
+
+def _form_blocks(context, spec, method=None):
+    """The blocks of one form: its fields on the library's group, any
+    rows other add-ons have added to it, and the commands under them."""
     group = spec.get('props')
     if spec.get('scope', 'main') == 'scene':
         owner = getattr(context.scene, group, None)
@@ -809,6 +843,8 @@ def _form_blocks(context, spec):
     if owner is None:
         return []
     blocks = _field_blocks(context, spec.get('fields', ()), owner)
+    if method is not None:
+        blocks.extend(_extension_blocks(context, method))
     actions = spec.get('actions', ())
     if actions:
         blocks.append(('gap', None))
@@ -949,7 +985,7 @@ def _blocks(context):
             if kind == 'pool':
                 inner = _pool_blocks(context, _pool_from_spec(spec))
             else:
-                inner = _form_blocks(context, spec)
+                inner = _form_blocks(context, spec, method)
             blocks.extend(('indent', b) for b in inner)
             blocks.append(('gap', None))
     return blocks
