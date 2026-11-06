@@ -21377,6 +21377,10 @@ class WoodTopPart(CabinetPart):
             depth = wt.depth
         t = wt.thickness
         if shaped:
+            # Band end trims are a square-top build; drop their fills.
+            self._sync_core_fills(
+                obj, {c['hb_wood_top_core_fill']: c for c in obj.children
+                      if c.get('hb_wood_top_core_fill')}, [], t)
             self._rebuild_shaped(obj, wt, width, depth, t)
             return
         core_w = width - edge_t * (('left' in edged) + ('right' in edged))
@@ -21421,7 +21425,11 @@ class WoodTopPart(CabinetPart):
         part.
         """
         existing = {}
+        fills = {}
         for child in list(obj.children):
+            if child.get('hb_wood_top_core_fill'):
+                fills[child.get('hb_wood_top_core_fill')] = child
+                continue
             if child.get('hb_part_role') != PART_ROLE_WOOD_TOP_EDGE:
                 continue
             existing[child.get('hb_wood_top_edge_side')] = child
@@ -21429,21 +21437,13 @@ class WoodTopPart(CabinetPart):
             if side in edged:
                 continue
             bpy.data.objects.remove(part, do_unlink=True)
-        if not edged:
-            return
 
         edge_t = wt.edge_thickness
-        out_l = edge_t if 'left' in edged else 0.0
-        out_r = edge_t if 'right' in edged else 0.0
-        # (length, width, location) per side.
-        layout = {
-            'front': (core_w + out_l + out_r, edge_t,
-                      (-out_l, -core_d, 0.0)),
-            'back':  (core_w + out_l + out_r, edge_t,
-                      (-out_l, edge_t, 0.0)),
-            'left':  (edge_t, core_d, (-edge_t, 0.0, 0.0)),
-            'right': (edge_t, core_d, (core_w, 0.0, 0.0)),
-        }
+        layout, fill_rects = WoodTopPart._edge_band_layout(
+            core_w, core_d, edge_t, wt, edged)
+        WoodTopPart._sync_core_fills(obj, fills, fill_rects, t)
+        if not edged:
+            return
         for side in edged:
             part = existing.get(side)
             band = CabinetPart()
@@ -21479,6 +21479,125 @@ class WoodTopPart(CabinetPart):
                 bev.limit_method = 'ANGLE'
             elif bev is not None:
                 part.modifiers.remove(bev)
+
+    @staticmethod
+    def _edge_band_layout(core_w, core_d, edge_t, wt, edged):
+        """Band rectangles plus the core fill pieces their end trims
+        leave, in the core's local frame. Returns ({side: (length,
+        width, location)}, [(key, x0, x1, y_top, y_bot)]).
+
+        Untrimmed, the front and back bands run the full outer length
+        and the end bands butt between them. A positive trim shortens a
+        band at that end and a core-stock fill takes the gap, so the
+        outline holds; a negative one runs the band past the top.
+        """
+        if not edged:
+            return {}, []
+        min_len = inch(1.0)
+        out_l = edge_t if 'left' in edged else 0.0
+        out_r = edge_t if 'right' in edged else 0.0
+        x_lo, x_hi = -out_l, core_w + out_r
+
+        def trim(side, end):
+            return getattr(wt, f'edge_{side}_trim_{end}', 0.0) or 0.0
+
+        # The stretch of the outline each side's band owns, as
+        # (x0, x1, y_top, y_bot).
+        strips = {
+            'front': (x_lo, x_hi, -core_d, -core_d - edge_t),
+            'back': (x_lo, x_hi, edge_t, 0.0),
+            'left': (-edge_t, 0.0, 0.0, -core_d),
+            'right': (core_w, core_w + edge_t, 0.0, -core_d),
+        }
+        bands = {}
+        for side in edged:
+            x0, x1, yt, yb = strips[side]
+            if side in ('front', 'back'):
+                a, b = trim(side, 'left'), trim(side, 'right')
+                if x1 - x0 - a - b < min_len:
+                    a = b = 0.0
+                bands[side] = (x0 + a, x1 - b, yt, yb)
+            else:
+                f, k = trim(side, 'front'), trim(side, 'back')
+                if yt - yb - f - k < min_len:
+                    f = k = 0.0
+                bands[side] = (x0, x1, yt - k, yb + f)
+
+        def covers_across(rect, strip, horizontal):
+            # A band spanning the strip's full width, crossing it.
+            if horizontal:
+                return (rect[2] >= strip[2] - 1e-6
+                        and rect[3] <= strip[3] + 1e-6)
+            return rect[0] <= strip[0] + 1e-6 and rect[1] >= strip[1] - 1e-6
+
+        fills = []
+        for side in edged:
+            strip = strips[side]
+            band = bands[side]
+            horizontal = side in ('front', 'back')
+            ax = (0, 1) if horizontal else (3, 2)   # (low, high) on the run
+            lo, hi = strip[ax[0]], strip[ax[1]]
+            gaps = [(lo, min(hi, band[ax[0]])), (max(lo, band[ax[1]]), hi)]
+            # A band run through this strip (a side band extended past
+            # the front, say) already fills its stretch of it.
+            for other, rect in bands.items():
+                if other == side or not covers_across(
+                        rect, strip, horizontal):
+                    continue
+                o_lo, o_hi = rect[ax[0]], rect[ax[1]]
+                cut = []
+                for g0, g1 in gaps:
+                    if o_hi <= g0 or o_lo >= g1:
+                        cut.append((g0, g1))
+                        continue
+                    cut.append((g0, max(g0, o_lo)))
+                    cut.append((min(g1, o_hi), g1))
+                gaps = cut
+            n = 0
+            for g0, g1 in gaps:
+                if g1 - g0 < 1e-4:
+                    continue
+                key = f'{side}{n}'
+                n += 1
+                if horizontal:
+                    fills.append((key, g0, g1, strip[2], strip[3]))
+                else:
+                    fills.append((key, strip[0], strip[1], g1, g0))
+        layout = {side: (x1 - x0, yt - yb, (x0, yt, 0.0))
+                  for side, (x0, x1, yt, yb) in bands.items()}
+        return layout, fills
+
+    @staticmethod
+    def _sync_core_fills(obj, existing, rects, t):
+        """Core-stock pieces filling the outline where a band was
+        trimmed back. They read as the top's own board (finish and paint
+        follow the board) and carry no wood-top tag of their own."""
+        wanted = {r[0] for r in rects}
+        for key, part in list(existing.items()):
+            if key not in wanted:
+                bpy.data.objects.remove(part, do_unlink=True)
+        for key, x0, x1, yt, yb in rects:
+            part = existing.get(key)
+            piece = CabinetPart()
+            if part is None:
+                piece.create('Wood Top Core Fill')
+                part = piece.obj
+                part.parent = obj
+                part['hb_part_role'] = PART_ROLE_WOOD_TOP
+                part['hb_wood_top_core_fill'] = key
+                part['CABINET_PART'] = True
+                part['IS_FINISHED'] = True
+                part['Finish Top'] = True
+                part['Finish Bottom'] = True
+                part['MENU_ID'] = 'HOME_BUILDER_MT_face_frame_part_commands'
+                piece.set_input('Mirror Y', True)
+            else:
+                piece.obj = part
+            piece.set_input('Length', x1 - x0)
+            piece.set_input('Width', yt - yb)
+            piece.set_input('Thickness', t)
+            part.location = (x0, yt, 0.0)
+            part.rotation_euler = (0.0, 0.0, 0.0)
 
     @staticmethod
     def _nosing_section(wt, t):

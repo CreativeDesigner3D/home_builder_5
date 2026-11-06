@@ -1076,6 +1076,18 @@ class hb_face_frame_OT_wood_top_prompts(bpy.types.Operator):
             row.prop(wt, 'edge_back', text="Back", toggle=True)
             row.prop(wt, 'edge_left', text="Left", toggle=True)
             row.prop(wt, 'edge_right', text="Right", toggle=True)
+            # End trims: shorten a band (the core fills in) or run it
+            # past the top (negative).
+            for side, ends in (('front', ('left', 'right')),
+                               ('back', ('left', 'right')),
+                               ('left', ('front', 'back')),
+                               ('right', ('front', 'back'))):
+                if not getattr(wt, 'edge_' + side):
+                    continue
+                for end in ends:
+                    edge_col.prop(
+                        wt, f'edge_{side}_trim_{end}',
+                        text=f"{side.capitalize()} Trim {end.capitalize()}")
         col.separator()
         # Nosing: edge profile from the shelf-nosing set; the
         # extra-height styles take a height of their own. Side toggles

@@ -370,6 +370,10 @@ def _edged(wt):
     return wt.nosing_style == 'NONE' and wt.edge_type != 'NONE'
 
 
+def _edge_on(side):
+    return lambda wt: _edge_side(wt) and getattr(wt, 'edge_' + side)
+
+
 def _nosed(wt):
     return wt.edge_type == 'NONE' and wt.nosing_style != 'NONE'
 
@@ -406,6 +410,17 @@ WOOD_TOP_FIELDS = (
             ('bool', 'edge_back', "Back", {'when': _edge_side}),
             ('bool', 'edge_left', "Left", {'when': _edge_side}),
             ('bool', 'edge_right', "Right", {'when': _edge_side}),
+        )}),
+    ('group', 'ff_wood_top_edge_ends', "Edge Ends", {
+        'when': _edge_side, 'fields': (
+            ('distance', 'edge_front_trim_left', "Front - Left", {'when': _edge_on('front')}),
+            ('distance', 'edge_front_trim_right', "Front - Right", {'when': _edge_on('front')}),
+            ('distance', 'edge_back_trim_left', "Back - Left", {'when': _edge_on('back')}),
+            ('distance', 'edge_back_trim_right', "Back - Right", {'when': _edge_on('back')}),
+            ('distance', 'edge_left_trim_front', "Left - Front", {'when': _edge_on('left')}),
+            ('distance', 'edge_left_trim_back', "Left - Back", {'when': _edge_on('left')}),
+            ('distance', 'edge_right_trim_front', "Right - Front", {'when': _edge_on('right')}),
+            ('distance', 'edge_right_trim_back', "Right - Back", {'when': _edge_on('right')}),
         )}),
     ('group', 'ff_wood_top_nosing', "Edge Profile", {
         'when': lambda wt: wt.edge_type == 'NONE',

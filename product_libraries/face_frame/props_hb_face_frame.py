@@ -3496,7 +3496,8 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
         """
         override = part_obj.get('hb_part_material_override')
         if (override is None
-                and part_obj.get('hb_part_role') == 'WOOD_TOP_EDGE'
+                and (part_obj.get('hb_part_role') == 'WOOD_TOP_EDGE'
+                     or part_obj.get('hb_wood_top_core_fill'))
                 and part_obj.parent is not None):
             # A top's edge bands are rebuilt with it and carry no stamp
             # of their own; they follow the paint on their board.
@@ -14999,6 +15000,57 @@ class Face_Frame_Wood_Top_Props(PropertyGroup):
         name="Edge Right", default=False,
         description="Apply the edge band to the right end",
         update=_update_wood_top,
+    )  # type: ignore
+    # Band end trims. Each band can be shortened at either end (the core
+    # fills in behind it so the top keeps its outline) or run past the
+    # top (negative), e.g. where tops butt or a return wraps a corner.
+    edge_front_trim_left: FloatProperty(
+        name="Front Edge Left End", default=0.0,
+        description=("Shorten the front edge band at its left end "
+                     "(negative runs it past the top)"),
+        unit='LENGTH', precision=4, update=_update_wood_top,
+    )  # type: ignore
+    edge_front_trim_right: FloatProperty(
+        name="Front Edge Right End", default=0.0,
+        description=("Shorten the front edge band at its right end "
+                     "(negative runs it past the top)"),
+        unit='LENGTH', precision=4, update=_update_wood_top,
+    )  # type: ignore
+    edge_back_trim_left: FloatProperty(
+        name="Back Edge Left End", default=0.0,
+        description=("Shorten the back edge band at its left end "
+                     "(negative runs it past the top)"),
+        unit='LENGTH', precision=4, update=_update_wood_top,
+    )  # type: ignore
+    edge_back_trim_right: FloatProperty(
+        name="Back Edge Right End", default=0.0,
+        description=("Shorten the back edge band at its right end "
+                     "(negative runs it past the top)"),
+        unit='LENGTH', precision=4, update=_update_wood_top,
+    )  # type: ignore
+    edge_left_trim_front: FloatProperty(
+        name="Left Edge Front End", default=0.0,
+        description=("Shorten the left edge band at its front end "
+                     "(negative runs it past the top)"),
+        unit='LENGTH', precision=4, update=_update_wood_top,
+    )  # type: ignore
+    edge_left_trim_back: FloatProperty(
+        name="Left Edge Back End", default=0.0,
+        description=("Shorten the left edge band at its back end "
+                     "(negative runs it past the top)"),
+        unit='LENGTH', precision=4, update=_update_wood_top,
+    )  # type: ignore
+    edge_right_trim_front: FloatProperty(
+        name="Right Edge Front End", default=0.0,
+        description=("Shorten the right edge band at its front end "
+                     "(negative runs it past the top)"),
+        unit='LENGTH', precision=4, update=_update_wood_top,
+    )  # type: ignore
+    edge_right_trim_back: FloatProperty(
+        name="Right Edge Back End", default=0.0,
+        description=("Shorten the right edge band at its back end "
+                     "(negative runs it past the top)"),
+        unit='LENGTH', precision=4, update=_update_wood_top,
     )  # type: ignore
     # How plan drawings show the top. Drawn over the cabinets, a top hides
     # them and their dimensions, so a shaped one is usually drawn as a
