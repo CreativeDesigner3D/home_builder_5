@@ -221,6 +221,9 @@ _edit_pool = None
 # index). The chip then reads "Delete?" and the next click on it is the
 # one that removes; a click anywhere else in the tab stands it down.
 _armed_delete = None
+# The last press on a 'list_row', as (row key, time): a second press on
+# the same row soon after is a double click, which renames it.
+_last_list_click = None
 # Inline value typing for a distance field, keyed by (ID, path, prop).
 _value_edit = InlineEdit()
 _edit_kind = None       # the field kind being typed into
@@ -1259,6 +1262,38 @@ def build_page(rect, context, blocks_fn, lst):
                     break           # more than a row holds: the caller's to split
                 entries.append(('icon_btn', label, op_id, kwargs, rect,
                                 _can_run(op_id, polled), icon))
+        elif kind == 'list_row':
+            # One line of a list a hosted page keeps itself, as a dict:
+            # 'key' (unique on the page), 'text', 'summary' (dim, at the
+            # end), 'active', 'click' (a callable or (op, kwargs)),
+            # 'rename' (callable(new name), on a double click, from
+            # 'name' or the text), 'icons' ((tip, op, kwargs, icon), ...;
+            # an icon is a name or (name, folder)), 'remove' ((op,
+            # kwargs): the small X; 'confirm' False removes on one click).
+            spec = payload
+            rect = (x, block_top - row_h, row_w, row_h)
+            right = x + row_w - 2 * s
+            remove_rect = None
+            if spec.get('remove'):
+                chip = GEAR * s
+                chip_w = chip
+                if _armed_delete == ('list', spec.get('key')):
+                    chip_w = text_width(0, FONT * s, CONFIRM_TEXT) + 12 * s
+                remove_rect = (right - chip_w,
+                               block_top - row_h + (row_h - chip) / 2.0,
+                               chip_w, chip)
+                right = remove_rect[0] - ARROW_GAP * s
+            icons = []
+            ib = row_h - 2 * s
+            for tip, op_id, kwargs, icon in reversed(
+                    tuple(spec.get('icons') or ())):
+                irect = (right - ib, block_top - row_h + s, ib, ib)
+                right = irect[0] - ARROW_GAP * s
+                icons.append((irect, tip, op_id, dict(kwargs or {}), icon,
+                              _can_run(op_id, polled)))
+            icons.reverse()
+            entries.append(('list_row', spec, rect, icons, remove_rect,
+                            right))
         elif kind == 'field':
             field, owner = payload
             entries.extend(_field_entries(context, field, owner, x,
@@ -1903,6 +1938,8 @@ def paint(entries, mx, my):
                                        label[:2])
                 if hovered:
                     note_tip(rect, label)
+            elif kind == 'list_row':
+                _paint_list_row(shader, font_id, s, mx, my, entry)
             elif kind == 'action_btn':
                 _, label, _op, _prop, _val, rect, enabled = entry
                 hovered = enabled and point_in_rect(mx, my, rect)
@@ -1989,6 +2026,130 @@ def paint(entries, mx, my):
     # edge row is not cut off with it.
     paint_tip(shader, font_id, FONT * s)
     gpu.state.blend_set('NONE')
+
+
+class _ListRename:
+    """A 'list_row' being renamed: its key, and what takes the name."""
+
+    def __init__(self, key, apply):
+        self.key = key
+        self.apply = apply
+
+
+def _paint_list_row(shader, font_id, s, mx, my, entry):
+    _, spec, rect, icons, remove_rect, right = entry
+    key = ('list', spec.get('key'))
+    rx, ry, rw, rh = rect
+    hovered = point_in_rect(mx, my, rect)
+    renaming = (isinstance(_edit_pool, _ListRename) and _edit.editing(key))
+    active = spec.get('active', False)
+    if hovered and not renaming and spec.get('click') is not None:
+        draw_rects(shader, [rect], Theme.ROW_HOVER_BG)
+    if active:
+        draw_rects(shader, [(rx, ry + 2 * s, ACCENT_W * s, rh - 4 * s)],
+                   Theme.ACCENT_BG)
+    text_x = rx + (ACCENT_W + 8) * s
+    limit = right - 6 * s
+    if renaming:
+        box = (text_x - 3 * s, ry + 3 * s,
+               max(limit - text_x, 20 * s) + 6 * s, rh - 6 * s)
+        draw_rects(shader, [box], (0.0, 0.0, 0.0, 0.55))
+        paint_inline_edit(shader, font_id, box, FONT * s, _edit, pad=3 * s)
+        return
+    summary = spec.get('summary') or ""
+    if summary:
+        sw = text_width(font_id, FONT * s, summary)
+        if limit - sw - text_x > 40 * s:
+            draw_text(font_id, limit - sw, ry + rh * 0.28, FONT * s,
+                      Theme.TEXT_DIM, summary)
+            limit -= sw + 8 * s
+    text = spec.get('text', "")
+    shown = fit_text(font_id, FONT * s, text, limit - text_x)
+    if hovered:
+        note_tip_if_cut(rect, shown, text)
+    draw_text(font_id, text_x, ry + rh * 0.28, FONT * s,
+              Theme.TEXT_PRIMARY if active
+              else Theme.TEXT_DIM if spec.get('dim') else Theme.TEXT_NORMAL,
+              shown)
+    for irect, tip, _op, _kw, icon, enabled in icons:
+        hot = enabled and point_in_rect(mx, my, irect)
+        if hot:
+            paint_button(shader, irect, hovered=True)
+        color = (Theme.TEXT_DIM if not enabled
+                 else Theme.GLYPH_HOVER if hot else Theme.GLYPH)
+        name, folder = icon if isinstance(icon, tuple) else (icon, None)
+        drawn = False
+        if name and has_icon(name, folder):
+            drawn = draw_icon(name, irect, color, icon_dir=folder)
+            shader.bind()
+        if not drawn:
+            draw_centered_text(font_id, irect, FONT * s * 0.85, color,
+                               tip[:2])
+        if point_in_rect(mx, my, irect):
+            note_tip(irect, tip)
+    if remove_rect is not None:
+        hot = point_in_rect(mx, my, remove_rect)
+        if _armed_delete == key:
+            danger = Theme.ACTION_DANGER_BG
+            paint_button(shader, remove_rect, hovered=hot, bg=danger,
+                         hover_bg=danger[:3] + (0.95,))
+            draw_centered_text(font_id, remove_rect, FONT * s,
+                               Theme.TEXT_PRIMARY, CONFIRM_TEXT)
+        else:
+            if hot:
+                paint_button(shader, remove_rect, hovered=True)
+                note_tip(remove_rect, spec.get('remove_tip', "Remove"))
+            glyph_delete(shader, remove_rect,
+                         Theme.GLYPH_HOVER if hot else Theme.GLYPH)
+
+
+def _list_row_hit(context, mx, my, entry, armed):
+    """A press on a 'list_row'. True = consumed."""
+    global _edit_pool, _armed_delete, _last_list_click
+    _, spec, rect, icons, remove_rect, _right = entry
+    key = ('list', spec.get('key'))
+    if remove_rect is not None and point_in_rect(mx, my, remove_rect):
+        op_id, kwargs = spec['remove']
+        if armed == key or not spec.get('confirm', True):
+            _run_on_release(op_id, kwargs or {})
+        else:
+            _armed_delete = key
+        _tag()
+        return True
+    for irect, _tip, op_id, kwargs, _icon, enabled in icons:
+        if point_in_rect(mx, my, irect):
+            if enabled:
+                _run_on_release(op_id, kwargs)
+            _tag()
+            return True
+    if not point_in_rect(mx, my, rect):
+        return False
+    import time
+    now = time.monotonic()
+    last, _last_list_click = _last_list_click, (key, now)
+    try:
+        window = context.preferences.inputs.mouse_double_click_time / 1000.0
+    except AttributeError:
+        window = 0.35
+    rename = spec.get('rename')
+    if (rename is not None and last is not None and last[0] == key
+            and now - last[1] <= window):
+        _last_list_click = None
+        _edit_pool = _ListRename(key, rename)
+        _edit.begin(key, str(spec.get('name', spec.get('text', "")) or ""))
+        bpy.ops.home_builder.style_rename('INVOKE_DEFAULT')
+    else:
+        click = spec.get('click')
+        try:
+            if callable(click):
+                click()
+            elif click:
+                _run(click[0], **dict(click[1] or {}))
+        except Exception as ex:
+            print('Home Builder: list row %s failed: %s'
+                  % (spec.get('key'), ex))
+    _tag()
+    return True
 
 
 def _tile_buttons(context, entry, s):
@@ -2380,6 +2541,10 @@ def hit(context, mx, my, entries):
                     bpy.ops.home_builder.style_rename('INVOKE_DEFAULT')
                 _tag()
                 return True
+        if kind == 'list_row':
+            if _list_row_hit(context, mx, my, entry, armed):
+                return True
+            continue
         if kind == 'styles_head' and entry[3] is not None:
             if point_in_rect(mx, my, entry[3]):
                 pool = entry[4]
@@ -3161,6 +3326,13 @@ def commit_rename(context):
     global _edit_pool
     index, name = _edit.take()
     pool, _edit_pool = _edit_pool, None
+    if isinstance(pool, _ListRename):
+        if index is not None and name:
+            try:
+                pool.apply(name)
+            except Exception as ex:
+                print('Home Builder: rename failed: %s' % ex)
+        return None
     if index is None or not name or pool is None:
         return None
     styles = pool.items(context)
