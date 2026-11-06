@@ -15,6 +15,7 @@ from . import door_vents
 from . import selected_card
 from . import selected_products
 from . import drill
+from . import accessory_place
 
 NAMESPACE = "hb_face_frame"
 MENU_NAME = "Face Frame"
@@ -36,11 +37,13 @@ def register():
     selected_card.register()
     selected_products.register()
     drill.register()
+    accessory_place.register()
 
 
 def unregister():
     from . import finish_swatches
     finish_swatches.unregister()
+    accessory_place.unregister()
     drill.unregister()
     selected_products.unregister()
     selected_card.unregister()

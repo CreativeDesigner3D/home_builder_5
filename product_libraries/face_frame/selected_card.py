@@ -61,6 +61,11 @@ def find(context):
         return ('opening', root, _owning_bay(opening), opening, None)
     if kind != 'cabinet':
         part = sel[1]
+        from . import accessory_place
+        if accessory_place.is_drawer_box(part):
+            # A drawer box has a page of its own: the Drawer page.
+            opening = _owning(part, types_face_frame.TAG_OPENING_CAGE)
+            return ('drawer', root, _owning_bay(part), opening, part)
         if generic_page.menu_id(part) == PART_MENU:
             opening = _owning(part, types_face_frame.TAG_OPENING_CAGE)
             return ('part', root, _owning_bay(part), opening, part)
@@ -711,7 +716,15 @@ def blocks(context, item):
     # One picked: the head is where it sits, said once.
     several = (n_cab > 1 if kind == 'cabinet'
                else kind in ('bay', 'opening') and n_part > 1)
-    if kind == 'cabinet' and several:
+    n_box = 0
+    if kind == 'drawer':
+        from . import accessory_place
+        n_box = len(accessory_place.picked_drawer_boxes(context, part_obj))
+        several = n_box > 1
+    if kind == 'drawer' and several:
+        out = [('head', (f"{n_box} Drawer Boxes", False, None)),
+               ('label', f"Changes apply to all {n_box}")]
+    elif kind == 'cabinet' and several:
         out = [('head', (f"{n_cab} Cabinets", False, None)),
                ('label', f"Changes apply to all {n_cab}")]
     elif several:
@@ -740,6 +753,10 @@ def blocks(context, item):
         op = opening_obj.face_frame_opening
         out.extend(options_panel.field_blocks(context, _opening_fields(op), op))
         _footer(out, 'hb_face_frame.opening_prompts')
+    elif kind == 'drawer':
+        from . import accessory_place
+        out.extend(accessory_place.drawer_blocks(context, part_obj))
+        _footer(out, 'hb_face_frame.opening_prompts')
     else:
         out.extend(_part_blocks(context, part_obj))
         _footer(out, None)
@@ -752,6 +769,10 @@ def crumbs(context, item):
     many."""
     kind, root, bay_obj, opening_obj, part_obj = item
     _gather(context)
+    if kind == 'drawer':
+        from . import accessory_place
+        if len(accessory_place.picked_drawer_boxes(context, part_obj)) > 1:
+            return None
     if _count('face_frame_cabinet') > 1 or (
             kind in ('bay', 'opening') and _count(
                 'face_frame_bay' if kind == 'bay' else 'face_frame_opening') > 1):
