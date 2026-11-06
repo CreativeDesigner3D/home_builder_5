@@ -18,6 +18,7 @@ Properties opens the full dialog.
 import bpy
 
 from . import types_face_frame
+from . import part_pages
 from ... import units
 
 
@@ -469,11 +470,12 @@ def _cabinet_fields(root, cab):
                 ('bool', 'existing_cabinet', "Existing (on site)"),
             )}),
         ('group', 'ff_cab_ends', "Finished Ends & Back", {
-            'summary': _ends_summary, 'fields': (
-                ('enum', 'left_finished_end_condition', "Left End"),
-                ('enum', 'right_finished_end_condition', "Right End"),
-                ('enum', 'back_finished_end_condition', "Back"),
-            )}),
+            'summary': _ends_summary,
+            'fields': (part_pages.end_fields('left', "Left End")
+                       + (('gap', None, None),)
+                       + part_pages.end_fields('right', "Right End")
+                       + (('gap', None, None),)
+                       + part_pages.back_fields("Back"))}),
         ('group', 'ff_cab_face_frame', "Face Frame", {
             'icon': 'cab_face_frame', 'summary': _frame_summary, 'fields': (
                 ('locked', 'top_rail_width', "Top Rail", {'unlock': 'unlock_top_rail'}),
@@ -574,6 +576,12 @@ def _part_blocks(context, part_obj):
                             for d in part_obj.dimensions)
     if size:
         out.append(('value', ("Size (W x D x H)", size)))
+    page = part_pages.page_blocks(context, part_obj)
+    if page is not None:
+        if out and page:
+            out.append(('gap', None))
+        out.extend(page)
+        return out
     picked = []
     for rec in generic_page._record(context, generic_page.menu_id(part_obj)):
         if rec[0] == 'op':
@@ -716,7 +724,11 @@ def blocks(context, item):
     # One picked: the head is where it sits, said once.
     several = (n_cab > 1 if kind == 'cabinet'
                else kind in ('bay', 'opening') and n_part > 1)
-    n_box = 0
+    n_box = n_same = 0
+    if kind == 'part':
+        # Parts of one kind picked together edit together.
+        n_same = part_pages.gather(context, part_obj, _picked)
+        several = n_same > 1
     if kind == 'drawer':
         from . import accessory_place
         n_box = len(accessory_place.picked_drawer_boxes(context, part_obj))
@@ -724,6 +736,10 @@ def blocks(context, item):
     if kind == 'drawer' and several:
         out = [('head', (f"{n_box} Drawer Boxes", False, None)),
                ('label', f"Changes apply to all {n_box}")]
+    elif kind == 'part' and several:
+        out = [('head', (part_pages.plural(part_pages.role_of(part_obj),
+                                           n_same), False, None)),
+               ('label', f"Changes apply to all {n_same}")]
     elif kind == 'cabinet' and several:
         out = [('head', (f"{n_cab} Cabinets", False, None)),
                ('label', f"Changes apply to all {n_cab}")]
@@ -773,6 +789,8 @@ def crumbs(context, item):
         from . import accessory_place
         if len(accessory_place.picked_drawer_boxes(context, part_obj)) > 1:
             return None
+    if kind == 'part' and len(part_pages.same_role_parts(context, part_obj)) > 1:
+        return None
     if _count('face_frame_cabinet') > 1 or (
             kind in ('bay', 'opening') and _count(
                 'face_frame_bay' if kind == 'bay' else 'face_frame_opening') > 1):
@@ -799,12 +817,14 @@ def register():
     selected_tab.register_source(SOURCE_KEY, find, blocks, crumbs)
     from ...operators import options_panel
     options_panel.register_peers(_peers)
+    options_panel.register_peers(part_pages.proxy_peers)
 
 
 def unregister():
     try:
         from ...operators import options_panel, selected_tab
         options_panel.unregister_peers(_peers)
+        options_panel.unregister_peers(part_pages.proxy_peers)
         selected_tab.unregister_source(SOURCE_KEY)
     except Exception:
         pass
