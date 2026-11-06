@@ -138,6 +138,7 @@ def roof_frame(scene, level):
     the ridge (and a barn roof's breaks); 'p_out' the slope at the eaves,
     which the overhangs carry on."""
     from .operators import walls
+    from . import hb_types
     roof = level.roof
     outline_levels = [level]
     if roof.base == 'FLOOR':
@@ -151,6 +152,11 @@ def roof_frame(scene, level):
     for lv in outline_levels:
         for obj in _exterior_walls(scene, lv):
             corners.extend(pt for _e, _f, pt in walls.wall_plan_corners(obj))
+            if hb_types.is_curved_wall(obj):
+                # A curved wall bows past its corners
+                t = hb_types.GeoNodeWall(obj).get_input('Thickness')
+                for y in (0.0, t):
+                    corners.extend(p.to_2d() for p in hb_types.wall_face_points(obj, y))
             siding = max(siding, hb_assemblies.siding_inset(obj))
     if len(corners) < 3:
         return None
@@ -1276,7 +1282,9 @@ def _wall_in_footprint(frame, obj, wall, strict):
         # wall into a gable, so a raised wall is always cut back
         rot = m.to_euler().z
         return _within_roof(frame, obj, Vector((math.cos(rot), math.sin(rot))))
-    mid = m @ Vector((wall.get_input('Length') / 2.0, wall.get_input('Thickness') / 2.0, 0.0))
+    from . import hb_types
+    mid = hb_types.wall_point(obj, wall.get_input('Length') / 2.0,
+                              wall.get_input('Thickness') / 2.0)
     u, v = _uv(frame, (mid.x, mid.y))
     return (frame['u0'] + 0.3 <= u <= frame['u1'] - 0.3
             and frame['v0'] - 0.1 <= v <= frame['v1'] + 0.1)

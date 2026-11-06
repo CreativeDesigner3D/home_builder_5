@@ -267,12 +267,14 @@ def apply_wall_type(wall, wall_type, height, thickness):
 
 
 def build_wall_run(scene, points, wall_type='Exterior', level=None,
-                   thickness=None, height=None, closed=False):
+                   thickness=None, height=None, closed=False, arcs=None):
     """Walls along a run of plan points, joined end to end as Draw Walls
     joins them - and closed back to the first point with `closed` - with
     the type's size unless a thickness or height is given. In a house, on
-    `level` (the active level when None). The scene must be the context's
-    (new objects go into it). Returns the wall objects.
+    `level` (the active level when None). `arcs` ({segment index: arc
+    angle}, see hb_wall_graph.collapse_arcs) bends those segments' walls.
+    The scene must be the context's (new objects go into it). Returns the
+    wall objects.
 
     Wall wrappers are kept here, not collection items, so nothing is held
     across an add()."""
@@ -301,6 +303,9 @@ def build_wall_run(scene, points, wall_type='Exterior', level=None,
             wall.obj.location = a
             wall.obj.rotation_euler.z = math.atan2(d.y, d.x)
             wall.set_input('Length', d.length)
+            if arcs and arcs.get(i):
+                hb_types.ensure_wall_arc(wall.obj.modifiers[wall.obj.home_builder.mod_name].node_group)
+                wall.set_input(hb_types.WALL_ARC_INPUT, float(arcs[i]))
             if level is not None:
                 hb_house.assign_wall_to_level(wall.obj, level, scene)
             if walls:

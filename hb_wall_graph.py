@@ -48,6 +48,80 @@ def _rot(a, r):
     return (a[0] * c - a[1] * s, a[0] * s + a[1] * c)
 
 
+def collapse_arcs(poly, tol=0.002):
+    """A closed outline with the arcs a curved wall's tessellation left in
+    it (pieces(), turning by at most ARC_PIECE each) taken back out:
+    (points, arcs) - the outline's corners, and {segment index: arc angle}
+    for each segment that stands for an arc, signed as a wall drawn along
+    it is bent (positive bows to its right). A run needs two or more such
+    turns the same way, with its points on one circle, so a drawn polygon
+    (an octagon bay turns 45 deg a corner) is never taken for an arc."""
+    n = len(poly)
+    if n < 4:
+        return list(poly), {}
+
+    def turn(i):
+        ax, ay = poly[i - 1]
+        bx, by = poly[i]
+        cx, cy = poly[(i + 1) % n]
+        t = math.atan2(cy - by, cx - bx) - math.atan2(by - ay, bx - ax)
+        return (t + math.pi) % (2.0 * math.pi) - math.pi
+
+    turns = [turn(i) for i in range(n)]
+    small = [1e-6 < abs(t) <= ARC_PIECE + 1e-4 for t in turns]
+    if all(small) or not any(small):
+        return list(poly), {}           # a whole circle stays as it is
+    # Runs of consecutive small turns the same way, walked from a corner
+    start = next(i for i in range(n) if not small[i])
+    runs, run = [], []
+    for k in range(1, n + 1):
+        i = (start + k) % n
+        if small[i] and (not run or (turns[i] > 0) == (turns[run[0]] > 0)):
+            run.append(i)
+            continue
+        if len(run) >= 2:
+            runs.append(run)
+        run = [i] if small[i] else []
+    if len(run) >= 2:
+        runs.append(run)
+
+    drop, arcs_at = set(), {}
+    for run in runs:
+        a, b = (run[0] - 1) % n, (run[-1] + 1) % n
+        # The circle through the run's own points: the outline's corners
+        # where it meets the straight walls sit a little off it
+        if len(run) >= 3:
+            fit = (poly[run[0]], poly[run[len(run) // 2]], poly[run[-1]])
+        else:
+            fit = (poly[a], poly[run[0]], poly[b])
+        (ax, ay), (mx, my), (bx, by) = fit
+        d = 2.0 * (ax * (by - my) + bx * (my - ay) + mx * (ay - by))
+        if abs(d) < 1e-12:
+            continue
+        ux = ((ax * ax + ay * ay) * (by - my) + (bx * bx + by * by) * (my - ay)
+              + (mx * mx + my * my) * (ay - by)) / d
+        uy = ((ax * ax + ay * ay) * (mx - bx) + (bx * bx + by * by) * (ax - mx)
+              + (mx * mx + my * my) * (bx - ax)) / d
+        r = math.hypot(ax - ux, ay - uy)
+        if any(abs(math.hypot(poly[i][0] - ux, poly[i][1] - uy) - r) > tol for i in run):
+            continue
+        sweep = sum(turns[i] for i in run)
+        # The tessellation's end pieces run into the corners, so the
+        # angle is the one the corners make round the circle's centre
+        a0 = math.atan2(poly[a][1] - uy, poly[a][0] - ux)
+        a1 = math.atan2(poly[b][1] - uy, poly[b][0] - ux)
+        angle = (a1 - a0) % (2.0 * math.pi)
+        if sweep < 0.0:
+            angle -= 2.0 * math.pi
+        drop.update(run)
+        arcs_at[a] = angle
+    if not arcs_at:
+        return list(poly), {}
+    keep = [i for i in range(n) if i not in drop]
+    index = {i: k for k, i in enumerate(keep)}
+    return [poly[i] for i in keep], {index[i]: ang for i, ang in arcs_at.items()}
+
+
 def bend(x, y, length, arc):
     """A point (x, y) in a wall's own straight frame - x along the chord,
     y towards the thickness - where it lands once the wall is bent through

@@ -14,8 +14,11 @@ scratch whenever the sizes change, so nothing about them has to be kept
 in step by hand.
 """
 
+import math
+
 import bpy
 import bmesh
+from mathutils import Vector
 
 from .. import hb_types
 
@@ -23,6 +26,10 @@ TAG = 'IS_WALL_BASEBOARD'
 MATERIAL_NAME = 'Baseboard'
 MATERIAL_COLOR = (0.92, 0.91, 0.88, 1.0)
 NOTCHED = ('SINGLE_NOTCH', 'DOUBLE_NOTCH')
+
+
+# A curved wall's baseboard: a piece per this much of its arc
+ARC_STEP = math.radians(3.0)
 
 
 def baseboard_profile(scene):
@@ -75,6 +82,15 @@ def _door_spans(wall_obj, height):
             w = float(hb_types.GeoNodeCage(child).get_input('Dim X'))
         except Exception:
             continue
+        if hb_types.is_curved_wall(wall_obj):
+            # A door stands square to the arc: its span is the stations
+            # its two sides stand over
+            from . import walls as hb_walls
+            m = child.matrix_world
+            x0 = hb_walls.curved_wall_station(wall_obj, m @ Vector((0.0, 0.0, 0.0)))[0]
+            x1 = hb_walls.curved_wall_station(wall_obj, m @ Vector((w, 0.0, 0.0)))[0]
+            spans.append((min(x0, x1), max(x0, x1)))
+            continue
         spans.append((child.location.x, child.location.x + w))
     return sorted(spans)
 
@@ -92,18 +108,37 @@ def _runs(length, spans):
     return runs
 
 
-def _strip_mesh(name, runs, height, depth):
-    """One mesh holding a box per run, on the wall's room face."""
+def _strip_mesh(name, runs, height, depth, arc=0.0, length=0.0, y_offset=0.0):
+    """One mesh holding a strip per run, on the wall's room face. On a
+    curved wall (`arc`, over the wall's `length`) each run is cut into
+    pieces of at most ARC_STEP and bent onto the arc; `y_offset` is where
+    the object stands off the wall, so the bend is taken from the face."""
+    from .. import hb_wall_graph
     me = bpy.data.meshes.new(name)
     bm = bmesh.new()
+    curved = abs(arc) > 1e-5 and length > 0.0
     for x0, x1 in runs:
-        vs = [bm.verts.new(co) for co in (
-            (x0, 0.0, 0.0), (x1, 0.0, 0.0), (x1, -depth, 0.0),
-            (x0, -depth, 0.0), (x0, 0.0, height), (x1, 0.0, height),
-            (x1, -depth, height), (x0, -depth, height))]
-        for f in ((0, 3, 2, 1), (4, 5, 6, 7), (0, 1, 5, 4),
-                  (1, 2, 6, 5), (2, 3, 7, 6), (3, 0, 4, 7)):
-            bm.faces.new([vs[i] for i in f])
+        n = 1
+        if curved:
+            n = max(1, math.ceil(abs(arc) * (x1 - x0) / length / ARC_STEP))
+        rings = []
+        for k in range(n + 1):
+            x = x0 + (x1 - x0) * k / n
+            ring = []
+            for y, z in ((0.0, 0.0), (-depth, 0.0), (-depth, height), (0.0, height)):
+                if curved:
+                    bx, by = hb_wall_graph.bend(x, y + y_offset, length, arc)
+                    ring.append(bm.verts.new((bx, by - y_offset, z)))
+                else:
+                    ring.append(bm.verts.new((x, y, z)))
+            rings.append(ring)
+        for a, b in zip(rings, rings[1:]):
+            for i in range(4):
+                j = (i + 1) % 4
+                bm.faces.new((a[i], a[j], b[j], b[i]))
+        bm.faces.new(rings[0])
+        bm.faces.new(list(reversed(rings[-1])))
+    bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
     bm.to_mesh(me)
     bm.free()
     return me
@@ -148,7 +183,8 @@ def build_baseboards(scene):
             if not runs:
                 continue
             name = "Baseboard" if i == 0 else "Quarter Round"
-            me = _strip_mesh(name, runs, height, depth)
+            me = _strip_mesh(name, runs, height, depth,
+                             hb_types.wall_arc_angle(wall_obj), length, -depth_back)
             me.materials.append(mat)
             obj = bpy.data.objects.new(name, me)
             obj[TAG] = True

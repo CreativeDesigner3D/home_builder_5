@@ -793,8 +793,7 @@ def wall_corners(scene):
             length, t = w.get_input('Length'), w.get_input('Thickness')
         except Exception:
             continue
-        m = obj.matrix_world
-        pts += [m @ Vector(p) for p in ((0, 0, 0), (length, 0, 0), (0, t, 0), (length, t, 0))]
+        pts += [hb_types.wall_point(obj, x, y) for x, y in ((0, 0), (length, 0), (0, t), (length, t))]
     return pts
 
 

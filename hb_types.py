@@ -664,6 +664,30 @@ def is_curved_wall(obj):
     return abs(wall_arc_angle(obj)) > 1e-5
 
 
+def wall_point(obj, x, y=0.0, z=0.0):
+    """World point of (x, y, z) in a wall's own straight frame - x along
+    it, y into its thickness - bent onto its arc when it is curved. The
+    same as matrix_world @ (x, y, z) for a straight wall."""
+    from mathutils import Vector
+    arc = wall_arc_angle(obj)
+    if abs(arc) > 1e-5:
+        from . import hb_wall_graph
+        length = GeoNodeObject(obj).get_input('Length')
+        x, y = hb_wall_graph.bend(x, y, length, arc)
+    return obj.matrix_world @ Vector((x, y, z))
+
+
+def wall_face_points(obj, y=0.0, z=0.0):
+    """World points along a wall's face at depth y, end to end: its two
+    ends for a straight wall, one per arc piece (hb_wall_graph.ARC_PIECE)
+    along a curved one."""
+    from . import hb_wall_graph
+    length = GeoNodeObject(obj).get_input('Length')
+    arc = wall_arc_angle(obj)
+    n = max(1, math.ceil(abs(arc) / hb_wall_graph.ARC_PIECE)) if abs(arc) > 1e-5 else 1
+    return [wall_point(obj, length * k / n, y, z) for k in range(n + 1)]
+
+
 def ensure_all_wall_extensions():
     """Patch every wall node group in the file (called on load)."""
     changed = False

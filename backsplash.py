@@ -248,6 +248,8 @@ def base_runs(context, wall_names=None):
             continue
         if wall_names is not None and wall.name not in wall_names:
             continue
+        if hb_types.is_curved_wall(wall):
+            continue            # the slab is straight along the wall
         groups.setdefault((wall.name, _is_back_side(obj)), []).append(obj)
 
     ct_thickness = _countertop_thickness(context)

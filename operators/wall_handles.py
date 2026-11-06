@@ -109,12 +109,27 @@ def handle_places(obj):
     """{handle: (point, direction)} in plan - where each arrow sits and
     which way it points."""
     start, axis, length, t, _h = wall_frame(obj)
+    arc = hb_types.wall_arc_angle(obj)
+    if abs(arc) > 1e-5:
+        # On the arc, each end pointing along it there
+        def at(x):
+            return hb_types.wall_point(obj, x, t / 2.0).to_2d()
+        return {
+            'START': (at(0.0), -_turned(axis, -arc / 2.0)),
+            'END': (at(length), _turned(axis, arc / 2.0)),
+            'MIDDLE': (at(length / 2.0), outward(obj)),
+        }
     side = Vector((-axis.y, axis.x)) * (t / 2.0)
     return {
         'START': (start + side, -axis),
         'END': (start + axis * length + side, axis),
         'MIDDLE': (start + axis * (length / 2.0) + side, outward(obj)),
     }
+
+
+def _turned(v, angle):
+    c, s = math.cos(angle), math.sin(angle)
+    return Vector((v.x * c - v.y * s, v.x * s + v.y * c))
 
 
 # =============================================================================

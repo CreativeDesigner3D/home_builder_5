@@ -48,8 +48,9 @@ def _wall_frame(obj):
     except Exception:
         return None
     m = obj.matrix_world
-    mid = m @ Vector((length / 2.0, t / 2.0, h / 2.0))
-    y = (m.to_3x3() @ Vector((0.0, 1.0, 0.0))).normalized()
+    # The middle of a curved wall is on its arc, facing square to it there
+    mid = hb_types.wall_point(obj, length / 2.0, t / 2.0, h / 2.0)
+    y = (hb_types.wall_point(obj, length / 2.0, t) - hb_types.wall_point(obj, length / 2.0, 0.0)).normalized()
     a = m @ Vector((0.0, t / 2.0, 0.0))
     b = m @ Vector((length, t / 2.0, 0.0))
     return mid, y, (a.x, a.y), (b.x, b.y), (m @ Vector((0.0, 0.0, h))).z, a.z

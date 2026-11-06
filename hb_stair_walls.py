@@ -162,7 +162,9 @@ def _wall_box(wall):
     except Exception:
         return None
     M = wall.matrix_world
-    poly = [(M @ Vector((x, y, 0.0))).to_2d() for x, y in ((0, 0), (L, 0), (L, t), (0, t))]
+    # Round both faces of a curved wall; its four corners otherwise
+    poly = ([p.to_2d() for p in hb_types.wall_face_points(wall, 0.0)]
+            + [p.to_2d() for p in reversed(hb_types.wall_face_points(wall, t))])
     z = M.translation.z
     return poly, z, z + h, t
 

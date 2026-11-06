@@ -274,10 +274,11 @@ def wall_faces(scene, level_uids):
             length, t = w.get_input('Length'), w.get_input('Thickness')
         except Exception:
             continue
-        m = obj.matrix_world
         for y in (0.0, t):
-            a, b = m @ Vector((0.0, y, 0.0)), m @ Vector((length, y, 0.0))
-            out.append((Vector((a.x, a.y)), Vector((b.x, b.y))))
+            # A piece per arc piece along a curved wall
+            pts = hb_types.wall_face_points(obj, y)
+            for a, b in zip(pts, pts[1:]):
+                out.append((Vector((a.x, a.y)), Vector((b.x, b.y))))
     return out
 
 

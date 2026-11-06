@@ -298,9 +298,12 @@ def _rebuild(scene, house, ground_uid):
     h = wall_height(house)
     for obj in auto_objects(scene, fl):
         _remove_wall(obj)
+    from . import hb_wall_graph
     for poly in outlines:
-        made = walls.build_wall_run(scene, poly, WALL_TYPE, level=hb_house.get_level(uid),
-                                    thickness=t, height=h, closed=True)
+        # A curved wall above stands on one curved stem wall, not its facets
+        corners, arcs = hb_wall_graph.collapse_arcs(poly)
+        made = walls.build_wall_run(scene, corners, WALL_TYPE, level=hb_house.get_level(uid),
+                                    thickness=t, height=h, closed=True, arcs=arcs)
         for obj in made:
             obj[AUTO_KEY] = True
             _concrete(obj)

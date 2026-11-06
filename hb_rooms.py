@@ -1219,10 +1219,11 @@ def _faces_round(stair, level):
             length, t = w.get_input('Length'), w.get_input('Thickness')
         except Exception:
             continue
-        m = wall.matrix_world
         for y in (0.0, t):
-            a, b = m @ Vector((0.0, y, 0.0)), m @ Vector((length, y, 0.0))
-            out.append(((inv @ a).to_2d(), (inv @ b).to_2d(), wall))
+            # A piece per arc piece along a curved wall
+            pts = hb_types.wall_face_points(wall, y)
+            for a, b in zip(pts, pts[1:]):
+                out.append(((inv @ a).to_2d(), (inv @ b).to_2d(), wall))
     return out
 
 
@@ -1860,7 +1861,7 @@ def _keeps(obj, room, poly):
         # A wall round the room runs along its outline for some way
         near = 0
         for k in range(1, 10):
-            q = m @ Vector((length * k / 10.0, thick / 2.0, 0.0))
+            q = hb_types.wall_point(obj, length * k / 10.0, thick / 2.0)
             if hb_wall_graph._dist_to_edges((q.x, q.y), poly) <= thick + 0.05:
                 near += 1
         return near >= 2

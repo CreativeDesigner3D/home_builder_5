@@ -799,11 +799,11 @@ def _outside_input(obj, wall, rooms):
     dormer front's or a bay's side's thickness is always inward."""
     if obj.get('WALL_TYPE') in hb_wall_graph.MODULE_WALL_TYPES:
         return REF_SIDE
-    from mathutils import Vector
-    m = obj.matrix_world
+    from . import hb_types
     t = wall.get_input('Thickness')
     mid = wall.get_input('Length') / 2.0
-    thick_side = m @ Vector((mid, t + 0.3, 0.0))
+    # Bent onto a curved wall's arc: its chord can run through the room
+    thick_side = hb_types.wall_point(obj, mid, t + 0.3)
     if any(hb_wall_graph.point_in_polygon((thick_side.x, thick_side.y), poly) for poly in rooms):
         return REF_SIDE
     return THICK_SIDE

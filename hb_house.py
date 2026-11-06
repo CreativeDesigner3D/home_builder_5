@@ -643,8 +643,9 @@ _ghost_handle = None
 
 
 def _wall_footprint(obj):
-    """The wall's four plan corners in world XY (square ends - miters are
-    not worth drawing in a ghost)."""
+    """The wall's outline in plan, world XY: its four corners (square ends
+    - miters are not worth drawing in a ghost), or round both faces of a
+    curved wall."""
     from . import hb_types  # hb_types imports this module
     wall = hb_types.GeoNodeWall(obj)
     if not wall.has_modifier():
@@ -656,6 +657,9 @@ def _wall_footprint(obj):
         return None
     if not length:
         return None
+    if hb_types.is_curved_wall(obj):
+        return (hb_types.wall_face_points(obj, 0.0)
+                + list(reversed(hb_types.wall_face_points(obj, thickness))))
     m = obj.matrix_world
     return [m @ Vector(p) for p in ((0, 0, 0), (length, 0, 0),
                                     (length, thickness, 0), (0, thickness, 0))]
@@ -685,9 +689,9 @@ def _draw_level_ghost():
         if not corners:
             continue
         pts = [Vector((c.x, c.y, z)) for c in corners]
-        for i in range(4):
+        for i in range(len(pts)):
             coords.append(pts[i])
-            coords.append(pts[(i + 1) % 4])
+            coords.append(pts[(i + 1) % len(pts)])
     if not coords:
         return
 
