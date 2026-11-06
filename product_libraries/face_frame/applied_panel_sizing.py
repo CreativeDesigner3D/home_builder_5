@@ -422,8 +422,9 @@ def apply_panel_x_frame(cab_obj, panel_obj, side):
     depth = panel_props.depth
     x0 = panel_props.left_stile_width
     x1 = width - panel_props.right_stile_width
-    z0 = panel_props.bottom_rail_width
-    z1 = height - panel_props.top_rail_width
+    top_w, bottom_w = _frame_rail_widths(panel_props)
+    z0 = bottom_w
+    z1 = height - top_w
     if x1 - x0 < _X_BAR_WIDTH or z1 - z0 < _X_BAR_WIDTH:
         return
 
@@ -1199,13 +1200,27 @@ def _manual_rail_widths(panel_props, rows):
     return out
 
 
+def _frame_rail_widths(panel_props):
+    """(top, bottom) rail widths the panel's frame is actually built
+    with. Rails render from the bay's own widths, which a user can
+    unlock and change apart from the panel-level values, so the rows
+    must be measured against those or the leftover lands in the
+    top row."""
+    panel_obj = panel_props.id_data
+    bays = _sorted_panel_bays(panel_obj) if panel_obj else []
+    if bays:
+        bay = bays[0].face_frame_bay
+        return bay.top_rail_width, bay.bottom_rail_width
+    return panel_props.top_rail_width, panel_props.bottom_rail_width
+
+
 def _manual_row_heights(panel_props, rows):
     """Effective bottom-up row opening heights for an explicit row
     count: rows flagged override hold their typed height, the rest
     share the remaining frame opening equally (auto-calculated)."""
     min_h = units.inch(1.0)
-    open_h = (panel_props.height - panel_props.top_rail_width
-              - panel_props.bottom_rail_width
+    top_w, bottom_w = _frame_rail_widths(panel_props)
+    open_h = (panel_props.height - top_w - bottom_w
               - sum(_manual_rail_widths(panel_props, rows)))
     entries = panel_props.panel_row_heights
     fixed = 0.0
