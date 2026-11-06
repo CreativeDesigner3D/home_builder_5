@@ -4213,11 +4213,14 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
         FALSE_FRONT get self.drawer_front_style. The exception is a false
         face frame end, whose fixed fronts stand in for door panels and so
         read the door pool (front_reads_door_pool). Other roles
-        (INSET_PANEL, structural parts, hardware) are skipped.
+        Inset panels take the door style's look (style_inset_panel);
+        structural parts and hardware are skipped.
         """
         from . import types_face_frame as _tff
 
         DOOR_ROLES = {'DOOR', 'PULLOUT_FRONT', 'DOOR_LOOK_FRONT'}
+        # Inset panels (paneled ends, panel backs) take the door style's
+        # look -- its inside profile and center -- on their own frame.
         DRAWER_ROLES = {'DRAWER_FRONT', 'FALSE_FRONT', 'TILT_OUT',
                         'DRAWER_LOOK_FRONT'}
 
@@ -4267,6 +4270,9 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
             if child.get('HB_DRAWER_LOOK_CARRIER'):
                 continue
             role = child.get('hb_part_role')
+            if role == 'INSET_PANEL':
+                style_inset_panel(child, door_ds)
+                continue
             if role not in DOOR_ROLES and role not in DRAWER_ROLES:
                 continue
             reads_door = (role in DOOR_ROLES
@@ -5078,6 +5084,136 @@ def _clear_static_door(front_obj):
     if cut is not None:
         cut.show_viewport = True
         cut.show_render = True
+
+
+INSET_PANEL_STYLED_TAG = 'HB_STYLED_INSET_PANEL'
+_FRAME_ROLES = ('LEFT_STILE', 'RIGHT_STILE', 'MID_STILE', 'TOP_RAIL',
+                'BOTTOM_RAIL', 'MID_RAIL')
+
+
+def _owning_cage(obj):
+    cur = obj.parent
+    while cur is not None and not cur.get('IS_FACE_FRAME_CABINET_CAGE'):
+        cur = cur.parent
+    return cur
+
+
+def _frame_thickness_for(panel_obj, cage):
+    """Thickness of the face frame around an inset panel, read off one
+    of its stiles / rails (the panel sits back in that depth)."""
+    from ... import hb_types
+    if cage is not None:
+        for obj in cage.children_recursive:
+            if obj.get('hb_part_role') not in _FRAME_ROLES:
+                continue
+            try:
+                th = hb_types.GeoNodeCutpart(obj).get_input('Thickness')
+            except Exception:
+                continue
+            if th and th > 0.0:
+                return th
+    return units.inch(0.75)
+
+
+def _clear_styled_inset_panel(panel_obj):
+    if INSET_PANEL_STYLED_TAG not in panel_obj:
+        return
+    del panel_obj[INSET_PANEL_STYLED_TAG]
+    if 'HB_STATIC_TEXTURED' in panel_obj:
+        del panel_obj['HB_STATIC_TEXTURED']
+    panel_obj.data.clear_geometry()
+    cut = _front_cutpart_mod(panel_obj)
+    if cut is not None:
+        cut.show_viewport = True
+        cut.show_render = True
+
+
+def style_inset_panel(panel_obj, door_style):
+    """Give an inset panel (paneled ends, panel backs, inset-panel
+    openings) the door style's look: the style's inside profile swept
+    around the opening as sticking against the face frame, and its
+    raised / grooved center when it has one. The frame members keep
+    their own widths. The cutpart stays the panel's size (its display
+    is hidden under the static mesh); a slab or mitered style, or one
+    with nothing to show, leaves the plain flat panel. Textured
+    (beadboard / shiplap) panels and mirror panels are left alone."""
+    from ... import hb_types
+    from ..common import door_builder
+    cage = _owning_cage(panel_obj)
+    if cage is not None and cage.get('HB_MIRROR_PANEL_FRONTS'):
+        _clear_styled_inset_panel(panel_obj)
+        return False
+    if (panel_obj.get('HB_STATIC_TEXTURED')
+            and INSET_PANEL_STYLED_TAG not in panel_obj):
+        return False
+    if (door_style is None or door_style.door_type == 'SLAB'
+            or not door_builder.USE_PYTHON_DOORS):
+        _clear_styled_inset_panel(panel_obj)
+        return False
+    part = hb_types.GeoNodeCutpart(panel_obj)
+    try:
+        length = part.get_input('Length')
+        width = part.get_input('Width')
+        p_th = part.get_input('Thickness')
+        mirror_y = part.get_input('Mirror Y')
+        mirror_z = part.get_input('Mirror Z')
+    except Exception:
+        return False
+    frame_th = _frame_thickness_for(panel_obj, cage)
+    if (not mirror_y or mirror_z or length <= 0.0 or width <= 0.0
+            or frame_th <= p_th):
+        _clear_styled_inset_panel(panel_obj)
+        return False
+    setback = frame_th - p_th          # panel face behind the frame face
+    pkind = style_options.panel_kind(door_style.front_panel)
+    if door_style.resolve_member_section(frame_th) is not None:
+        _clear_styled_inset_panel(panel_obj)
+        return False
+    secs = door_style.resolve_mesh_sections(frame_th, setback, pkind, None)
+    lr = (secs['inner_rail_section'] or secs['inner_section']
+          or secs['inner_stile_section'])
+    ls = (secs['inner_stile_section'] or secs['inner_section']
+          or secs['inner_rail_section'])
+    panel_sec = secs['panel_section']
+    grooves = secs['panel_grooves']
+    if lr is None and panel_sec is None and grooves is None:
+        _clear_styled_inset_panel(panel_obj)
+        return False
+    cell = dict(key='panel', x0=0.0, x1=width, z0=0.0, z1=length,
+                thickness=p_th, y_inset=setback)
+    verts, faces, slots = [], [], []
+    built = False
+    if panel_sec is not None:
+        built = door_builder._emit_raised_panel(verts, faces, slots, cell,
+                                                frame_th, panel_sec)
+    if not built and grooves is not None:
+        built = door_builder._emit_grooved_panel(verts, faces, slots,
+                                                 cell, frame_th, grooves)
+    if not built:
+        x0, x1, y0, y1, z0, z1 = 0.0, length, -width, 0.0, 0.0, p_th
+        verts.extend([(x0, y0, z0), (x1, y0, z0), (x1, y1, z0),
+                      (x0, y1, z0), (x0, y0, z1), (x1, y0, z1),
+                      (x1, y1, z1), (x0, y1, z1)])
+        faces.extend([(0, 3, 2, 1), (4, 5, 6, 7), (0, 1, 5, 4),
+                      (1, 2, 6, 5), (2, 3, 7, 6), (3, 0, 4, 7)])
+    if lr is not None:
+        door_builder._emit_strip_rings(verts, faces, slots, cell, frame_th,
+                                       lr, ls)
+    me = panel_obj.data
+    me.clear_geometry()
+    me.from_pydata(verts, [], faces)
+    attr = (me.attributes.get('material_index')
+            or me.attributes.new('material_index', 'INT', 'FACE'))
+    attr.data.foreach_set('value', [0] * len(faces))
+    me.update()
+    cut = _front_cutpart_mod(panel_obj)
+    if cut is not None:
+        cut.show_viewport = False
+        cut.show_render = False
+    # The material walk finishes a static panel through its mesh slot.
+    panel_obj['HB_STATIC_TEXTURED'] = True
+    panel_obj[INSET_PANEL_STYLED_TAG] = door_style.name
+    return True
 
 
 def _mirror_front_mesh_y_if_unmirrored(front_obj):

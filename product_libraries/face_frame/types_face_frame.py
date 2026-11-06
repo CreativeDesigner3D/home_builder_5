@@ -10123,8 +10123,8 @@ class FaceFrameCabinet(GeoNodeCage):
             # unmaterialed (rendered white). A parent recalc would walk
             # them, but a panel-scoped recalc (e.g. the panel dim writes
             # below) has no following parent walk. _apply_door_styles_to_
-            # fronts is a no-op on INSET_PANEL roles, so this only adds the
-            # finish. Re-stamped each reconcile to track a parent restyle.
+            # fronts gives the inset panels the door style's look and the
+            # material walk adds the finish. Re-stamped each reconcile to track a parent restyle.
             parent_style = self.obj.get('STYLE_NAME')
             if parent_style:
                 panel_obj['STYLE_NAME'] = parent_style
