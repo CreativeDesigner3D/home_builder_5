@@ -780,10 +780,6 @@ def _top_shape(shape):
 def _bay_fields(bay_obj, bp):
     index = bp.bay_index
     quick = _quick(bp, (
-        ((_menu("Change Bay", 'HOME_BUILDER_MT_face_frame_change_bay',
-                'cab_change_bay'), _has_bay_presets),
-         (_act("Equal Doors", 'hb_face_frame.set_equal_door_width', None,
-               'cab_equal_doors'), None)),
         ((_act("Insert Before", 'hb_face_frame.insert_bay',
                {'bay_index': index, 'direction': 'BEFORE'},
                'cab_insert_before'), None),
@@ -792,9 +788,11 @@ def _bay_fields(bay_obj, bp):
                'cab_insert_after'), None)),
         ((_act("Break Left", 'hb_face_frame.break_cabinet_left'), _several_bays),
          (_act("Break Right", 'hb_face_frame.break_cabinet_right'), _several_bays)),
-        ((_act("Finish Bay", 'hb_face_frame.finish_bay_prompts'), None),
+        ((_act("Equal Doors", 'hb_face_frame.set_equal_door_width', None,
+               'cab_equal_doors'), None),
          (_act("Flush Toe Kick", 'hb_face_frame.toggle_flush_toe_kick', None,
                'cab_flush_kick'), _is_type('BASE', 'TALL'))),
+        ((_act("Finish Bay", 'hb_face_frame.finish_bay_prompts'), None),),
     ))
     return (
         ('locked', 'width', "Width", {'unlock': 'unlock_width'}),
@@ -1095,6 +1093,9 @@ def blocks(context, item):
         _footer(out, 'hb_face_frame.cabinet_prompts')
     elif kind == 'bay':
         bp = bay_obj.face_frame_bay
+        # What the bay is built as, and a pick of another layout.
+        from . import bay_config
+        out.extend(bay_config.field_blocks(context, bay_obj))
         out.extend(options_panel.field_blocks(
             context, _bay_fields(bay_obj, bp), bp))
         _footer(out, 'hb_face_frame.bay_prompts')
