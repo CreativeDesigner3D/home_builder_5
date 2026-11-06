@@ -17450,6 +17450,25 @@ class UpperFaceFrameCabinet(FaceFrameCabinet):
             self.obj.location.z = scene.hb_face_frame.default_wall_cabinet_location
 
 
+class VanityFaceFrameCabinet(BaseFaceFrameCabinet):
+    """Base cabinet sized as a vanity: the room's vanity depth instead
+    of the base depth. The bay layout still comes from the library name.
+    """
+
+    def __init__(self):
+        super().__init__()
+        scene = bpy.context.scene
+        if hasattr(scene, 'hb_face_frame'):
+            self.default_depth = scene.hb_face_frame.vanity_cabinet_depth
+
+    def create(self, name="Base Cabinet", bay_qty=1):
+        self.create_cabinet_root(name)
+        # Built and re-wrapped as a plain base cabinet; only the default
+        # depth differs.
+        self.obj['CLASS_NAME'] = BaseFaceFrameCabinet.__name__
+        self.create_carcass(has_toe_kick=True, bay_qty=bay_qty)
+
+
 class FloatingVanityCabinet(FloatingBaseFaceFrameCabinet):
     """Floating vanity: a floating base built as a vanity.
 
@@ -17462,8 +17481,15 @@ class FloatingVanityCabinet(FloatingBaseFaceFrameCabinet):
 
     It places like any base cabinet - same sizes, same defaults - and
     comes in with the floating kick and the vanity construction already
-    on. The catalog's floor for one of these is a 20" box.
+    on, at the room's vanity depth. The catalog's floor for one of these
+    is a 20" box.
     """
+
+    def __init__(self):
+        super().__init__()
+        scene = bpy.context.scene
+        if hasattr(scene, 'hb_face_frame'):
+            self.default_depth = scene.hb_face_frame.vanity_cabinet_depth
 
     def create(self, name="Floating Vanity", bay_qty=1):
         super().create(name, bay_qty=bay_qty)
@@ -21811,6 +21837,9 @@ CABINET_NAME_DISPATCH = {
     "Base Drawer": BaseFaceFrameCabinet,
     "Floating Base Cabinet": FloatingBaseFaceFrameCabinet,
     "Floating Vanity": FloatingVanityCabinet,
+    "Special": VanityFaceFrameCabinet,
+    "Combination": VanityFaceFrameCabinet,
+    "Deluxe": VanityFaceFrameCabinet,
     "5 Drawer Dresser": FiveDrawerDresserCabinet,
     "6 Drawer Dresser": SixDrawerDresserCabinet,
     "Night Stand": NightStandFaceFrameCabinet,
