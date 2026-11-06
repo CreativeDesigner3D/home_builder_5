@@ -618,6 +618,21 @@ def _stack_on_countertop(context, root, base):
     return True
 
 
+def _match_corner_footprint(root, base):
+    """A corner stacked on a tall corner takes its footprint: size,
+    wing depths and the wall its back partition stands against, so the
+    two read as one unit."""
+    sp = root.hb_closet_starter
+    bsp = base.hb_closet_starter
+    with types_closets.suspend_recalc():
+        sp.width = bsp.width
+        sp.depth = bsp.depth
+        sp.l_left_depth = bsp.l_left_depth
+        sp.l_right_depth = bsp.l_right_depth
+        sp.l_back_width = bsp.l_back_width
+        sp.l_flip_partition = bsp.l_flip_partition
+
+
 def _stack_on_tall(context, root, span, base):
     """Fit a hanging starter that was placed on top of a tall starter:
     the run and every bay take the stack height, so the whole unit
@@ -745,6 +760,7 @@ class hb_closets_OT_place_starter(bpy.types.Operator,
                 size = float(scene_props.default_corner_closet_size)
             self._cabinet_width = size
             self._cabinet_depth = size
+            self._corner_free_size = (size, size)
             self.bay_qty = 1
         else:
             self._cabinet_width = scene_props.default_closet_width
@@ -1106,25 +1122,39 @@ class hb_closets_OT_place_starter(bpy.types.Operator,
 
     def _stack_target(self):
         """The base starter under the cursor, when a hanging starter is
-        being placed over one; else None."""
-        if (not self._is_hanging or getattr(self, '_is_corner', False)
-                or self.source_starter_name):
+        being placed over one; else None. An upper corner unit stacks
+        on a tall corner unit only, and a run only on a run."""
+        if not self._is_hanging or self.source_starter_name:
             return None
+        corner = bool(getattr(self, '_is_corner', False))
         obj = self.hit_object
         while obj is not None and not obj.get(types_closets.TAG_STARTER_CAGE):
             obj = obj.parent
         if obj is None or obj is self._preview_cage.obj:
             return None
         cls = types_closets.WRAP_CLASS_REGISTRY.get(obj.get('CLASS_NAME', ''))
-        if cls is None or getattr(cls, 'is_corner', False):
+        if cls is None or bool(getattr(cls, 'is_corner', False)) != corner:
+            return None
+        if corner and getattr(cls, 'is_filler', False):
             return None
         if cls.default_closet_type == 'TALL':
             if _stack_tall_span(bpy.context, obj) <= 0.0:
                 return None
             return obj
+        if corner:
+            return None
         if not cls.has_countertop or cls.default_closet_type != 'BASE':
             return None
         return obj
+
+    def _fit_corner_preview(self, width, depth):
+        """A corner's footprint is fixed, so the stack sets it directly:
+        the tall corner's when over one, the free size again off it."""
+        self._cabinet_width = width
+        self._cabinet_depth = depth
+        if self._preview_cage is not None:
+            self._preview_cage.set_input('Dim X', width)
+            self._preview_cage.set_input('Dim Y', depth)
 
     def _set_stack_base(self, context, base):
         name = base.name if base is not None else ""
@@ -1140,6 +1170,9 @@ class hb_closets_OT_place_starter(bpy.types.Operator,
             self._clear_stack_highlight()
             if self._preview_cage is not None:
                 self._preview_cage.set_input('Dim Z', self._cabinet_height)
+            free = getattr(self, '_corner_free_size', None)
+            if getattr(self, '_is_corner', False) and free is not None:
+                self._fit_corner_preview(*free)
         self._update_header(context)
         if context.area is not None:
             context.area.tag_redraw()
@@ -1172,7 +1205,11 @@ class hb_closets_OT_place_starter(bpy.types.Operator,
             cage_obj.location.z = (base.location.z
                                    + self._mount_z(context.scene.hb_closets))
             self._preview_cage.set_input('Dim Z', self._cabinet_height)
-        self._apply_width(base.hb_closet_starter.width, fill_mode=True)
+        if getattr(self, '_is_corner', False):
+            self._fit_corner_preview(base.hb_closet_starter.width,
+                                     base.hb_closet_starter.depth)
+        else:
+            self._apply_width(base.hb_closet_starter.width, fill_mode=True)
         self._place_on_front = abs(base.rotation_euler.z) < 1e-3
         self._gap_wall = None
         self._set_stack_base(context, base)
@@ -2069,6 +2106,8 @@ class hb_closets_OT_place_starter(bpy.types.Operator,
             if _stack_is_tall(base):
                 span = _stack_tall_span(context, base)
                 if span > 0.0:
+                    if getattr(self, '_is_corner', False):
+                        _match_corner_footprint(root, base)
                     _stack_on_tall(context, root, span, base)
             else:
                 _stack_on_countertop(context, root, base)
