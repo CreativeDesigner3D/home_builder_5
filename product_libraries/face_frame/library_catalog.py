@@ -341,6 +341,7 @@ OPTION_FORMS = (
     ("Finished Ends and Backs", 'draw_finished_ends_ui'),
     ("Pulls", 'draw_pulls_ui'),
     ("Drawer Boxes", 'draw_drawer_box_ui'),
+    ("Accessories", 'draw_accessories_ui'),
     ("Countertops & Backsplash", 'draw_countertop_ui'),
     ("Molding", 'draw_molding_ui'),
 )
@@ -1074,7 +1075,18 @@ def _front_manager(kind, pool_key):
     return spec
 
 
+def _accessory_blocks(context):
+    from . import accessory_place
+    return accessory_place.browse_blocks(context, 'options')
+
+
 OPTION_PAGES = {
+    # The catalog's accessories, browsed in the panel: a click adds one
+    # to the selected openings and drawers, or starts placing it.
+    'draw_accessories_ui': {
+        'kind': 'blocks',
+        'blocks': _accessory_blocks,
+    },
     # The commands sit straight under the list: a style has more fields
     # than fit on screen, and the brushes are what the list is reached
     # for. Order is what the list means -- the first style is the one

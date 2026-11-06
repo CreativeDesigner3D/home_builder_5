@@ -985,7 +985,7 @@ def _blocks(context):
     for label, method in form_sections(context):
         spec = pages.get(method)
         kind = spec.get('kind') if spec else None
-        if kind not in ('pool', 'form'):
+        if kind not in ('pool', 'form', 'blocks'):
             blocks.append(('form', (label, method)))
             continue
         expanded = section_expanded(context, method)
@@ -993,6 +993,13 @@ def _blocks(context):
         if expanded:
             if kind == 'pool':
                 inner = _pool_blocks(context, _pool_from_spec(spec))
+            elif kind == 'blocks':
+                # A section that lays itself out: spec['blocks'](context).
+                try:
+                    inner = list(spec['blocks'](context) or ())
+                except Exception as ex:
+                    print('Home Builder: %s failed: %s' % (label, ex))
+                    inner = []
             else:
                 inner = _form_blocks(context, spec, method)
             blocks.extend(('indent', b) for b in inner)

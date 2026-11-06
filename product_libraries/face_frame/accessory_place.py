@@ -1,11 +1,11 @@
-"""Accessories from the tool strip, and the Drawer page.
+"""Accessories in the viewport panel, and the Drawer page.
 
-One browser for every catalog accessory, cabinets and drawers alike: a
-search box and a section dropdown over a single list. With openings or
-drawers selected, OK adds the pick to them; with nothing selected it
-starts placing -- the opening under the cursor lights up green when the
-accessory fits it and red (with the reason) when it does not, and each
-click adds one, until Esc.
+The Options tab's Accessories section browses every catalog accessory,
+cabinets and drawers alike: a search field, the catalog's sections, a
+section's items. With openings or drawers selected, clicking one adds
+it to them; with nothing selected it starts placing -- the opening
+under the cursor lights up green when the accessory fits it and red
+(with the reason) when it does not, and each click adds one, until Esc.
 
 The catalog is the host application's (accessory_registry); what fits
 where is the opening accessory dialog's own rules (ops_cabinet), so the
@@ -29,11 +29,6 @@ from . import types_face_frame
 from .operators import ops_cabinet
 
 DRAWER_BOX_MENU = 'HOME_BUILDER_MT_face_frame_drawer_box_commands'
-TOOL_KEY = 'hb_face_frame_accessories'
-
-# Enum item lists must stay alive at module scope.
-_section_items = []
-
 
 # ---- What an accessory goes on ----------------------------------------------
 
@@ -107,146 +102,130 @@ def _valid_hosts(targets):
     return valid
 
 
-# ---- The browser --------------------------------------------------------------
+# ---- Browsing, in the viewport panel --------------------------------------
+# The Options tab's Accessories section and the Drawer page's Add
+# Accessory fold lay the catalog out with this: a search field, the
+# catalog's sections as rows, a section's items under it. The search and
+# the open section are the window manager's, so both places agree.
 
-def _targets(op):
-    return [o for o in (bpy.data.objects.get(n)
-                        for n in op.target_names.split('\n') if n)
-            if o is not None]
-
-
-def _section_enum(self, context):
-    _section_items.clear()
-    _section_items.append(('ALL', "All Sections", "Every section"))
-    valid = _valid_hosts(_targets(self))
-    for sec in accessory_registry.sections():
-        if any(it.get('host') in valid for it in accessory_registry.all_items()
-               if it.get('section') == sec):
-            _section_items.append((sec, sec, sec))
-    return _section_items
+def _go_section(name):
+    def go():
+        bpy.context.window_manager.hb_accessory_section = name
+    return go
 
 
-def _populate(op):
-    op.matches.clear()
-    valid = _valid_hosts(_targets(op))
-    tokens = op.filter_text.lower().split()
-    section = op.section_filter
-    for it in accessory_registry.all_items():
-        code = it.get('code')
-        if not code or it.get('host') not in valid:
-            continue
-        name = it.get('name', code)
-        sec = it.get('section', '')
-        grp = it.get('group', '')
-        if section not in ('', 'ALL') and sec != section:
-            continue
-        if tokens:
-            hay = " ".join((name, sec, grp, code)).lower()
-            if not all(tok in hay for tok in tokens):
-                continue
-        row = op.matches.add()
-        row.code = code
-        row.name = name
-        row.section = sec
-        row.group = grp
-        row.render_kind = ops_cabinet._geometry_kind(it)
-        mw = it.get('min_opening_w')
-        row.label = name if mw is None else "%s  (min %g\")" % (name, mw)
-    op.active_index = min(op.active_index, max(0, len(op.matches) - 1))
+def _clear_search():
+    bpy.context.window_manager.hb_accessory_search = ""
 
 
-def _search_update(self, context):
-    _populate(self)
+def _item_row(key, it, targets, names):
+    code = it.get('code')
+    mw = it.get('min_opening_w')
+    summary = code if not mw else '%s  %g"' % (code, mw)
+    dim = bool(targets) and not any(check_fit(t, it)[0] for t in targets)
+    return ('list_row', {
+        'key': '%s:item:%s' % (key, code),
+        'text': it.get('name', code),
+        'summary': summary,
+        'dim': dim,
+        'click': ('hb_face_frame.apply_accessory',
+                  {'code': code, 'target_names': names}),
+    })
 
 
-class hb_face_frame_OT_accessory_browser(bpy.types.Operator):
-    """Browse every accessory: add the pick to the selected openings and
-    drawers, or with nothing selected, click to place it"""
-    bl_idname = "hb_face_frame.accessory_browser"
-    bl_label = "Accessories"
+def browse_blocks(context, key, targets=None):
+    """The catalog as panel blocks. ``targets`` are the openings a click
+    adds to (the selection's when not given); with none, a click starts
+    placing."""
+    from ...operators import options_panel
+    wm = context.window_manager
+    if targets is None:
+        targets = _selected_targets(context)
+    names = "\n".join(t.name for t in targets)
+    valid = _valid_hosts(targets)
+    items = [it for it in accessory_registry.all_items()
+             if it.get('code') and it.get('host') in valid]
+    out = []
+    if not accessory_registry.available(*ops_cabinet._ALL_ACCESSORY_HOSTS):
+        return [('note', "No accessory catalog is loaded.")]
+    if targets:
+        out.append(('hint', "Click one to add it to the %d selected." %
+                    len(targets)))
+    else:
+        out.append(('hint', "Click one, then click where it goes."))
+    out.extend(options_panel.field_blocks(
+        context, (('text', 'hb_accessory_search', "Search"),), wm))
+    tokens = wm.hb_accessory_search.lower().split()
+    if tokens:
+        found = [it for it in items if all(
+            tok in " ".join((it.get('name', ''), it.get('section', ''),
+                             it.get('group', ''), it.get('code', ''))).lower()
+            for tok in tokens)]
+        out.append(('list_row', {'key': key + ':clear',
+                                 'text': "\u2039  Clear Search",
+                                 'summary': "%d found" % len(found),
+                                 'click': _clear_search}))
+        for it in found[:60]:
+            out.append(_item_row(key, it, targets, names))
+        if len(found) > 60:
+            out.append(('note', "Showing 60: narrow the search."))
+        if not found:
+            out.append(('note', "Nothing matches."))
+        return out
+    sections = [s for s in accessory_registry.sections()
+                if any(it.get('section') == s for it in items)]
+    section = wm.hb_accessory_section
+    if section not in sections and len(sections) == 1:
+        section = sections[0]
+    if section in sections:
+        if len(sections) > 1:
+            out.append(('list_row', {'key': key + ':back',
+                                     'text': "\u2039  All Sections",
+                                     'summary': section,
+                                     'click': _go_section("")}))
+        # Each group once, under its heading, in catalog order.
+        groups = {}
+        for it in items:
+            if it.get('section') == section:
+                groups.setdefault(it.get('group') or "", []).append(it)
+        for group, members in groups.items():
+            if group and len(groups) > 1:
+                out.append(('label', group))
+            out.extend(_item_row(key, it, targets, names) for it in members)
+        return out
+    for sec in sections:
+        count = sum(1 for it in items if it.get('section') == sec)
+        out.append(('list_row', {'key': '%s:sec:%s' % (key, sec),
+                                 'text': sec, 'summary': str(count),
+                                 'click': _go_section(sec)}))
+    if not sections:
+        out.append(('note', "Nothing in the catalog fits the selection."))
+    return out
+
+
+class hb_face_frame_OT_apply_accessory(bpy.types.Operator):
+    """Add this accessory to the selected openings and drawers, or with
+    nothing selected, click openings to place it"""
+    bl_idname = "hb_face_frame.apply_accessory"
+    bl_label = "Add Accessory"
     bl_options = {'REGISTER', 'UNDO'}
 
+    code: bpy.props.StringProperty(options={'HIDDEN'})  # type: ignore
     target_names: bpy.props.StringProperty(options={'HIDDEN', 'SKIP_SAVE'})  # type: ignore
-    filter_text: bpy.props.StringProperty(
-        name="Search", options={'TEXTEDIT_UPDATE', 'SKIP_SAVE'},
-        description="Filter by name, section, group or code",
-        update=_search_update)  # type: ignore
-    section_filter: bpy.props.EnumProperty(
-        name="Section", items=_section_enum, update=_search_update,
-        options={'SKIP_SAVE'})  # type: ignore
-    matches: bpy.props.CollectionProperty(type=ops_cabinet.AccessorySearchRow)  # type: ignore
-    active_index: bpy.props.IntProperty(default=0, options={'SKIP_SAVE'})  # type: ignore
-
-    @classmethod
-    def poll(cls, context):
-        return accessory_registry.available(*ops_cabinet._ALL_ACCESSORY_HOSTS)
-
-    def _picked(self):
-        if not len(self.matches):
-            return None, None
-        row = self.matches[max(0, min(self.active_index,
-                                      len(self.matches) - 1))]
-        return row.code, accessory_registry.find(row.code)
 
     def invoke(self, context, event):
-        if not self.target_names:
-            self.target_names = "\n".join(
-                t.name for t in _selected_targets(context))
-        _populate(self)
-        n = len(_targets(self))
-        return context.window_manager.invoke_props_dialog(
-            self, width=560,
-            confirm_text=("Add to %d Selected" % n) if n else "Place")
-
-    def check(self, context):
-        _populate(self)
-        return True
-
-    def draw(self, context):
-        layout = self.layout
-        targets = _targets(self)
-        if targets:
-            layout.label(text="Adds to the %d selected opening%s" % (
-                len(targets), "" if len(targets) == 1 else "s"), icon='INFO')
-        else:
-            layout.label(text="Pick one, then click the openings and "
-                              "drawers to add it to", icon='INFO')
-        head = layout.row(align=True)
-        head.prop(self, "filter_text", text="", icon='VIEWZOOM')
-        head.prop(self, "section_filter", text="")
-        if not len(self.matches):
-            layout.label(text="Nothing matches", icon='INFO')
-            return
-        layout.template_list("HB_UL_face_frame_accessory_search", "",
-                             self, "matches", self, "active_index", rows=12)
-        code, item = self._picked()
-        if item is None:
-            return
-        box = layout.box()
-        box.label(text="%s  (%s)" % (item.get('name', code), code))
-        if ops_cabinet._geometry_kind(item):
-            box.label(text="Modeled in the cabinet", icon='MESH_GRID')
-        else:
-            box.label(text="Called out on the drawings; not shown in 3D",
-                      icon='DOT')
-        mw = item.get('min_opening_w')
-        if mw:
-            box.label(text="Minimum opening width: %g\"" % mw)
-        for t in targets:
-            ok, why = check_fit(t, item)
-            if not ok:
-                box.label(text="%s: %s" % (t.name, why), icon='ERROR')
+        return self.execute(context)
 
     def execute(self, context):
-        if not len(self.matches):
-            _populate(self)         # run without the dialog
-        code, item = self._picked()
+        item = accessory_registry.find(self.code)
         if item is None:
             return {'CANCELLED'}
-        targets = _targets(self)
+        targets = [o for o in (bpy.data.objects.get(n)
+                               for n in self.target_names.split('\n') if n)
+                   if o is not None]
         if not targets:
-            _start_placing(context, code)
-            return {'FINISHED'}
+            _start_placing(context, self.code)
+            return {'CANCELLED'}     # each placed one is its own undo step
         added, skipped = 0, []
         for t in targets:
             ok, why = check_fit(t, item)
@@ -254,9 +233,9 @@ class hb_face_frame_OT_accessory_browser(bpy.types.Operator):
                 skipped.append(why)
                 continue
             if ops_cabinet._apply_accessory_choice(
-                    self, context, t, code, item, 0.0) == {'FINISHED'}:
+                    self, context, t, self.code, item, 0.0) == {'FINISHED'}:
                 added += 1
-        msg = "Added %s to %d" % (item.get('name', code), added)
+        msg = "Added %s to %d" % (item.get('name', self.code), added)
         if skipped:
             msg += "; %d skipped (%s)" % (len(skipped), skipped[0])
         self.report({'WARNING'} if skipped else {'INFO'}, msg)
@@ -596,16 +575,27 @@ def drawer_blocks(context, part_obj):
     if accessory_registry.available(*ops_cabinet._ALL_ACCESSORY_HOSTS):
         label = ("Add Accessory" if len(openings) <= 1
                  else "Add Accessory to %d Drawers" % len(openings))
-        out.append(('actions', ((label, 'hb_face_frame.accessory_browser',
-                                 {'target_names': "\n".join(
-                                     o.name for o in openings)}, None),)))
+        open_ = _add_open[0]
+        out.append(('section', (label, 'hb_drawer_add_accessory', open_,
+                                _toggle_add)))
+        if open_:
+            out.extend(('indent', b) for b in
+                       browse_blocks(context, 'drawer', openings))
     return out
+
+
+# The Drawer page's Add Accessory fold, open or not.
+_add_open = [False]
+
+
+def _toggle_add():
+    _add_open[0] = not _add_open[0]
 
 
 # ---- Registration -----------------------------------------------------------
 
 classes = (
-    hb_face_frame_OT_accessory_browser,
+    hb_face_frame_OT_apply_accessory,
     hb_face_frame_OT_place_accessory,
     hb_face_frame_OT_set_drawer_option,
     hb_face_frame_OT_remove_accessory_item,
@@ -615,25 +605,18 @@ classes = (
 def register():
     for cls in classes:
         bpy.utils.register_class(cls)
-    try:
-        from ...operators import room_palette
-        from ...hb_icons import icon_glyph
-        glyph = icon_glyph('cab_accessories', room_palette._g_furnish,
-                           size=16)
-        room_palette.register_tool(
-            TOOL_KEY, "Accessories", glyph,
-            hb_face_frame_OT_accessory_browser.bl_idname, group=2,
-            order=1000)
-    except Exception as ex:
-        print("Home Builder: no Accessories tool: %s" % ex)
+    wm = bpy.types.WindowManager
+    wm.hb_accessory_search = bpy.props.StringProperty(
+        name="Search", description="Find accessories by name, section, "
+        "group or code")
+    wm.hb_accessory_section = bpy.props.StringProperty(
+        name="Section", description="The catalog section being browsed")
 
 
 def unregister():
     _remove_handles()
-    try:
-        from ...operators import room_palette
-        room_palette.unregister_tool(TOOL_KEY)
-    except Exception:
-        pass
+    for name in ('hb_accessory_search', 'hb_accessory_section'):
+        if hasattr(bpy.types.WindowManager, name):
+            delattr(bpy.types.WindowManager, name)
     for cls in reversed(classes):
         bpy.utils.unregister_class(cls)
