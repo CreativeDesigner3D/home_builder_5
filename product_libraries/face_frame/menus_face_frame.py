@@ -284,6 +284,10 @@ class HOME_BUILDER_MT_face_frame_cabinet_commands(bpy.types.Menu):
                 layout.operator("hb_face_frame.remove_pipe_chase",
                                 text="Remove Pipe Chase", icon='X')
 
+        layout.separator()
+        layout.operator_menu_enum("hb_face_frame.add_steel_support", 'shape',
+                                  text="Add Steel Support", icon='MOD_LATTICE')
+
         _draw_visibility_items(layout, 'PRODUCT', "Cabinet")
 
         _ex_root = types_face_frame.find_cabinet_root(context.active_object)

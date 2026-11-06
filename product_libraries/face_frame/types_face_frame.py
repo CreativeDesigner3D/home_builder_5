@@ -22458,6 +22458,9 @@ def recalculate_face_frame_cabinet(obj):
             cabinet = _wrap_cabinet(root)
             cabinet.recalculate()
             _resize_seated_wood_tops(root)
+            # Steel supports position from the cabinet's faces.
+            from . import steel_support
+            steel_support.refit(root)
             _reapply_cabinet_style(root)
             # Round-top doors: carry a quarter / half circle door's
             # curve into the frame member above it, so the opening

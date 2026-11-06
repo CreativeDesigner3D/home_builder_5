@@ -16,6 +16,7 @@ from . import selected_card
 from . import selected_products
 from . import drill
 from . import accessory_place
+from . import steel_support
 
 NAMESPACE = "hb_face_frame"
 MENU_NAME = "Face Frame"
@@ -25,6 +26,7 @@ def register():
     props_hb_face_frame.register()
     appliance_panels.register()
     menus_face_frame.register()
+    steel_support.register()
     operators.register()
     ui_face_frame.register()
     dim_edit_overlay.register()
@@ -56,6 +58,7 @@ def unregister():
     dim_edit_overlay.unregister()
     ui_face_frame.unregister()
     operators.unregister()
+    steel_support.unregister()
     menus_face_frame.unregister()
     appliance_panels.unregister()
     props_hb_face_frame.unregister()

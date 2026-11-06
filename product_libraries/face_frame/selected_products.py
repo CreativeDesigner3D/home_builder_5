@@ -31,7 +31,8 @@ TAGS = (LEG_TAG, SHELF_TAG, END_SHELVES_TAG, MANTLE_TAG, VALANCE_TAG,
 WOOD_TOP_TAG = types_face_frame.WOOD_TOP_TAG
 MISC_PART_TAG = 'IS_FACE_FRAME_MISC_PART'
 DOOR_PART_TAG = 'IS_FACE_FRAME_DOOR_PART'
-PART_TAGS = (WOOD_TOP_TAG, MISC_PART_TAG, DOOR_PART_TAG)
+STEEL_SUPPORT_TAG = 'IS_STEEL_SUPPORT'
+PART_TAGS = (STEEL_SUPPORT_TAG, WOOD_TOP_TAG, MISC_PART_TAG, DOOR_PART_TAG)
 
 MISC_PART_SCHEMA = 'FF_MISC_PART'
 DOOR_PART_SCHEMA = 'FF_DOOR_PART'
@@ -564,9 +565,27 @@ def _register_part_schemas():
     })
 
 
+STEEL_SUPPORT_FIELDS = (
+    ('choices', 'shape', "", {'cols': 3}),
+    ('choices', 'exits', "Exits", {'cols': 2}),
+    ('distance', 'x_position', "Center From Left"),
+    ('distance', 'run_in', "Into Cabinet"),
+    ('distance', 'run_out', "Past Cabinet"),
+    ('distance', 'drop', "Drop Leg", {'when': lambda sp: sp.shape == 'L'}),
+    ('distance', 'span', "Span", {'when': lambda sp: sp.shape == 'U'}),
+    ('distance', 'top_offset', "Down From Top"),
+    ('distance', 'bar_width', "Bar Width"),
+    ('distance', 'thickness', "Thickness"),
+)
+
+
 def _part_blocks(context, tag, part):
     from ...operators import options_panel, prop_proxy, generic_page
-    if tag == WOOD_TOP_TAG:
+    if tag == STEEL_SUPPORT_TAG:
+        key, label, owner, fields = ('ff_steel_support', "Steel Support",
+                                     part.hb_steel_support,
+                                     STEEL_SUPPORT_FIELDS)
+    elif tag == WOOD_TOP_TAG:
         key, label, owner, fields = ('ff_wood_top', "Wood Top", part.wood_top,
                                      WOOD_TOP_FIELDS)
     elif tag == MISC_PART_TAG:
@@ -578,7 +597,9 @@ def _part_blocks(context, tag, part):
     _open_once(context, key)
     from . import selected_card
     out = [('head', (part.name, False, None))]
-    out.extend(selected_card.style_blocks(context, part, 'hb_style_section'))
+    if tag != STEEL_SUPPORT_TAG:
+        # Steel takes no cabinet style.
+        out.extend(selected_card.style_blocks(context, part, 'hb_style_section'))
     out.extend(options_panel.field_blocks(context, (
         ('group', key, label, {'icon': 'cab_parts', 'fields': fields}),
     ), owner))
