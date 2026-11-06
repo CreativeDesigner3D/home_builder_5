@@ -3431,6 +3431,24 @@ def arc_length(chord, arc):
     return radius_from_arc(chord, arc) * abs(arc)
 
 
+def wall_plan_point(wall_obj, x, y=0.0):
+    """World point of (x, y) in the wall's own straight frame, bent onto
+    its arc when it is curved."""
+    wall = hb_types.GeoNodeWall(wall_obj)
+    bx, by = hb_wall_graph.bend(x, y, wall.get_input('Length'),
+                                hb_types.wall_arc_angle(wall_obj))
+    return wall_obj.matrix_world @ Vector((bx, by, 0.0))
+
+
+def arc_midpoint(wall_obj):
+    """World point at the middle of a curved wall's reference arc, or None
+    for a straight wall."""
+    if not hb_types.is_curved_wall(wall_obj):
+        return None
+    length = hb_types.GeoNodeWall(wall_obj).get_input('Length')
+    return wall_plan_point(wall_obj, length / 2.0)
+
+
 def set_wall_arc(wall_obj, arc):
     """Bend a wall (0 straightens it) and re-cut the corners round it."""
     wall = hb_types.GeoNodeWall(wall_obj)
@@ -3463,10 +3481,12 @@ class home_builder_walls_OT_curve_wall(bpy.types.Operator):
                                  precision=4)  # type: ignore
     radius: bpy.props.FloatProperty(name="Radius", unit='LENGTH', min=0.0,
                                     precision=4)  # type: ignore
+    # A room's walls are drawn with their thickness on the outside, so
+    # Out (towards the thickness) is a negative arc and In a positive one
     side: bpy.props.EnumProperty(
         name="Bow Side",
-        items=(('OUT', "Out", "Bow away from the wall's thickness side"),
-               ('IN', "In", "Bow towards the wall's thickness side")),
+        items=(('OUT', "Out", "Bow out of the room, towards the wall's thickness side"),
+               ('IN', "In", "Bow into the room, away from the wall's thickness side")),
         default='OUT')  # type: ignore
 
     @classmethod
@@ -3480,7 +3500,7 @@ class home_builder_walls_OT_curve_wall(bpy.types.Operator):
 
     def _arc(self, context):
         chord = self._chord(context)
-        sign = 1.0 if self.side == 'OUT' else -1.0
+        sign = -1.0 if self.side == 'OUT' else 1.0
         if self.curve_by == 'BOW':
             return arc_from_bow(chord, sign * self.bow)
         if self.curve_by == 'RADIUS':
@@ -3490,7 +3510,7 @@ class home_builder_walls_OT_curve_wall(bpy.types.Operator):
     def invoke(self, context, event):
         chord = self._chord(context)
         arc = hb_types.wall_arc_angle(context.object)
-        self.side = 'OUT' if arc >= 0 else 'IN'
+        self.side = 'IN' if arc > 0 else 'OUT'
         if abs(arc) > 1e-5:
             self.curve_by = 'BOW'
             self.bow = abs(bow_from_arc(chord, arc))

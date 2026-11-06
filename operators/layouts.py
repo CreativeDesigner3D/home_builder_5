@@ -4224,6 +4224,15 @@ class home_builder_layouts_OT_generate_2d_plan(bpy.types.Operator):
             if ext is None:
                 ext = {'back': (0.0, length), 'front': (0.0, length)}
             base_z = wall_matrix.translation.z      # the wall's own level
+            # A curved wall: each segment is a strip of quads along its arc
+            from .. import hb_wall_graph
+            arc = hb_types.wall_arc_angle(wall_obj)
+
+            def plan_point(x, y):
+                bx, by = hb_wall_graph.bend(x, y, length, arc)
+                p = wall_matrix @ Vector((bx, by, 0))
+                p.z = base_z
+                return p
 
             # Create quad for each solid segment, the wall's ends as built,
             # straight at openings
@@ -4237,19 +4246,18 @@ class home_builder_layouts_OT_generate_2d_plan(bpy.types.Operator):
                 if abs(seg_end - length) < 0.001:
                     x1_inside, x1_outside = ext['back'][1], ext['front'][1]
 
-                p0 = wall_matrix @ Vector((x0_inside, 0, 0))
-                p1 = wall_matrix @ Vector((x1_inside, 0, 0))
-                p2 = wall_matrix @ Vector((x1_outside, thickness, 0))
-                p3 = wall_matrix @ Vector((x0_outside, thickness, 0))
-
-                for p in (p0, p1, p2, p3):
-                    p.z = base_z
-
-                v0 = bm.verts.new(p0)
-                v1 = bm.verts.new(p1)
-                v2 = bm.verts.new(p2)
-                v3 = bm.verts.new(p3)
-                bm.faces.new((v0, v1, v2, v3))
+                steps = 1
+                if arc and length > 0:
+                    span = abs(arc) * (seg_end - seg_start) / length
+                    steps = max(1, int(math.ceil(span / math.radians(3.0))))
+                inner = [bm.verts.new(plan_point(
+                    x0_inside + (x1_inside - x0_inside) * k / steps, 0.0))
+                    for k in range(steps + 1)]
+                outer = [bm.verts.new(plan_point(
+                    x0_outside + (x1_outside - x0_outside) * k / steps, thickness))
+                    for k in range(steps + 1)]
+                for k in range(steps):
+                    bm.faces.new((inner[k], inner[k + 1], outer[k + 1], outer[k]))
 
         # Merge overlapping vertices at corners for clean geometry
         bmesh.ops.remove_doubles(bm, verts=bm.verts, dist=0.001)

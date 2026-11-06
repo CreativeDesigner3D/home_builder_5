@@ -543,7 +543,8 @@ def ensure_wall_arc(node_group):
     so its reference line runs on a circular arc through (0, 0) and
     (Length, 0). Length stays the CHORD: the wall's end, its obj_x and
     everything chained to it don't move. Positive angles bow the wall
-    away from its body (to -Y), negative towards it. The body keeps its
+    away from its body (to -Y: into the room, as rooms are drawn with the
+    thickness outside), negative towards it. The body keeps its
     thickness radially, and x is spread evenly along the arc, so the end
     tangents turn -angle/2 at the start and +angle/2 at the end.
 

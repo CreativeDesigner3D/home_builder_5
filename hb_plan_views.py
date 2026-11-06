@@ -130,6 +130,10 @@ def house_bounds(scene, level=None):
             continue
         xs += [a.x, b.x]
         ys += [a.y, b.y]
+        mid = hb_walls.arc_midpoint(obj)        # a curved wall bows past its ends
+        if mid is not None:
+            xs.append(mid.x)
+            ys.append(mid.y)
     z = level.elevation if level is not None else 0.0
     if not xs:
         return Vector((0.0, 0.0, z)), (10.0, 10.0), z
