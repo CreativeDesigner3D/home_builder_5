@@ -75,6 +75,27 @@ def finish_new_parts():
 # ---------------------------------------------------------------------------
 TAG_STARTER_CAGE = 'IS_CLOSET_STARTER_CAGE'
 TAG_BAY_CAGE = 'IS_CLOSET_BAY_CAGE'
+
+# Name of the tall starter a hanging starter was stacked on.
+STACKED_ON_KEY = 'hb_stacked_on'
+
+
+def stands_on_starter(obj):
+    """True when a hanging starter still stands on the tall starter it
+    was stacked on: that starter exists and this one's bottom is at its
+    top (an accent shelf's worth of slack allowed). A stacked unit grows
+    up from the tall on a height change instead of hanging down into
+    it. Moved off the tall, it hangs from its top again."""
+    base = bpy.data.objects.get(obj.get(STACKED_ON_KEY, '') or '')
+    if base is None or base is obj or not base.get(TAG_STARTER_CAGE):
+        return False
+    try:
+        base_top = (base.matrix_world
+                    @ Vector((0.0, 0.0, base.hb_closet_starter.height))).z
+    except Exception:
+        return False
+    bottom = obj.matrix_world.translation.z
+    return -inch(0.05) <= bottom - base_top <= inch(1.5)
 TAG_OPENING_CAGE = 'IS_CLOSET_OPENING_CAGE'
 # A corner (L-shelf) unit has no bays or openings - it lays itself out
 # whole - but the Bays and Openings selection modes still show it: one
@@ -2725,7 +2746,8 @@ class ClosetStarter(GeoNodeCage):
             # origin - manual moves (G) are untouched.
             if sp.closet_type == 'HANGING':
                 last_h = self.obj.get('hb_last_height')
-                if last_h is not None and abs(last_h - sp.height) > 1e-9:
+                if (last_h is not None and abs(last_h - sp.height) > 1e-9
+                        and not stands_on_starter(self.obj)):
                     self.obj.location.z += (last_h - sp.height)
             self.obj['hb_last_height'] = sp.height
 

@@ -129,6 +129,11 @@ def inch_label(mm_value):
 # the prior library produced.
 PANEL_HEIGHT_MIN_MM = 83
 PANEL_HEIGHT_MAX_MM = 3027
+
+# A hanging unit stacked on a tall one is sized to leave this much
+# between its top and the top of the wall, so the pair can be stood up
+# and tipped into place on site.
+STACK_CEILING_CLEARANCE = inch(2.0)
 PANEL_HEIGHT_ITEMS = [
     (str(v), inch_label(v), inch_label(v))
     for v in range(PANEL_HEIGHT_MIN_MM, PANEL_HEIGHT_MAX_MM + 1, 32)

@@ -526,9 +526,9 @@ def _stack_top_of_base(base):
 def _stack_tall_span(context, base):
     """Run height for a hanging starter stacked on a tall starter: the
     tallest 32mm-system height between the tall's top and the top of
-    the wall it stands against (no wall: the default hanging bay
-    height), no taller than the system builds. 0.0 when there is not
-    room for the smallest panel."""
+    the wall it stands against, less the installation clearance (no
+    wall: the default hanging bay height), no taller than the system
+    builds. 0.0 when there is not room for the smallest panel."""
     bottom = (base.matrix_world
               @ Vector((0.0, 0.0, _stack_top_of_base(base)))).z
     wall = base.parent
@@ -540,8 +540,9 @@ def _stack_tall_span(context, base):
         except Exception:
             wall_h = 0.0
         if wall_h > 0.0:
-            room = (wall.matrix_world
-                    @ Vector((0.0, 0.0, wall_h))).z - bottom
+            room = ((wall.matrix_world
+                     @ Vector((0.0, 0.0, wall_h))).z - bottom
+                    - const.STACK_CEILING_CLEARANCE)
     if room is None:
         room = context.scene.hb_closets.hanging_panel_height
     span = const.snap_system_height_down(
@@ -617,7 +618,7 @@ def _stack_on_countertop(context, root, base):
     return True
 
 
-def _stack_on_tall(context, root, span):
+def _stack_on_tall(context, root, span, base):
     """Fit a hanging starter that was placed on top of a tall starter:
     the run and every bay take the stack height, so the whole unit
     stands on the tall's top (its accent shelf, when it has one). The
@@ -636,6 +637,9 @@ def _stack_on_tall(context, root, span):
             bp.unlock_height = True
             bp.height = span
     root['hb_last_height'] = span
+    # Remembered so later height edits keep it standing on the tall
+    # rather than hanging it down into it.
+    root[types_closets.STACKED_ON_KEY] = base.name
     types_closets.recalculate_closet_starter(root)
     root.location.z = z
 
@@ -2065,7 +2069,7 @@ class hb_closets_OT_place_starter(bpy.types.Operator,
             if _stack_is_tall(base):
                 span = _stack_tall_span(context, base)
                 if span > 0.0:
-                    _stack_on_tall(context, root, span)
+                    _stack_on_tall(context, root, span, base)
             else:
                 _stack_on_countertop(context, root, base)
 
