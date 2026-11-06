@@ -1021,7 +1021,9 @@ class PlaceCabinetBase(WallObjectPlacementMixin):
             return
         if getattr(self, '_placement_dim_handle', None) is None:
             return
-        if self.selected_wall and not self.free_standing:
+        if self.on_curved_wall():
+            specs = []
+        elif self.selected_wall and not self.free_standing:
             specs = self._dim_specs_on_wall(context)
         else:
             specs = self._dim_specs_free(context)
@@ -1276,6 +1278,18 @@ class PlaceCabinetBase(WallObjectPlacementMixin):
             wall_length = wall.get_input('Length')
             wall_thickness = wall.get_input('Thickness')
             
+            if hb_types.is_curved_wall(obj):
+                if self.is_corner_cabinet():
+                    continue
+                from ....operators import walls as hb_walls
+                station, off = hb_walls.curved_wall_station(obj, floor_point)
+                distance = abs(off - wall_thickness / 2)
+                if 0.0 < station < wall_length and distance < nearest_distance:
+                    nearest_distance = distance
+                    nearest_wall = obj
+                    self.hit_location = Vector((floor_point.x, floor_point.y, 0))
+                continue
+
             # Get wall start and end points in world space (at wall centerline)
             wall_matrix = obj.matrix_world
             local_start = Vector((0, wall_thickness / 2, 0))
@@ -1489,6 +1503,54 @@ class PlaceCabinetBase(WallObjectPlacementMixin):
             fillers.append(self.create_corner_filler(
                 context, wall_thickness, self.gap_right_boundary, False))
         return fillers
+
+    def on_curved_wall(self):
+        return (self.selected_wall is not None and not self.free_standing
+                and hb_types.is_curved_wall(self.selected_wall))
+
+    def set_position_on_curved_wall(self, context):
+        """Stand the preview square to a curved wall where the cursor is,
+        butted up to what already stands on the arc and to the wall's
+        ends (face frame's arc rules). A row fans along the arc from the
+        first cabinet, which the preview shows; the cabinets keep their
+        width, and offsets are straight-wall ideas."""
+        from ....operators import walls as hb_walls
+        from ...face_frame.operators.ops_placement import _curved_wall_station
+        wall_obj = self.selected_wall
+        cage = self.preview_cage.obj
+        if cage.parent is not wall_obj:
+            cage.parent = wall_obj
+            cage.matrix_parent_inverse.identity()
+        self.place_on_front = True
+        self.left_offset = None
+        self.right_offset = None
+        self.position_locked = False
+        self.snap_cabinet = None
+        self.snap_side = None
+        self.center_snap_state = None
+        width = self.individual_cabinet_width
+        depth = self.get_cabinet_depth(context)
+        z = (self.get_cabinet_z_location(context) if self.keeps_natural_z()
+             else 0.0)
+        height = self.preview_cage.get_input('Dim Z')
+        unit = hb_walls.curved_wall_half_span(wall_obj, width, depth)
+        half = unit * self.cabinet_quantity
+        station, _off = hb_walls.curved_wall_station(wall_obj, self.hit_location)
+        station = _curved_wall_station(wall_obj, station, half, z, height, (cage,))
+        self.arc_first_station = station - half + unit
+        self.arc_unit = unit
+        loc, rot = hb_walls.curved_wall_pose(wall_obj, self.arc_first_station, width)
+        cage.location = (loc.x, loc.y, z)
+        cage.rotation_euler = (0.0, 0.0, rot)
+        self.update_dimensions(context)
+
+    def curved_wall_pose(self, index):
+        """Wall-local (location, rotation z) of cabinet `index` of the row
+        set_position_on_curved_wall laid along the arc."""
+        from ....operators import walls as hb_walls
+        station = self.arc_first_station + 2.0 * self.arc_unit * index
+        return hb_walls.curved_wall_pose(self.selected_wall, station,
+                                         self.individual_cabinet_width)
 
     def set_position_on_wall(self, context):
         """Position preview cage on the selected wall."""
@@ -2018,7 +2080,11 @@ class PlaceCabinetBase(WallObjectPlacementMixin):
                 cabinet.obj.location.z = z_loc
                 
                 is_corner = self.is_corner_cabinet()
-                if is_corner and self.corner_right_side:
+                if self.on_curved_wall():
+                    loc, rot = self.curved_wall_pose(i)
+                    cabinet.obj.location.x, cabinet.obj.location.y = loc.x, loc.y
+                    cabinet.obj.rotation_euler = (0, 0, rot)
+                elif is_corner and self.corner_right_side:
                     cabinet.obj.location.x = self.wall_length
                     cabinet.obj.location.y = 0
                     cabinet.obj.rotation_euler = (0, 0, math.radians(-90))
@@ -2041,7 +2107,8 @@ class PlaceCabinetBase(WallObjectPlacementMixin):
 
             # The corner fillers the run reaches, styled and shown like
             # the cabinets beside them.
-            self.placed_fillers = self.create_corner_fillers(context, wall_thickness)
+            if not self.on_curved_wall():
+                self.placed_fillers = self.create_corner_fillers(context, wall_thickness)
         else:
             # Floor placement (free or snapped)
 
@@ -2263,7 +2330,11 @@ class PlaceCabinetBase(WallObjectPlacementMixin):
 
         # Check if we're over a wall (or a child of a wall like a window)
         self.selected_wall = None
-        if self.hit_object:
+        curved = getattr(self, 'curved_wall_hit', None)
+        if curved is not None and not self.is_corner_cabinet():
+            self.selected_wall = curved
+            self.wall_length = hb_types.GeoNodeWall(curved).get_input('Length')
+        elif self.hit_object:
             # Walk up parent hierarchy to find wall
             current = self.hit_object
             while current:
@@ -2304,6 +2375,8 @@ class PlaceCabinetBase(WallObjectPlacementMixin):
             target = self.facing_target()
             if target is not None:
                 self.set_position_facing(context, target)
+            elif self.on_curved_wall():
+                self.set_position_on_curved_wall(context)
             elif (self.selected_wall and self.is_quarter_turned()
                   and not self.is_corner_cabinet()):
                 self.set_position_peninsula(context)
@@ -2538,8 +2611,11 @@ class hb_frameless_OT_duplicate_cabinet(bpy.types.Operator, PlaceCabinetBase):
             new.matrix_parent_inverse.identity()
             new.location.z = self.get_cabinet_z_location(context)
             is_corner = self.is_corner_cabinet()
-            if is_corner and self.corner_right_side:
-                new.location.x, new.location.y = self.wall_length, 0.0
+            if self.on_curved_wall():
+                loc, rot = self.curved_wall_pose(0)
+                new.location.x, new.location.y = loc.x, loc.y
+                new.rotation_euler = (0, 0, rot)
+            elif is_corner and self.corner_right_side:
                 new.rotation_euler = (0, 0, math.radians(-90))
             elif is_corner or self.place_on_front:
                 new.location.x, new.location.y = self.placement_x, 0.0
@@ -2548,8 +2624,9 @@ class hb_frameless_OT_duplicate_cabinet(bpy.types.Operator, PlaceCabinetBase):
                 new.location.x = self.placement_x + width
                 new.location.y = wall_thickness
                 new.rotation_euler = (0, 0, math.pi)
-            self.placed_fillers = self.create_corner_fillers(
-                context, wall_thickness)
+            if not self.on_curved_wall():
+                self.placed_fillers = self.create_corner_fillers(
+                    context, wall_thickness)
         else:
             new.parent = None
             new.matrix_parent_inverse.identity()

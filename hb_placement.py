@@ -310,12 +310,15 @@ class PlacementMixin:
             event.mouse_y - self.region.y
         ))
         hb_snap.main(self, event.ctrl, context)
-        # Nothing is placed on a curved wall yet - everything that hangs on
-        # a wall works along a straight one - so a curved wall under the
-        # cursor is floor: cabinets go down free-standing where it is.
+        # Most of what hangs on a wall works along a straight one, so a
+        # curved wall under the cursor reads as floor - the product goes
+        # down free-standing where it is - unless the operator places onto
+        # arcs itself: it finds the wall in curved_wall_hit.
         from . import hb_types
         hit = getattr(self, 'hit_object', None)
+        self.curved_wall_hit = None
         if hit is not None and hit.get('IS_WALL_BP') and hb_types.is_curved_wall(hit):
+            self.curved_wall_hit = hit
             self.hit_object = None
             if self.hit_location is not None:
                 self.hit_location = Vector((self.hit_location[0],

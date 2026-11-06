@@ -114,6 +114,68 @@ def _is_face_frame_carcass(obj):
     return obj.face_frame_cabinet.cabinet_type != 'PANEL'
 
 
+ARC_TOUCH = units.inch(1.0 / 16.0)
+
+
+def _on_curved_wall(obj):
+    parent = obj.parent
+    return (parent is not None and parent.get('IS_WALL_BP')
+            and hb_types.is_curved_wall(parent))
+
+
+def _arc_span(obj):
+    """(lo, hi) stations a box standing on its curved parent wall takes
+    along it (see walls.curved_wall_half_span), or None."""
+    from ...operators import walls as hb_walls
+    wall = obj.parent
+    try:
+        cage = hb_types.GeoNodeCage(obj)
+        w = cage.get_input('Dim X')
+        d = abs(cage.get_input('Dim Y'))
+    except Exception:
+        return None
+    if not w:
+        return None
+    back = (wall.matrix_world @ obj.matrix_parent_inverse
+            @ obj.matrix_basis @ Vector((w / 2.0, 0.0, 0.0)))
+    centre, _off = hb_walls.curved_wall_station(wall, back)
+    half = hb_walls.curved_wall_half_span(wall, w, d)
+    return centre - half, centre + half
+
+
+def _arc_side_exposure(cab_obj, side):
+    """_side_exposure on a curved wall: cabinets there fan along the arc,
+    so a side is covered when a neighbour's run of stations meets its
+    own (their back or front corners touch), or at the wall's ends."""
+    span = _arc_span(cab_obj)
+    if span is None:
+        return ('EXPOSED', False, False)
+    edge = span[0] if side == 'left' else span[1]
+    wall_length = _wall_length(cab_obj.parent)
+    if edge <= ARC_TOUCH or (wall_length is not None
+                             and edge >= wall_length - ARC_TOUCH):
+        return ('UNEXPOSED', False, True)
+    z0 = cab_obj.location.z
+    z1 = z0 + cab_obj.face_frame_cabinet.height
+    state = 'EXPOSED'
+    for sib in cab_obj.parent.children:
+        if sib is cab_obj or not _is_face_frame_carcass(sib):
+            continue
+        other = _arc_span(sib)
+        if other is None:
+            continue
+        if abs((other[1] if side == 'left' else other[0]) - edge) > ARC_TOUCH:
+            continue
+        s0 = sib.location.z
+        s1 = s0 + sib.face_frame_cabinet.height
+        if s1 <= z0 + EPS or s0 >= z1 - EPS:
+            continue
+        if s0 <= z0 + EPS and s1 >= z1 - EPS:
+            return ('UNEXPOSED', False, False)
+        state = 'PARTIAL'
+    return (state, False, False)
+
+
 def _neighbor_xspan(obj):
     """(x_min, x_max) in parent-wall local space, or None if obj is
     neither a face-frame carcass cabinet nor an appliance. Cabinets and
@@ -1016,6 +1078,9 @@ def _side_exposure(cab_obj, side):
             return ('UNEXPOSED', False, False)
         return ('EXPOSED', False, False)
 
+    if _on_curved_wall(cab_obj):
+        return _arc_side_exposure(cab_obj, side)
+
     cab = cab_obj.face_frame_cabinet
     cab_x = cab_obj.location.x
     cab_z = cab_obj.location.z
@@ -1316,6 +1381,20 @@ def _find_immediate_face_frame_neighbors(cab_obj):
     """
     if cab_obj.parent is None:
         return (None, None)
+    if _on_curved_wall(cab_obj):
+        span = _arc_span(cab_obj)
+        left = right = None
+        for sib in (cab_obj.parent.children if span else ()):
+            if sib is cab_obj or not _is_face_frame_carcass(sib):
+                continue
+            other = _arc_span(sib)
+            if other is None:
+                continue
+            if abs(other[1] - span[0]) <= ARC_TOUCH:
+                left = sib
+            elif abs(other[0] - span[1]) <= ARC_TOUCH:
+                right = sib
+        return (left, right)
     cab_x = cab_obj.location.x
     cab_w = cab_obj.face_frame_cabinet.width
     left = None

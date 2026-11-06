@@ -608,12 +608,74 @@ def _detect_wall(op, context):
     The fallback exists so cursor flicker on wall surfaces (which
     causes raycasts to occasionally miss the wall) doesn't kick the
     cabinet off the wall mid-placement.
+
+    A curved wall is only found for an operator that places onto arcs
+    (PLACES_ON_CURVED_WALLS); for the rest it is floor.
     """
+    curved = getattr(op, 'curved_wall_hit', None)
+    if curved is not None and getattr(op, 'PLACES_ON_CURVED_WALLS', False):
+        return curved
     if op.hit_object is not None:
         wall = _find_wall_root(op.hit_object)
         if wall is not None:
             return wall
     return _find_nearest_wall_from_cursor(op, context)
+
+
+_ARC_SNAP_DISTANCE = units.inch(4.0)
+
+
+def _curved_wall_station(wall, station, half, z, height, exclude):
+    """Station on a curved wall for a cabinet taking `half` either side
+    of it: kept on the wall, pulled to its ends when close, and butted
+    up to the products already standing on the arc at its height - each
+    measured the same way, so fanned neighbours meet at their back
+    corners (bowed into the room) or front corners (bowed away). Where
+    the cursor is over a neighbour it goes to the nearer free side."""
+    from ....operators import walls as hb_walls
+    length = hb_types.GeoNodeWall(wall).get_input('Length')
+    lo, hi = half, length - half
+    if hi <= lo:
+        return length / 2.0
+    spans = []
+    for child in wall.children:
+        if child in exclude:
+            continue
+        try:
+            cage = hb_types.GeoNodeCage(child)
+            w = cage.get_input('Dim X')
+            d = abs(cage.get_input('Dim Y'))
+            h = cage.get_input('Dim Z')
+        except Exception:
+            continue
+        if not w or child.location.z >= z + height - 1e-4                 or child.location.z + h <= z + 1e-4:
+            continue
+        back = (wall.matrix_world @ child.matrix_parent_inverse
+                @ child.matrix_basis @ Vector((w / 2.0, 0.0, 0.0)))
+        centre, _off = hb_walls.curved_wall_station(wall, back)
+        spans.append((centre, hb_walls.curved_wall_half_span(wall, w, d)))
+    s = min(max(station, lo), hi)
+    # Stations left free between the neighbours (touching is allowed);
+    # with none - the arc is full - the cabinet follows the cursor.
+    free = []
+    start = lo
+    for a, b in sorted((c - half - o, c + half + o) for c, o in spans):
+        if a > start:
+            free.append((start, min(a, hi)))
+        start = max(start, b)
+        if start > hi:
+            break
+    if start <= hi:
+        free.append((start, hi))
+    if not free:
+        return s
+    a, b = min(free, key=lambda ab: abs(min(max(s, ab[0]), ab[1]) - s))
+    s = min(max(s, a), b)
+    if s - a < _ARC_SNAP_DISTANCE:
+        s = a
+    elif b - s < _ARC_SNAP_DISTANCE:
+        s = b
+    return s
 
 
 def _find_nearest_wall_from_cursor(op, context):
@@ -646,6 +708,7 @@ def _find_nearest_wall_from_cursor(op, context):
     cursor_2d = Vector((floor_point.x, floor_point.y))
     nearest_wall = None
     nearest_distance = _WALL_SNAP_DISTANCE
+    on_arcs = getattr(op, 'PLACES_ON_CURVED_WALLS', False)
 
     for obj in context.scene.objects:
         if 'IS_WALL_BP' not in obj:
@@ -660,6 +723,19 @@ def _find_nearest_wall_from_cursor(op, context):
             wall_length = wall.get_input('Length')
             wall_thickness = wall.get_input('Thickness')
         except Exception:
+            continue
+
+        if hb_types.is_curved_wall(obj):
+            # Measured to the arc, not its chord
+            if not on_arcs:
+                continue
+            from ....operators import walls as hb_walls
+            station, off = hb_walls.curved_wall_station(obj, floor_point)
+            distance = abs(off - wall_thickness / 2)
+            if 0.0 < station < wall_length and distance < nearest_distance:
+                nearest_distance = distance
+                nearest_wall = obj
+                op.hit_location = Vector((floor_point.x, floor_point.y, 0))
             continue
 
         wall_matrix = obj.matrix_world
@@ -1672,6 +1748,8 @@ def _detect_blind_corner_neighbor(cab_obj, allow_configured=False):
     wall = cab_obj.parent
     if wall is None or 'IS_WALL_BP' not in wall:
         return None
+    if hb_types.is_curved_wall(wall):
+        return None             # an arc has no square corners on it
     try:
         wall_geo = hb_types.GeoNodeWall(wall)
         wall_length = wall_geo.get_input('Length')
@@ -2269,6 +2347,7 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
     """Modal: cursor drags a face-frame preview cage, click to commit."""
     bl_idname = "hb_face_frame.place_cabinet"
     bl_label = "Place Face Frame Cabinet"
+    PLACES_ON_CURVED_WALLS = True
     bl_description = (
         "Place a face frame cabinet on a wall or on the floor. "
         "Up/Down arrows adjust bay quantity, Left/Right arrows set "
@@ -3153,13 +3232,16 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
                 and corner_obj is not self._preview_cage.obj):
             arm_wall = _wall_behind_corner_snap(
                 self, context, corner_obj, corner_side, self._cabinet_width)
-            if arm_wall is not None:
+            if arm_wall is not None and not hb_types.is_curved_wall(arm_wall):
                 self._position_on_wall(context, arm_wall)
             else:
                 self._position_free(context)
             return
 
         wall = _detect_wall(self, context)
+        if wall is not None and hb_types.is_curved_wall(wall):
+            self._position_on_curved_wall(context, wall)
+            return
         if wall is not None:
             # Quarter-turn R rotation + wall -> peninsula: the cabinet's
             # side goes against the wall and the run projects into the
@@ -3314,6 +3396,52 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
         self._right_offset = None
         self._top_target = (cab, width, depth, loc.copy())
         self._placement_dim_specs = self._build_dim_specs_free(context)
+
+    def _position_on_curved_wall(self, context, wall):
+        """Stand the cage square to a curved wall where the cursor is,
+        parented to it, butted up to what already stands on the arc and
+        to the wall's ends. The cabinet keeps its width: there is no gap
+        to fill along an arc, and offsets and peninsulas are straight-
+        wall ideas."""
+        from ....operators import walls as hb_walls
+        cage_obj = self._preview_cage.obj
+        if getattr(self, '_corner_sink_snap', None) is not None:
+            self._corner_sink_snap = None
+        if self._gap_wall is not None or self._position_locked:
+            self._gap_wall = None
+            self._left_offset = None
+            self._right_offset = None
+            self._position_locked = False
+        self._center_snap_state = None
+        self._cabinet_snap_side = None
+        self._place_on_front = True
+        if self._fill_mode:
+            scene_props = context.scene.hb_face_frame
+            default_w = (self._source_obj.face_frame_cabinet.width
+                         if self._source_obj is not None
+                         else scene_props.default_cabinet_width)
+            self._apply_width(default_w, fill_mode=True)
+            self._update_header(context)
+
+        if cage_obj.parent is not wall:
+            cage_obj.parent = wall
+            cage_obj.matrix_parent_inverse.identity()
+
+        width = self._cabinet_width
+        depth = abs(self._preview_cage.get_input('Dim Y'))
+        height = self._preview_cage.get_input('Dim Z')
+        z = cage_obj.location.z
+        half = hb_walls.curved_wall_half_span(wall, width, depth)
+        station, _off = hb_walls.curved_wall_station(wall, self.hit_location)
+        station = _curved_wall_station(
+            wall, station, half, z, height,
+            self._placement_exclusions(cage_obj))
+        loc, rot = hb_walls.curved_wall_pose(wall, station, width)
+        cage_obj.location = (loc.x, loc.y, z)
+        cage_obj.rotation_euler = (0.0, 0.0, rot)
+        self._placement_dim_specs = []
+        if context.area is not None:
+            context.area.tag_redraw()
 
     def _position_on_wall(self, context, wall):
         """Parent the cage to the wall and fill the available gap.

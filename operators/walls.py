@@ -3449,6 +3449,64 @@ def arc_midpoint(wall_obj):
     return wall_plan_point(wall_obj, length / 2.0)
 
 
+def curved_wall_station(wall_obj, world_point):
+    """(x, y) of a world point against a curved wall: x the station along
+    its chord (0..Length) of the arc point straight out from the circle's
+    centre, y how far off the arc it is (+ toward the thickness)."""
+    length = hb_types.GeoNodeWall(wall_obj).get_input('Length')
+    arc = hb_types.wall_arc_angle(wall_obj)
+    p = wall_obj.matrix_world.inverted() @ Vector(world_point)
+    if abs(arc) < 1e-5 or length < 1e-9:
+        return min(max(p.x, 0.0), length), p.y
+    r = length / (2.0 * math.sin(arc / 2.0))
+    dx, dy = p.x - length / 2.0, p.y - r * math.cos(arc / 2.0)
+    rho = math.hypot(dx, dy)
+    if r > 0.0:
+        phi, y = math.atan2(dx, -dy), r - rho
+    else:
+        phi, y = math.atan2(-dx, dy), r + rho
+    x = length * (phi / arc + 0.5)
+    return min(max(x, 0.0), length), y
+
+
+def curved_wall_pose(wall_obj, x, width):
+    """Wall-local (location, rotation z) of a box `width` wide - origin
+    at its back left, depth toward -Y - standing square to a curved wall
+    with its back centre at station x. Where the wall bows into the room
+    its back touches the face at its middle; where it bows away, at its
+    two back corners."""
+    length = hb_types.GeoNodeWall(wall_obj).get_input('Length')
+    arc = hb_types.wall_arc_angle(wall_obj)
+    phi = arc * (x / length - 0.5) if length > 1e-9 else 0.0
+    px, py = hb_wall_graph.bend(x, 0.0, length, arc)
+    tangent = Vector((math.cos(phi), math.sin(phi), 0.0))
+    normal = Vector((math.sin(phi), -math.cos(phi), 0.0))     # into the room
+    half = width / 2.0
+    back = 0.0
+    if arc < 0.0:
+        radius = radius_from_arc(length, arc)
+        back = radius - math.sqrt(max(radius * radius - half * half, 0.0))
+    return Vector((px, py, 0.0)) + normal * back - tangent * half, phi
+
+
+def curved_wall_half_span(wall_obj, width, depth):
+    """Half the run of stations a box `width` x `depth` takes along a
+    curved wall: set by its back corners where the wall bows into the
+    room, by its front corners where it bows away (they close up)."""
+    length = hb_types.GeoNodeWall(wall_obj).get_input('Length')
+    arc = hb_types.wall_arc_angle(wall_obj)
+    if abs(arc) < 1e-5:
+        return width / 2.0
+    radius = radius_from_arc(length, arc)
+    half = width / 2.0
+    if arc > 0.0:
+        dphi = math.atan2(half, radius)
+    else:
+        inner = math.sqrt(max(radius * radius - half * half, 0.0)) - depth
+        dphi = math.atan2(half, inner) if inner > 1e-6 else math.pi / 2.0
+    return length * dphi / abs(arc)
+
+
 def set_wall_arc(wall_obj, arc):
     """Bend a wall (0 straightens it) and re-cut the corners round it."""
     wall = hb_types.GeoNodeWall(wall_obj)
