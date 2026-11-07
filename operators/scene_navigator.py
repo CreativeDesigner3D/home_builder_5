@@ -85,8 +85,12 @@ PANEL_HEADER_HEIGHT   = 26
 ACTION_BTN_SIZE       = 18
 ACTION_BTN_GAP        = 4
 ACTION_BTN_RIGHT_PAD  = 5
-NEW_ROOM_BTN_HEIGHT   = 26      # a room action button, under the list
-NEW_ROOM_GAP          = 8
+NEW_ROOM_GAP          = 8       # list to the room action chips
+# Room actions: compact chips under the list, as many to a row as fit.
+ROOM_ACTION_HEIGHT    = 20
+ROOM_ACTION_PAD       = 8       # text to the chip's edge
+ROOM_ACTION_GAP       = 4
+ROOM_ACTION_FONT      = 10
 # The + NEW chip a section action draws in its header -- the same chip
 # the Options tab's pool headers carry.
 NEW_CHIP_HEIGHT       = 16
@@ -683,7 +687,6 @@ def _build_layout(region, area, current_scene_name,
     section_hdr_h = SECTION_HEADER_HEIGHT * s
     row_h = ROW_HEIGHT * s
     new_room_gap = NEW_ROOM_GAP * s
-    new_room_h = NEW_ROOM_BTN_HEIGHT * s
     pad_x = PANEL_PADDING_X * s
     pad_y = PANEL_PADDING_Y * s
     btn = ACTION_BTN_SIZE * s
@@ -737,9 +740,11 @@ def _build_layout(region, area, current_scene_name,
     margin = PANEL_TOP_MARGIN * s
     panel_top = anchor_top if anchor_top >= 0.0 else y_max - margin
 
-    action_rows = (len(_room_actions) + 2) // 3     # three per row
-    actions_h = (new_room_gap + action_rows * (new_room_h + 3 * s)
-                 if action_rows else 0.0)
+    chip_rows = _room_action_rows(panel_width(s) - pad_x * 2, s)
+    chip_h = ROOM_ACTION_HEIGHT * s
+    chip_gap = ROOM_ACTION_GAP * s
+    actions_h = (new_room_gap + len(chip_rows) * (chip_h + chip_gap)
+                 if chip_rows else 0.0)
     fixed_h = pad_y * 2 + panel_hdr_h + section_gap + actions_h
     tab = resolve_active_tab()
     is_rooms = tab == TAB_ROOMS
@@ -876,17 +881,12 @@ def _build_layout(region, area, current_scene_name,
 
     # ---- Room actions ----------------------------------------------------
     cursor_y = list_bottom - new_room_gap
-    if _room_actions:
-        gap_x = 3 * s
-        for start in range(0, len(_room_actions), 3):
-            row = _room_actions[start:start + 3]
-            bw = (content_w - gap_x * (len(row) - 1)) / len(row)
-            for j, (_o, key, label, operator, kwargs) in enumerate(row):
-                entries.append((
-                    'room_action', key, label, operator, kwargs,
-                    (content_x + j * (bw + gap_x), cursor_y - new_room_h,
-                     bw, new_room_h)))
-            cursor_y -= new_room_h + gap_x
+    for row in _room_action_rows(content_w, s):
+        for (_o, key, label, operator, kwargs), x, w in row:
+            entries.append((
+                'room_action', key, label, operator, kwargs,
+                (content_x + x, cursor_y - chip_h, w, chip_h)))
+        cursor_y -= chip_h + chip_gap
 
     return panel_rect, entries
 
@@ -910,6 +910,24 @@ def _body_content_bottom(provider, entries):
         if entry[0] in _BODY_CLIP_KINDS:
             return entry[1][1]
     return None
+
+
+def _room_action_rows(width, s):
+    """The room actions as rows of chips, each sized to its label:
+    [[(action, x offset, width), ...], ...]."""
+    font = ROOM_ACTION_FONT * s
+    gap = ROOM_ACTION_GAP * s
+    rows, row, x = [], [], 0.0
+    for action in _room_actions:
+        w = min(_text_w(0, font, action[2]) + ROOM_ACTION_PAD * 2 * s, width)
+        if row and x + w > width + 0.5:
+            rows.append(row)
+            row, x = [], 0.0
+        row.append((action, x, w))
+        x += w + gap
+    if row:
+        rows.append(row)
+    return rows
 
 
 def _list_clip(entries):
@@ -1441,10 +1459,11 @@ def paint_navigator(panel_rect, entries, mx, my):
                 _draw_rect(shader, *track, SCROLLBAR_TRACK)
                 _draw_rect(shader, *thumb, SCROLLBAR_THUMB)
         elif kind == 'room_action':
-            _paint_button(shader, entry[5],
-                          hovered=_point_in_rect(mx, my, entry[5]))
-            _draw_centered_text(font_id, entry[5], HEADER_FONT_SIZE * s,
-                                TEXT_NORMAL, entry[2])
+            hot = _point_in_rect(mx, my, entry[5])
+            _paint_button(shader, entry[5], hovered=hot)
+            _draw_centered_text(font_id, entry[5], ROOM_ACTION_FONT * s,
+                                TEXT_PRIMARY if hot else TEXT_NORMAL,
+                                entry[2])
 
     gpu.state.blend_set('NONE')
 
