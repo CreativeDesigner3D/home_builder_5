@@ -199,10 +199,13 @@ _tab_icons = {TAB_ROOMS: ('rooms', None), TAB_LIBRARY: ('library', None),
 # Each tab's colour, for its icon when the user colours them (see
 # panel_tabs): the Rooms tab's list colours, so the strip reads like it.
 _tab_colors = {TAB_ROOMS: COLOR_ROOMS}
+# Each tab's status dot: callable(scene) -> rgba or None (see tab_badge).
+_tab_badges = {}
 
 
 def register_tab(key, module, label=None, order=100, available=None,
-                 prefer=None, icon=None, icon_dir=None, color=None):
+                 prefer=None, icon=None, icon_dir=None, color=None,
+                 badge=None):
     """Add a tab and the provider that draws it.
 
     `label` is what the tab button says (the key, if omitted) -- a key
@@ -217,6 +220,9 @@ def register_tab(key, module, label=None, order=100, available=None,
     shows only it until opened; without one it keeps its label.
     `color` (rgb) tints the icon when the user has the tab icons
     coloured -- COLOR_LAYOUTS / COLOR_DETAILS for drawings and details.
+    `badge` is an optional callable(scene) giving the rgba of a dot on
+    the tab's corner, or None for none: something on the tab needs
+    attention from wherever you are (signed out of the portal).
     Sorted by (order, key); built-ins take an implicit order from their
     position, spaced so a contribution can land between two of them.
     Re-registering a key replaces it, so a reloaded add-on cannot stack
@@ -232,11 +238,14 @@ def register_tab(key, module, label=None, order=100, available=None,
         _tab_icons[key] = (icon, icon_dir)
     if color is not None:
         _tab_colors[key] = tuple(color)
+    if badge is not None:
+        _tab_badges[key] = badge
 
 
 def unregister_tab(key):
     global _active_tab
     _preferred.pop(key, None)
+    _tab_badges.pop(key, None)
     if key not in TABS:
         _tab_icons.pop(key, None)
         _tab_colors.pop(key, None)
@@ -284,6 +293,18 @@ def tab_label(tab):
         if key == tab:
             return label
     return tab
+
+
+def tab_badge(tab, scene=None):
+    """The rgba of the tab's status dot, or None."""
+    fn = _tab_badges.get(tab)
+    if fn is None:
+        return None
+    try:
+        color = fn(scene if scene is not None else bpy.context.scene)
+    except Exception:
+        return None             # never let a contribution break the HUD
+    return tuple(color) if color else None
 
 
 def tab_icon(tab):

@@ -623,6 +623,19 @@ class _PanelTabButton:
                 and scene_navigator.active_tab() == self.tab)
 
     def draw(self, shader, font_id, rect, context, mouse):
+        self._draw_face(shader, font_id, rect, context, mouse)
+        badge = scene_navigator.tab_badge(self.tab, context.scene)
+        if badge:
+            # A dot on the corner: this tab wants you, whichever one
+            # is open.
+            s = _s()
+            rx, ry, rw, rh = rect
+            d = 6 * s
+            shader.bind()
+            draw_round_rect(shader, rx + rw - d - 2 * s, ry + rh - d - 2 * s,
+                            d, d, d / 2.0, badge)
+
+    def _draw_face(self, shader, font_id, rect, context, mouse):
         rx, ry, rw, rh = rect
         s = _s()
         hovered = point_in_rect(mouse[0], mouse[1], rect)
