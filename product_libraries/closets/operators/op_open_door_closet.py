@@ -51,7 +51,12 @@ def _raycast_front(context, event):
     direction = view3d_utils.region_2d_to_vector_3d(region, rv3d, coord)
     # Past the cages, so it works in every selection mode.
     from ....hb_utils import ray_cast_past_cages
-    obj = ray_cast_past_cages(context, origin, direction)
+    return openable_part(ray_cast_past_cages(context, origin, direction))
+
+
+def openable_part(obj):
+    """The door or drawer front ``obj`` is part of (a pull or a drawer
+    box counts as its front), or None."""
     if obj is None:
         return None
     door_role = types_closets.PART_ROLE_DOOR

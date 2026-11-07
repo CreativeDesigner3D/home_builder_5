@@ -15,6 +15,8 @@ can do what a house needs:
   swinging its leaf (or sliding a pocket, barn or bypass door, rolling
   a garage door) over DOOR_SWING_TIME. E again mid-swing turns it back
   from where it is.
+  A cabinet's door, drawer or pullout opens the same way, moved by its
+  own library as its Open Doors mode moves it.
 * The cursor is captured. It is hidden and held at the middle of the
   viewport, so you can turn round and round without it leaving the
   window.
@@ -35,7 +37,7 @@ the keys shows for a few seconds (H brings it back). Esc glides back
 out to the view you started from.
 
 Keys: mouse to look, W A S D (or the arrows) to move, Shift to run,
-wheel to change speed, E to open or close a door, H for the keys. Click
+wheel to change speed, E to open or close a door or drawer, H for the keys. Click
 or Enter to stop where you are; Esc or right-click to stop and go back
 to the view you started from.
 """
@@ -85,7 +87,7 @@ CARD_LINES = (
     ("Mouse", "Look around"),
     ("W A S D", "Walk"),
     ("Shift", "Run    Wheel: speed"),
-    ("E", "Open or close a door"),
+    ("E", "Open or close a door or drawer"),
     ("Click", "Stop here"),
     ("Esc", "Go back"),
     ("H", "Show these keys"),
@@ -159,10 +161,11 @@ def passes_through(obj):
     """True for what the walk goes through: a door or window's outline
     (its cage) and the plan drawing and cutters that hang off it, text
     and empties, and walls that only close rooms. A door's modelled leaf
-    and frame, and a window's, are solid."""
+    and frame, and a window's, are solid. So is nothing that doesn't
+    render: a cabinet's cage, shown again when E rebuilds the cabinet."""
     if obj is None:
         return False
-    if obj.type in {'FONT', 'CURVE', 'EMPTY'}:
+    if obj.type in {'FONT', 'CURVE', 'EMPTY'} or obj.hide_render:
         return True
     if _is_opening(obj):
         return True
@@ -350,6 +353,203 @@ class DoorSwings:
         self.moving.clear()
 
 
+# ---- Cabinet fronts --------------------------------------------------------------
+
+def _face_frame_front(obj):
+    from .product_libraries.face_frame.operators import op_open_mode as om
+    front = om._find_owning_front(obj)
+    opening = om._find_opening_cage(front) if front is not None else None
+    ctx = om._build_tween_context(opening) if opening is not None else None
+    if ctx is None:
+        return None
+    props = ctx['op_props']
+
+    def commit(v):
+        om._apply_swing(ctx, v)
+        props.swing_percent = v
+    return (opening.name, float(props.swing_percent),
+            lambda v: om._apply_swing(ctx, v), commit)
+
+
+def _frameless_front(obj):
+    from .product_libraries.frameless import solver_frameless
+    from .product_libraries.frameless.operators import op_open_mode as om
+    opening = om.opening_for_front(om.openable_front(obj))
+    if opening is None:
+        return None
+    set_amount = lambda v: om.set_open_amount(opening, v)
+    return (opening.name, float(solver_frameless.open_amount(opening)),
+            set_amount, set_amount)
+
+
+def _closet_front(obj):
+    from .product_libraries.closets import types_closets
+    from .product_libraries.closets.operators import op_open_door_closet as om
+    part = om.openable_part(obj)
+    if part is None:
+        return None
+    door = part.get('hb_part_role') == types_closets.PART_ROLE_DOOR
+    apply = types_closets.apply_door_open if door else types_closets.apply_drawer_open
+    key = 'hb_door_open' if door else 'hb_drawer_open'
+
+    def commit(v):
+        apply(part, v)
+        part[key] = 1.0 if v >= 0.5 else 0.0
+    return (part.name, float(types_closets.current_open_frac(part)),
+            lambda v: apply(part, v), commit)
+
+
+def cabinet_front(obj):
+    """What E opens on a cabinet when `obj` is part of one of its doors,
+    drawers or pullouts (a pull counts): (key, how open 0..1,
+    set(amount), commit(amount)), or None. Each library moves its own
+    fronts, the way its Open Doors mode does."""
+    if obj is None:
+        return None
+    for find in (_face_frame_front, _frameless_front, _closet_front):
+        try:
+            found = find(obj)
+        except Exception:
+            found = None
+        if found is not None:
+            return found
+    return None
+
+
+# The boxes a cabinet's fronts close over, most specific first: an open
+# door is swung out of the way, so E looks for the opening it shuts.
+_OPENING_TAGS = ('IS_FACE_FRAME_OPENING_CAGE', 'IS_FRAMELESS_OPENING_CAGE',
+                 'IS_CLOSET_OPENING_CAGE')
+_BAY_TAGS = ('IS_CLOSET_BAY_CAGE',)
+
+
+def _cage_box(obj):
+    """A cage's box in its own space: from its Dim inputs (a cage that
+    is hidden has no evaluated mesh to measure), else its bounds."""
+    from . import hb_types
+    try:
+        c = hb_types.GeoNodeCage(obj)
+        lo, hi = Vector(), Vector()
+        for i, axis in enumerate('XYZ'):
+            size = float(c.get_input('Dim ' + axis))
+            if c.has_input('Mirror ' + axis) and c.get_input('Mirror ' + axis):
+                lo[i] = -size
+            else:
+                hi[i] = size
+        return lo, hi
+    except Exception:
+        pts = [Vector(v) for v in obj.bound_box]
+        return (Vector([min(p[i] for p in pts) for i in range(3)]),
+                Vector([max(p[i] for p in pts) for i in range(3)]))
+
+
+def _box_entry(obj, eye, direction, reach):
+    """How far along the ray the eye enters obj's box through its face
+    (the depth axis, Y: where its fronts close), or None. Coming in at a
+    side, the top or the bottom is not looking into it."""
+    m = obj.matrix_world
+    try:
+        inv = m.inverted()
+    except ValueError:
+        return None
+    o = inv @ eye
+    d = inv.to_3x3() @ direction
+    lo, hi = _cage_box(obj)
+    t0, t1 = 0.0, reach
+    axis = None
+    for i in range(3):
+        if abs(d[i]) < 1e-9:
+            if o[i] < lo[i] or o[i] > hi[i]:
+                return None
+            continue
+        a, b = (lo[i] - o[i]) / d[i], (hi[i] - o[i]) / d[i]
+        if min(a, b) > t0:
+            t0, axis = min(a, b), i
+        t1 = min(t1, max(a, b))
+    if t0 > t1 or axis not in (None, 1):
+        return None
+    return t0
+
+
+def front_ahead(scene, eye, direction):
+    """The cabinet front E acts on: the one in the middle of the view, or
+    else the one that shuts the opening you are looking into, within
+    reach. None for nothing."""
+    d = direction.normalized()
+    hit, loc, _n, obj = walk_cast(scene, eye, d, DOOR_REACH)
+    front = cabinet_front(obj)
+    if front is not None:
+        return front
+    # The view has to reach into the opening: past its face, or onto
+    # something of its own (a shelf). Not stopped on a panel flush with
+    # its box - a cabinet's side or top seen from outside.
+    reach = (loc - eye).length if hit else DOOR_REACH
+    inside = set()
+    cur = obj
+    while cur is not None:
+        inside.add(cur.name)
+        cur = cur.parent
+    for tags in (_OPENING_TAGS, _BAY_TAGS):
+        best = None
+        for cage in scene.objects:
+            if not any(cage.get(t) for t in tags):
+                continue
+            if (cage.matrix_world.translation - eye).length > DOOR_REACH + 3.0:
+                continue
+            own = cage.name in inside
+            t = _box_entry(cage, eye, d, reach + (1e-3 if own else -0.01))
+            if t is None or (best is not None and t >= best[0]):
+                continue
+            part = next((c for c in cage.children_recursive
+                         if c.type == 'MESH' and cabinet_front(c) is not None), None)
+            if part is not None:
+                best = (t, part)
+        if best is not None:
+            return cabinet_front(best[1])
+    return None
+
+
+class FrontSwings:
+    """Cabinet fronts opening or closing, eased over DOOR_SWING_TIME like
+    the house's doors. The open state is committed when a swing ends."""
+
+    def __init__(self):
+        self.moving = {}        # key -> [set, commit, from, to, start time]
+
+    def toggle(self, front, now):
+        key, amount, set_amount, commit = front
+        if key in self.moving:
+            m = self.moving[key]
+            here = m[2] + (m[3] - m[2]) * ease((now - m[4]) / DOOR_SWING_TIME)
+            target = 0.0 if m[3] > 0.5 else 1.0
+        else:
+            here = amount
+            target = 0.0 if amount > 0.5 else 1.0
+        self.moving[key] = [set_amount, commit, here, target, now]
+        return target > 0.5
+
+    def step(self, now):
+        for key, (set_amount, commit, a, b, t0) in list(self.moving.items()):
+            f = (now - t0) / DOOR_SWING_TIME
+            try:
+                if f >= 1.0:
+                    commit(b)
+                else:
+                    set_amount(a + (b - a) * ease(f))
+            except (ReferenceError, AttributeError, KeyError):
+                f = 1.0             # the cabinet went away mid-swing
+            if f >= 1.0:
+                self.moving.pop(key, None)
+
+    def finish(self):
+        for set_amount, commit, _a, b, _t0 in self.moving.values():
+            try:
+                commit(b)
+            except (ReferenceError, AttributeError, KeyError):
+                pass
+        self.moving.clear()
+
+
 # ---- Moving through the house ------------------------------------------------------
 
 def ground_under(cast, xy, feet_z):
@@ -534,6 +734,7 @@ class HOME_BUILDER_OT_walk_through(bpy.types.Operator):
         self.timer = context.window_manager.event_timer_add(TICK, window=window)
         self.last_tick = time.perf_counter()
         self.doors = DoorSwings()
+        self.fronts = FrontSwings()
         self.aim_handle = bpy.types.SpaceView3D.draw_handler_add(
             self._draw, (), 'WINDOW', 'POST_PIXEL')
         self._header(context)
@@ -590,11 +791,13 @@ class HOME_BUILDER_OT_walk_through(bpy.types.Operator):
         self.glide_start = time.perf_counter()
         self.phase = 'GLIDE_OUT'
         self.doors.finish()
+        self.fronts.finish()
         self._header(context)
 
     def _finish(self, context, go_back):
         context.window_manager.event_timer_remove(self.timer)
         self.doors.finish()
+        self.fronts.finish()
         bpy.types.SpaceView3D.draw_handler_remove(self.aim_handle, 'WINDOW')
         self.window.cursor_modal_restore()
         self.area.header_text_set(None)
@@ -679,7 +882,7 @@ class HOME_BUILDER_OT_walk_through(bpy.types.Operator):
                     "Enter: start in the room in view | Esc: cancel")
         elif self.phase == 'WALK':
             text = (f"Walk Through: mouse look | WASD move | Shift run | wheel speed "
-                    f"({self.speed:.1f} m/s) | E open/close door | H keys | "
+                    f"({self.speed:.1f} m/s) | E open/close door or drawer | H keys | "
                     f"click/Enter stop here | Esc go back")
         else:
             text = "Walk Through"
@@ -905,6 +1108,11 @@ class HOME_BUILDER_OT_walk_through(bpy.types.Operator):
             return {'RUNNING_MODAL'}
 
         if event.type == 'E' and event.value == 'PRESS':
+            # A cabinet's door or drawer in the middle of the view first
+            front = front_ahead(self.scene, self._eye(), self._look())
+            if front is not None:
+                self.fronts.toggle(front, time.perf_counter())
+                return {'RUNNING_MODAL'}
             cage = door_ahead(self.scene, self._eye(), self._look())
             if cage is not None:
                 self.doors.toggle(cage, time.perf_counter())
@@ -944,6 +1152,9 @@ class HOME_BUILDER_OT_walk_through(bpy.types.Operator):
         doors = getattr(self, 'doors', None)
         if doors is not None and doors.moving:
             doors.step(now)
+        fronts = getattr(self, 'fronts', None)
+        if fronts is not None and fronts.moving:
+            fronts.step(now)
         x = sum(MOVE_KEYS[k][0] for k in self.keys)
         y = sum(MOVE_KEYS[k][1] for k in self.keys)
         if x or y:
