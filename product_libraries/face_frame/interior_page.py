@@ -28,6 +28,7 @@ from ... import hb_types
 from ...hb_gpu_draw import draw_rect, draw_rect_outline, draw_text
 from ...hb_gpu_ui import Theme, fit_text
 from . import types_face_frame as tff
+from . import solver_face_frame as solver
 
 CANVAS_H = 170          # unscaled px
 PAD = 8
@@ -37,6 +38,13 @@ _shown_for = None
 # The pick the item list was last lined up with, so a newly picked part
 # selects its item once and a click in the list is not undone
 _synced_pick = None
+# A split picked in the picture when it builds no part to pick (by name)
+_picked_split = None
+# (split name, axis, px per metre) for the drag a press on a bar starts
+_pending_drag = None
+
+BAR_HIT_PX = 5          # unscaled: how near a bar a press takes it
+MIN_REGION = 0.0508     # 2": the least a drag leaves either side
 
 _SHELVES = ('ADJUSTABLE_SHELF', 'GLASS_SHELF', 'HALF_DEPTH_SHELF',
             'QUARTER_DEPTH_SHELF')
@@ -46,6 +54,7 @@ BAR_FILL = (0.55, 0.45, 0.32, 1.0)          # fixed shelves and divisions
 BOX_FILL = (0.70, 0.58, 0.42, 0.85)         # roll-out / drawer boxes
 OPENING_FILL = (0.10, 0.10, 0.11, 1.0)
 PICK_LINE = (0.35, 0.80, 1.00, 1.0)
+BAR_HOVER = (1.0, 1.0, 1.0, 0.45)
 
 
 # ---- What the page is for ---------------------------------------------------
@@ -181,6 +190,111 @@ def _bounds(pts):
     return (min(xs), min(zs), max(xs), max(zs))
 
 
+def _tree_children(node):
+    return sorted([c for c in node.children
+                   if c.get(tff.TAG_INTERIOR_REGION)
+                   or c.get(tff.TAG_INTERIOR_SPLIT_NODE)],
+                  key=lambda c: c.get('hb_interior_child_index', 0))
+
+
+def _node_size(node):
+    return solver._read_interior_node_size(node)[0]
+
+
+def splits_of(opening, obox):
+    """Every split in the opening's tree, as dicts: node, axis, bar (the
+    fixed shelf or division's box), box (the split's whole box) and its
+    two children -- laid out as the cabinet lays the cages out."""
+    out = []
+    root = solver._interior_tree_root(opening)
+
+    def walk(node, box):
+        if not node.get(tff.TAG_INTERIOR_SPLIT_NODE):
+            return
+        kids = _tree_children(node)
+        if len(kids) != 2:
+            return
+        sp = node.face_frame_interior_split
+        t = sp.effective_thickness()
+        a, b = _node_size(kids[0]), _node_size(kids[1])
+        x0, z0, x1, z1 = box
+        if sp.axis == 'H':
+            bar = (x0, z0 + a, x1, z0 + a + t)
+            boxes = ((x0, z0, x1, z0 + a),
+                     (x0, z0 + a + t, x1, z0 + a + t + b))
+        else:
+            bar = (x0 + a, z0, x0 + a + t, z1)
+            boxes = ((x0, z0, x0 + a, z1),
+                     (x0 + a + t, z0, x0 + a + t + b, z1))
+        out.append({'node': node, 'axis': sp.axis, 'bar': bar, 'box': box,
+                    'children': kids})
+        for kid, kbox in zip(kids, boxes):
+            walk(kid, kbox)
+
+    if root is not None and obox is not None:
+        walk(root, obox)
+    return out
+
+
+def split_label(node):
+    return ("Fixed Shelf" if node.face_frame_interior_split.axis == 'H'
+            else "Division")
+
+
+def is_split_part(obj):
+    return bool(obj is not None and obj.get('hb_part_role')
+                in ('INTERIOR_FIXED_SHELF', 'INTERIOR_DIVISION'))
+
+
+def split_of_part(part):
+    """The split a fixed shelf or division part was built for."""
+    opening = opening_of(part)
+    if opening is None:
+        return None
+    frame = _Frame(opening)
+    box = frame.part_box(part)
+    if box is None:
+        return None
+    axis = 'H' if part.get('hb_part_role') == 'INTERIOR_FIXED_SHELF' else 'V'
+    cx, cz = (box[0] + box[2]) / 2.0, (box[1] + box[3]) / 2.0
+    best = None
+    for sp in splits_of(opening, frame.opening_box()):
+        if sp['axis'] != axis:
+            continue
+        bx0, bz0, bx1, bz1 = sp['bar']
+        if not (bx0 - 1e-3 <= cx <= bx1 + 1e-3
+                and bz0 - 1e-3 <= cz <= bz1 + 1e-3):
+            continue
+        d = abs((bx0 + bx1) / 2.0 - cx) + abs((bz0 + bz1) / 2.0 - cz)
+        if best is None or d < best[0]:
+            best = (d, sp['node'])
+    return best[1] if best else None
+
+
+def part_of_split(node):
+    """The fixed shelf or division part built for `node`, or None."""
+    opening = opening_of(node)
+    if opening is None:
+        return None
+    for part in _interior_parts(opening):
+        if is_split_part(part) and split_of_part(part) is node:
+            return part
+    return None
+
+
+def _bar_at(splits, view, mx, my, s):
+    best = None
+    tol = BAR_HIT_PX * s
+    for sp in splits:
+        x, y, w, h = view.rect(sp['bar'])
+        if (x - tol <= mx <= x + w + tol and y - tol <= my <= y + h + tol):
+            d = (abs(mx - (x + w / 2.0)) if sp['axis'] == 'V'
+                 else abs(my - (y + h / 2.0)))
+            if best is None or d < best[0]:
+                best = (d, sp)
+    return best[1] if best else None
+
+
 def _interior_parts(opening):
     return [o for o in opening.children_recursive
             if is_interior_part(o) and o.visible_get()]
@@ -214,9 +328,10 @@ class _View:
 
 # ---- The picture --------------------------------------------------------------
 
-def _canvas(opening_name, owner_name):
+def _canvas(opening_name, owner_name, split_name=""):
     def paint(shader, font_id, rect, mx, my, s):
-        _paint(shader, font_id, rect, mx, my, s, opening_name, owner_name)
+        _paint(shader, font_id, rect, mx, my, s, opening_name, owner_name,
+               split_name)
 
     def hit(context, rect, mx, my):
         _hit(context, rect, mx, my, opening_name, owner_name)
@@ -234,7 +349,8 @@ def _layout(opening_name, rect, s):
     return opening, frame, obox, _View(rect, obox, s)
 
 
-def _paint(shader, font_id, rect, mx, my, s, opening_name, owner_name):
+def _paint(shader, font_id, rect, mx, my, s, opening_name, owner_name,
+           split_name=""):
     draw_rect(shader, *rect, Theme.PANEL_BG)
     laid = _layout(opening_name, rect, s)
     if laid is None:
@@ -243,7 +359,10 @@ def _paint(shader, font_id, rect, mx, my, s, opening_name, owner_name):
     orect = view.rect(obox)
     draw_rect(shader, *orect, OPENING_FILL)
     regions = regions_of(opening) if has_tree(opening) else []
-    hover = _region_at(frame, view, regions, mx, my)
+    splits = splits_of(opening, obox) if regions else []
+    bar_hover = _bar_at(splits, view, mx, my, s)
+    hover = (None if bar_hover is not None
+             else _region_at(frame, view, regions, mx, my))
     for region in regions:
         box = frame.region_box(region)
         if box is None:
@@ -269,9 +388,24 @@ def _paint(shader, font_id, rect, mx, my, s, opening_name, owner_name):
         draw_rect(shader, *r, color)
         if part.get('IS_DRAWER_BOX'):
             draw_rect_outline(shader, *r, BAR_FILL)
+    # A bar under the cursor can be dragged or clicked: lit up. One
+    # that builds no part is drawn as a line so it can still be found.
+    for sp in splits:
+        r = view.rect(sp['bar'], min_px=3.0 * s)
+        if sp is bar_hover:
+            draw_rect(shader, *r, BAR_HOVER)
+        elif sp['node'].face_frame_interior_split.effective_thickness() <= 0:
+            draw_rect(shader, *r, Theme.PANEL_BORDER)
+    picked = next((sp for sp in splits if sp['node'].name == split_name),
+                  None)
+    if picked is not None:
+        x, y, w, h = view.rect(picked['bar'], min_px=4.0 * s)
+        draw_rect_outline(shader, x, y, w, h, PICK_LINE)
+        draw_rect_outline(shader, x - s, y - s, w + 2 * s, h + 2 * s,
+                          PICK_LINE)
     # The region (or the opening) the page is editing.
     owner = bpy.data.objects.get(owner_name) if owner_name else None
-    if owner is not None:
+    if picked is None and owner is not None:
         box = (frame.region_box(owner) if owner.get(tff.TAG_INTERIOR_REGION)
                else obox)
         if box is not None:
@@ -280,8 +414,9 @@ def _paint(shader, font_id, rect, mx, my, s, opening_name, owner_name):
             draw_rect_outline(shader, x, y, w, h, PICK_LINE)
             draw_rect_outline(shader, x + s, y + s, w - 2 * s, h - 2 * s,
                               PICK_LINE)
-    if regions and (owner is None or not owner.get(tff.TAG_INTERIOR_REGION)):
-        text = "Click a region to edit what is in it"
+    if regions and picked is None and (
+            owner is None or not owner.get(tff.TAG_INTERIOR_REGION)):
+        text = "Click a region, or drag a shelf or division"
         size = 11 * s
         draw_text(font_id, rect[0] + 6 * s, rect[1] + 5 * s, size,
                   Theme.TEXT_DIM, fit_text(font_id, size, text, rect[2] - 12 * s))
@@ -304,8 +439,19 @@ def _hit(context, rect, mx, my, opening_name, owner_name):
     laid = _layout(opening_name, rect, _s())
     if laid is None:
         return
-    opening, frame, _obox, view = laid
+    opening, frame, obox, view = laid
     if not has_tree(opening):
+        return
+    bar = _bar_at(splits_of(opening, obox), view, mx, my, _s())
+    if bar is not None:
+        # Drag it to move it; let go without moving to pick it.
+        global _pending_drag
+        _pending_drag = (bar['node'].name, bar['axis'], view.k)
+        try:
+            bpy.ops.hb_face_frame.drag_interior_split('INVOKE_DEFAULT')
+        except Exception as ex:
+            _pending_drag = None
+            print('Home Builder: split drag failed: %s' % ex)
         return
     region = _region_at(frame, view, regions_of(opening), mx, my)
     if region is None or region.name == owner_name:
@@ -318,8 +464,26 @@ def _s():
     return scale()
 
 
+def pick_split(context, node):
+    """Pick a split: its part when it builds one, else the opening with
+    the split remembered."""
+    global _picked_split
+    part = part_of_split(node)
+    if part is not None:
+        pick(context, part)
+        return
+    opening = opening_of(node)
+    if opening is None:
+        return
+    show(opening.name)
+    pick(context, opening)
+    _picked_split = node.name
+
+
 def pick(context, obj):
     """Make `obj` the pick, so the page follows it."""
+    global _picked_split
+    _picked_split = None
     view_layer = context.view_layer
     for o in context.selected_objects:
         try:
@@ -455,24 +619,98 @@ def _sync_index(pick_obj, props):
             return
 
 
+def _picked_split_node(opening, pick_obj):
+    """The split the page is on: the picked fixed shelf or division's,
+    or one picked in the picture that builds no part."""
+    if is_split_part(pick_obj):
+        return split_of_part(pick_obj)
+    if pick_obj is None and _picked_split:
+        node = bpy.data.objects.get(_picked_split)
+        if node is not None and opening_of(node) is opening:
+            return node
+    return None
+
+
+def _split_cmd(label, target, axis="", remove=False, icon=None):
+    return _act(label, 'hb_face_frame.interior_page_split',
+                {'target_name': target.name, 'axis': axis or 'H',
+                 'remove': remove}, icon)
+
+
+def _leaf_child(node):
+    """A region directly under `node`: what remove_interior_split takes
+    to name the split."""
+    return next((c for c in _tree_children(node)
+                 if c.get(tff.TAG_INTERIOR_REGION)), None)
+
+
+def _split_blocks(context, node):
+    from ...operators import options_panel
+    sp = node.face_frame_interior_split
+    kids = _tree_children(node)
+    is_h = sp.axis == 'H'
+    out = [('label', split_label(node))]
+    names = ("Below", "Above") if is_h else ("Left", "Right")
+    for kid, name in zip(kids, names):
+        kp = (kid.face_frame_interior_region if kid.get(tff.TAG_INTERIOR_REGION)
+              else kid.face_frame_interior_split)
+        out.extend(options_panel.field_blocks(context, (
+            ('distance', 'size', "Space %s" % name),
+            ('bool', 'unlock_size', "Hold Space %s" % name),
+        ), kp))
+    fields = [
+        ('bool', 'include_part', "Build %s" % split_label(node)),
+        ('distance', 'divider_thickness', "Thickness",
+         {'when': lambda o: o.include_part}),
+    ]
+    if is_h:
+        fields.append(('distance', 'shelf_setback', "Setback",
+                       {'when': lambda o: o.include_part}))
+    out.extend(options_panel.field_blocks(context, tuple(fields), sp))
+    out.append(('note', "Drag it in the picture to move it"))
+    leaf = _leaf_child(node)
+    row = []
+    if leaf is not None:
+        row.append(_split_cmd("Remove %s" % split_label(node), leaf,
+                              remove=True, icon='delete'))
+    for kid, name in zip(kids, names):
+        if kid.get(tff.TAG_INTERIOR_REGION):
+            row.append(_act("Space %s" % name, 'hb_face_frame.pick_interior',
+                            {'name': kid.name}))
+    if row:
+        out.append(('actions', tuple(row)))
+    return out
+
+
+def _footer_row(opening):
+    return ('actions', (
+        _act("Opening", 'hb_face_frame.show_interior_page',
+             {'opening_name': ""}),
+        _act("More Options...", 'hb_face_frame.interior_options',
+             {'opening_name': opening.name}),
+    ))
+
+
 def blocks(context, item):
     """The Interior page's blocks for a face frame card item."""
     from ...operators import options_panel
     _kind, _root, _bay, opening, pick_obj = item
     if opening is None:
         return []
+    split = _picked_split_node(opening, pick_obj)
     owner = owner_of(pick_obj) if pick_obj is not None else opening
-    props = items_props(owner)
-    out = [('canvas', _canvas(opening.name, owner.name if owner else ""))]
+    props = None if split is not None else items_props(owner)
+    out = [('canvas', _canvas(opening.name, owner.name if owner else "",
+                              split.name if split is not None else ""))]
+    if split is not None:
+        out.extend(_split_blocks(context, split))
+        out.append(('gap', None))
+        out.append(_footer_row(opening))
+        return out
     if props is None:
         out.append(('note', "This interior is split: click a region"))
         out.append(('gap', None))
-        out.append(('actions', (
-            _act("Opening", 'hb_face_frame.show_interior_page',
-                 {'opening_name': ""}, ),
-            _act("More Options...", 'hb_face_frame.interior_options',
-                 {'opening_name': opening.name}),
-        )))
+        out.append(_footer_row(opening))
         return out
     _sync_index(pick_obj, props)
     where = "Region" if owner.get(tff.TAG_INTERIOR_REGION) else "Opening"
@@ -495,9 +733,9 @@ def blocks(context, item):
         }))
     out.append(('actions', (
         _act("Shelves", 'hb_face_frame.add_interior_item',
-             {'kind': 'ADJUSTABLE_SHELF', 'target_name': owner.name}, 'ADD'),
+             {'kind': 'ADJUSTABLE_SHELF', 'target_name': owner.name}),
         _act("Roll-outs", 'hb_face_frame.add_interior_item',
-             {'kind': 'ROLLOUT', 'target_name': owner.name}, 'ADD'),
+             {'kind': 'ROLLOUT', 'target_name': owner.name}),
         ("Add...", _add_entries(owner.name), None, None),
     )))
     idx = props.interior_items_index
@@ -506,13 +744,18 @@ def blocks(context, item):
         out.append(('gap', None))
         out.append(('label', _item_label(it)))
         out.extend(options_panel.field_blocks(context, _item_fields(it), it))
+    # Split what is picked in two, or join it back to its neighbor.
     out.append(('gap', None))
-    out.append(('actions', (
-        _act("Opening", 'hb_face_frame.show_interior_page',
-             {'opening_name': ""}),
-        _act("More Options...", 'hb_face_frame.interior_options',
-             {'opening_name': opening.name}),
-    )))
+    out.append(('label', "Split this %s" % where.lower()))
+    row = [_split_cmd("Fixed Shelf", owner, 'H', icon='cab_split_h'),
+           _split_cmd("Division", owner, 'V', icon='cab_split_v')]
+    parent = owner.parent if owner.get(tff.TAG_INTERIOR_REGION) else None
+    if parent is not None and parent.get(tff.TAG_INTERIOR_SPLIT_NODE):
+        row.append(_split_cmd("Remove %s" % split_label(parent), owner,
+                              remove=True, icon='delete'))
+    out.append(('actions', tuple(row)))
+    out.append(('gap', None))
+    out.append(_footer_row(opening))
     return out
 
 
@@ -546,7 +789,182 @@ class hb_face_frame_OT_show_interior_page(bpy.types.Operator):
         return {'FINISHED'}
 
 
-classes = (hb_face_frame_OT_show_interior_page,)
+class hb_face_frame_OT_pick_interior(bpy.types.Operator):
+    """Pick this region of the interior"""
+    bl_idname = "hb_face_frame.pick_interior"
+    bl_label = "Pick Region"
+    bl_options = {'INTERNAL'}
+
+    name: bpy.props.StringProperty(default="", options={'SKIP_SAVE'})  # type: ignore
+
+    def execute(self, context):
+        obj = bpy.data.objects.get(self.name)
+        if obj is None:
+            return {'CANCELLED'}
+        pick(context, obj)
+        _redraw(context)
+        return {'FINISHED'}
+
+
+class hb_face_frame_OT_interior_page_split(bpy.types.Operator):
+    """Split this region with a fixed shelf or a division, or remove the
+    split beside it, and keep the page on what is left"""
+    bl_idname = "hb_face_frame.interior_page_split"
+    bl_label = "Split Interior"
+    bl_options = {'UNDO', 'INTERNAL'}
+
+    target_name: bpy.props.StringProperty(default="", options={'SKIP_SAVE'})  # type: ignore
+    axis: bpy.props.EnumProperty(
+        items=(('H', "Fixed Shelf", ""), ('V', "Division", "")),
+        default='H', options={'SKIP_SAVE'})  # type: ignore
+    remove: bpy.props.BoolProperty(default=False, options={'SKIP_SAVE'})  # type: ignore
+
+    def execute(self, context):
+        target = bpy.data.objects.get(self.target_name)
+        opening = opening_of(target) if target is not None else None
+        if opening is None:
+            self.report({'WARNING'}, "Pick an opening or region first")
+            return {'CANCELLED'}
+        before = {o.name for o in opening.children_recursive}
+        if self.remove:
+            result = bpy.ops.hb_face_frame.remove_interior_split(
+                target_name=target.name)
+        elif self.axis == 'H':
+            result = bpy.ops.hb_face_frame.add_interior_fixed_shelf(
+                target_name=target.name)
+        else:
+            result = bpy.ops.hb_face_frame.add_interior_division(
+                target_name=target.name)
+        if 'FINISHED' not in result:
+            return {'CANCELLED'}
+        new = [o for o in opening.children_recursive
+               if o.name not in before]
+        if self.remove:
+            # The joined region, or the opening when the last split went
+            leaf = next((o for o in new if o.get(tff.TAG_INTERIOR_REGION)),
+                        None)
+            if leaf is not None:
+                pick(context, leaf)
+            else:
+                show(opening.name)
+                pick(context, opening)
+        else:
+            # The new lower or left side, which holds what was there
+            node = next((o for o in new
+                         if o.get(tff.TAG_INTERIOR_SPLIT_NODE)), None)
+            kids = _tree_children(node) if node is not None else []
+            leaf = next((k for k in kids
+                         if k.get(tff.TAG_INTERIOR_REGION)
+                         and items_props(k) is not None
+                         and len(items_props(k).interior_items)), None)
+            leaf = leaf or (kids[0] if kids else None)
+            if leaf is not None and leaf.get(tff.TAG_INTERIOR_REGION):
+                pick(context, leaf)
+        _redraw(context)
+        return {'FINISHED'}
+
+
+class hb_face_frame_OT_drag_interior_split(bpy.types.Operator):
+    """Drag a fixed shelf or division to move it; let go without moving
+    to pick it. Esc or right-click puts it back"""
+    bl_idname = "hb_face_frame.drag_interior_split"
+    bl_label = "Move Interior Split"
+    bl_options = {'UNDO', 'INTERNAL'}
+
+    def invoke(self, context, event):
+        global _pending_drag
+        pending, _pending_drag = _pending_drag, None
+        if pending is None:
+            return {'CANCELLED'}
+        self.split_name, self.axis, self.k = pending
+        if not self._begin():
+            return {'CANCELLED'}
+        self.press = (event.mouse_x, event.mouse_y)
+        self.dragging = False
+        context.window_manager.modal_handler_add(self)
+        return {'RUNNING_MODAL'}
+
+    def _begin(self):
+        node = bpy.data.objects.get(self.split_name)
+        if node is None or self.k <= 0:
+            return False
+        kids = _tree_children(node)
+        if len(kids) != 2:
+            return False
+        self.kids = [k.name for k in kids]
+        self.start = [solver._read_interior_node_size(k) for k in kids]
+        self.total = self.start[0][0] + self.start[1][0]
+        return True
+
+    def _props(self, i):
+        obj = bpy.data.objects.get(self.kids[i])
+        if obj is None:
+            return None
+        return (obj.face_frame_interior_region
+                if obj.get(tff.TAG_INTERIOR_REGION)
+                else obj.face_frame_interior_split)
+
+    def move_to(self, size_a):
+        """Give the lower / left side `size_a`; the other side takes
+        the rest."""
+        lo = min(MIN_REGION, self.total / 2.0)
+        size_a = max(lo, min(self.total - lo, size_a))
+        a, b = self._props(0), self._props(1)
+        if a is None or b is None:
+            return
+        if b.unlock_size:
+            b.unlock_size = False
+        if abs(a.size - size_a) > 1e-6:
+            a.size = size_a         # holds it, and rebuilds the cabinet
+        _redraw(bpy.context)
+
+    def restore(self):
+        for i in (0, 1):
+            pr = self._props(i)
+            if pr is None:
+                continue
+            size, unlock = self.start[i]
+            pr.unlock_size = unlock
+            pr.size = size
+            pr.unlock_size = unlock
+
+    def modal(self, context, event):
+        if event.type in {'MOUSEMOVE', 'INBETWEEN_MOUSEMOVE'}:
+            dx = event.mouse_x - self.press[0]
+            dy = event.mouse_y - self.press[1]
+            delta = dx if self.axis == 'V' else dy
+            if not self.dragging:
+                if abs(delta) < 3:
+                    return {'RUNNING_MODAL'}
+                self.dragging = True
+            self.move_to(self.start[0][0] + delta / self.k)
+            return {'RUNNING_MODAL'}
+        if event.type == 'LEFTMOUSE' and event.value == 'RELEASE':
+            if not self.dragging:
+                node = bpy.data.objects.get(self.split_name)
+                if node is not None:
+                    pick_split(context, node)
+                _redraw(context)
+            return {'FINISHED'}
+        if event.type in {'ESC', 'RIGHTMOUSE'} and event.value == 'PRESS':
+            if self.dragging:
+                self.restore()
+            _redraw(context)
+            return {'CANCELLED'}
+        return {'RUNNING_MODAL'}
+
+
+def _redraw(context):
+    screen = getattr(context, 'screen', None)
+    for area in screen.areas if screen else ():
+        if area.type == 'VIEW_3D':
+            area.tag_redraw()
+
+
+classes = (hb_face_frame_OT_show_interior_page,
+           hb_face_frame_OT_pick_interior,
+           hb_face_frame_OT_interior_page_split,
+           hb_face_frame_OT_drag_interior_split)
 
 
 def register():

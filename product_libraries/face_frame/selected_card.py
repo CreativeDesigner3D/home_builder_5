@@ -1371,7 +1371,7 @@ def blocks(context, item):
         out.extend(options_panel.field_blocks(context, _opening_fields(op), op))
         out.append(('actions', (
             _act("Edit Interior", 'hb_face_frame.show_interior_page',
-                 {'opening_name': opening_obj.name}),)))
+                 {'opening_name': opening_obj.name}, 'cab_interior'),)))
         out.extend(opening_group_blocks(context, opening_obj))
         out.extend(opening_overlay_blocks(context, opening_obj))
         _footer(out, 'hb_face_frame.opening_prompts')

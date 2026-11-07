@@ -22451,6 +22451,7 @@ def recalculate_face_frame_cabinet(obj):
         return
     if id(root) in _RECALCULATING:
         return
+    lost_active = _active_name_in(root)
     _RECALCULATING.add(id(root))
     try:
         with hb_utils.children_index():
@@ -22490,6 +22491,43 @@ def recalculate_face_frame_cabinet(obj):
             hook(root)
         except Exception:
             pass
+    _restore_active(root, lost_active)
+
+
+def _active_name_in(root):
+    """The active object's name when it is part of `root`, else None."""
+    try:
+        active = bpy.context.view_layer.objects.active
+    except Exception:
+        return None
+    if active is None or active is root:
+        return None
+    try:
+        return active.name if find_cabinet_root(active) is root else None
+    except ReferenceError:
+        return None
+
+
+def _restore_active(root, name):
+    """The recalc wipes and rebuilds parts: a picked shelf, division or
+    other rebuilt part comes back under its name but is no longer the
+    active object, and every page that follows the pick went blank. Pick
+    it again when the rebuild left nothing active."""
+    if not name:
+        return
+    view_layer = bpy.context.view_layer
+    if view_layer.objects.active is not None:
+        return
+    obj = bpy.data.objects.get(name)
+    if obj is None or view_layer.objects.get(obj.name) is None:
+        return
+    if find_cabinet_root(obj) is not root:
+        return
+    try:
+        view_layer.objects.active = obj
+        obj.select_set(True)
+    except Exception:
+        pass
 
 
 def _resize_seated_wood_tops(root):
