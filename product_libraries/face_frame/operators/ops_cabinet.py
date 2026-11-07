@@ -2113,13 +2113,14 @@ class hb_face_frame_OT_split_opening(bpy.types.Operator):
         self.sizes = zeros
         self.unlocks = falses
         opening = context.view_layer.objects.active
-        # Default per-opening contents to the existing behavior: new
-        # openings get the root's default front, the original (last slot)
-        # keeps its current front_type -- so an untouched dialog produces
-        # an identical result to before this field existed.
-        default_front = types_face_frame.default_front_type_for_root(root)
+        # New openings take the front the split opening has: splitting
+        # double doors gives double doors, splitting a drawer gives
+        # drawers (built like it -- see _copy_front). An open opening
+        # still splits into the root's default front.
         orig_front = (opening.face_frame_opening.front_type
                       if opening is not None else 'NONE')
+        default_front = (orig_front if orig_front != 'NONE'
+                         else types_face_frame.default_front_type_for_root(root))
         for i in range(MAX_SPLIT_OPENINGS):
             setattr(self, f'front_type_{i}', default_front)
         setattr(self, f'front_type_{self.count - 1}', orig_front)
@@ -2287,6 +2288,8 @@ class hb_face_frame_OT_split_opening(bpy.types.Operator):
             # the previous behavior -- new openings get the root default).
             new_op.obj.face_frame_opening.front_type = getattr(
                 self, f'front_type_{i}')
+            if new_op.obj.face_frame_opening.front_type == op_props.front_type:
+                _copy_front(op_props, new_op.obj.face_frame_opening)
             new_openings.append(new_op.obj)
 
         # Re-parent original under split as the last child.
@@ -2309,6 +2312,36 @@ class hb_face_frame_OT_split_opening(bpy.types.Operator):
         if (root.get(types_face_frame.TAG_APPLIED_PANEL_SIDE)
                 or types_face_frame._is_standalone_panel(root)):
             root.face_frame_cabinet.panel_split_auto = False
+
+
+# What makes a front what it is, copied onto the openings a split makes
+# when they take the split opening's front: a double door stays a double
+# door, a drawer keeps its box, slides and look. Left out is what belongs
+# to the opening's place rather than its front -- size, overlays, finish
+# opening, interior items, an apron, a pullout's accessory model.
+_FRONT_PROPS = (
+    'inset_panel_type', 'is_tilt_out',
+    'pull_override', 'pull_override_category', 'false_front_pull',
+    'pull_location_override',
+    'hinge_side', 'door_mechanism', 'bifold_fold_side', 'bifold_pull',
+    'lift_up_servo',
+    'door_look_divisions', 'door_look_direction', 'door_look_top_height',
+    'drawer_look_divisions',
+    'drawer_box_construction', 'drawer_box_construction_label',
+    'drawer_slides', 'drawer_slides_label',
+)
+
+
+def _copy_front(src, dst):
+    for prop in _FRONT_PROPS:
+        if not hasattr(src, prop):
+            continue
+        try:
+            value = getattr(src, prop)
+            if getattr(dst, prop) != value:
+                setattr(dst, prop, value)
+        except (AttributeError, TypeError, ValueError):
+            pass
 
 
 def _find_owning_opening(obj):
