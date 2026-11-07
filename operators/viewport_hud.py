@@ -1028,10 +1028,32 @@ class _GrabPill:
             pass
 
 
+_DROP_W = 12            # unscaled px a pill's dropdown chevron takes
+
+
+def _paint_drop_pill(shader, font_id, rect, mouse, on, label):
+    """A pill that opens a dropdown: lit while its option is on, the
+    label left of a small down chevron."""
+    rx, ry, rw, rh = rect
+    s = _s()
+    hovered = point_in_rect(mouse[0], mouse[1], rect)
+    bg = (BTN_ACTIVE_BG if on else (BTN_HOVER_BG if hovered else BTN_BG))
+    _paint_btn(shader, rx, ry, rw, rh, bg)
+    color = TEXT_ACTIVE if on else TEXT_NORMAL
+    drop = _DROP_W * s
+    _draw_centered_text(font_id, (rx, ry, rw - drop, rh),
+                        FONT_SIZE * s, color, label)
+    tip = (rx + rw - drop + 1 * s, ry + rh / 2.0 - 2 * s)
+    draw_arrow_head(shader, tip, (0.0, -1.0), 4 * s, color)
+
+
 class _SizesButton:
-    """Cycles the dimension-label scope: All -> Cabinet (every label on
-    the selected cabinets) -> Selected (only the selected objects'
-    labels) -> None.
+    """The size-label scope, picked from a dropdown: All, Selected
+    Cabinet (every label on the selected cabinets), Selected Object
+    (only the selected objects' labels) or None.
+
+    It cycled on each click once; with four scopes that meant clicking
+    through the ones you did not want to reach the one you did.
 
     It used to draw itself, in the overlay module, from a private copy
     of this file's layout constants and a guess at which HUD row was
@@ -1040,15 +1062,16 @@ class _SizesButton:
     modify what the selection mode shows you.
     """
 
-    SCOPES = ('ALL', 'SELECTED_CABINET', 'SELECTED', 'OFF')
-    NEXT = {'ALL': 'SELECTED_CABINET', 'SELECTED_CABINET': 'SELECTED',
-            'SELECTED': 'OFF'}
+    PROP = 'selection_mode_sizes_scope'
     LABELS = {'ALL': 'Sizes: All', 'SELECTED_CABINET': 'Sizes: Cab',
               'SELECTED': 'Sizes: Sel'}
 
+    def _props(self, context):
+        return getattr(context.scene, 'hb_face_frame', None)
+
     def _scope(self, context):
-        props = getattr(context.scene, 'hb_face_frame', None)
-        return getattr(props, 'selection_mode_sizes_scope', 'OFF') if props else 'OFF'
+        props = self._props(context)
+        return getattr(props, self.PROP, 'OFF') if props else 'OFF'
 
     def _label(self, context):
         return self.LABELS.get(self._scope(context), 'Sizes')
@@ -1058,55 +1081,43 @@ class _SizesButton:
         s = _s()
         blf.size(0, FONT_SIZE * s)
         # Sized to the longest label so the row does not jitter as the
-        # scope cycles.
+        # scope changes.
         return int(max(blf.dimensions(0, t)[0]
-                       for t in self.LABELS.values()) + 24 * s)
+                       for t in self.LABELS.values()) + (24 + _DROP_W) * s)
 
     def visible(self, context):
         return _face_frame_ui_visible(context)
 
     def draw(self, shader, font_id, rect, context, mouse):
-        rx, ry, rw, rh = rect
-        on = self._scope(context) != 'OFF'
-        hovered = point_in_rect(mouse[0], mouse[1], rect)
-        bg = (BTN_ACTIVE_BG if on else (BTN_HOVER_BG if hovered else BTN_BG))
-        _paint_btn(shader, rx, ry, rw, rh, bg)
-        _draw_centered_text(font_id, rect, FONT_SIZE * _s(),
-                            TEXT_ACTIVE if on else TEXT_NORMAL,
-                            self._label(context))
+        _paint_drop_pill(shader, font_id, rect, mouse,
+                         self._scope(context) != 'OFF', self._label(context))
 
     def on_click(self, context, area, region):
-        props = getattr(context.scene, 'hb_face_frame', None)
+        props = self._props(context)
         if props is None:
             return
-        props.selection_mode_sizes_scope = self.NEXT.get(
-            self._scope(context), 'ALL')
+        from . import options_panel
+        with context.temp_override(area=area, region=region):
+            options_panel.open_enum_menu(context, props, self.PROP,
+                                         title="Size Labels")
 
 
 class _FramelessSizesButton(_SizesButton):
-    """The Sizes pill for the frameless library: same cycle, same look,
-    reading and writing hb_frameless's scope instead. Frameless has no
-    master enable bool, so it gates on the picked mode alone -- the three
-    modes its dim_edit_overlay draws labels in."""
+    """The Sizes pill for the frameless library: same dropdown, same
+    look, reading and writing hb_frameless's scope instead. Frameless has
+    no master enable bool, so it gates on the picked mode alone -- the
+    three modes its dim_edit_overlay draws labels in."""
 
     MODES = ('Cabinets', 'Bays', 'Openings')
 
-    def _scope(self, context):
-        props = getattr(context.scene, 'hb_frameless', None)
-        return getattr(props, 'selection_mode_sizes_scope', 'OFF') if props else 'OFF'
+    def _props(self, context):
+        return getattr(context.scene, 'hb_frameless', None)
 
     def visible(self, context):
         if not _frameless_ui_visible(context):
             return False
-        props = getattr(context.scene, 'hb_frameless', None)
+        props = self._props(context)
         return getattr(props, 'frameless_selection_mode', '') in self.MODES
-
-    def on_click(self, context, area, region):
-        props = getattr(context.scene, 'hb_frameless', None)
-        if props is None:
-            return
-        props.selection_mode_sizes_scope = self.NEXT.get(
-            self._scope(context), 'ALL')
 
 
 class _ClosetGrabPill(_GrabPill):
@@ -1182,25 +1193,51 @@ class _ClosetDimsButton:
         blf.size(0, FONT_SIZE * s)
         # Sized to the longest label so the row does not jitter as the
         # scope cycles.
-        return int(blf.dimensions(0, 'Dims: Sel')[0] + 24 * s)
+        return int(blf.dimensions(0, 'Dims: Sel')[0] + (24 + _DROP_W) * s)
 
     def visible(self, context):
         return (_closet_ui_visible(context)
                 and _closet_mode(context) in self.MODES)
 
     def draw(self, shader, font_id, rect, context, mouse):
-        rx, ry, rw, rh = rect
-        on = self._scope(context) != 'OFF'
-        hovered = point_in_rect(mouse[0], mouse[1], rect)
-        bg = (BTN_ACTIVE_BG if on else (BTN_HOVER_BG if hovered else BTN_BG))
-        _paint_btn(shader, rx, ry, rw, rh, bg)
-        _draw_centered_text(font_id, rect, FONT_SIZE * _s(),
-                            TEXT_ACTIVE if on else TEXT_NORMAL,
-                            self._label(context))
+        _paint_drop_pill(shader, font_id, rect, mouse,
+                         self._scope(context) != 'OFF', self._label(context))
 
     def on_click(self, context, area, region):
-        cur = {'ALL': 1, 'SELECTED': 2}.get(self._scope(context), 0)
-        context.scene[self.KEY] = {1: 2, 2: 0}.get(cur, 1)
+        from . import options_panel
+        with context.temp_override(area=area, region=region):
+            options_panel._open_popup("Dimensions", _draw_closet_dims_menu)
+
+
+# The closet Dims dropdown: (scope, idprop value, label)
+_CLOSET_DIMS = (('ALL', 1, "All"), ('SELECTED', 2, "Selected"),
+                ('OFF', 0, "None"))
+
+
+def _draw_closet_dims_menu(menu, context):
+    current = _CLOSET_DIMS_BUTTON._scope(context)
+    for scope, _value, label in _CLOSET_DIMS:
+        op = menu.layout.operator(
+            'home_builder.closet_dims_scope', text=label,
+            icon='CHECKMARK' if scope == current else 'BLANK1')
+        op.scope = scope
+
+
+class home_builder_OT_closet_dims_scope(bpy.types.Operator):
+    """Which closet dimension labels to show"""
+    bl_idname = "home_builder.closet_dims_scope"
+    bl_label = "Closet Dimensions"
+    bl_options = {'INTERNAL', 'UNDO'}
+
+    scope: bpy.props.EnumProperty(items=[(s, l, "") for s, _v, l in _CLOSET_DIMS])  # type: ignore
+
+    def execute(self, context):
+        context.scene[_ClosetDimsButton.KEY] = next(
+            v for s, v, _l in _CLOSET_DIMS if s == self.scope)
+        for area in context.screen.areas if context.screen else ():
+            if area.type == 'VIEW_3D':
+                area.tag_redraw()
+        return {'FINISHED'}
 
 
 _SIZES_BUTTON = _SizesButton()
@@ -2752,6 +2789,7 @@ classes = (
     home_builder_OT_panel_tab_drag,
     home_builder_OT_hud_scroll,
     home_builder_OT_hud_hover,
+    home_builder_OT_closet_dims_scope,
 )
 
 
