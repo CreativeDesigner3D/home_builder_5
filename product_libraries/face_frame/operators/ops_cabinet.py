@@ -7112,6 +7112,9 @@ class hb_face_frame_OT_set_under_cabinet_appliance(bpy.types.Operator):
                     "cabinet",
     )  # type: ignore
     bay_name: bpy.props.StringProperty(default="", options={'SKIP_SAVE'})  # type: ignore
+    # The kind a fresh bay's dialog starts on (the inspector's Add
+    # Microwave / Add Vent Hood); empty starts on Microwave.
+    start_kind: bpy.props.StringProperty(default="", options={'SKIP_SAVE', 'HIDDEN'})  # type: ignore
     # The kind the size fields were last seeded from, so re-picking the
     # appliance in the open dialog resets the sizes to that kind's
     # defaults without stomping a size the user has typed since.
@@ -7152,8 +7155,10 @@ class hb_face_frame_OT_set_under_cabinet_appliance(bpy.types.Operator):
         props = bay.face_frame_bay
         current = props.under_cabinet_appliance
         if current == 'NONE':
-            self.appliance = 'MICROWAVE'
-            self._seed_from_kind('MICROWAVE')
+            kind = (self.start_kind if self.start_kind in self._KIND_DEFAULTS
+                    else 'MICROWAVE')
+            self.appliance = kind
+            self._seed_from_kind(kind)
         else:
             # Re-editing: show what the bay already carries.
             self.appliance = current
@@ -7201,6 +7206,29 @@ class hb_face_frame_OT_set_under_cabinet_appliance(bpy.types.Operator):
             # Kind last: its update does the opening resize, so the
             # sizes are already in place when the block gets built.
             props.under_cabinet_appliance = self.appliance
+        root = types_face_frame.find_cabinet_root(bay)
+        if root is not None:
+            types_face_frame.recalculate_face_frame_cabinet(root)
+        return {'FINISHED'}
+
+
+class hb_face_frame_OT_remove_under_cabinet_appliance(bpy.types.Operator):
+    """Take the microwave or vent hood off an upper bay; its opening goes
+    back to full height"""
+    bl_idname = "hb_face_frame.remove_under_cabinet_appliance"
+    bl_label = "Remove Under Cabinet Appliance"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    bay_name: bpy.props.StringProperty(default="", options={'SKIP_SAVE'})  # type: ignore
+
+    def execute(self, context):
+        bay = bpy.data.objects.get(self.bay_name) if self.bay_name else None
+        if bay is None:
+            bay = context.active_object
+        if bay is None or not bay.get(types_face_frame.TAG_BAY_CAGE):
+            self.report({'WARNING'}, "Select a bay first")
+            return {'CANCELLED'}
+        bay.face_frame_bay.under_cabinet_appliance = 'NONE'
         root = types_face_frame.find_cabinet_root(bay)
         if root is not None:
             types_face_frame.recalculate_face_frame_cabinet(root)
@@ -8050,6 +8078,7 @@ classes = (
     hb_face_frame_OT_remove_opening_pullout,
     hb_face_frame_OT_add_appliance_to_bay,
     hb_face_frame_OT_set_under_cabinet_appliance,
+    hb_face_frame_OT_remove_under_cabinet_appliance,
     hb_face_frame_OT_remove_appliance_from_bay,
     hb_face_frame_OT_insert_bay,
     hb_face_frame_OT_delete_bay,

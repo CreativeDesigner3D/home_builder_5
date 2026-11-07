@@ -789,6 +789,119 @@ def _top_shape(shape):
     return lambda cab: cab.furniture_top and cab.furniture_top_shape == shape
 
 
+# ---- A bay's appliances -------------------------------------------------------
+# A base bay can hold a sink or a cooktop (stamped on the bay by the Add
+# Appliance dialog); an upper bay can have a microwave or a vent hood
+# hanging under it (the bay's own properties).
+
+_SINK_KINDS = (('KITCHEN_SINK', "Kitchen Sink"), ('FARM_SINK', "Farm Sink"),
+               ('VANITY_SINK', "Vanity Sink"), ('COOKTOP', "Cooktop"))
+
+
+def _bay_appliance(bp):
+    """'SINK', 'COOKTOP' or None for a base bay."""
+    kind = bp.id_data.get('APPLIANCE_BAY')
+    return kind if kind in ('SINK', 'COOKTOP') else None
+
+
+def _bay_appliance_kind(bp):
+    return bp.id_data.get('APPLIANCE_BAY_KIND') or (
+        'COOKTOP' if _bay_appliance(bp) == 'COOKTOP' else 'KITCHEN_SINK')
+
+
+def _bay_appliance_name(bp):
+    if _cab_type(bp) == 'UPPER':
+        if bp.under_cabinet_appliance == 'NONE':
+            return None
+        return {'MICROWAVE': "Microwave", 'HOOD': "Vent Hood"}.get(
+            bp.under_cabinet_appliance, bp.under_cabinet_appliance.title())
+    if _bay_appliance(bp) is None:
+        return None
+    return dict(_SINK_KINDS).get(_bay_appliance_kind(bp), "Sink")
+
+
+def _appliance_summary(bp):
+    return _bay_appliance_name(bp) or "None"
+
+
+def _takes_appliance(bp):
+    return _cab_type(bp) in ('BASE', 'UPPER')
+
+
+def _base_free(bp):
+    return _cab_type(bp) == 'BASE' and _bay_appliance(bp) is None
+
+
+def _base_held(bp):
+    return _cab_type(bp) == 'BASE' and _bay_appliance(bp) is not None
+
+
+def _upper_free(bp):
+    return _cab_type(bp) == 'UPPER' and bp.under_cabinet_appliance == 'NONE'
+
+
+def _upper_held(bp):
+    return _cab_type(bp) == 'UPPER' and bp.under_cabinet_appliance != 'NONE'
+
+
+def _dropped(bp):
+    return _base_held(bp) and bp.front_drop > 0.0
+
+
+def _drop_fillers(bp):
+    return _dropped(bp) and bp.front_drop_include_fillers
+
+
+def _bay_appliance_fields(bay_obj):
+    name = bay_obj.name
+    add = 'hb_face_frame.add_appliance_to_bay'
+    under = 'hb_face_frame.set_under_cabinet_appliance'
+
+    def sink_add(label, kind):
+        return _act(label, add, {'appliance_kind': kind, 'bay_name': name})
+    edit = _act("Edit...", add, {
+        'appliance_kind': _bay_appliance_kind(bay_obj.face_frame_bay),
+        'bay_name': name})
+    return (
+        # Base bays: a sink or a cooktop
+        ('actions', (sink_add("Kitchen Sink", 'KITCHEN_SINK'),
+                     sink_add("Farm Sink", 'FARM_SINK')), None,
+         {'when': _base_free}),
+        ('actions', (sink_add("Vanity Sink", 'VANITY_SINK'),
+                     sink_add("Cooktop", 'COOKTOP')), None,
+         {'when': _base_free}),
+        ('value', _bay_appliance_name, "Appliance", {'when': _base_held}),
+        ('distance', 'front_drop', "Drop Bay", {'when': _base_held}),
+        ('bool', 'front_drop_include_fillers', "Drop Fillers", {'when': _dropped}),
+        ('bool', 'front_drop_set_appliance_width', "Set Appliance Width",
+         {'when': _drop_fillers}),
+        ('distance', 'front_drop_appliance_width', "Appliance Width",
+         {'when': lambda bp: _drop_fillers(bp) and bp.front_drop_set_appliance_width}),
+        ('distance', 'front_drop_left_filler', "Left Filler",
+         {'when': lambda bp: _drop_fillers(bp) and not bp.front_drop_set_appliance_width}),
+        ('distance', 'front_drop_right_filler', "Right Filler",
+         {'when': lambda bp: _drop_fillers(bp) and not bp.front_drop_set_appliance_width}),
+        ('bool', 'sink_removable_floor', "Removable Floor",
+         {'when': lambda bp: _base_held(bp) and _bay_appliance(bp) == 'SINK'}),
+        ('bool', 'farm_sink_custom_fit', "Custom Fit by Shop",
+         {'when': lambda bp: _base_held(bp) and _bay_appliance_kind(bp) == 'FARM_SINK'}),
+        ('actions', (edit, _act("Remove", 'hb_face_frame.remove_appliance_from_bay',
+                                {'bay_name': name})), None,
+         {'when': _base_held}),
+        # Upper bays: a microwave or a vent hood under it
+        ('actions', (_act("Microwave", under, {'start_kind': 'MICROWAVE', 'bay_name': name}),
+                     _act("Vent Hood", under, {'start_kind': 'HOOD', 'bay_name': name})),
+         None, {'when': _upper_free}),
+        ('enum', 'under_cabinet_appliance', "Appliance", {'when': _upper_held}),
+        ('distance', 'under_cabinet_appliance_width', "Width", {'when': _upper_held}),
+        ('distance', 'under_cabinet_appliance_height', "Height", {'when': _upper_held}),
+        ('distance', 'under_cabinet_appliance_depth', "Depth", {'when': _upper_held}),
+        ('enum', 'under_cabinet_appliance_finish', "Finish", {'when': _upper_held}),
+        ('actions', (_act("Remove", 'hb_face_frame.remove_under_cabinet_appliance',
+                          {'bay_name': name}),), None, {'when': _upper_held}),
+    )
+
+
 def _bay_fields(bay_obj, bp):
     index = bp.bay_index
     quick = _quick(bp, (
@@ -816,6 +929,9 @@ def _bay_fields(bay_obj, bp):
         ('gap', None, None),
     ) + quick + (
         ('gap', None, None),
+        ('group', 'ff_bay_appliances', "Appliances", {
+            'summary': _appliance_summary, 'when': _takes_appliance,
+            'fields': _bay_appliance_fields(bay_obj)}),
         ('group', 'ff_bay_more', "Bay Details", {
             'summary': _bay_details_summary, 'fields': (
                 ('enum', 'toe_kick_type', "Toe Kick", {'when': _has_kick}),
