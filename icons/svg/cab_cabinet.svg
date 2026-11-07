@@ -1,6 +1,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="none" stroke="#fff" stroke-width="1" stroke-linecap="butt" stroke-linejoin="miter">
-  <!-- A base cabinet from the front: drawer over two doors, toe kick -->
-  <rect x="1.5" y="1.5" width="13" height="10"/>
-  <path d="M1.5 4.5h13M7.5 4.5v7M8.5 4.5v7"/>
-  <path d="M2.5 11.5v3h11v-3"/>
+  <!-- A base cabinet with its countertop: two doors with pulls, toe kick -->
+  <rect x="0.5" y="2.5" width="15" height="2" fill="#fff" fill-opacity=".35"/>
+  <path d="M1.5 4.5v8h13v-8M8 4.5v8"/>
+  <path d="M6.5 6.5v2M9.5 6.5v2"/>
+  <path d="M2.5 12.5v2h11v-2"/>
 </svg>
