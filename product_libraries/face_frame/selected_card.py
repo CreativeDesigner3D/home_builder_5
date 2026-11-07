@@ -359,6 +359,16 @@ def _appliance_width_set(op):
     return _appliance_width_shown(op) and op.set_appliance_width
 
 
+def _fillers_typed(op):
+    return (_appliance_width_shown(op) and not op.set_appliance_width
+            and op.appliance_fit != 'NOTCH')
+
+
+def _notches_typed(op):
+    return (_appliance_width_shown(op) and not op.set_appliance_width
+            and op.appliance_fit == 'NOTCH')
+
+
 # An opening's overlays: locked, an overlay is the cabinet's default, so
 # the field reads what is built rather than the stored (ignored) value.
 OVERLAY_KEY = 'FF_OPENING_OVERLAYS'
@@ -832,8 +842,7 @@ def _opening_fields(op):
          (_act("Equalize Heights", 'hb_face_frame.equalize_opening_heights',
                None, 'cab_equalize_heights'), None)),
         ((_act("Accessories", 'hb_face_frame.accessory_menu', None,
-               'cab_accessories'), _accessories),
-         (_act("Finish Opening", 'hb_face_frame.finish_opening_prompts'), None)),
+               'cab_accessories'), _accessories),),
     ))
     return (
         ('value', _opening_root_size, "Size"),
@@ -843,8 +852,6 @@ def _opening_fields(op):
         ('gap', None, None),
     ) + quick + (
         ('gap', None, None),
-        ('group', 'ff_opening_more', "Front Details", {
-            'summary': _opening_summary, 'fields': front_detail_fields()}),
     )
 
 
@@ -889,9 +896,127 @@ def front_detail_fields():
         ('bool', 'set_appliance_width', "Set Appliance Width",
          {'when': _appliance_width_shown}),
         ('distance', 'appliance_width', "Appliance Width", {'when': _appliance_width_set}),
-        ('distance', 'left_filler_amount', "Left Filler", {'when': _appliance_width_set}),
-        ('distance', 'right_filler_amount', "Right Filler", {'when': _appliance_width_set}),
+        ('distance', 'left_filler_amount', "Left Filler", {'when': _fillers_typed}),
+        ('distance', 'right_filler_amount', "Right Filler", {'when': _fillers_typed}),
+        ('distance', 'left_filler_amount', "Left Notch", {'when': _notches_typed}),
+        ('distance', 'right_filler_amount', "Right Notch", {'when': _notches_typed}),
     )
+
+
+def finish_fields():
+    """An opening's finish, as the Finish Opening dialog has it."""
+    def on(op):
+        return op.finish_opening
+
+    def textured(op):
+        return on(op) and op.finish_opening_texture not in ('NONE', '')
+
+    def flush(op):
+        return on(op) and op.finish_opening_flush
+    return (
+        ('bool', 'finish_opening', "Finish Opening"),
+        ('enum', 'finish_opening_material', "Finish Color", {'when': on}),
+        ('enum', 'finish_opening_texture', "Texture", {'when': on}),
+        ('enum', 'finish_opening_texture_scope', "Texture On", {'when': textured}),
+        ('enum', 'finish_opening_beadboard_pattern', "Beadboard",
+         {'when': lambda op: on(op) and op.finish_opening_texture == 'BEADBOARD'}),
+        ('bool', 'finish_opening_flush', "Finish Flush", {'when': on}),
+        ('distance', 'finish_opening_flush_depth', "Flush Depth", {'when': flush}),
+        ('bool', 'finish_opening_flush_top', "Flush Top", {'when': flush}),
+    )
+
+
+def _finish_summary(op):
+    if not op.finish_opening:
+        return "Off"
+    return _label_of(op, 'finish_opening_material')
+
+
+def _cab_texture_fields(op):
+    """The cabinet's own texture settings an opening's choices reach:
+    an inset beadboard panel's pattern and material, and a textured
+    finish's boards, as (front details, finish). Shared with the rest
+    of the cabinet, so labelled."""
+    def inset_bead(_cab):
+        return (op.front_type == 'INSET_PANEL'
+                and op.inset_panel_type == 'BEADBOARD')
+
+    def finish_tex(kind):
+        return lambda _cab: (op.finish_opening
+                             and op.finish_opening_texture == kind)
+    inset = (
+        ('enum', 'beadboard_pattern', "Pattern (Cabinet)", {'when': inset_bead}),
+        ('enum', 'beadboard_material', "Material (Cabinet)", {'when': inset_bead}),
+    )
+    return inset, (
+        ('enum', 'beadboard_material', "Beadboard Material (Cabinet)",
+         {'when': finish_tex('BEADBOARD')}),
+        ('distance', 'v_groove_spacing', "V-Groove Spacing (Cabinet)",
+         {'when': finish_tex('V_GROOVE')}),
+        ('enum', 'shiplap_board_width', "Shiplap Width (Cabinet)",
+         {'when': finish_tex('SHIPLAP')}),
+        ('enum', 'shiplap_direction', "Shiplap Direction (Cabinet)",
+         {'when': finish_tex('SHIPLAP')}),
+    )
+
+
+def _drawer_look_rows(op):
+    """[(fields, owner)] for a drawer-look stack's rows, top to bottom:
+    each row's height, and between two rows the rail that can come out."""
+    if not (_drawer_look_ok(op) and op.drawer_look_divisions != 'NONE'):
+        return []
+    rows = op.drawer_look_openings
+    out = []
+    for idx in range(len(rows) - 1, -1, -1):
+        out.append(((('locked', 'size', "Drawer %d" % (len(rows) - idx),
+                      {'unlock': 'unlock_size'}),), rows[idx]))
+        if idx > 0:
+            out.append(((('bool', 'no_rail_above', "Remove Rail Below"),),
+                        rows[idx - 1]))
+    return out
+
+
+def _owners_group(context, key, label, summary, parts):
+    """A folding group, as a 'group' field draws one, whose fields sit
+    on more than one owner: [(fields, owner)]. Left out when nothing in
+    it is shown."""
+    from ...operators import options_panel
+    inner = []
+    for fields, owner in parts:
+        if owner is not None:
+            inner.extend(options_panel.field_blocks(context, fields, owner))
+    if not inner:
+        return []
+    method = 'group:' + key
+    expanded = options_panel.section_expanded(context, method)
+
+    def toggle(m=method):
+        options_panel.toggle_section(bpy.context, m)
+    blocks = [('section', (label, method, expanded, toggle, summary, None))]
+    if expanded:
+        blocks.extend(('indent', b) for b in inner)
+        blocks.append(('gap', None))
+    return blocks
+
+
+def opening_group_blocks(context, opening_obj):
+    """The opening page's folding groups past its main fields: the
+    front's details, a drawer-look stack's row heights and the finish."""
+    op = opening_obj.face_frame_opening
+    root = types_face_frame.find_cabinet_root(opening_obj)
+    cab = root.face_frame_cabinet if root is not None else None
+    inset_tex, finish_tex = _cab_texture_fields(op)
+    out = _owners_group(context, 'ff_opening_more', "Front Details",
+                        _opening_summary(op),
+                        [(front_detail_fields(), op), (inset_tex, cab)])
+    rows = _drawer_look_rows(op)
+    if rows:
+        out += _owners_group(context, 'ff_opening_rows', "Drawer Heights",
+                             "%d rows" % len(op.drawer_look_openings), rows)
+    out += _owners_group(context, 'ff_opening_finish', "Finish",
+                         _finish_summary(op),
+                         [(finish_fields(), op), (finish_tex, cab)])
+    return out
 
 
 def _part_blocks(context, part_obj):
@@ -1104,6 +1229,7 @@ def blocks(context, item):
         from . import bay_config
         out.extend(bay_config.opening_field_blocks(context, opening_obj))
         out.extend(options_panel.field_blocks(context, _opening_fields(op), op))
+        out.extend(opening_group_blocks(context, opening_obj))
         out.extend(opening_overlay_blocks(context, opening_obj))
         _footer(out, 'hb_face_frame.opening_prompts')
     elif kind == 'drawer':
