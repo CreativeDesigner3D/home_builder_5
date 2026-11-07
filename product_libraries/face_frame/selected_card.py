@@ -62,6 +62,16 @@ def _find(context):
     whose Interior page is open (part_obj is the region or part)."""
     from . import ui_face_frame, interior_page
     from ...operators import generic_page
+    # The Interior page on a hidden region or split, while the visible
+    # object it keeps as the pick stays picked.
+    found = interior_page.focused(context)
+    if found is not None:
+        opening, region, page = found
+        root = types_face_frame.find_cabinet_root(opening)
+        if root is not None and page == 'opening':
+            return ('opening', root, _owning_bay(opening), opening, None)
+        if root is not None:
+            return ('interior', root, _owning_bay(opening), opening, region)
     sel = ui_face_frame.find_active_selection(context)
     kind = sel[0]
     if kind == 'none':

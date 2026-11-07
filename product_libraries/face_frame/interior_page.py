@@ -38,8 +38,13 @@ _shown_for = None
 # The pick the item list was last lined up with, so a newly picked part
 # selects its item once and a click in the list is not undone
 _synced_pick = None
-# A split picked in the picture when it builds no part to pick (by name)
-_picked_split = None
+# What the page is on when that is not the active object: (anchor,
+# opening, region, split) names. Region cages and splits are hidden, and
+# Blender's viewport has no active object while a hidden one is active
+# -- the inspector closed. So a visible object (the anchor) stays the
+# pick and the page remembers the region or split; picking anything
+# else in the viewport ends it.
+_focus = None
 # (split name, axis, px per metre) for the drag a press on a bar starts
 _pending_drag = None
 
@@ -479,25 +484,86 @@ def _s():
 
 
 def pick_split(context, node):
-    """Pick a split: its part when it builds one, else the opening with
-    the split remembered."""
-    global _picked_split
+    """Pick a split: its part when it builds one, else the split itself
+    as the page's focus."""
     part = part_of_split(node)
-    if part is not None:
+    if part is not None and part.visible_get():
         pick(context, part)
         return
     opening = opening_of(node)
-    if opening is None:
+    if opening is not None:
+        focus(context, opening, split=node)
+
+
+def _visible(context, obj):
+    try:
+        return (obj is not None
+                and context.view_layer.objects.get(obj.name) is not None
+                and obj.visible_get())
+    except ReferenceError:
+        return False
+
+
+def _anchor(context, opening):
+    """A visible object to stay the pick while the page is on a hidden
+    region or split: the pick already made when it is one of this
+    opening's, else the opening, a part in it, or its bay."""
+    active = context.view_layer.objects.active
+    if (_visible(context, active)
+            and (active is opening or opening_of(active) is opening)):
+        return active
+    candidates = [opening]
+    candidates += [o for o in opening.children_recursive
+                   if is_interior_part(o)]
+    candidates += list(opening.children_recursive)
+    candidates.append(opening.parent)
+    return next((o for o in candidates if _visible(context, o)), None)
+
+
+def focus(context, opening, region=None, split=None, page='interior'):
+    """Put the page on `region` or `split` of `opening` (neither: the
+    opening's whole interior) without making the hidden cage active.
+    page 'opening' is the Opening page of a hidden opening cage."""
+    global _focus
+    anchor = _anchor(context, opening)
+    if anchor is None:
+        # Nothing of the opening is visible: the cage it is, then.
+        pick(context, region or opening)
         return
-    show(opening.name)
-    pick(context, opening)
-    _picked_split = node.name
+    pick(context, anchor)
+    _focus = (anchor.name, opening.name,
+              region.name if region is not None else "",
+              split.name if split is not None else "", page)
+
+
+def focused(context):
+    """(opening, region or None, page) the page is on in place of the
+    active object, or None when the focus is gone."""
+    global _focus
+    if not _focus:
+        return None
+    anchor, opening_name, region_name, _split, page = _focus
+    active = context.view_layer.objects.active
+    opening = bpy.data.objects.get(opening_name)
+    if active is None or active.name != anchor or opening is None:
+        _focus = None
+        return None
+    region = bpy.data.objects.get(region_name) if region_name else None
+    if region_name and (region is None or opening_of(region) is not opening):
+        region = None           # joined or gone: the opening's interior
+    return opening, region, page
+
+
+def _focused_split():
+    if not _focus or not _focus[3]:
+        return None
+    return bpy.data.objects.get(_focus[3])
 
 
 def pick(context, obj):
     """Make `obj` the pick, so the page follows it."""
-    global _picked_split
-    _picked_split = None
+    global _focus
+    _focus = None
     view_layer = context.view_layer
     for o in context.selected_objects:
         try:
@@ -638,10 +704,9 @@ def _picked_split_node(opening, pick_obj):
     or one picked in the picture that builds no part."""
     if is_split_part(pick_obj):
         return split_of_part(pick_obj)
-    if pick_obj is None and _picked_split:
-        node = bpy.data.objects.get(_picked_split)
-        if node is not None and opening_of(node) is opening:
-            return node
+    node = _focused_split()
+    if pick_obj is None and node is not None and opening_of(node) is opening:
+        return node
     return None
 
 
@@ -788,15 +853,18 @@ class hb_face_frame_OT_show_interior_page(bpy.types.Operator):
             opening = bpy.data.objects.get(self.opening_name)
             if opening is None:
                 return {'CANCELLED'}
-            show(opening.name)
-            pick(context, opening)
+            focus(context, opening)
         else:
             # Back to the Opening page of the opening on show
+            found = focused(context)
             active = context.view_layer.objects.active
-            opening = opening_of(active) if active is not None else None
+            opening = (found[0] if found else
+                       opening_of(active) if active is not None else None)
             show(None)
-            if opening is not None:
+            if opening is not None and _visible(context, opening):
                 pick(context, opening)
+            elif opening is not None:
+                focus(context, opening, page='opening')
         for area in context.screen.areas if context.screen else ():
             if area.type == 'VIEW_3D':
                 area.tag_redraw()
@@ -815,7 +883,11 @@ class hb_face_frame_OT_pick_interior(bpy.types.Operator):
         obj = bpy.data.objects.get(self.name) if self.name else None
         if obj is None:
             return {'CANCELLED'}     # a press on nothing: just taken
-        pick(context, obj)
+        opening = opening_of(obj)
+        if obj.get(tff.TAG_INTERIOR_REGION) and opening is not None:
+            focus(context, opening, region=obj)
+        else:
+            pick(context, obj)
         _redraw(context)
         return {'FINISHED'}
 
@@ -857,11 +929,7 @@ class hb_face_frame_OT_interior_page_split(bpy.types.Operator):
             # The joined region, or the opening when the last split went
             leaf = next((o for o in new if o.get(tff.TAG_INTERIOR_REGION)),
                         None)
-            if leaf is not None:
-                pick(context, leaf)
-            else:
-                show(opening.name)
-                pick(context, opening)
+            focus(context, opening, region=leaf)
         else:
             # The new lower or left side, which holds what was there
             node = next((o for o in new
@@ -873,7 +941,7 @@ class hb_face_frame_OT_interior_page_split(bpy.types.Operator):
                          and len(items_props(k).interior_items)), None)
             leaf = leaf or (kids[0] if kids else None)
             if leaf is not None and leaf.get(tff.TAG_INTERIOR_REGION):
-                pick(context, leaf)
+                focus(context, opening, region=leaf)
         _redraw(context)
         return {'FINISHED'}
 
