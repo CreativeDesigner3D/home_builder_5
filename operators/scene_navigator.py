@@ -487,18 +487,18 @@ def run_section_clear(label):
     return True
 
 
-# Section actions: one button heading a section's rows (e.g. a command
-# that makes that section's scenes). It sits first, under the header, so
-# a long list never scrolls it away. A section normally disappears when
-# it has no scenes; one with an action stays listed, showing the button.
-_section_actions = {}    # section label -> (button text, operator idname)
+# Section actions: a command that makes a section's scenes, as a small
+# + chip in line with the section header, so a long list never scrolls it
+# away. A section normally disappears when it has no scenes; one with an
+# action stays listed, showing the chip.
+_section_actions = {}    # section label -> (text, operator idname, chip)
 
 
-def register_section_action(label, text, op_idname):
-    """Give section ``label`` a ``text`` button that invokes
-    ``op_idname`` (no arguments), and keep the section listed when
-    empty."""
-    _section_actions[label] = (text, op_idname)
+def register_section_action(label, text, op_idname, chip=NEW_CHIP_TEXT):
+    """Give section ``label`` a + chip that invokes ``op_idname`` (no
+    arguments), and keep the section listed when empty. ``text`` names
+    the command; ``chip`` is the word on the chip (NEW, CREATE ALL)."""
+    _section_actions[label] = (text, op_idname, chip.upper())
 
 
 def unregister_section_action(label):
@@ -857,10 +857,11 @@ def _build_layout(region, area, current_scene_name,
                 # the clear button -- reachable folded or open.
                 right = (clear_rect[0] - btn_gap if clear_rect is not None
                          else content_x + row_w - btn_right_pad)
-                cw = new_chip_width(s)
+                chip_text = _section_actions[label][2]
+                cw = new_chip_width(s, chip_text)
                 ch = NEW_CHIP_HEIGHT * s
                 entries.append(('section_action', label,
-                                _section_actions[label][0],
+                                chip_text,
                                 (right - cw, item_bot + (h - ch) / 2.0,
                                  cw, ch)))
         else:
@@ -1339,12 +1340,14 @@ def _draw_row(shader, font_id, entry, mx, my):
         _draw_rect(shader, rx, ry, rw, rh, (*PANEL_BG[:3], 0.6))
 
 
-def new_chip_width(s):
-    return (NEW_CHIP_PAD * 2 + NEW_CHIP_PLUS + NEW_CHIP_PLUS_GAP) * s         + _text_w(0, NEW_CHIP_FONT * s, NEW_CHIP_TEXT)
+def new_chip_width(s, text=NEW_CHIP_TEXT):
+    pad = (NEW_CHIP_PAD * 2 + NEW_CHIP_PLUS + NEW_CHIP_PLUS_GAP) * s
+    return pad + _text_w(0, NEW_CHIP_FONT * s, text)
 
 
-def _draw_new_chip(shader, font_id, rect, mx, my):
-    """A section action: + NEW, in line with its header."""
+def _draw_new_chip(shader, font_id, rect, mx, my, text=NEW_CHIP_TEXT):
+    """A section action: + NEW (or its own word), in line with its
+    header."""
     s = _s()
     hot = _point_in_rect(mx, my, rect)
     _paint_button(shader, rect, hovered=hot)
@@ -1356,7 +1359,7 @@ def _draw_new_chip(shader, font_id, rect, mx, my):
     _draw_text(font_id,
                rx + (NEW_CHIP_PAD + NEW_CHIP_PLUS + NEW_CHIP_PLUS_GAP) * s,
                ry + rh * 0.26, NEW_CHIP_FONT * s,
-               TEXT_PRIMARY if hot else TEXT_NORMAL, NEW_CHIP_TEXT)
+               TEXT_PRIMARY if hot else TEXT_NORMAL, text)
 
 
 # ---- Draw callback ----------------------------------------------------------
@@ -1418,7 +1421,8 @@ def paint_navigator(panel_rect, entries, mx, my):
         elif kind == 'row':
             _draw_row(shader, font_id, entry, lmx, lmy)
         elif kind == 'section_action':
-            _draw_new_chip(shader, font_id, entry[3], lmx, lmy)
+            _draw_new_chip(shader, font_id, entry[3], lmx, lmy,
+                           text=entry[2])
 
     # Insertion line for a live row drag, on top of the rows and inside
     # the same clip.
