@@ -53,14 +53,8 @@ _page = 'LEVELS'        # the page on show
 def available(scene):
     if scene.get('IS_LAYOUT_VIEW') or scene.get('IS_DETAIL_VIEW'):
         return False
-    return _tab_enabled() or bool(scene.get('IS_HOUSE_SCENE'))
-
-
-def _tab_enabled():
-    """The House Tab preference (off by default while houses are in
-    development)."""
-    addon = bpy.context.preferences.addons.get(hb_house.__package__)
-    return bool(addon and getattr(addon.preferences, 'show_house_tab', False))
+    # Always offered; the user hides it from the tab strip (panel_tabs).
+    return True
 
 
 def _length(owner, value):
