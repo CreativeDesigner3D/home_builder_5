@@ -465,16 +465,20 @@ def step_feet(feet_z, target_z, fall_speed, dt):
 class HOME_BUILDER_OT_walk_through(bpy.types.Operator):
     bl_idname = "home_builder.walk_through"
     bl_label = "Walk Through"
-    bl_description = ("Walk around the house at eye height, starting on the "
-                      "active level: click where to stand (drag to face a way). "
+    bl_description = ("Walk around the room or house at eye height: click "
+                      "where to stand (drag to face a way). "
                       "Mouse to look, WASD to move, Shift to run, click to stop, "
                       "Esc to go back")
 
     @classmethod
     def poll(cls, context):
         area = context.area
-        return (hb_house.active_level(context) is not None
-                and area is not None and area.type == 'VIEW_3D')
+        scene = context.scene
+        if area is None or area.type != 'VIEW_3D' or scene is None:
+            return False
+        # Any model scene: a house level, or a room drawn on its own.
+        # Sheets and detail cards have nothing to walk through.
+        return not (scene.get('IS_LAYOUT_VIEW') or scene.get('IS_DETAIL_VIEW'))
 
     # -- setup / teardown --
     #
@@ -483,9 +487,13 @@ class HOME_BUILDER_OT_walk_through(bpy.types.Operator):
     # view it started from, on Esc).
 
     def invoke(self, context, event):
+        # Outside a house project there is no level: the room's own
+        # scene is walked, on the floor at z 0.
         level = hb_house.active_level(context)
-        self.level_uid = level.uid
-        self.scene = hb_house.house_scene_of(context.scene)
+        self.level_uid = level.uid if level is not None else None
+        self.scene = (hb_house.house_scene_of(context.scene)
+                      if level is not None else context.scene)
+        self.floor_z = level.elevation if level is not None else 0.0
         self.area = context.area
         self.region = next((r for r in self.area.regions if r.type == 'WINDOW'), context.region)
         self.r3d = self.area.spaces.active.region_3d
@@ -499,9 +507,10 @@ class HOME_BUILDER_OT_walk_through(bpy.types.Operator):
                            r3d.view_distance, r3d.view_perspective)
         self.space = self.area.spaces.active
         self.saved_lens = self.space.lens
-        house = self.scene.hb_house
-        self.saved_house = (house.show_ceilings, house.level_display)
         self.house_changed = False
+        if level is not None:
+            house = self.scene.hb_house
+            self.saved_house = (house.show_ceilings, house.level_display)
 
         self.phase = 'PICK'
         self.hover = None           # the floor point under the cursor
@@ -509,7 +518,7 @@ class HOME_BUILDER_OT_walk_through(bpy.types.Operator):
         self.yaw = _heading(r3d)
         self.default_yaw = self.yaw
         self.pitch = 0.0
-        self.feet = Vector((0.0, 0.0, level.elevation))
+        self.feet = Vector((0.0, 0.0, self.floor_z))
         self.fall = 0.0
         self.keys = set()
         self.run = False
@@ -532,18 +541,21 @@ class HOME_BUILDER_OT_walk_through(bpy.types.Operator):
         return {'RUNNING_MODAL'}
 
     def _level(self):
+        if self.level_uid is None:
+            return None
         return next((l for l in self.scene.hb_house.levels if l.uid == self.level_uid), None)
 
     def _start_walk(self, context, spot, yaw):
         """Stand at a spot facing a way: the house is shown as lived in, and
         the view starts gliding down to the eye."""
         level = self._level()
-        house = self.scene.hb_house
-        house.show_ceilings = True
-        house.level_display = 'ALL'
-        self.house_changed = True
-        from . import hb_rooms
-        self._labels_off(hb_rooms)
+        if level is not None:
+            house = self.scene.hb_house
+            house.show_ceilings = True
+            house.level_display = 'ALL'
+            self.house_changed = True
+            from . import hb_rooms
+            self._labels_off(hb_rooms)
         self._present(context)
         self.yaw, self.pitch = yaw, 0.0
         self.feet = Vector((spot.x, spot.y, level.elevation if level else spot.z))
@@ -586,9 +598,9 @@ class HOME_BUILDER_OT_walk_through(bpy.types.Operator):
         bpy.types.SpaceView3D.draw_handler_remove(self.aim_handle, 'WINDOW')
         self.window.cursor_modal_restore()
         self.area.header_text_set(None)
-        house = self.scene.hb_house
         self._unpresent()
         if self.house_changed:
+            house = self.scene.hb_house
             from . import hb_rooms
             hb_rooms.apply_label_visibility(self.scene)       # back as the house has them
             ceilings, display = self.saved_house
@@ -696,17 +708,14 @@ class HOME_BUILDER_OT_walk_through(bpy.types.Operator):
                                          self.feet.z + self.eye_height))
 
     def _floor_under_cursor(self, event):
-        """The point on the level's floor under the mouse, or None."""
-        level = self._level()
-        if level is None:
-            return None
+        """The point on the floor under the mouse, or None."""
         coord = (event.mouse_x - self.region.x, event.mouse_y - self.region.y)
         if not (0 <= coord[0] < self.region.width and 0 <= coord[1] < self.region.height):
             return None
         rv3d = self.r3d
         origin = view3d_utils.region_2d_to_origin_3d(self.region, rv3d, coord)
         direction = view3d_utils.region_2d_to_vector_3d(self.region, rv3d, coord)
-        return floor_point(origin, direction, level.elevation)
+        return floor_point(origin, direction, self.floor_z)
 
     # -- drawing --
 
@@ -832,8 +841,11 @@ class HOME_BUILDER_OT_walk_through(bpy.types.Operator):
             return {'RUNNING_MODAL'}
         if event.value == 'PRESS' and event.type in {'RET', 'NUMPAD_ENTER', 'SPACE'}:
             level = self._level()
-            spot = _start_point(level, self.r3d.view_location)
-            self._start_walk(context, Vector((spot.x, spot.y, level.elevation)), self.default_yaw)
+            if level is not None:
+                spot = _start_point(level, self.r3d.view_location)
+            else:
+                spot = self.r3d.view_location
+            self._start_walk(context, Vector((spot.x, spot.y, self.floor_z)), self.default_yaw)
             return {'RUNNING_MODAL'}
         if event.value == 'PRESS' and event.type in {'ESC', 'RIGHTMOUSE'}:
             self._finish(context, go_back=False)

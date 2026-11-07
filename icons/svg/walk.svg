@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="none" stroke="#fff" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round">
+  <!-- Walk Through: a person mid-stride -->
+  <circle cx="9" cy="2.5" r="1.5" fill="#fff" stroke="none"/>
+  <path d="M8.5 5l-1.25 4.75"/>
+  <path d="M5 8l1.75-2.75 1.75-.25 1.5 2.25 2 .75"/>
+  <path d="M7.25 9.75l-1.75 2.5-2 2.25"/>
+  <path d="M7.25 9.75l2.25 1.75.5 3"/>
+</svg>

@@ -337,6 +337,7 @@ _ICON_SELECT_BOX = icon_glyph('select_box', _glyph_select_box)
 _ICON_MOVE = icon_glyph('move', _glyph_move)
 _ICON_ROTATE = icon_glyph('rotate', _glyph_rotate)
 _ICON_VIEW_ALL = icon_glyph('view_all', _glyph_view_all)
+_ICON_WALK = icon_glyph('walk')
 
 
 def _draw_centered_text(font_id, rect, size, color, text):
@@ -1402,6 +1403,20 @@ _VIEW_ALL_BUTTON = _IconCommandButton(
     'view3d.view_all', "View All", _ICON_VIEW_ALL, hotkey="HOME")
 
 
+class _WalkButton(_IconCommandButton):
+    """Walk Through, wherever there is a model to walk: a house level or
+    a room on its own. Not on a sheet or a detail card."""
+
+    def visible(self, context):
+        scene = context.scene
+        return scene is not None and not (scene.get('IS_LAYOUT_VIEW')
+                                          or scene.get('IS_DETAIL_VIEW'))
+
+
+_WALK_BUTTON = _WalkButton(
+    'home_builder.walk_through', "Walk Through", _ICON_WALK)
+
+
 def _view_strip():
     """The right-anchored groups: what a drag does, then what you see.
 
@@ -1415,7 +1430,7 @@ def _view_strip():
                   _CLOSET_OPEN_DOOR_BUTTON, _CUTAWAY_BUTTON]
          + _mode_extra_widgets()
          + [_SIZES_BUTTON, _FRAMELESS_SIZES_BUTTON, _CLOSET_DIMS_BUTTON,
-            _VIEW_ALL_BUTTON]),
+            _WALK_BUTTON, _VIEW_ALL_BUTTON]),
     ]
 
 
