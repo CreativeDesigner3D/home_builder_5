@@ -32,6 +32,7 @@ from bpy_extras import view3d_utils
 from .. import solver_face_frame as solver
 from .. import types_face_frame
 from .... import hb_types
+from .... import hb_icons
 from ....units import inch
 
 
@@ -43,6 +44,17 @@ SNAP_PX = 8.0
 SNAP_FRACTIONS = (inch(1.0), inch(0.5), inch(0.25), inch(0.125))
 MIN_BAY_WIDTH = inch(2.0)
 MIN_OPENING_SIZE = inch(1.0)
+# Two cabinets whose ends are this close are butted: one joint handle
+# between them instead of two coinciding end handles.
+BUTT_TOL = inch(0.0625)
+# Cabinets whose backs sit this close (along the run's depth axis) are
+# on the same run -- the ones a move snaps to and a stretch stops at.
+RUN_PLANE_TOL = inch(4.0)
+# A moved cabinet's end snaps to another cabinet's end inside this many
+# pixels.
+MOVE_SNAP_PX = 14.0
+# Radius of the move handle at a cabinet's centre (unscaled px).
+MOVE_HANDLE_R = 13.0
 # How far the cursor must travel off the grab point before the typed-
 # value target switches sides. Keeps the active opening stable under
 # jitter; the user flips it by dragging decisively the other way.
@@ -309,6 +321,7 @@ def _snapshot_session(scene):
         snap['cabinets'][cab.name] = {
             'width': cab.face_frame_cabinet.width,
             'lock_width': cab.face_frame_cabinet.lock_width,
+            'location': cab.location.copy(),
         }
     return snap
 
@@ -329,6 +342,8 @@ def _restore_session(snap):
         # an inconsistent intermediate state.
         cp.lock_width = state['lock_width']
         cp.width = state['width']
+        if 'location' in state:
+            cab.location = state['location']
     for cab_name, bay_states in snap.get('bays', {}).items():
         for state in bay_states:
             bay = bpy.data.objects.get(state['bay_name'])
@@ -352,6 +367,143 @@ def _collect_boundaries(scene, collector):
         for b in collector(cab, layout):
             out.append((b, layout))
     return out
+
+
+# ---- Cabinets mode: runs of cabinets ----------------------------------------------
+# A cabinet is moved by its centre and stretched by its ends. Cabinets
+# that sit side by side on one wall are a run: a moved cabinet snaps its
+# ends to theirs, a stretched end stops where the next one starts, and
+# where two are butted the end handles become one joint that shifts
+# width from one to the other.
+
+def _run_entry(cab, layout):
+    mw = cab.matrix_world
+    rot = mw.to_3x3()
+    return {
+        'obj': cab,
+        'layout': layout,
+        'origin': mw.translation.copy(),
+        'x': (rot @ Vector((1.0, 0.0, 0.0))).normalized(),
+        'y': (rot @ Vector((0.0, 1.0, 0.0))).normalized(),
+        'dim_x': layout.dim_x,
+        'z_low': mw.translation.z,
+        'z_high': mw.translation.z + layout.dim_z,
+        # Angled and corner fronts do not run along their own X.
+        'straight': not layout.is_angled,
+    }
+
+
+def _same_run(a, b):
+    """b faces the same way as a and stands against the same wall."""
+    if a['x'].dot(b['x']) < 0.999:
+        return False
+    return abs((b['origin'] - a['origin']).dot(a['y'])) < RUN_PLANE_TOL
+
+
+def _z_overlap(a, b):
+    return min(a['z_high'], b['z_high']) - max(a['z_low'], b['z_low']) > inch(1.0)
+
+
+def _span_in(a, b):
+    """b's (left, right) along a's X, measured from a's origin."""
+    p = (b['origin'] - a['origin']).dot(a['x'])
+    return p, p + b['dim_x']
+
+
+def run_neighbors(entries, a, overlap_z=True):
+    """[(entry, left, right)] of the cabinets on a's run."""
+    out = []
+    for b in entries:
+        if b is a or not b['straight'] or not _same_run(a, b):
+            continue
+        if overlap_z and not _z_overlap(a, b):
+            continue
+        left, right = _span_in(a, b)
+        out.append((b, left, right))
+    return out
+
+
+def _collect_cabinet_mode(scene):
+    """Boundary records for Cabinets mode: each cabinet's outer edges and
+    a move handle at its centre, with the two end handles of a butted
+    pair folded into one joint, and a free end's stretch stopped at the
+    next cabinet on the run."""
+    cabs = [(c, solver.FaceFrameLayout(c))
+            for c in _iter_face_frame_cabinets(scene)]
+    entries = [_run_entry(c, l) for c, l in cabs]
+    by_name = {e['obj'].name: e for e in entries}
+    joints = []
+    folded = set()
+    for a in entries:
+        if not a['straight']:
+            continue
+        for b, left, _right in run_neighbors(entries, a):
+            if abs(left - a['dim_x']) <= BUTT_TOL:
+                joints.append((a, b))
+                folded.add((a['obj'].name, 'OUTER_RIGHT'))
+                folded.add((b['obj'].name, 'OUTER_LEFT'))
+    out = []
+    for cab, layout in cabs:
+        a = by_name[cab.name]
+        for rec in solver.editable_boundaries_cabinet(cab, layout):
+            if (cab.name, rec['kind']) in folded:
+                continue
+            if a['straight'] and rec['kind'] in ('OUTER_RIGHT', 'OUTER_LEFT'):
+                stop = _free_end_stop(entries, a, rec['kind'])
+                if stop is not None:
+                    rec['max_value'] = cab.face_frame_cabinet.width + stop
+            out.append((rec, layout))
+        if a['straight']:
+            ff_x = 0.5 * a['dim_x'] - layout.ff_inset_left
+            out.append(({
+                'kind': 'CABINET_MOVE',
+                'axis': 'X',
+                'primary_sign': 1.0,
+                'cabinet_obj': cab,
+                'ff_x': ff_x,
+                'ff_z_low': 0.5 * layout.dim_z,
+                'ff_z_high': 0.5 * layout.dim_z,
+            }, layout))
+    for a, b in joints:
+        layout = a['layout']
+        out.append(({
+            'kind': 'CABINET_JOINT',
+            'axis': 'X',
+            'primary_sign': 1.0,
+            'cabinet_obj': a['obj'],
+            'left_cab_name': a['obj'].name,
+            'right_cab_name': b['obj'].name,
+            'ff_x': a['dim_x'] - layout.ff_inset_left,
+            'ff_z_low': max(0.0, b['z_low'] - a['z_low']),
+            'ff_z_high': min(layout.dim_z, b['z_high'] - a['z_low']),
+        }, layout))
+    return out
+
+
+def _free_end_stop(entries, a, kind):
+    """How far a's end can stretch before it meets the next cabinet on
+    its run, or None when nothing is in the way."""
+    gaps = []
+    for _b, left, right in run_neighbors(entries, a):
+        if kind == 'OUTER_RIGHT' and left >= a['dim_x'] - BUTT_TOL:
+            gaps.append(left - a['dim_x'])
+        elif kind == 'OUTER_LEFT' and right <= BUTT_TOL:
+            gaps.append(-right)
+    return max(0.0, min(gaps)) if gaps else None
+
+
+def _move_targets(scene, cab):
+    """Where cab's ends can snap while it moves: the ends of every other
+    cabinet on its run, base or wall, along cab's X from its origin."""
+    entries = [_run_entry(c, solver.FaceFrameLayout(c))
+               for c in _iter_face_frame_cabinets(scene)]
+    a = next((e for e in entries if e['obj'] is cab), None)
+    if a is None:
+        return [], 0.0
+    targets = []
+    for _b, left, right in run_neighbors(entries, a, overlap_z=False):
+        targets.extend((left, right))
+    return targets, a['dim_x']
 
 
 # ---------------------------------------------------------------------------
@@ -547,8 +699,16 @@ def _draw_padlock(shader, x, y, color, size=10.0):
     by = y - bh
     body_cx = bx + bw * 0.5
     body_cy = by + bh * 0.5
-    # Backing chip: centered between body and shackle so both sit on it.
-    _draw_disc_2d(shader, body_cx, by + bh * 0.75, size * 1.05, LOCK_CHIP)
+    # The add-on's lock icon on a dark chip, centred where the drawn
+    # glyph's body was so the click targets stay where they were.
+    icon_px = size * 1.6
+    _draw_disc_2d(shader, body_cx, body_cy, size * 1.15, LOCK_CHIP)
+    if hb_icons.draw_icon('lock', (body_cx - icon_px / 2.0,
+                                   body_cy - icon_px / 2.0,
+                                   icon_px, icon_px), color,
+                          size=16):
+        return
+    # Fallback: the drawn padlock, when the icon files are missing.
     body = [
         Vector((bx, by)),
         Vector((bx + bw, by)),
@@ -762,6 +922,11 @@ def _draw_callback_impl(op, context):
                 })
     # 2. Boundary lines
     for b, layout in op._boundaries:
+        if b['kind'] == 'CABINET_MOVE':
+            _draw_move_handle(shader, region, rv3d, b, layout, s,
+                              (op._drag_boundary is b)
+                              or (op._hover_boundary is b))
+            continue
         p1_ff, p2_ff = _boundary_endpoints_ff(b)
         a = _ff_to_screen(region, rv3d, b['cabinet_obj'], layout,
                           p1_ff[0], p1_ff[1])
@@ -783,7 +948,29 @@ def _draw_callback_impl(op, context):
         layout = op._drag_layout
         cab = b['cabinet_obj']
         snap = op._drag_snapshot or []
-        if b['kind'] in ('OUTER_RIGHT', 'OUTER_LEFT',
+        if b['kind'] == 'CABINET_MOVE':
+            moved = snap[0]['value'] if snap else 0.0
+            scr = _ff_to_screen(region, rv3d, cab, layout,
+                                b['ff_x'], b['ff_z_low'])
+            if scr is not None:
+                _draw_text(scr.x, scr.y - 28.0 * s,
+                           ("\u2192 " if moved >= 0 else "\u2190 ")
+                           + _format_inches(abs(moved)), DIM_TEXT, size=14)
+        elif b['kind'] == 'CABINET_JOINT':
+            # Both cabinets' widths, each over its own cabinet.
+            for st in snap:
+                obj = bpy.data.objects.get(st['name'])
+                if obj is None:
+                    continue
+                lay = solver.FaceFrameLayout(obj)
+                scr = _ff_to_screen(
+                    region, rv3d, obj, lay,
+                    0.5 * lay.dim_x - lay.ff_inset_left, 0.5 * lay.dim_z)
+                if scr is not None:
+                    _draw_text(scr.x, scr.y,
+                               _format_inches(obj.face_frame_cabinet.width),
+                               DIM_TEXT, size=14)
+        elif b['kind'] in ('OUTER_RIGHT', 'OUTER_LEFT',
                          'OUTER_TOP', 'OUTER_BOTTOM',
                          'TOE_KICK'):
             # Single-neighbor drag: one label at the boundary's
@@ -894,7 +1081,11 @@ def _draw_callback_impl(op, context):
                                    size=17 if is_active else 14)
         # Snap marker
         if op._snap_kind is not None:
-            if b['axis'] == 'X':
+            if b['kind'] == 'CABINET_MOVE':
+                # On the end that snapped, at the cabinet's top.
+                edge = op._snap_kind[1] if op._snap_kind[0] == 'END' else 0.0
+                marker_pt = (edge - layout.ff_inset_left, layout.dim_z)
+            elif b['axis'] == 'X':
                 marker_pt = (b['ff_x'], b['ff_z_high'])
             else:
                 marker_pt = (b['ff_x_high'], b['ff_z'])
@@ -915,6 +1106,25 @@ def _draw_callback_impl(op, context):
                 batch.draw(shader)
     gpu.state.line_width_set(1.0)
     gpu.state.blend_set('NONE')
+
+
+def _draw_move_handle(shader, region, rv3d, b, layout, s, hot):
+    """The move handle: the move icon on a chip at the cabinet's
+    centre, lit while hovered or dragged."""
+    c = _ff_to_screen(region, rv3d, b['cabinet_obj'], layout,
+                      b['ff_x'], b['ff_z_low'])
+    if c is None:
+        return
+    r = MOVE_HANDLE_R * s
+    chip = ((ACTIVE_LINE[0], ACTIVE_LINE[1], ACTIVE_LINE[2], 0.95)
+            if hot else LOCK_CHIP)
+    _draw_disc_2d(shader, c.x, c.y, r, chip, segs=24)
+    color = (0.08, 0.08, 0.09, 1.0) if hot else (1.0, 1.0, 1.0, 0.92)
+    px = r * 1.5
+    if not hb_icons.draw_icon('move', (c.x - px / 2.0, c.y - px / 2.0, px, px),
+                              color, size=16):
+        _draw_line_2d(shader, (c.x - r * 0.6, c.y), (c.x + r * 0.6, c.y),
+                      color, 2.0 * s)
 
 
 # ---------------------------------------------------------------------------
@@ -1129,8 +1339,19 @@ class _GrabBaseMixin:
         mxy = (event.mouse_region_x, event.mouse_region_y)
         best = None
         best_d = HIT_TOLERANCE_PX
+        try:
+            ui_s = bpy.context.preferences.system.ui_scale
+        except AttributeError:
+            ui_s = 1.0
         for b, layout in self._boundaries:
             d = _boundary_screen_distance(region, rv3d, b, layout, mxy)
+            if b['kind'] == 'CABINET_MOVE':
+                # Anywhere on the chip counts; an edge line under the
+                # cursor still wins over the chip's rim.
+                d = max(0.0, d - (MOVE_HANDLE_R - 2.0) * ui_s)
+                if d > 0.0:
+                    continue
+                d = HIT_TOLERANCE_PX - 0.01
             if d < best_d:
                 best_d = d
                 best = (b, layout)
@@ -1272,6 +1493,43 @@ class _GrabBaseMixin:
                     bp, b['compensate_unlock_attr'])
             return [state]
 
+        if b['kind'] == 'CABINET_MOVE':
+            return [{
+                'kind': 'CABINET_MOVE',
+                'name': cab.name,
+                'value': 0.0,           # how far it has moved
+                'unlock': None,
+                'orig_world_loc': cab.matrix_world.translation.copy(),
+                'orig_location': cab.location.copy(),
+            }]
+
+        if b['kind'] == 'CABINET_JOINT':
+            # The left cabinet grows by what the right one gives up; the
+            # right one moves with the joint so its far end stays put.
+            out = []
+            for nm, translate in ((b['left_cab_name'], False),
+                                  (b['right_cab_name'], True)):
+                obj = bpy.data.objects.get(nm)
+                if obj is None:
+                    return []
+                state = {
+                    'kind': 'CABINET_DIM',
+                    'name': obj.name,
+                    'dim': 'width',
+                    'value': obj.face_frame_cabinet.width,
+                    'unlock': None,
+                }
+                if translate:
+                    state.update({
+                        'translate': True,
+                        'translate_axis': 'X',
+                        'grow_sign': -1.0,
+                        'orig_world_loc': obj.matrix_world.translation.copy(),
+                        'orig_location': obj.location.copy(),
+                    })
+                out.append(state)
+            return out
+
         if b['kind'] in ('OUTER_RIGHT', 'OUTER_LEFT',
                          'OUTER_TOP', 'OUTER_BOTTOM',
                          'TOE_KICK'):
@@ -1282,6 +1540,8 @@ class _GrabBaseMixin:
                 'dim': dim_attr,
                 'value': getattr(cab.face_frame_cabinet, dim_attr),
                 'unlock': None,
+                # A free end stops at the next cabinet on the run.
+                'max_value': b.get('max_value'),
             }
             # Translate companion: dragging the LEFT or BOTTOM edge
             # also moves the cabinet's location so the opposite edge
@@ -1409,6 +1669,9 @@ class _GrabBaseMixin:
             setattr(obj.face_frame_cabinet, state['dim'], state['value'])
             if state.get('translate') and 'orig_location' in state:
                 obj.location = state['orig_location']
+            return
+        if state['kind'] == 'CABINET_MOVE':
+            obj.location = state['orig_location']
             return
         if state['kind'] == 'CABINET_WIDTH':
             cp = obj.face_frame_cabinet
@@ -1572,6 +1835,9 @@ class _GrabBaseMixin:
             b['cabinet_obj'], layout)
         self._drag_active = True
         self._drag_snapshot = self._snapshot_neighbors(b)
+        if b['kind'] == 'CABINET_MOVE':
+            self._move_targets, self._move_dim_x = _move_targets(
+                context.scene, b['cabinet_obj'])
         # Seed the typed-value target from which side of the boundary
         # the user grabbed, so a type-without-drag still has a sensible
         # target. _apply_drag refines this live from the drag direction.
@@ -1658,6 +1924,9 @@ class _GrabBaseMixin:
                 return
         snap_mode = 'OFF' if (self._snap_disabled_temp or self._typing) \
             else self._snap_mode
+        if b['kind'] == 'CABINET_MOVE':
+            self._apply_move(context, b, cursor_delta, snap_mode)
+            return
         snapped_axis, snap_kind = _snap_offset(
             proposed_axis, region, rv3d, b, layout,
             self._boundaries, snap_mode)
@@ -1702,7 +1971,7 @@ class _GrabBaseMixin:
         # Default minimum if the boundary record didn't supply its own.
         if b['kind'] in ('BAY_EDGE', 'OUTER_RIGHT', 'OUTER_LEFT',
                          'OUTER_TOP', 'OUTER_BOTTOM', 'BAY_HANDLE',
-                         'CABINET_BOUNDARY'):
+                         'CABINET_BOUNDARY', 'CABINET_JOINT'):
             default_min = MIN_BAY_WIDTH
         elif b['kind'] == 'TOE_KICK':
             default_min = 0.0
@@ -1738,6 +2007,13 @@ class _GrabBaseMixin:
                     upper = (c_min - c_orig) / c_sign
                     if delta > upper:
                         delta = upper
+            # A free end stops where the next cabinet starts.
+            primary_max = state0.get('max_value')
+            if primary_max is not None:
+                if primary_sign > 0:
+                    delta = min(delta, (primary_max - primary_orig) / primary_sign)
+                elif primary_sign < 0:
+                    delta = max(delta, (primary_max - primary_orig) / primary_sign)
             new_primary = primary_orig + primary_sign * delta
             new_secondary = None
         else:
@@ -1776,6 +2052,8 @@ class _GrabBaseMixin:
                 same = nb.get('edge_index') == b.get('edge_index')
             elif b['kind'] == 'CABINET_BOUNDARY':
                 same = nb.get('edge_index') == b.get('edge_index')
+            elif b['kind'] == 'CABINET_JOINT':
+                same = nb.get('right_cab_name') == b.get('right_cab_name')
             elif b['kind'] in ('OUTER_RIGHT', 'OUTER_LEFT',
                                'OUTER_TOP', 'OUTER_BOTTOM',
                                'TOE_KICK'):
@@ -1796,6 +2074,63 @@ class _GrabBaseMixin:
                 self._drag_boundary = nb
                 self._drag_layout = nl
                 break
+
+    def _apply_move(self, context, b, cursor_delta, snap_mode):
+        """Slide the cabinet along its run by the cursor (or the typed
+        distance, toward the side dragged), its ends snapping flush to
+        the other cabinets' ends on the run."""
+        state = self._drag_snapshot[0] if self._drag_snapshot else None
+        if state is None or self._drag_basis is None:
+            return
+        cab = b['cabinet_obj']
+        delta = cursor_delta
+        self._snap_kind = None
+        if self._typing and self._typed:
+            try:
+                delta = self._active_dir * self._parse_typed(self._typed)
+            except ValueError:
+                return
+        elif snap_mode != 'OFF':
+            delta, self._snap_kind = self._snap_move(context, b, delta)
+        state['value'] = delta
+        _origin, x_axis_w, _z, _n = self._drag_basis
+        world = state['orig_world_loc'] + x_axis_w * delta
+        if cab.parent is not None:
+            cab.location = cab.parent.matrix_world.inverted_safe() @ world
+        else:
+            cab.location = world
+        self._boundaries = self._collect()
+        for nb, nl in self._boundaries:
+            if nb['cabinet_obj'] is cab and nb['kind'] == 'CABINET_MOVE':
+                self._drag_boundary = nb
+                self._drag_layout = nl
+                break
+
+    def _snap_move(self, context, b, delta):
+        """(delta, snap) with the nearer end flush to another cabinet's
+        end when one is within MOVE_SNAP_PX on screen."""
+        targets = getattr(self, '_move_targets', None) or []
+        if not targets:
+            return delta, None
+        region, rv3d = context.region, context.region_data
+        origin_w, x_axis_w, _z, _n = self._drag_basis
+        mid = (self._drag_snapshot[0]['orig_world_loc']
+               + x_axis_w * (delta + 0.5 * self._move_dim_x))
+        a = view3d_utils.location_3d_to_region_2d(region, rv3d, mid)
+        z = view3d_utils.location_3d_to_region_2d(region, rv3d,
+                                                  mid + x_axis_w * 0.1)
+        if a is None or z is None or (z - a).length < 1e-6:
+            return delta, None
+        reach = MOVE_SNAP_PX / ((z - a).length / 0.1)
+        best = None
+        for t in targets:
+            for edge in (0.0, self._move_dim_x):
+                d = abs(t - (edge + delta))
+                if d < reach and (best is None or d < best[0]):
+                    best = (d, t - edge, edge)
+        if best is None:
+            return delta, None
+        return best[1], ('END', best[2])
 
     def _end_drag(self, commit):
         if not self._drag_active:
@@ -2229,10 +2564,13 @@ class hb_face_frame_OT_grab(_GrabBaseMixin, bpy.types.Operator):
         return super()._modal_impl(context, event)
 
     def _collect(self):
-        collector = collector_for_mode(bpy.context.scene)
+        scene = bpy.context.scene
+        if current_mode(scene) == 'Cabinets':
+            return _collect_cabinet_mode(scene)
+        collector = collector_for_mode(scene)
         if collector is None:
             return []
-        return _collect_boundaries(bpy.context.scene, collector)
+        return _collect_boundaries(scene, collector)
 
 
 # Running grab operators, so undo/redo can reach them. Undo frees every
