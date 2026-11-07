@@ -1754,6 +1754,16 @@ class home_builder_OT_navigator_rename(bpy.types.Operator):
         return {'RUNNING_MODAL'}
 
     def modal(self, context, event):
+        if editing_scene() is None:
+            return {'CANCELLED'}
+        # The mouse works the field like any other text field: a press
+        # places the caret, a drag selects, a double click takes a word.
+        if _edit.mouse(event, event.mouse_region_x, event.mouse_region_y):
+            _tag_redraw()
+            return {'RUNNING_MODAL'}
+        if event.type in {'MIDDLEMOUSE', 'WHEELUPMOUSE', 'WHEELDOWNMOUSE',
+                          'MOUSEMOVE', 'INBETWEEN_MOUSEMOVE', 'TIMER'}:
+            return {'PASS_THROUGH'}
         result = edit_key(event)
         if result == 'COMMIT':
             commit_rename()

@@ -1624,10 +1624,15 @@ def paint(entries, mx, my):
                 summary = entry[6] if len(entry) > 6 else ""
                 icon = entry[7] if len(entry) > 7 else None
                 lx = rx + 16 * s
-                if icon and has_icon(icon):
+                # An icon is a name, or (name, folder) for one baked
+                # outside this add-on.
+                icon_name, icon_dir = (icon if isinstance(icon, tuple)
+                                       else (icon, None))
+                if icon_name and has_icon(icon_name, icon_dir):
                     # The group's own icon between chevron and name.
-                    draw_icon(icon, (lx - 2 * s, ry, rh, rh), Theme.GLYPH_HOVER
-                              if (expanded or hot) else Theme.GLYPH, size=14)
+                    draw_icon(icon_name, (lx - 2 * s, ry, rh, rh),
+                              Theme.GLYPH_HOVER if (expanded or hot)
+                              else Theme.GLYPH, size=14, icon_dir=icon_dir)
                     shader.bind()
                     lx += rh
                 label_w = rx + rw - 4 * s - lx
