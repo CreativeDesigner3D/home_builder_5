@@ -678,8 +678,37 @@ def _item_label(it):
     return kind_label(it.kind)
 
 
-def _item_fields(it):
-    """The few settings that matter for an item, by its type."""
+def _extra_nosing(o, prop='shelf_nosing_style'):
+    from . import shelf_nosing
+    return getattr(o, prop) in shelf_nosing.EXTRA_HEIGHT_STYLES
+
+
+def _render_kind(o):
+    return tff.render_hint_kind(o.accessory_render) or ""
+
+
+def _draw_divider_spaces(layout, item):
+    """A divider accessory's spaces, sized like openings: unlock one to
+    type its size, the locked ones share what is left."""
+    n_spaces = min(item.accessory_qty + 1, len(item.divider_space_unlock))
+    side = "Left" if item.divider_lengthwise else "Front"
+    col = layout.column(align=True)
+    for i in range(n_spaces):
+        label = "Space %d" % (i + 1)
+        if i == 0:
+            label += " (%s)" % side
+        unlocked = item.divider_space_unlock[i]
+        row = col.row(align=True)
+        field = row.row(align=True)
+        field.enabled = unlocked
+        field.prop(item, 'divider_space_sizes', index=i, text=label)
+        row.prop(item, 'divider_space_unlock', index=i, text="",
+                 icon='UNLOCKED' if unlocked else 'LOCKED')
+
+
+def _item_fields(it, index=0, owner_name=""):
+    """Every setting of an item, by its type -- all the interior dialog
+    had, so the page is the one place an interior is edited."""
     f = [('enum', 'kind', "Type")]
     k = it.kind
     if k in _SHELVES:
@@ -687,24 +716,41 @@ def _item_fields(it):
             ('bool', 'unlock_shelf_qty', "Set Count"),
             ('number', 'shelf_qty', "Shelves",
              {'when': lambda o: o.unlock_shelf_qty}),
-            ('value', lambda o: str(o.shelf_qty), "Shelves",
+            ('value', lambda o: "%d (auto)" % o.shelf_qty, "Shelves",
              {'when': lambda o: not o.unlock_shelf_qty}),
-            ('distance', 'shelf_setback', "Setback"),
-            ('enum', 'shelf_nosing_style', "Nosing"),
         ]
+        if k not in ('HALF_DEPTH_SHELF', 'QUARTER_DEPTH_SHELF'):
+            # Partial-depth shelves work out their own setback.
+            f.append(('distance', 'shelf_setback', "Setback"))
         if k == 'GLASS_SHELF':
-            f.append(('distance', 'glass_thickness', "Glass"))
+            f.append(('distance', 'glass_thickness', "Glass Thickness"))
+        f += [
+            ('distance', 'bottom_offset', "From Bottom"),
+            ('enum', 'shelf_support', "Support"),
+        ]
+        if k != 'GLASS_SHELF':
+            f += [
+                ('enum', 'shelf_nosing_style', "Nosing"),
+                ('distance', 'shelf_nosing_height', "Nosing Height",
+                 {'when': _extra_nosing}),
+                ('actions', (("Apply Nosing to Room",
+                              'hb_face_frame.apply_shelf_nosing_to_room',
+                              {'index': index, 'target_name': owner_name},
+                              None),), ""),
+            ]
     elif k == 'PULLOUT_SHELF':
         f += [
             ('bool', 'unlock_qty', "Set Count"),
             ('number', 'qty', "Shelves", {'when': lambda o: o.unlock_qty}),
-            ('value', lambda o: str(o.qty), "Shelves",
+            ('value', lambda o: "%d (auto)" % o.qty, "Shelves",
              {'when': lambda o: not o.unlock_qty}),
             ('distance', 'pullout_thickness', "Thickness"),
             ('distance', 'distance_between', "Gap Between"),
             ('distance', 'bottom_gap', "Bottom Gap"),
             ('distance', 'item_setback', "Front Setback"),
             ('bool', 'hide_rollout_spacers', "Hide Spacer Ladders"),
+            ('distance', 'rollout_spacer_height', "Ladder Height (0 = Full)",
+             {'when': lambda o: not o.hide_rollout_spacers}),
         ]
     elif k == 'ROLLOUT':
         # The boxes themselves are listed above these (_rollout_blocks).
@@ -713,29 +759,68 @@ def _item_fields(it):
             ('distance', 'bottom_gap', "Bottom Gap"),
             ('distance', 'item_setback', "Front Setback"),
             ('distance', 'rollout_depth', "Depth (0 = Auto)"),
-            ('bool', 'rollout_bottom_fixed', "Bottom Box Fixed",
-             {'when': lambda o: not o.hide_rollout_spacers}),
             ('bool', 'hide_rollout_spacers', "Hide Spacer Ladders"),
+            ('bool', 'rollout_bottom_fixed', "Bottom Box Fixed at Floor",
+             {'when': lambda o: not o.hide_rollout_spacers}),
+            ('distance', 'rollout_spacer_height', "Ladder Height (0 = Full)",
+             {'when': lambda o: not o.hide_rollout_spacers}),
             ('bool', 'finger_scoop', "Finger Scoop"),
         ]
     elif k == 'TRAY_DIVIDERS':
         f += [
             ('number', 'tray_qty', "Dividers"),
-            ('bool', 'tray_remove_shelf', "No Shelf Above"),
+            ('bool', 'tray_remove_shelf', "Remove Locked Shelf"),
+            ('distance', 'tray_opening_height', "Opening Height",
+             {'when': lambda o: not o.tray_remove_shelf}),
+            ('distance', 'tray_divider_thickness', "Divider Thickness"),
+            ('distance', 'tray_setback', "Setback"),
+            ('distance', 'bottom_offset', "From Bottom"),
         ]
     elif k == 'VANITY_SHELVES':
         f += [
-            ('distance', 'vanity_z', "Height"),
-            ('distance', 'vanity_length', "Length"),
+            ('distance', 'vanity_z', "Shelf Height"),
+            ('distance', 'vanity_length', "Shelf Length"),
         ]
     elif k == 'CLOSET_ROD':
-        f.append(('distance', 'rod_distance_from_top', "From Top"))
+        f.append(('distance', 'rod_distance_from_top', "Distance From Top"))
     elif k == 'ACCESSORY':
         if it.accessory_code:
-            f += [('value', lambda o: o.accessory_code, "Code"),
-                  ('number', 'accessory_qty', "Quantity")]
-        else:
-            f.append(('text', 'accessory_label', "Text"))
+            f.append(('value', lambda o: o.accessory_code, "Code"))
+        f += [
+            ('text', 'accessory_label', "Label"),
+            ('number', 'accessory_qty', "Quantity"),
+            ('label', None, "This accessory is listed, not modeled",
+             {'when': lambda o: not _render_kind(o)}),
+            # A divider insert: its spaces and how far it crosses
+            ('bool', 'divider_lengthwise', "Run Lengthwise",
+             {'when': lambda o: _render_kind(o) == 'DIVIDER'}),
+            ('native', 'divider_space_sizes', "Divider Space Sizes",
+             {'when': lambda o: _render_kind(o) == 'DIVIDER',
+              'draw': _draw_divider_spaces}),
+            ('number', 'divider_span_from', "Cross From Space",
+             {'when': lambda o: _render_kind(o) == 'DIVIDER'}),
+            ('number', 'divider_span_to', "Cross To Space",
+             {'when': lambda o: _render_kind(o) == 'DIVIDER'}),
+            # Any other modeled insert: compartments and where it sits
+            ('number', 'insert_slots', "Compartments (0 = Auto)",
+             {'when': lambda o: _render_kind(o) in
+              ('CUTLERY', 'TRAY', 'KNIFE_BLOCK')}),
+        ]
+        placed = lambda o: _render_kind(o) not in ('', 'DIVIDER')
+        f += [
+            ('distance', 'insert_offset', "From Left (0 = Auto)",
+             {'when': placed}),
+            ('distance', 'insert_from_front', "From Front", {'when': placed}),
+            ('distance', 'insert_width', "Width (0 = Auto)", {'when': placed}),
+            ('distance', 'insert_depth', "Depth (0 = Auto)", {'when': placed}),
+            ('distance', 'insert_height', "Height (0 = Auto)",
+             {'when': placed}),
+        ]
+    else:
+        from . import bar_storage
+        if k in bar_storage.KINDS:
+            # Sized from the opening by the catalog charts
+            f.append(('label', None, "Auto-sized to the opening"))
     return tuple(f)
 
 
@@ -781,6 +866,12 @@ def _rollout_blocks(context, it, item_index, owner):
             ('enum', 'height_preset', "%s Height" % _box_name(j, n)),
             ('distance', 'height', "Custom Height",
              {'when': lambda o: o.height_preset == 'CUSTOM'}),
+            ('enum', 'galley_top', "Top Opening"),
+            ('bool', 'sink_duo', "U-Shaped Box"),
+            ('distance', 'sink_duo_notch_width', "Notch Width",
+             {'when': lambda o: o.sink_duo}),
+            ('distance', 'sink_duo_notch_depth', "Notch Depth",
+             {'when': lambda o: o.sink_duo}),
         ), boxes[j]))
     return out
 
@@ -882,8 +973,20 @@ def _split_blocks(context, node):
          {'when': lambda o: o.include_part}),
     ]
     if is_h:
-        fields.append(('distance', 'shelf_setback', "Setback",
-                       {'when': lambda o: o.include_part}))
+        # A face frame rail at the shelf replaces its nosing and setback
+        shelf = lambda o: o.include_part and not o.add_face_frame
+        fields += [
+            ('distance', 'shelf_setback', "Setback", {'when': shelf}),
+            ('enum', 'shelf_nosing_style', "Nosing", {'when': shelf}),
+            ('distance', 'shelf_nosing_height', "Nosing Height",
+             {'when': lambda o: shelf(o) and _extra_nosing(o)}),
+        ]
+    fields += [
+        ('bool', 'add_face_frame',
+         "Face Frame Rail" if is_h else "Face Frame Stile"),
+        ('distance', 'face_frame_width', "Face Frame Width",
+         {'when': lambda o: o.add_face_frame}),
+    ]
     out.extend(options_panel.field_blocks(context, tuple(fields), sp))
     out.append(('note', "Drag it in the picture to move it"))
     leaf = _leaf_child(node)
@@ -931,6 +1034,9 @@ def blocks(context, item):
         out.append(_footer_row(opening))
         return out
     _sync_index(pick_obj, props)
+    if opening.face_frame_opening.front_type == 'DRAWER_FRONT':
+        out.append(('actions', (
+            _act("Drawer Interior...", 'hb_face_frame.drawer_interior'),)))
     where = "Region" if owner.get(tff.TAG_INTERIOR_REGION) else "Opening"
     out.append(('label', "In this %s" % where.lower()))
     items = props.interior_items
@@ -961,7 +1067,12 @@ def blocks(context, item):
         it = items[idx]
         out.append(('gap', None))
         out.append(('label', _item_label(it)))
-        fields = _item_fields(it)
+    if 0 <= idx < len(items) and items[idx].get(
+            tff.FaceFrameCabinet.ROLLOUT_ABOVE_MARK):
+        out.append(('note', "Rollouts above the drawer: right-click the "
+                            "drawer box or a rollout to edit"))
+    elif 0 <= idx < len(items):
+        fields = _item_fields(it, idx, owner.name)
         # Type first, then a roll-out's boxes, then the rest
         out.extend(options_panel.field_blocks(context, fields[:1], it))
         if it.kind == 'ROLLOUT':
