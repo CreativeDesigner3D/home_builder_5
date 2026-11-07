@@ -53,7 +53,10 @@ chip is opened), ``native`` (a colour or datablock, edited through Blender's
 own field in a popover), ``file`` (a path, chosen in Blender's file
 browser and cleared by the chip on its row), ``items`` (a row per item of a
 collection, each with a remove chip), ``pick`` (a button opening a menu
-of commands worked out as it opens), ``icons`` (a row of square command
+of commands worked out as it opens), ``canvas`` (a picture the page draws
+itself and takes clicks on: a dict of ``height`` (unscaled px),
+``paint(shader, font_id, rect, mx, my, s)`` and ``hit(context, rect,
+mx, my)``), ``icons`` (a row of square command
 buttons, each an icon that names itself on hover: ``(icon, label,
 operator[, kwargs[, when]])``, ``when`` taking the owner), ``notes`` (lines of text a callable
 works out from the context) and ``gap`` (space). A field may carry a dict after its label: ``when``
@@ -1048,6 +1051,8 @@ def _block_h(block, s):
         return (TILE_H + ROW_GAP) * s
     if kind == 'card':
         return (CARD_H + ROW_GAP) * s
+    if kind == 'canvas':
+        return (block[1].get('height', TILE_H) + ROW_GAP) * s
     if kind == 'choices':
         return len(_choice_rows(*block[1])) * (ROW_H + ROW_GAP) * s
     if kind == 'gap':
@@ -1368,6 +1373,10 @@ def build_page(rect, context, blocks_fn, lst):
         elif kind == 'card':
             entries.append(('card', payload,
                             (x, block_top - CARD_H * s, row_w, CARD_H * s)))
+        elif kind == 'canvas':
+            ch = payload.get('height', TILE_H) * s
+            entries.append(('canvas', payload,
+                            (x, block_top - ch, row_w, ch)))
         elif kind == 'picture_tiles':
             cells_fn, owner = payload
             try:
@@ -2050,6 +2059,14 @@ def paint(entries, mx, my):
                                caption=cell.get('label'))
             elif kind == 'card':
                 _paint_card(shader, font_id, s, entry)
+            elif kind == 'canvas':
+                try:
+                    entry[1]['paint'](shader, font_id, entry[2], mx, my, s)
+                except Exception as ex:
+                    print('Home Builder: picture failed: %s' % ex)
+                # The picture may have drawn with shaders of its own.
+                gpu.state.blend_set('ALPHA')
+                shader.bind()
             elif kind == 'choice_caption':
                 rx, ry, rw, rh = entry[2]
                 draw_text(font_id, rx + 2 * s, ry + rh * 0.28, FONT * s,
@@ -2714,6 +2731,13 @@ def hit(context, mx, my, entries):
                 entry[1][1]()
             else:
                 close_subpage()
+            return True
+        if kind == 'canvas' and point_in_rect(mx, my, entry[2]):
+            try:
+                entry[1]['hit'](context, entry[2], mx, my)
+            except Exception as ex:
+                print('Home Builder: picture click failed: %s' % ex)
+            _tag()
             return True
         if kind == 'picture_tile' and point_in_rect(mx, my, entry[2]):
             cell = entry[1]

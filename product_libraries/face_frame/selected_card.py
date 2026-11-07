@@ -42,11 +42,25 @@ _OWN_FORMS = ('IS_LEG_PRODUCT', 'IS_FLOATING_SHELF', 'IS_END_SHELVES',
 # ---- Finding what is picked -------------------------------------------------
 
 def find(context):
+    """The pick, as _find gives it; an Interior page left open on an
+    opening closes once the pick is somewhere else."""
+    from . import interior_page
+    item = _find(context)
+    if interior_page._shown_for and (
+            item is None or item[3] is None
+            or item[3].name != interior_page._shown_for):
+        interior_page.show(None)
+    return item
+
+
+def _find(context):
     """(kind, root, bay_obj, opening_obj, part_obj) for a picked face
     frame cabinet or part of one, or None. `kind` is the level the page
     is on: 'cabinet', 'bay', 'opening' or 'part' -- a door, a stile, a
-    rail, anything inside with a right-click menu of its own."""
-    from . import ui_face_frame
+    rail, anything inside with a right-click menu of its own -- or
+    'interior': an interior region, an interior part, or an opening
+    whose Interior page is open (part_obj is the region or part)."""
+    from . import ui_face_frame, interior_page
     from ...operators import generic_page
     sel = ui_face_frame.find_active_selection(context)
     kind = sel[0]
@@ -57,8 +71,13 @@ def find(context):
         return None
     if kind == 'bay':
         return ('bay', root, sel[1], None, None)
-    if kind in ('opening', 'interior_region'):
-        opening = sel[1] if kind == 'opening' else sel[2]
+    if kind == 'interior_region':
+        region, opening = sel[1], sel[2]
+        return ('interior', root, _owning_bay(opening), opening, region)
+    if kind == 'opening':
+        opening = sel[1]
+        if interior_page.showing(opening):
+            return ('interior', root, _owning_bay(opening), opening, None)
         return ('opening', root, _owning_bay(opening), opening, None)
     if kind != 'cabinet':
         part = sel[1]
@@ -67,6 +86,11 @@ def find(context):
             # A drawer box has a page of its own: the Drawer page.
             opening = _owning(part, types_face_frame.TAG_OPENING_CAGE)
             return ('drawer', root, _owning_bay(part), opening, part)
+        if interior_page.is_interior_part(part):
+            # A shelf, a division, anything inside: the Interior page.
+            opening = interior_page.opening_of(part)
+            if opening is not None:
+                return ('interior', root, _owning_bay(part), opening, part)
         if generic_page.menu_id(part) == PART_MENU:
             opening = _owning(part, types_face_frame.TAG_OPENING_CAGE)
             return ('part', root, _owning_bay(part), opening, part)
@@ -1345,9 +1369,16 @@ def blocks(context, item):
         from . import bay_config
         out.extend(bay_config.opening_field_blocks(context, opening_obj))
         out.extend(options_panel.field_blocks(context, _opening_fields(op), op))
+        out.append(('actions', (
+            _act("Edit Interior", 'hb_face_frame.show_interior_page',
+                 {'opening_name': opening_obj.name}),)))
         out.extend(opening_group_blocks(context, opening_obj))
         out.extend(opening_overlay_blocks(context, opening_obj))
         _footer(out, 'hb_face_frame.opening_prompts')
+    elif kind == 'interior':
+        from . import interior_page
+        out.extend(interior_page.blocks(context, item))
+        _footer(out, None)
     elif kind == 'drawer':
         from . import accessory_place
         out.extend(accessory_place.drawer_blocks(context, part_obj))
@@ -1392,6 +1423,8 @@ def crumbs(context, item):
 # ---- Lifecycle --------------------------------------------------------------
 
 def register():
+    from . import interior_page
+    interior_page.register()
     from ...operators import selected_tab
     selected_tab.register_source(SOURCE_KEY, find, blocks, crumbs)
     from ...operators import options_panel
@@ -1400,6 +1433,8 @@ def register():
 
 
 def unregister():
+    from . import interior_page
+    interior_page.unregister()
     try:
         from ...operators import options_panel, selected_tab
         options_panel.unregister_peers(_peers)
