@@ -241,6 +241,53 @@ def splits_of(opening, obox):
     return out
 
 
+def _split_entry(node):
+    opening = opening_of(node)
+    if opening is None:
+        return None
+    for sp in splits_of(opening, _Frame(opening).opening_box()):
+        if sp['node'].name == node.name:
+            return sp
+    return None
+
+
+def split_position(node):
+    """A fixed shelf's bottom from the opening's bottom, or a division's
+    left face from the opening's left side."""
+    sp = _split_entry(node)
+    if sp is None:
+        return 0.0
+    return sp['bar'][1] if sp['axis'] == 'H' else sp['bar'][0]
+
+
+def set_first_size(node, size_a, total=None):
+    """Give the lower / left side of `node` `size_a` and hold it; the
+    other side takes the rest of the split's space."""
+    kids = _tree_children(node)
+    if len(kids) != 2:
+        return
+    props = [k.face_frame_interior_region if k.get(tff.TAG_INTERIOR_REGION)
+             else k.face_frame_interior_split for k in kids]
+    if total is None:
+        total = props[0].size + props[1].size
+    lo = min(MIN_REGION, total / 2.0)
+    size_a = max(lo, min(total - lo, size_a))
+    if props[1].unlock_size:
+        props[1].unlock_size = False
+    if abs(props[0].size - size_a) > 1e-6:
+        props[0].size = size_a      # holds it, and rebuilds the cabinet
+    elif not props[0].unlock_size:
+        props[0].unlock_size = True
+
+
+def set_split_position(node, value):
+    sp = _split_entry(node)
+    if sp is None:
+        return
+    origin = sp['box'][1] if sp['axis'] == 'H' else sp['box'][0]
+    set_first_size(node, value - origin)
+
+
 def split_label(node):
     return ("Fixed Shelf" if node.face_frame_interior_split.axis == 'H'
             else "Division")
@@ -408,6 +455,7 @@ def _paint(shader, font_id, rect, mx, my, s, opening_name, owner_name,
         draw_rect_outline(shader, x, y, w, h, PICK_LINE)
         draw_rect_outline(shader, x - s, y - s, w + 2 * s, h + 2 * s,
                           PICK_LINE)
+        _paint_position(font_id, rect, picked, x, y, w, h, s)
     # The region (or the opening) the page is editing.
     owner = bpy.data.objects.get(owner_name) if owner_name else None
     if picked is None and owner is not None:
@@ -425,6 +473,25 @@ def _paint(shader, font_id, rect, mx, my, s, opening_name, owner_name,
         size = 11 * s
         draw_text(font_id, rect[0] + 6 * s, rect[1] + 5 * s, size,
                   Theme.TEXT_DIM, fit_text(font_id, size, text, rect[2] - 12 * s))
+
+
+def _paint_position(font_id, rect, picked, x, y, w, h, s):
+    """The picked split's From Bottom / From Left, beside it."""
+    from ... import units
+    try:
+        us = bpy.context.scene.unit_settings
+        value = split_position(picked['node'])
+        text = units.unit_to_string(us, value)
+    except Exception:
+        return
+    size = 11 * s
+    if picked['axis'] == 'H':
+        tx, ty = x + 6 * s, y + h + 4 * s
+    else:
+        tx, ty = x + w + 5 * s, y + 6 * s
+    tx = min(tx, rect[0] + rect[2] - 60 * s)
+    ty = min(ty, rect[1] + rect[3] - size - 2 * s)
+    draw_text(font_id, tx, ty, size, PICK_LINE, text)
 
 
 def _region_at(frame, view, regions, mx, my):
@@ -729,6 +796,10 @@ def _split_blocks(context, node):
     kids = _tree_children(node)
     is_h = sp.axis == 'H'
     out = [('label', split_label(node))]
+    # Where it sits, measured from the opening: type it, or drag.
+    out.extend(options_panel.field_blocks(context, (
+        ('distance', 'position', "From Bottom" if is_h else "From Left"),
+    ), sp))
     names = ("Below", "Above") if is_h else ("Left", "Right")
     for kid, name in zip(kids, names):
         kp = (kid.face_frame_interior_region if kid.get(tff.TAG_INTERIOR_REGION)
@@ -990,15 +1061,10 @@ class hb_face_frame_OT_drag_interior_split(bpy.types.Operator):
     def move_to(self, size_a):
         """Give the lower / left side `size_a`; the other side takes
         the rest."""
-        lo = min(MIN_REGION, self.total / 2.0)
-        size_a = max(lo, min(self.total - lo, size_a))
-        a, b = self._props(0), self._props(1)
-        if a is None or b is None:
+        node = bpy.data.objects.get(self.split_name)
+        if node is None:
             return
-        if b.unlock_size:
-            b.unlock_size = False
-        if abs(a.size - size_a) > 1e-6:
-            a.size = size_a         # holds it, and rebuilds the cabinet
+        set_first_size(node, size_a, self.total)
         _redraw(bpy.context)
 
     def restore(self):

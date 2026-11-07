@@ -12452,6 +12452,22 @@ def _update_interior_add_face_frame(self, context):
     _update_cabinet_dim(self, context)
 
 
+def _get_split_position(self):
+    from . import interior_page
+    try:
+        return interior_page.split_position(self.id_data)
+    except Exception:
+        return 0.0
+
+
+def _set_split_position(self, value):
+    from . import interior_page
+    try:
+        interior_page.set_split_position(self.id_data, value)
+    except Exception as ex:
+        print('Home Builder: split position failed: %s' % ex)
+
+
 class Face_Frame_Interior_Split_Props(PropertyGroup):
     """Per-interior-split-node state. Attached to each interior split
     node Empty as bpy.types.Object.face_frame_interior_split.
@@ -12482,6 +12498,17 @@ class Face_Frame_Interior_Split_Props(PropertyGroup):
         name="Unlock Size",
         description="Hold this split's size during sibling redistribution",
         default=False, update=_update_cabinet_dim,
+    )  # type: ignore
+
+    position: FloatProperty(
+        name="Position",
+        description="Where the fixed shelf or division sits: a fixed "
+                    "shelf's bottom from the bottom of the opening, a "
+                    "division's left face from the opening's left side. "
+                    "Setting it holds the space below / left of it",
+        unit='LENGTH', precision=4,
+        get=_get_split_position, set=_set_split_position,
+        options={'SKIP_SAVE'},
     )  # type: ignore
 
     divider_thickness: FloatProperty(
