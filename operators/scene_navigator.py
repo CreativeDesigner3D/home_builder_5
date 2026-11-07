@@ -85,8 +85,16 @@ PANEL_HEADER_HEIGHT   = 26
 ACTION_BTN_SIZE       = 18
 ACTION_BTN_GAP        = 4
 ACTION_BTN_RIGHT_PAD  = 5
-NEW_ROOM_BTN_HEIGHT   = 26
+NEW_ROOM_BTN_HEIGHT   = 26      # a room action button, under the list
 NEW_ROOM_GAP          = 8
+# The + NEW chip a section action draws in its header -- the same chip
+# the Options tab's pool headers carry.
+NEW_CHIP_HEIGHT       = 16
+NEW_CHIP_PAD          = 6
+NEW_CHIP_FONT         = 10
+NEW_CHIP_PLUS         = 8       # full width of the plus mark
+NEW_CHIP_PLUS_GAP     = 4
+NEW_CHIP_TEXT         = "NEW"
 
 ROW_FONT_SIZE         = 12
 HEADER_FONT_SIZE      = 10
@@ -115,8 +123,6 @@ ACTION_HOVER_BG        = Theme.ACTION_HOVER_BG
 ACTION_DELETE_HOVER_BG = Theme.ACTION_DANGER_BG
 ACTION_GLYPH           = Theme.GLYPH
 ACTION_GLYPH_HOVER     = Theme.GLYPH_HOVER
-NEW_ROOM_BG            = Theme.NEUTRAL_BG
-NEW_ROOM_HOVER_BG      = Theme.ACCENT_BG
 SEPARATOR_COLOR        = Theme.SEPARATOR
 
 FIELD_ACTIVE_BG        = Theme.ACCENT_BG
@@ -664,7 +670,7 @@ def _build_layout(region, area, current_scene_name,
                    clear_rect_or_None)
         ('row', scene, parent, color, is_current, rect,
                 delete_rect_or_None)
-        ('section_action', label, text, rect)
+        ('section_action', label, text, rect)   the header's + NEW chip
     Room and layout-view rows carry a delete sub-rect; detail rows
     carry None.
     """
@@ -714,11 +720,6 @@ def _build_layout(region, area, current_scene_name,
                       section_hdr_h, hdr_w))
         if collapsed:
             continue
-        if label in _section_actions:
-            text = _section_actions[label][0]
-            items.append(('section_action', (label, text), row_h,
-                          text_left + _text_w(font_id, row_font, text)
-                          + 30 * s + plain_reserve))
         for sc in scenes:
             parent = parent_fn(sc) if parent_fn else None
             tw = _text_w(font_id, row_font, sc.name)
@@ -788,9 +789,23 @@ def _build_layout(region, area, current_scene_name,
                      cursor_y - (panel_y + pad_y))
         provider = _providers.get(tab)
         if provider is not None:
-            entries.append(('body', tab, body_rect))
             try:
-                entries.extend(provider.build(body_rect, bpy.context))
+                body = provider.build(body_rect, bpy.context)
+                # Like the ROOMS list, the panel ends where the tab's
+                # content does: laid out once in all the room there is,
+                # then again in just what it used, so anything the tab
+                # keeps at its bottom edge lands under the content.
+                used_bottom = _body_content_bottom(provider, body)
+                shrink = (used_bottom - body_rect[1]
+                          if used_bottom is not None else 0.0)
+                if shrink > 1.0:
+                    body_rect = (body_rect[0], body_rect[1] + shrink,
+                                 body_rect[2], body_rect[3] - shrink)
+                    panel_rect = (panel_x, panel_y + shrink, panel_w,
+                                  panel_rect[3] - shrink)
+                    body = provider.build(body_rect, bpy.context)
+                entries.append(('body', tab, body_rect))
+                entries.extend(body)
             except Exception as ex:      # a broken tab must not kill the panel
                 print('Home Builder: %s tab failed to build: %s'
                       % (tab, ex))
@@ -832,12 +847,17 @@ def _build_layout(region, area, current_scene_name,
             entries.append(('header', label, color,
                             (content_x, item_bot, row_w, h),
                             collapsed, count, clear_rect))
-        elif kind == 'section_action':
-            label, text = payload
-            inset = 2 * s
-            entries.append(('section_action', label, text,
-                            (content_x + inset, item_bot + inset,
-                             row_w - 2 * inset, h - 2 * inset)))
+            if label in _section_actions:
+                # A small + NEW chip in line with the header, left of
+                # the clear button -- reachable folded or open.
+                right = (clear_rect[0] - btn_gap if clear_rect is not None
+                         else content_x + row_w - btn_right_pad)
+                cw = new_chip_width(s)
+                ch = NEW_CHIP_HEIGHT * s
+                entries.append(('section_action', label,
+                                _section_actions[label][0],
+                                (right - cw, item_bot + (h - ch) / 2.0,
+                                 cw, ch)))
         else:
             sc, parent, color = payload
             row_rect = (content_x, item_bot, row_w, h)
@@ -869,6 +889,27 @@ def _build_layout(region, area, current_scene_name,
             cursor_y -= new_room_h + gap_x
 
     return panel_rect, entries
+
+
+# Entry kinds a tab's scrolling area is reported as: its clip rect is the
+# content it shows, at most the room it was given.
+_BODY_CLIP_KINDS = ('styles_clip', 'sp_clip')
+
+
+def _body_content_bottom(provider, entries):
+    """The lowest point a hosted tab's content reaches, or None when the
+    tab does not say (it then keeps the full height). A provider with a
+    layout of its own answers through ``content_bottom(entries)``."""
+    fn = getattr(provider, 'content_bottom', None)
+    if fn is not None:
+        try:
+            return fn(entries)
+        except Exception:
+            return None
+    for entry in entries or ():
+        if entry[0] in _BODY_CLIP_KINDS:
+            return entry[1][1]
+    return None
 
 
 def _list_clip(entries):
@@ -904,6 +945,12 @@ def hit_test(mx, my, entries):
     two can't disagree.
     """
     clip = _list_clip(entries)
+    # A section's + NEW chip sits inside its header: it is checked first.
+    for entry in entries or ():
+        if (entry[0] == 'section_action'
+                and (not clip or _point_in_rect(mx, my, clip))
+                and _point_in_rect(mx, my, entry[3])):
+            return ('section_action', entry[1])
     for entry in entries or ():
         kind = entry[0]
 
@@ -923,11 +970,6 @@ def hit_test(mx, my, entries):
                 return ('delete', scene)
             if _point_in_rect(mx, my, rect):
                 return ('row', scene)
-        elif kind == 'section_action':
-            if clip and not _point_in_rect(mx, my, clip):
-                continue
-            if _point_in_rect(mx, my, entry[3]):
-                return ('section_action', entry[1])
         elif kind == 'room_action':
             if _point_in_rect(mx, my, entry[5]):
                 return ('room_action', entry)
@@ -1279,25 +1321,24 @@ def _draw_row(shader, font_id, entry, mx, my):
         _draw_rect(shader, rx, ry, rw, rh, (*PANEL_BG[:3], 0.6))
 
 
-def _draw_new_room_button(shader, font_id, rect, mx, my, label="New Room"):
-    rx, ry, rw, rh = rect
-    hovered = _point_in_rect(mx, my, rect)
-    _draw_rect(shader, rx, ry, rw, rh,
-               NEW_ROOM_HOVER_BG if hovered else NEW_ROOM_BG)
-    _draw_rect_outline(shader, rx, ry, rw, rh, PANEL_BORDER)
+def new_chip_width(s):
+    return (NEW_CHIP_PAD * 2 + NEW_CHIP_PLUS + NEW_CHIP_PLUS_GAP) * s         + _text_w(0, NEW_CHIP_FONT * s, NEW_CHIP_TEXT)
+
+
+def _draw_new_chip(shader, font_id, rect, mx, my):
+    """A section action: + NEW, in line with its header."""
     s = _s()
-    row_font = ROW_FONT_SIZE * s
-    blf.size(font_id, row_font)
-    label_w = blf.dimensions(font_id, label)[0]
-    plus_size = 10 * s
-    gap = 8 * s
-    group_w = plus_size + gap + label_w
-    gx = rx + (rw - group_w) / 2.0
-    cy = ry + rh / 2.0
-    _draw_plus_glyph(shader, gx + plus_size / 2.0, cy, plus_size, TEXT_PRIMARY)
-    baseline = _vcenter_baseline(rect, font_id, row_font)
-    _draw_text(font_id, gx + plus_size + gap, baseline,
-               row_font, TEXT_PRIMARY, label)
+    hot = _point_in_rect(mx, my, rect)
+    _paint_button(shader, rect, hovered=hot)
+    shader.bind()
+    rx, ry, rw, rh = rect
+    _draw_plus_glyph(shader, rx + (NEW_CHIP_PAD + NEW_CHIP_PLUS / 2.0) * s,
+                     ry + rh / 2.0, NEW_CHIP_PLUS * s,
+                     ACTION_GLYPH_HOVER if hot else ACTION_GLYPH)
+    _draw_text(font_id,
+               rx + (NEW_CHIP_PAD + NEW_CHIP_PLUS + NEW_CHIP_PLUS_GAP) * s,
+               ry + rh * 0.26, NEW_CHIP_FONT * s,
+               TEXT_PRIMARY if hot else TEXT_NORMAL, NEW_CHIP_TEXT)
 
 
 # ---- Draw callback ----------------------------------------------------------
@@ -1359,8 +1400,7 @@ def paint_navigator(panel_rect, entries, mx, my):
         elif kind == 'row':
             _draw_row(shader, font_id, entry, lmx, lmy)
         elif kind == 'section_action':
-            _draw_new_room_button(shader, font_id, entry[3], lmx, lmy,
-                                  label=entry[2])
+            _draw_new_chip(shader, font_id, entry[3], lmx, lmy)
 
     # Insertion line for a live row drag, on top of the rows and inside
     # the same clip.

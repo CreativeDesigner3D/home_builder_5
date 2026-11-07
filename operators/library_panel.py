@@ -804,6 +804,18 @@ def build(rect, context):
     return [('library', layout)] if layout else []
 
 
+def content_bottom(entries):
+    """How low the grid reaches, with the footer under it: the panel
+    ends there. Never higher than the least the grid will draw in."""
+    layout = _layout_of(entries)
+    if layout is None:
+        return None
+    s = scale()
+    px, py, _pw, ph = layout[0]
+    least = (HEADER_H + LIB_H + FILTER_H + FOOTER_H + MIN_TILE) * s
+    return max(py, min(layout[3][1] - FOOTER_H * s, py + ph - least))
+
+
 def _layout_of(entries):
     for entry in entries or ():
         if entry[0] == 'library':
