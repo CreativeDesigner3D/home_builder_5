@@ -142,6 +142,40 @@ def label(bay_obj):
 
 # ---- As a field -------------------------------------------------------------
 
+def _keeping_selection(change):
+    """Run `change` and leave the same things picked after it.
+
+    Change Bay re-applies the selection mode, which deselects everything,
+    and in Material Preview a deselected cage is hidden -- the bay went
+    out from under the Inspector the moment its configuration changed.
+    What was picked is picked again (by name: a rebuild can replace an
+    object), the active one made active, and a hidden cage shown."""
+    view_layer = bpy.context.view_layer
+    names = [o.name for o in bpy.context.selected_objects]
+    active = view_layer.objects.active
+    active_name = active.name if active is not None else None
+    change()
+    from . import quiet_cages
+    try:
+        mode = quiet_cages.quiet_mode()
+    except Exception:
+        mode = None
+    for name in names + ([active_name] if active_name else []):
+        obj = bpy.data.objects.get(name)
+        if obj is None or obj.name not in view_layer.objects:
+            continue
+        if mode is not None and obj.get('IS_GEONODE_CAGE') \
+                and quiet_cages._matches(obj, mode):
+            quiet_cages._reveal(obj, mode)
+        try:
+            obj.select_set(True)
+        except RuntimeError:
+            pass
+    obj = bpy.data.objects.get(active_name) if active_name else None
+    if obj is not None and obj.name in view_layer.objects:
+        view_layer.objects.active = obj
+
+
 def _key(cabinet_type):
     return 'FF_BAY_CONFIG_' + cabinet_type
 
@@ -167,8 +201,10 @@ def owner(bay_obj):
         def set_config(obj, value):
             if value == CUSTOM or value == detect(obj):
                 return
-            with bpy.context.temp_override(active_object=obj):
-                bpy.ops.hb_face_frame.change_bay(config=value)
+            def change():
+                with bpy.context.temp_override(active_object=obj):
+                    bpy.ops.hb_face_frame.change_bay(config=value)
+            _keeping_selection(change)
         prop_proxy.register(key, {
             'config': prop_proxy.computed(detect, set_config, type='ENUM',
                                           items=items),
@@ -249,9 +285,11 @@ def opening_owner(opening_obj):
                 o = _opening_of(sel)
                 if o is not None and o not in targets:
                     targets.append(o)
-            with bpy.context.temp_override(active_object=obj,
-                                           selected_objects=targets):
-                bpy.ops.hb_face_frame.change_opening(config=value)
+            def change():
+                with bpy.context.temp_override(active_object=obj,
+                                               selected_objects=targets):
+                    bpy.ops.hb_face_frame.change_opening(config=value)
+            _keeping_selection(change)
         prop_proxy.register(OPENING_KEY, {
             'config': prop_proxy.computed(detect_opening, set_config,
                                           type='ENUM', items=items),
