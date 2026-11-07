@@ -17453,13 +17453,20 @@ class UpperFaceFrameCabinet(FaceFrameCabinet):
 class VanityFaceFrameCabinet(BaseFaceFrameCabinet):
     """Base cabinet sized as a vanity: the room's vanity depth instead
     of the base depth. The bay layout still comes from the library name.
+
+    A vanity is one bay with a working range of sizes, so it places as
+    a single piece at the room's vanity width (40") rather than filling
+    the wall; a typed width overrides it.
     """
+
+    single_placement = True
 
     def __init__(self):
         super().__init__()
         scene = bpy.context.scene
         if hasattr(scene, 'hb_face_frame'):
             self.default_depth = scene.hb_face_frame.vanity_cabinet_depth
+            self.default_width = scene.hb_face_frame.vanity_cabinet_width
 
     def create(self, name="Base Cabinet", bay_qty=1):
         self.create_cabinet_root(name)

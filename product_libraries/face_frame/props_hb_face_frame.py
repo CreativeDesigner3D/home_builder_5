@@ -13078,6 +13078,16 @@ class Face_Frame_Scene_Props(PropertyGroup):
         precision=4,
     )  # type: ignore
 
+    vanity_cabinet_width: FloatProperty(
+        name="Vanity Width",
+        description="Width a vanity is placed at. Vanities come in one "
+                    "bay and don't fill the wall; type a width while "
+                    "placing one to change it",
+        default=units.inch(40.0),
+        unit='LENGTH',
+        precision=4,
+    )  # type: ignore
+
     # ---- Toe kick defaults ----
     # Project-wide toe kick: seeds toe_kick_height / toe_kick_setback on
     # every new cabinet (create_cabinet_root) and drives Update Toe
@@ -13507,9 +13517,9 @@ class Face_Frame_Scene_Props(PropertyGroup):
         row.prop(self, 'upper_cabinet_depth', text="")
 
         row = layout.row()
-        row.label(text="Vanity Depth:")
+        row.label(text="Vanity Width / Depth:")
+        row.prop(self, 'vanity_cabinet_width', text="")
         row.prop(self, 'vanity_cabinet_depth', text="")
-        row.label(text="")
         row.label(text="")
 
         # Tall and upper heights are derived from ceiling, top clearance,
