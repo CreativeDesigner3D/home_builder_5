@@ -4977,7 +4977,12 @@ def _draw_accessory_notes(box, item, code, is_pullout, region_pullout, ow_in):
     """
     box.label(text="Accessory: %s" % item.get('name', code))
     kind = _geometry_kind(item)
-    if kind == 'MODEL':
+    if code in _STANDARD_INTERIOR_CODES:
+        box.label(text="Adds the opening's %s interior in place of its "
+                       "shelves" % ("Rollouts" if _STANDARD_INTERIOR_CODES[code]
+                                    == 'ROLLOUT' else "Roll-out Shelves"),
+                  icon='MESH_GRID')
+    elif kind == 'MODEL':
         box.label(text="Modeled in the cabinet", icon='MESH_GRID')
     elif not is_pullout and not kind:
         box.label(text="Called out on the drawings; not shown in 3D",
@@ -5000,6 +5005,53 @@ def _draw_accessory_notes(box, item, code, is_pullout, region_pullout, ow_in):
             icon='ERROR')
 
 
+# Catalog roll-outs that are the standard interiors under another name:
+# Roll-outs Behind a Single / Double Door are the Rollouts interior,
+# Roll-out Shelves Behind a Single / Double Door the Roll-out Shelves
+# one. Picked from the catalog they used to land as a listed-only
+# accessory -- nothing in the cabinet, billed at a guessed box height.
+# They become the interior instead, which builds the boxes and prices
+# them as they are (the shelves' single / double code follows the
+# opening's doors).
+_STANDARD_INTERIOR_CODES = {
+    'ROS': 'ROLLOUT',
+    'ROD': 'ROLLOUT',
+    'ROSS': 'PULLOUT_SHELF',
+    'ROSD': 'PULLOUT_SHELF',
+}
+
+
+def _apply_standard_interior(operator, target, kind, name):
+    """Give ``target`` the ``kind`` interior a catalog roll-out stands
+    for, in place of its shelves; one already there is kept."""
+    props = _interior_items_target(target)
+    if props is None:
+        operator.report({'WARNING'},
+                        "Select an opening or interior region first")
+        return {'CANCELLED'}
+    label = ("Rollouts" if kind == 'ROLLOUT' else "Roll-out Shelves")
+    existing = next((i for i, it in enumerate(props.interior_items)
+                     if it.kind == kind), None)
+    if existing is not None:
+        props.interior_items_index = existing
+        operator.report({'INFO'},
+                        "%s already has %s" % (target.name, label))
+        return {'FINISHED'}
+    with types_face_frame.suspend_recalc():
+        _set_opening_interior(props, 'OPEN')
+        new_item = props.interior_items.add()
+        new_item.kind = kind
+        if kind == 'ROLLOUT':
+            types_face_frame.seed_rollout_boxes(
+                new_item, _read_cage_dims(target)['cage_dim_z'])
+        props.interior_items_index = len(props.interior_items) - 1
+    root = types_face_frame.find_cabinet_root(target)
+    if root is not None:
+        types_face_frame.recalculate_face_frame_cabinet(root)
+    operator.report({'INFO'}, "Added %s as the opening's %s" % (name, label))
+    return {'FINISHED'}
+
+
 def _apply_accessory_choice(operator, context, target, code, item,
                             opening_width=0.0):
     """Put one catalog model on ``target`` and report what happened.
@@ -5016,6 +5068,9 @@ def _apply_accessory_choice(operator, context, target, code, item,
     """
     host = item.get('host')
     name = item.get('name', code)
+    if code in _STANDARD_INTERIOR_CODES:
+        return _apply_standard_interior(
+            operator, target, _STANDARD_INTERIOR_CODES[code], name)
 
     def _store_item(props_owner, message):
         props = _interior_items_target(props_owner)
@@ -5138,6 +5193,8 @@ def _geometry_kind(entry):
     model of its own or a drawer insert render hint - so lists can flag
     what will show up in 3D and what is listed only."""
     from .. import accessory_models, corner_accessory_models
+    if entry.get('code') in _STANDARD_INTERIOR_CODES:
+        return 'MODEL'          # built as the standard interior
     if (accessory_models.model_for(entry.get('code')) is not None
             or corner_accessory_models.model_for(entry.get('code'))
             is not None):
