@@ -436,12 +436,25 @@ def _region_at(frame, view, regions, mx, my):
 
 
 def _hit(context, rect, mx, my, opening_name, owner_name):
+    """A press in the picture. What it does waits for the release, as
+    the panel's buttons do, so the release is taken here and never
+    reaches the viewport behind -- where it ran Blender's own click
+    select and picked whatever was under the panel."""
+    from ...operators import options_panel
     laid = _layout(opening_name, rect, _s())
-    if laid is None:
-        return
+    target = ""
+    if laid is not None and has_tree(laid[0]):
+        target = _press(laid, mx, my, owner_name)
+        if target is None:
+            return              # a bar: its drag takes the release
+    options_panel._run_on_release('hb_face_frame.pick_interior',
+                                  {'name': target})
+
+
+def _press(laid, mx, my, owner_name):
+    """The region a press picks ("" for none), or None when it started a
+    drag of a bar."""
     opening, frame, obox, view = laid
-    if not has_tree(opening):
-        return
     bar = _bar_at(splits_of(opening, obox), view, mx, my, _s())
     if bar is not None:
         # Drag it to move it; let go without moving to pick it.
@@ -452,11 +465,12 @@ def _hit(context, rect, mx, my, opening_name, owner_name):
         except Exception as ex:
             _pending_drag = None
             print('Home Builder: split drag failed: %s' % ex)
-        return
+            return ""
+        return None
     region = _region_at(frame, view, regions_of(opening), mx, my)
     if region is None or region.name == owner_name:
-        return
-    pick(context, region)
+        return ""
+    return region.name
 
 
 def _s():
@@ -798,9 +812,9 @@ class hb_face_frame_OT_pick_interior(bpy.types.Operator):
     name: bpy.props.StringProperty(default="", options={'SKIP_SAVE'})  # type: ignore
 
     def execute(self, context):
-        obj = bpy.data.objects.get(self.name)
+        obj = bpy.data.objects.get(self.name) if self.name else None
         if obj is None:
-            return {'CANCELLED'}
+            return {'CANCELLED'}     # a press on nothing: just taken
         pick(context, obj)
         _redraw(context)
         return {'FINISHED'}
@@ -881,6 +895,7 @@ class hb_face_frame_OT_drag_interior_split(bpy.types.Operator):
             return {'CANCELLED'}
         self.press = (event.mouse_x, event.mouse_y)
         self.dragging = False
+        self.cancelled = False
         context.window_manager.modal_handler_add(self)
         return {'RUNNING_MODAL'}
 
@@ -929,6 +944,12 @@ class hb_face_frame_OT_drag_interior_split(bpy.types.Operator):
             pr.unlock_size = unlock
 
     def modal(self, context, event):
+        if self.cancelled:
+            # Put back; the button is still down, and its release is
+            # taken here so it does not select in the viewport.
+            if event.type == 'LEFTMOUSE' and event.value == 'RELEASE':
+                return {'CANCELLED'}
+            return {'RUNNING_MODAL'}
         if event.type in {'MOUSEMOVE', 'INBETWEEN_MOUSEMOVE'}:
             dx = event.mouse_x - self.press[0]
             dy = event.mouse_y - self.press[1]
@@ -950,7 +971,8 @@ class hb_face_frame_OT_drag_interior_split(bpy.types.Operator):
             if self.dragging:
                 self.restore()
             _redraw(context)
-            return {'CANCELLED'}
+            self.cancelled = True
+            return {'RUNNING_MODAL'}
         return {'RUNNING_MODAL'}
 
 
