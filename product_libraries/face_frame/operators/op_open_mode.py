@@ -26,7 +26,9 @@ TIMER_HZ = 60
 
 # Fronts that physically open. Other front roles (FALSE_FRONT, INSET_PANEL)
 # never move regardless of swing_percent, so clicks on them are ignored.
-OPENING_FRONT_ROLES = frozenset({'DOOR', 'DRAWER_FRONT', 'PULLOUT_FRONT'})
+# A tilt-out swings on its bottom hinge through the same pivot as a door.
+OPENING_FRONT_ROLES = frozenset({'DOOR', 'DRAWER_FRONT', 'PULLOUT_FRONT',
+                                 'TILT_OUT'})
 
 
 def _smoothstep(t):
@@ -69,6 +71,12 @@ def _find_owning_front(obj):
     while cur is not None:
         if cur.get('hb_part_role') in OPENING_FRONT_ROLES:
             return cur
+        if cur.get('hb_part_role') == 'FRONT_PIVOT':
+            # A rack or tray hung on the back of a front sits on the
+            # front's pivot beside it, and opens with it.
+            return next((c for c in cur.children
+                         if c.get('hb_part_role') in OPENING_FRONT_ROLES),
+                        None)
         cur = cur.parent
     return None
 

@@ -1157,6 +1157,7 @@ def attach_front_models(opening_obj, op_props, rect, leaves):
     rt = max(0.0, rect.get('reveal_top', 0.0))
     hx0, hx1 = rl, rect['cage_dim_x'] - rr
     hz0, hz1 = rb, rect['cage_dim_z'] - rt
+    has_tray = False
     for item in items:
         spec = _front_spec(getattr(item, 'accessory_code', ''))
         if spec is None:
@@ -1183,13 +1184,32 @@ def attach_front_models(opening_obj, op_props, rect, leaves):
         elif model == 'tilt_tray':
             targets = [pl for pl in leaves if pl[1].get('role') in
                        ('TILT_OUT', 'FALSE_FRONT', 'DOOR')][:1]
-            th = inch(_f(params, 'tray_height', 3.0))
             for pivot, leaf in targets:
-                _attach_on_front(pivot, leaf, entry, 'tilt_tray', params,
-                                 hx0, hx1, max(hz0, hz1 - inch(0.5) - th),
-                                 hz1 - inch(0.5),
-                                 inch(_f(params, 'side_margin', 1.0)),
-                                 max_w=inch(_f(params, 'max_width', 33.0)))
+                if _attach_tilt_tray(pivot, leaf, entry, params,
+                                     hx0, hx1, hz0, hz1) is not None:
+                    has_tray = True
+    # A tilt-out front always carries a tray: a plain one when no tray
+    # product was picked for the opening.
+    if not has_tray:
+        for pivot, leaf in leaves:
+            if leaf.get('role') == 'TILT_OUT':
+                _attach_tilt_tray(pivot, leaf, DEFAULT_TILT_TRAY, {},
+                                  hx0, hx1, hz0, hz1)
+                break
+
+
+# The tray hung behind a tilt-out front with no tray product of its own.
+DEFAULT_TILT_TRAY = {'name': "Tilt-Out Tray", 'code': ''}
+
+
+def _attach_tilt_tray(pivot, leaf, entry, params, hx0, hx1, hz0, hz1):
+    """A tilt tray across the top of the front's back, inside the hole."""
+    th = inch(_f(params, 'tray_height', 3.0))
+    return _attach_on_front(pivot, leaf, entry, 'tilt_tray', params,
+                            hx0, hx1, max(hz0, hz1 - inch(0.5) - th),
+                            hz1 - inch(0.5),
+                            inch(_f(params, 'side_margin', 1.0)),
+                            max_w=inch(_f(params, 'max_width', 33.0)))
 
 
 def _attach_on_front(pivot, leaf, entry, model, params, hx0, hx1, hz0, hz1,
