@@ -700,11 +700,21 @@ def _item_fields(it):
             ('number', 'qty', "Shelves", {'when': lambda o: o.unlock_qty}),
             ('value', lambda o: str(o.qty), "Shelves",
              {'when': lambda o: not o.unlock_qty}),
+            ('distance', 'pullout_thickness', "Thickness"),
+            ('distance', 'distance_between', "Gap Between"),
+            ('distance', 'bottom_gap', "Bottom Gap"),
+            ('distance', 'item_setback', "Front Setback"),
+            ('bool', 'hide_rollout_spacers', "Hide Spacer Ladders"),
         ]
     elif k == 'ROLLOUT':
+        # The boxes themselves are listed above these (_rollout_blocks).
         f += [
-            ('value', lambda o: str(len(o.rollout_boxes) or o.qty), "Boxes"),
-            ('bool', 'rollout_bottom_fixed', "Bottom Box Fixed"),
+            ('distance', 'distance_between', "Gap Between"),
+            ('distance', 'bottom_gap', "Bottom Gap"),
+            ('distance', 'item_setback', "Front Setback"),
+            ('distance', 'rollout_depth', "Depth (0 = Auto)"),
+            ('bool', 'rollout_bottom_fixed', "Bottom Box Fixed",
+             {'when': lambda o: not o.hide_rollout_spacers}),
             ('bool', 'hide_rollout_spacers', "Hide Spacer Ladders"),
             ('bool', 'finger_scoop', "Finger Scoop"),
         ]
@@ -727,6 +737,64 @@ def _item_fields(it):
         else:
             f.append(('text', 'accessory_label', "Text"))
     return tuple(f)
+
+
+def _box_name(j, n):
+    if n > 1 and j == 0:
+        return "Top Box"
+    if n > 1 and j == n - 1:
+        return "Bottom Box"
+    return "Box %d" % (j + 1)
+
+
+def _rollout_blocks(context, it, item_index, owner):
+    """A roll-out's boxes, top first as the stack numbers them: each
+    with its height and a remove, Add Box, and the picked box's height
+    (a standard size, or Custom to type one)."""
+    from ...operators import options_panel
+    from ... import units
+    us = context.scene.unit_settings
+    boxes = it.rollout_boxes
+    n = len(boxes)
+    out = []
+    for j, box in enumerate(boxes):
+        def click(j=j, it=it):
+            it.rollout_boxes_index = j
+        out.append(('list_row', {
+            'key': ('rollout_box', owner.name, item_index, j),
+            'text': _box_name(j, n),
+            'summary': units.unit_to_string(us, box.height),
+            'active': j == it.rollout_boxes_index,
+            'click': click,
+            'remove': ('hb_face_frame.remove_rollout_box',
+                       {'item_index': item_index, 'box_index': j,
+                        'target_name': owner.name}),
+            'confirm': False,
+        }))
+    out.append(('actions', (
+        _act("Add Box", 'hb_face_frame.add_rollout_box',
+             {'item_index': item_index, 'target_name': owner.name}),
+    )))
+    j = it.rollout_boxes_index
+    if 0 <= j < n:
+        out.extend(options_panel.field_blocks(context, (
+            ('enum', 'height_preset', "%s Height" % _box_name(j, n)),
+            ('distance', 'height', "Custom Height",
+             {'when': lambda o: o.height_preset == 'CUSTOM'}),
+        ), boxes[j]))
+    return out
+
+
+def interior_summary(props):
+    """One line for what an opening or region holds, or ""."""
+    parts = []
+    for it in props.interior_items:
+        text = _item_label(it)
+        extra = _summary(it)
+        if extra and it.kind not in ('ACCESSORY',):
+            text += " (%s)" % extra
+        parts.append(text)
+    return ", ".join(parts)
 
 
 def _add_entries(owner_name):
@@ -893,7 +961,12 @@ def blocks(context, item):
         it = items[idx]
         out.append(('gap', None))
         out.append(('label', _item_label(it)))
-        out.extend(options_panel.field_blocks(context, _item_fields(it), it))
+        fields = _item_fields(it)
+        # Type first, then a roll-out's boxes, then the rest
+        out.extend(options_panel.field_blocks(context, fields[:1], it))
+        if it.kind == 'ROLLOUT':
+            out.extend(_rollout_blocks(context, it, idx, owner))
+        out.extend(options_panel.field_blocks(context, fields[1:], it))
     # Split what is picked in two, or join it back to its neighbor.
     out.append(('gap', None))
     out.append(('label', "Split this %s" % where.lower()))

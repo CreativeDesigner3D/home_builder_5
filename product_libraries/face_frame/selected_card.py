@@ -1379,6 +1379,13 @@ def blocks(context, item):
         from . import bay_config
         out.extend(bay_config.opening_field_blocks(context, opening_obj))
         out.extend(options_panel.field_blocks(context, _opening_fields(op), op))
+        # What is inside, said here; changed on the Interior page.
+        from . import interior_page
+        if interior_page.has_tree(opening_obj):
+            inside = "%d sections" % len(interior_page.regions_of(opening_obj))
+        else:
+            inside = interior_page.interior_summary(op) or "Empty"
+        out.append(('value', ("Interior", inside)))
         out.append(('actions', (
             _act("Edit Interior", 'hb_face_frame.show_interior_page',
                  {'opening_name': opening_obj.name}, 'cab_interior'),)))
