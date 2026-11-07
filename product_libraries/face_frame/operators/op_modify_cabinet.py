@@ -376,6 +376,36 @@ def _collect_boundaries(scene, collector):
 # where two are butted the end handles become one joint that shifts
 # width from one to the other.
 
+class ApplianceLayout:
+    """What the grab's projection helpers read off a cabinet layout, for
+    a freestanding appliance (dishwasher, range, refrigerator...): its
+    box from the cage's Dim inputs, front at -Y like a cabinet's."""
+    is_angled = False
+    angled_multi = False
+    ff_inset_left = 0.0
+    ff_inset_right = 0.0
+
+    def __init__(self, obj):
+        geo = hb_types.GeoNodeObject(obj)
+        self.dim_x = geo.get_input('Dim X')
+        self.dim_y = geo.get_input('Dim Y')
+        self.dim_z = geo.get_input('Dim Z')
+
+
+def _iter_grab_appliances(scene):
+    """Appliances that stand in a run: not the countertop ones (a
+    cooktop sits in the top) and not the microwave / hood blocks a
+    cabinet builds under itself."""
+    for obj in scene.objects:
+        if not obj.get('IS_APPLIANCE') or not obj.get('APPLIANCE_TYPE'):
+            continue
+        if obj.get('IS_COUNTERTOP_APPLIANCE'):
+            continue
+        if not obj.visible_get():
+            continue
+        yield obj
+
+
 def _run_entry(cab, layout):
     mw = cab.matrix_world
     rot = mw.to_3x3()
@@ -390,7 +420,23 @@ def _run_entry(cab, layout):
         'z_high': mw.translation.z + layout.dim_z,
         # Angled and corner fronts do not run along their own X.
         'straight': not layout.is_angled,
+        # An appliance moves and is stopped against, but its width is
+        # its own: it has no ends to stretch and joins no joint.
+        'appliance': isinstance(layout, ApplianceLayout),
     }
+
+
+def _run_members(scene):
+    """[(obj, layout)] of everything a run is made of: face frame
+    cabinets and freestanding appliances."""
+    out = [(c, solver.FaceFrameLayout(c))
+           for c in _iter_face_frame_cabinets(scene)]
+    for obj in _iter_grab_appliances(scene):
+        try:
+            out.append((obj, ApplianceLayout(obj)))
+        except Exception:
+            continue            # a cage without its Dim inputs
+    return out
 
 
 def _same_run(a, b):
@@ -428,16 +474,17 @@ def _collect_cabinet_mode(scene):
     a move handle at its centre, with the two end handles of a butted
     pair folded into one joint, and a free end's stretch stopped at the
     next cabinet on the run."""
-    cabs = [(c, solver.FaceFrameLayout(c))
-            for c in _iter_face_frame_cabinets(scene)]
+    cabs = _run_members(scene)
     entries = [_run_entry(c, l) for c, l in cabs]
     by_name = {e['obj'].name: e for e in entries}
     joints = []
     folded = set()
     for a in entries:
-        if not a['straight']:
+        if not a['straight'] or a['appliance']:
             continue
         for b, left, _right in run_neighbors(entries, a):
+            if b['appliance']:
+                continue        # a cabinet against an appliance: its end stops there
             if abs(left - a['dim_x']) <= BUTT_TOL:
                 joints.append((a, b))
                 folded.add((a['obj'].name, 'OUTER_RIGHT'))
@@ -445,7 +492,9 @@ def _collect_cabinet_mode(scene):
     out = []
     for cab, layout in cabs:
         a = by_name[cab.name]
-        for rec in solver.editable_boundaries_cabinet(cab, layout):
+        edges = (() if a['appliance']
+                 else solver.editable_boundaries_cabinet(cab, layout))
+        for rec in edges:
             if (cab.name, rec['kind']) in folded:
                 continue
             if a['straight'] and rec['kind'] in ('OUTER_RIGHT', 'OUTER_LEFT'):
@@ -495,8 +544,7 @@ def _free_end_stop(entries, a, kind):
 def _move_targets(scene, cab):
     """Where cab's ends can snap while it moves: the ends of every other
     cabinet on its run, base or wall, along cab's X from its origin."""
-    entries = [_run_entry(c, solver.FaceFrameLayout(c))
-               for c in _iter_face_frame_cabinets(scene)]
+    entries = [_run_entry(c, l) for c, l in _run_members(scene)]
     a = next((e for e in entries if e['obj'] is cab), None)
     if a is None:
         return [], 0.0
