@@ -22494,8 +22494,20 @@ def recalculate_face_frame_cabinet(obj):
     _restore_active(root, lost_active)
 
 
+def _part_owner(obj):
+    """The opening or interior region a part is built in -- what outlives
+    the recalc that rebuilds the part -- or None."""
+    node = obj.parent
+    while node is not None:
+        if node.get(TAG_INTERIOR_REGION) or node.get(TAG_OPENING_CAGE):
+            return node
+        node = node.parent
+    return None
+
+
 def _active_name_in(root):
-    """The active object's name when it is part of `root`, else None."""
+    """(name, part role, owner name, is an interior part) of the active
+    object when it is part of `root`, else None."""
     try:
         active = bpy.context.view_layer.objects.active
     except Exception:
@@ -22503,7 +22515,12 @@ def _active_name_in(root):
     if active is None or active is root:
         return None
     try:
-        return active.name if find_cabinet_root(active) is root else None
+        if find_cabinet_root(active) is not root:
+            return None
+        owner = _part_owner(active)
+        return (active.name, active.get('hb_part_role'),
+                owner.name if owner is not None else None,
+                bool(active.get('IS_FACE_FRAME_INTERIOR_PART')))
     except ReferenceError:
         return None
 
@@ -22515,10 +22532,31 @@ def _restore_active(root, name):
     it again when the rebuild left nothing active."""
     if not name:
         return
+    name, role, owner_name, interior = name
     view_layer = bpy.context.view_layer
     if view_layer.objects.active is not None:
         return
+    # Rebuilt parts take their names in build order, so a name can come
+    # back on a part in another opening (bottom shelves turned rollouts:
+    # the picked shelf's name went to a shelf in the opening above). The
+    # part stays picked only in the opening it was in; failing that, a
+    # part with the same role there, then any interior part there (any
+    # other part, for one that was not interior).
     obj = bpy.data.objects.get(name)
+    if owner_name is not None and (
+            obj is None or _part_owner(obj) is None
+            or _part_owner(obj).name != owner_name):
+        obj = None
+        owner = bpy.data.objects.get(owner_name)
+        if owner is not None:
+            parts = sorted(
+                (o for o in owner.children_recursive
+                 if o.get('hb_part_role') and _part_owner(o) is owner
+                 and bool(o.get('IS_FACE_FRAME_INTERIOR_PART')) == interior
+                 and view_layer.objects.get(o.name) is not None),
+                key=lambda o: o.name)
+            same = [o for o in parts if o.get('hb_part_role') == role]
+            obj = (same or parts or [None])[0]
     if obj is None or view_layer.objects.get(obj.name) is None:
         return
     if find_cabinet_root(obj) is not root:
