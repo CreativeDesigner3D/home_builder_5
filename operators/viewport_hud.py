@@ -2464,6 +2464,44 @@ def _hud_event_poll(context):
             and context.region.type == 'WINDOW')
 
 
+def _eat_click():
+    try:
+        bpy.ops.home_builder.hud_eat_click('INVOKE_DEFAULT')
+    except Exception as ex:
+        print('Home Builder: HUD click guard failed: %s' % ex)
+
+
+class home_builder_OT_hud_eat_click(bpy.types.Operator):
+    """Take the CLICK that follows a press on the HUD, so the viewport's
+    click select never selects through it. Lives from the press to the
+    next event after the release: the release itself passes on (a
+    button waiting for it still gets it), only the CLICK made of it is
+    stopped, and anything else ends it untouched."""
+    bl_idname = "home_builder.hud_eat_click"
+    bl_label = "Home Builder HUD Click Guard"
+    bl_options = {'INTERNAL'}
+
+    def invoke(self, context, event):
+        self.released = False
+        context.window_manager.modal_handler_add(self)
+        return {'RUNNING_MODAL'}
+
+    def modal(self, context, event):
+        if event.type == 'LEFTMOUSE':
+            if event.value == 'CLICK':
+                return {'FINISHED'}             # taken: no select
+            if event.value == 'CLICK_DRAG':
+                # A drag begun on the HUD (a value, the header): not a
+                # box select through it. Its own modal works off moves.
+                return {'RUNNING_MODAL'}
+            if event.value == 'RELEASE' and not self.released:
+                self.released = True
+                return {'PASS_THROUGH'}
+        if self.released or event.type in {'ESC', 'RIGHTMOUSE'}:
+            return {'FINISHED', 'PASS_THROUGH'}
+        return {'PASS_THROUGH'}
+
+
 class home_builder_OT_hud_click(bpy.types.Operator):
     """Routes a viewport left-press to HUD widgets. A press landing on the
     pinned navigator panel or a widget rect is handled and consumed; any
@@ -2492,6 +2530,10 @@ class home_builder_OT_hud_click(bpy.types.Operator):
                 # scene); a second press without a mouse move must not
                 # put back the selection from before the first.
                 _surface_selection = _grab_surface_selection(context)
+                # Blender's click select runs on the CLICK its keymap
+                # makes of this press's release -- after the press was
+                # taken here -- and picked whatever sat behind the HUD.
+                _eat_click()
         return self._route(context, event, area, region, mx, my)
 
     def _route(self, context, event, area, region, mx, my):
@@ -2785,6 +2827,7 @@ def ensure_listener():
 
 
 classes = (
+    home_builder_OT_hud_eat_click,
     home_builder_OT_hud_click,
     home_builder_OT_panel_tab_drag,
     home_builder_OT_hud_scroll,
