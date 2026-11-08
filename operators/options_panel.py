@@ -1606,8 +1606,7 @@ def _paint_head(shader, font_id, s, mx, my, label, rect, add_rect):
 
 def paint(entries, mx, my):
     import gpu
-    global _painted
-    _painted = entries
+    _note_rows(entries)
     s = scale()
     font_id = 0
     gpu.state.blend_set('ALPHA')
@@ -2506,12 +2505,13 @@ def _run(op_id, **kwargs):
 # release drops the row where the line shows -- rows only move within
 # their own list. A release where it was pressed is the ordinary click.
 # The rows' places are read off what was painted last, so the line keeps
-# up with the page as it redraws.
+# up with the page as it redraws -- per list, as the inspector and the
+# other pages paint through here too.
 
 ROW_DRAG_THRESHOLD = 5      # unscaled px of travel before a press drags
 ROW_REORDER = True          # for hosted pages: this panel drags rows
 
-_painted = ()               # the entries painted last
+_painted_rows = {}          # pool key -> [(index, rect)] as last painted
 _row_drag = None            # the row held: see _start_row_drag
 
 
@@ -2529,10 +2529,18 @@ def _start_row_drag(pool, index, my, rename):
     return True
 
 
+def _note_rows(entries):
+    """Remember where each list's rows were painted."""
+    rows = {}
+    for e in entries:
+        if e[0] == 'style_row':
+            rows.setdefault(e[8].key, []).append((e[1], e[3]))
+    _painted_rows.update(rows)
+
+
 def _pool_rows(key):
     """(index, rect) of every painted row of the pool ``key``, top down."""
-    return [(e[1], e[3]) for e in _painted
-            if e[0] == 'style_row' and e[8].key == key]
+    return _painted_rows.get(key, [])
 
 
 def row_drop(rows, src, my):
