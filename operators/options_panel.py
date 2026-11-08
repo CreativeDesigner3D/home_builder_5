@@ -476,6 +476,9 @@ class PoolSpec:
     `move_every_row` puts the move arrows on every row rather than the
     active one alone, for a list whose order is what it means (a press
     on one moves that row).
+    `reorder_op` lets a row be pressed and dragged to a new place in the
+    list: the operator is run with `from_index` and `to_index` once the
+    row is dropped, the row being dragged made the active one first.
     `row_dot(context, item)` gives a row a colour dot (an (r, g, b) or
     None), `row_count(context, item)` a number at its end, and
     `summary(context, item)` a card over the selected item's fields --
@@ -489,7 +492,7 @@ class PoolSpec:
                  actions_first=False, scope='main', list_label="Styles",
                  row_text=None, rename_prop='name', allow_empty=False,
                  row_dot=None, row_count=None, summary=None,
-                 move_every_row=False):
+                 move_every_row=False, reorder_op=None):
         self.title = title
         self.props = props
         self.collection = collection
@@ -512,6 +515,7 @@ class PoolSpec:
         self.row_count = row_count
         self.summary = summary
         self.move_every_row = move_every_row
+        self.reorder_op = reorder_op
 
     @property
     def key(self):
@@ -583,6 +587,7 @@ def _pool_from_spec(spec):
         row_count=spec.get('row_count'),
         summary=spec.get('summary'),
         move_every_row=spec.get('move_every_row', False),
+        reorder_op=spec.get('reorder_op'),
     )
 
 
@@ -1601,6 +1606,8 @@ def _paint_head(shader, font_id, s, mx, my, label, rect, add_rect):
 
 def paint(entries, mx, my):
     import gpu
+    global _painted
+    _painted = entries
     s = scale()
     font_id = 0
     gpu.state.blend_set('ALPHA')
@@ -2078,6 +2085,7 @@ def paint(entries, mx, my):
                 draw_centered_text(font_id, rect, FONT * s,
                                    Theme.TEXT_PRIMARY if (active or hovered) else Theme.TEXT_NORMAL,
                                    fit_text(font_id, FONT * s, entry[4], rect[2] - 6 * s))
+        _paint_row_drag(shader, s, entries)
     finally:
         if clipped:
             end_clip(prev)
@@ -2492,6 +2500,130 @@ def _run(op_id, **kwargs):
         print('Home Builder: %s failed: %s' % (op_id, ex))
 
 
+# ---- Row drag-reorder -------------------------------------------------------
+# A pool with a reorder_op lets its rows be picked up: a press on a row
+# holds it, moving past a few pixels turns the press into a drag, and the
+# release drops the row where the line shows -- rows only move within
+# their own list. A release where it was pressed is the ordinary click.
+# The rows' places are read off what was painted last, so the line keeps
+# up with the page as it redraws.
+
+ROW_DRAG_THRESHOLD = 5      # unscaled px of travel before a press drags
+ROW_REORDER = True          # for hosted pages: this panel drags rows
+
+_painted = ()               # the entries painted last
+_row_drag = None            # the row held: see _start_row_drag
+
+
+def _start_row_drag(pool, index, my, rename):
+    global _row_drag
+    _row_drag = {'pool': pool, 'index': index, 'press_y': my,
+                 'rename': rename, 'active': False,
+                 'to': index, 'line': None}
+    try:
+        bpy.ops.home_builder.options_row_drag('INVOKE_DEFAULT')
+    except Exception as ex:
+        _row_drag = None
+        print('Home Builder: could not start a row drag: %s' % ex)
+        return False
+    return True
+
+
+def _pool_rows(key):
+    """(index, rect) of every painted row of the pool ``key``, top down."""
+    return [(e[1], e[3]) for e in _painted
+            if e[0] == 'style_row' and e[8].key == key]
+
+
+def row_drop(rows, src, my):
+    """Where a row ``src`` held at height ``my`` lands among ``rows``
+    ((index, rect), top down): (its new index, the line's y), or
+    (src, None) with nowhere else to go. The drop goes above the first
+    other row whose middle is below the cursor, else below the last."""
+    others = [(i, r) for i, r in rows if i != src]
+    if not others:
+        return src, None
+    for i, r in others:
+        if my > r[1] + r[3] / 2.0:
+            return (i if i < src else i - 1), r[1] + r[3]
+    i, r = others[-1]
+    return (i + 1 if i < src else i), r[1]
+
+
+def _paint_row_drag(shader, s, entries):
+    d = _row_drag
+    if d is None or not d['active']:
+        return
+    key = d['pool'].key
+    for e in entries:
+        if e[0] == 'style_row' and e[8].key == key and e[1] == d['index']:
+            draw_rects(shader, [e[3]], (0.0, 0.0, 0.0, 0.35))
+            if d['line'] is not None:
+                rx, _ry, rw, _rh = e[3]
+                draw_rects(shader, [(rx, d['line'] - 1 * s, rw, 2 * s)],
+                           Theme.ACCENT_BG)
+            break
+
+
+class home_builder_OT_options_row_drag(bpy.types.Operator):
+    """Drag a row to change its place in the list. A modal only from the
+    press to the release"""
+    bl_idname = "home_builder.options_row_drag"
+    bl_label = "Move Row"
+    bl_options = {'INTERNAL'}
+
+    def invoke(self, context, event):
+        if _row_drag is None:
+            return {'CANCELLED'}
+        context.window_manager.modal_handler_add(self)
+        return {'RUNNING_MODAL'}
+
+    def _end(self):
+        global _row_drag
+        _row_drag = None
+        _tag()
+
+    def modal(self, context, event):
+        global _edit_pool
+        d = _row_drag
+        if d is None:
+            return {'CANCELLED'}
+        my = event.mouse_region_y
+        if event.type == 'MOUSEMOVE':
+            if not d['active'] and abs(my - d['press_y']) \
+                    >= ROW_DRAG_THRESHOLD * scale():
+                d['active'] = True
+                if d['rename']:
+                    # Picked up, not renamed: it is the row being moved.
+                    d['pool'].set_active(context, d['index'])
+            if d['active']:
+                d['to'], d['line'] = row_drop(
+                    _pool_rows(d['pool'].key), d['index'], my)
+            _tag()
+            return {'RUNNING_MODAL'}
+        if event.type == 'LEFTMOUSE' and event.value == 'RELEASE':
+            pool, index = d['pool'], d['index']
+            if d['active']:
+                if d['to'] != index:
+                    _run(pool.reorder_op, from_index=index,
+                         to_index=d['to'])
+            elif d['rename']:
+                item = pool.active(context)
+                if item is not None:
+                    _edit_pool = pool
+                    _edit.begin(index, str(getattr(item, pool.rename_prop,
+                                                   "") or ""))
+                    self._end()
+                    bpy.ops.home_builder.style_rename('INVOKE_DEFAULT')
+                    return {'FINISHED'}
+            self._end()
+            return {'FINISHED'}
+        if event.type in {'RIGHTMOUSE', 'ESC'} and event.value == 'PRESS':
+            self._end()
+            return {'CANCELLED'}
+        return {'RUNNING_MODAL'}
+
+
 _pending_action = None  # (operator, kwargs) waiting for the release
 
 
@@ -2588,6 +2720,16 @@ def hit(context, mx, my, entries):
                 return True
             if point_in_rect(mx, my, entry[3]):
                 index = entry[1]
+                if pool.reorder_op and len(pool.items(context)) > 1:
+                    # Held and dragged, the row moves; let go in place,
+                    # it is the click below, renaming on the release.
+                    rename = (pool.active_index(context) == index
+                              and bool(pool.rename_prop))
+                    if not rename:
+                        pool.set_active(context, index)
+                    if _start_row_drag(pool, index, my, rename):
+                        _tag()
+                        return True
                 if pool.active_index(context) != index:
                     pool.set_active(context, index)
                 elif pool.rename_prop:
@@ -3515,6 +3657,7 @@ classes = (home_builder_OT_style_options_popup,
            home_builder_OT_options_pick_file,
            home_builder_OT_options_edit_value,
            home_builder_OT_options_drag_value,
+           home_builder_OT_options_row_drag,
            home_builder_OT_options_run_action,)
 
 
