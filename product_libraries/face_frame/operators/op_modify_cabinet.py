@@ -541,9 +541,63 @@ def _free_end_stop(entries, a, kind):
     return max(0.0, min(gaps)) if gaps else None
 
 
+WALL_OPENING_TAGS = ('IS_ENTRY_DOOR_BP', 'IS_WINDOW_BP')
+# A door or window has to reach this far into a cabinet's height to
+# count against it -- a window that only meets a base's countertop
+# line does not.
+OPENING_Z_TOL = inch(0.25)
+
+
+def _wall_of(obj):
+    parent = obj.parent
+    return parent if parent is not None and parent.get('IS_WALL_BP') else None
+
+
+def wall_targets(a):
+    """Run positions (along a's X, from a's origin) a's ends snap to on
+    the wall it stands on: the wall's two ends, and the sides of every
+    door and window whose height meets the cabinet's. [] for a cabinet
+    not on a wall, or not running along it."""
+    wall = _wall_of(a['obj'])
+    if wall is None:
+        return []
+    try:
+        length = hb_types.GeoNodeWall(wall).get_input('Length')
+    except Exception:
+        return []
+    mw = wall.matrix_world
+    wall_x = (mw.to_3x3() @ Vector((1.0, 0.0, 0.0))).normalized()
+    if abs(wall_x.dot(a['x'])) < 0.999:
+        return []
+
+    def run(x, z=0.0):
+        return (mw @ Vector((x, 0.0, z)) - a['origin']).dot(a['x'])
+
+    out = [run(0.0), run(length)]
+    for child in wall.children:
+        if not any(child.get(t) for t in WALL_OPENING_TAGS):
+            continue
+        try:
+            geo = hb_types.GeoNodeObject(child)
+            width = geo.get_input('Dim X')
+            height = geo.get_input('Dim Z')
+        except Exception:
+            continue
+        z0 = (mw @ Vector((0.0, 0.0, child.location.z))).z
+        z1 = z0 + height
+        if not (a['z_low'] + OPENING_Z_TOL < z1
+                and z0 < a['z_high'] - OPENING_Z_TOL):
+            continue
+        x0 = child.location.x
+        out.extend((run(x0), run(x0 + width)))
+    return out
+
+
 def _move_targets(scene, cab):
     """Where cab's ends can snap while it moves: the ends of every other
-    cabinet on its run, base or wall, along cab's X from its origin."""
+    cabinet on its run, base or wall, and the ends of its wall and the
+    sides of the doors and windows in its way, along cab's X from its
+    origin."""
     entries = [_run_entry(c, l) for c, l in _run_members(scene)]
     a = next((e for e in entries if e['obj'] is cab), None)
     if a is None:
@@ -551,7 +605,26 @@ def _move_targets(scene, cab):
     targets = []
     for _b, left, right in run_neighbors(entries, a, overlap_z=False):
         targets.extend((left, right))
+    targets.extend(wall_targets(a))
     return targets, a['dim_x']
+
+
+def edge_targets(cab, layout, kind, basis):
+    """FF-local values (in the frozen drag basis) a free end's handle
+    snaps to so the cabinet's own side -- not its face frame, which a
+    scribe sets in -- lands on a wall end or a door or window side."""
+    a = _run_entry(cab, layout)
+    if not a['straight']:
+        return []
+    origin_w, x_axis_w, _z, _n = basis
+    out = []
+    for t in wall_targets(a):
+        ff = (a['origin'] + a['x'] * t - origin_w).dot(x_axis_w)
+        if kind == 'OUTER_RIGHT':
+            out.append(ff - layout.ff_inset_right)
+        else:
+            out.append(ff + layout.ff_inset_left)
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -1886,6 +1959,14 @@ class _GrabBaseMixin:
         if b['kind'] == 'CABINET_MOVE':
             self._move_targets, self._move_dim_x = _move_targets(
                 context.scene, b['cabinet_obj'])
+        self._edge_targets = []
+        if b['kind'] in ('OUTER_LEFT', 'OUTER_RIGHT') \
+                and not isinstance(layout, ApplianceLayout):
+            try:
+                self._edge_targets = edge_targets(
+                    b['cabinet_obj'], layout, b['kind'], self._drag_basis)
+            except Exception:
+                self._edge_targets = []
         # Seed the typed-value target from which side of the boundary
         # the user grabbed, so a type-without-drag still has a sensible
         # target. _apply_drag refines this live from the drag direction.
@@ -1975,9 +2056,16 @@ class _GrabBaseMixin:
         if b['kind'] == 'CABINET_MOVE':
             self._apply_move(context, b, cursor_delta, snap_mode)
             return
-        snapped_axis, snap_kind = _snap_offset(
-            proposed_axis, region, rv3d, b, layout,
-            self._boundaries, snap_mode)
+        # A free end snaps to its wall's ends and the doors and windows
+        # first; then to the other boundaries, as before.
+        wall_hit = (self._snap_edge(context, proposed_axis)
+                    if snap_mode != 'OFF' else None)
+        if wall_hit is not None:
+            snapped_axis, snap_kind = wall_hit, ('WALL', wall_hit)
+        else:
+            snapped_axis, snap_kind = _snap_offset(
+                proposed_axis, region, rv3d, b, layout,
+                self._boundaries, snap_mode)
         delta = snapped_axis - self._drag_origin_boundary
         self._snap_kind = snap_kind
 
@@ -2153,6 +2241,28 @@ class _GrabBaseMixin:
                 self._drag_boundary = nb
                 self._drag_layout = nl
                 break
+
+    def _snap_edge(self, context, proposed):
+        """The edge target within MOVE_SNAP_PX on screen of a free end
+        at `proposed`, or None."""
+        targets = getattr(self, '_edge_targets', None) or []
+        if not targets or self._drag_basis is None:
+            return None
+        region, rv3d = context.region, context.region_data
+        origin_w, x_axis_w, _z, _n = self._drag_basis
+        at = origin_w + x_axis_w * proposed
+        a = view3d_utils.location_3d_to_region_2d(region, rv3d, at)
+        z = view3d_utils.location_3d_to_region_2d(region, rv3d,
+                                                  at + x_axis_w * 0.1)
+        if a is None or z is None or (z - a).length < 1e-6:
+            return None
+        reach = MOVE_SNAP_PX / ((z - a).length / 0.1)
+        best = None
+        for t in targets:
+            d = abs(t - proposed)
+            if d < reach and (best is None or d < best[0]):
+                best = (d, t)
+        return best[1] if best else None
 
     def _snap_move(self, context, b, delta):
         """(delta, snap) with the nearer end flush to another cabinet's
