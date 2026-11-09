@@ -759,6 +759,13 @@ def split_interior(context, interior_obj, kind):
         return None
     section_type = _section_type_of(interior_obj)
     _delete_tree(interior_obj)
+    return split_host(context, host, kind, section_type)
+
+
+def split_host(context, host, kind, section_type='EMPTY'):
+    """Give ``host`` (an opening, bay or section with no interior) a
+    two-section splitter, both sections holding ``section_type``.
+    Returns the splitter."""
     if kind == 'DIVISION':
         splitter = types_frameless.InteriorSplitterHorizontal()
     else:

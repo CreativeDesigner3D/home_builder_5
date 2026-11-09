@@ -99,6 +99,16 @@ def find(context):
     (a drawer or pull-out's front or box: `part`, with `opening` the
     drawer's opening) or 'part' -- anything else with a right-click
     menu of its own."""
+    from . import interior_page
+    found = interior_page.focused(context)
+    if found is not None:
+        # The Interior page on a hidden section (or the whole interior),
+        # while a visible object stays the pick.
+        host, section = found
+        root = hb_utils.get_cabinet_bp(host)
+        if root is not None and 'IS_FRAMELESS_PRODUCT_CAGE' not in root:
+            return ('interior', root, _owning(host, TAG_BAY),
+                    host if host.get(TAG_OPENING) else None, section)
     obj = context.active_object
     if obj is None or not obj.select_get():
         return None
@@ -463,6 +473,9 @@ def _part_label(part_obj):
         return "Interior"
     if part_obj.get('IS_FRAMELESS_INTERIOR_SECTION'):
         return "Section"
+    from . import interior_page
+    if interior_page.is_bar_part(part_obj):
+        return interior_page.split_label(part_obj.parent)
     role = str(part_obj.get('hb_part_role', '') or '')
     if 'SHELF' in role:
         return "Shelf"
@@ -679,9 +692,11 @@ def _opening_page(context, out, opening_obj):
         menus.append(_menu("Change Interior", 'HOME_BUILDER_MT_interior_change'))
     if menus:
         out.append(('actions', tuple(menus)))
-    if interior is not None:
+    if interior is not None or _items().accessory_host(opening_obj) is not None:
         out.append(('actions', (
-            ("Interior Options", 'hb_frameless.interior_prompts', None, None),)))
+            _act("Edit Interior", 'hb_frameless.show_interior_page',
+                 {'opening_name': opening_obj.name}, 'cab_interior'),
+            ("Interior Options", 'hb_frameless.interior_prompts', None, None))))
     out.extend(accessory_blocks(context, opening_obj))
     _quick(out, _menu_actions(context, opening_obj, skip=(
         'hb_frameless.opening_prompts', 'HOME_BUILDER_MT_opening_change',
@@ -689,26 +704,30 @@ def _opening_page(context, out, opening_obj):
     _footer(out, 'hb_frameless.opening_prompts')
 
 
-def _interior_page(context, out, part_obj):
-    from ...operators import generic_page
-    interior = (part_obj if part_obj.get(TAG_INTERIOR)
-                else hb_utils.get_interior_bp(part_obj))
-    out.append(('value', ("Interior", _interior_summary(interior))))
-    if not part_obj.get(TAG_INTERIOR) and not part_obj.get(
-            'IS_FRAMELESS_INTERIOR_SECTION'):
+def _interior_page(context, out, part_obj, opening_obj, bay_obj):
+    """The Interior page: a picture of the interior with its fixed
+    shelves and divisions, then what the pick holds. `part_obj` is a
+    shelf or board, a section, or None for the whole interior."""
+    from . import interior_page
+    host = (interior_page.host_of(part_obj) if part_obj is not None
+            else opening_obj or bay_obj)
+    if host is None:
+        _footer(out, None)
+        return
+    start = len(out)
+    out.extend(interior_page.blocks(context, host, part_obj))
+    # A part picked in the viewport: its own size and commands too.
+    real = (part_obj is not None and not part_obj.get(TAG_INTERIOR)
+            and not part_obj.get('IS_FRAMELESS_INTERIOR_SECTION'))
+    if real and not interior_page.is_bar_part(part_obj):
         size = _size_value(context, part_obj)
         if size:
-            out.append(size)
-    if hasattr(bpy.types, 'HOME_BUILDER_MT_interior_change'):
-        out.append(('actions', (_menu("Change Interior",
-                                      'HOME_BUILDER_MT_interior_change'),)))
-    if interior is not None:
-        out.extend(generic_page.prompt_blocks(
-            context, interior, 'fl_interior_prompts', "Interior"))
-    out.extend(accessory_blocks(context, part_obj))
-    _quick(out, _menu_actions(context, part_obj, skip=(
-        'hb_frameless.interior_prompts', 'HOME_BUILDER_MT_interior_change')))
-    _footer(out, 'hb_frameless.interior_prompts' if interior is not None else None)
+            out.insert(start + 1, size)     # under the picture
+    out.extend(accessory_blocks(context, part_obj or host))
+    if real:
+        _quick(out, _menu_actions(context, part_obj, skip=(
+            'hb_frameless.interior_prompts', 'HOME_BUILDER_MT_interior_change')))
+    _footer(out, 'hb_frameless.interior_prompts' if real else None)
 
 
 def _drawer_page(context, out, part_obj, drawers):
@@ -901,7 +920,10 @@ def blocks(context, item):
         _product_page(context, out, root)
         return out
 
-    level = _remember(root, bay_obj, opening_obj, part_obj)
+    # A hidden section is not a level to come back to from the tabs.
+    shown = (None if part_obj is not None
+             and part_obj.get('IS_FRAMELESS_INTERIOR_SECTION') else part_obj)
+    level = _remember(root, bay_obj, opening_obj, shown)
     trail = _trail(root, bay_obj, opening_obj, part_obj)
     n = _several(kind)
     if n:
@@ -924,7 +946,7 @@ def blocks(context, item):
     elif kind == 'opening':
         _opening_page(context, out, opening_obj)
     elif kind == 'interior':
-        _interior_page(context, out, part_obj)
+        _interior_page(context, out, part_obj, opening_obj, bay_obj)
     elif kind == 'drawer':
         drawers = list(_picked['drawer']) or [opening_obj]
         if opening_obj in drawers:
@@ -994,6 +1016,8 @@ class hb_frameless_OT_select_level(bpy.types.Operator):
 
 def register():
     bpy.utils.register_class(hb_frameless_OT_select_level)
+    from . import interior_page
+    interior_page.register()
     _register_schemas()
     from ...operators import selected_tab, options_panel
     selected_tab.register_source(SOURCE_KEY, find, blocks, crumbs)
@@ -1008,6 +1032,8 @@ def unregister():
     except Exception:
         pass
     _unregister_schemas()
+    from . import interior_page
+    interior_page.unregister()
     try:
         from ...operators import prop_proxy
         for key in [k for k in prop_proxy._schemas
