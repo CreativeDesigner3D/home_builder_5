@@ -161,6 +161,44 @@ def _end_condition_update(side):
     return _update
 
 
+def _built_filler_width(root, side):
+    """The filler width the run was last built with on that end: the
+    width of its filler part, or 0 when it has none (or it is hidden)."""
+    from ...hb_types import GeoNodeCutpart
+    for child in root.children:
+        if child.get('hb_filler') == side:
+            if child.hide_viewport:
+                return 0.0
+            try:
+                return float(GeoNodeCutpart(child).get_input('Width'))
+            except Exception:
+                return 0.0
+    return 0.0
+
+
+def _wall_filler_update(side):
+    """Update for a wall filler width. The filler stands outside the run,
+    so the run gives up the change in width: the run and its fillers keep
+    the footprint they had, wall to wall. A left filler grows out of the
+    left end, so the run moves right by the same amount to make room.
+    Then the countertop's end follows, as for any end condition."""
+    def _update(self, context):
+        from mathutils import Vector
+        from . import types_closets
+        root = self.id_data
+        new = float(getattr(self, side.lower() + '_side_wall_filler'))
+        delta = new - _built_filler_width(root, side)
+        with types_closets.suspend_recalc():
+            if abs(delta) > 1e-6 and self.width - delta >= inch(6.0):
+                self.width -= delta
+                if side == 'LEFT':
+                    rot = root.matrix_basis.to_3x3().normalized()
+                    root.location += rot @ Vector((delta, 0.0, 0.0))
+            sync_end_overhangs(self, (side,))
+        _update_starter_prop(self, context)
+    return _update
+
+
 def _system_panel_height(value):
     """A height someone set, on the 32mm system: down to the step below,
     never under the smallest panel the system builds."""
@@ -1246,15 +1284,15 @@ class Closet_Starter_Props(PropertyGroup):
     left_side_wall_filler: FloatProperty(
         name="Left Side Wall Filler",
         description="Width of the scribe filler past the left end (0 = "
-                    "none)",
+                    "none). The run gives up the same width",
         default=0.0, min=0.0, unit='LENGTH', precision=4,
-        update=_end_condition_update('LEFT'))  # type: ignore
+        update=_wall_filler_update('LEFT'))  # type: ignore
     right_side_wall_filler: FloatProperty(
         name="Right Side Wall Filler",
         description="Width of the scribe filler past the right end (0 = "
-                    "none)",
+                    "none). The run gives up the same width",
         default=0.0, min=0.0, unit='LENGTH', precision=4,
-        update=_end_condition_update('RIGHT'))  # type: ignore
+        update=_wall_filler_update('RIGHT'))  # type: ignore
 
     # Corner (L-shelf) starter prompts. Only meaningful when the
     # starter class is an L-shelf variant (is_corner); the prompts
