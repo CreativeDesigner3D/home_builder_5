@@ -724,11 +724,16 @@ def add_drawer_accessory(opening_obj, code):
 # are kept on the opening itself, or on the division section they were
 # added to, as ACCESSORY items in the same property group the face frame
 # library uses. They live on the opening rather than its interior so that
-# changing or splitting the interior keeps them. They are data for
-# reports and drawings; nothing is built in 3D.
+# changing or splitting the interior keeps them. They drive reports and
+# drawings, and opening_accessories builds their units in 3D.
 
 # Host keys a door or open opening offers, as in the face frame library.
+# Pull-out units (trash roll-outs, can storage, hampers...) stand in the
+# opening behind its door; a pull-out front names its own unit instead
+# (pullout_accessory_code, hb_frameless.pullout_model).
+PULLOUT_ACCESSORY_HOST = 'opening_interior_pullout'
 OPENING_ACCESSORY_HOSTS = frozenset({
+    PULLOUT_ACCESSORY_HOST,
     'opening_interior_accessory', 'tall_pantry', 'behind_door_rollout',
     'pullout_board', 'tilt_out', 'closet_rod',
 })

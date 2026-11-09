@@ -83,11 +83,20 @@ def _is_frameless_drawer(target):
     return fl is not None and fl.drawer_opening_for(target) is target
 
 
+def _is_frameless_pullout(target):
+    """A frameless pull-out opening: it names its own pull-out unit."""
+    return (_is_frameless_drawer(target)
+            and any(c.get('IS_PULLOUT_FRONT') for c in target.children))
+
+
 def _target_hosts(target):
     """Catalog host keys ``target`` takes."""
     if _is_frameless(target):
         if _is_frameless_drawer(target):
-            return {_FRAMELESS_DRAWER_HOST}
+            hosts = {_FRAMELESS_DRAWER_HOST}
+            if _is_frameless_pullout(target):
+                hosts.add(_frameless_items().PULLOUT_ACCESSORY_HOST)
+            return hosts
         return set(_frameless_items().accessory_hosts_for(target))
     return ops_cabinet._valid_accessory_hosts(target)
 
@@ -115,6 +124,13 @@ def apply_to_target(op, context, target, code, item):
         return ops_cabinet._apply_accessory_choice(
             op, context, target, code, item, 0.0)
     fl = _frameless_items()
+    if (_is_frameless_pullout(target)
+            and item.get('host') == fl.PULLOUT_ACCESSORY_HOST):
+        # The pull-out's own unit, as its Pullout Model command sets it.
+        fl.item_props(target).pullout_accessory_code = code
+        from ... import hb_utils
+        hb_utils.run_calc_fix(context, target)
+        return {'FINISHED'}
     if _is_frameless_drawer(target):
         if fl.add_drawer_accessory(target, code) is None:
             return {'CANCELLED'}
