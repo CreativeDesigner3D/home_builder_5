@@ -123,6 +123,8 @@ def apply_to_target(op, context, target, code, item):
         return {'FINISHED'}
     if fl.add_opening_accessory(target, code) is None:
         return {'CANCELLED'}
+    from ... import hb_utils
+    hb_utils.run_calc_fix(context, target)
     return {'FINISHED'}
 
 

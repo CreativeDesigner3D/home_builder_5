@@ -1685,6 +1685,11 @@ def solve_cage_tree(cage_obj):
         else:
             solve_insert_parts(child)
             solve_cage_tree(child)
+    # Catalog accessories kept on this cage, built once its fronts and
+    # interior are in place. Imported here for the same reason as
+    # interior_items below.
+    from . import opening_accessories
+    opening_accessories.solve(cage_obj)
 
 
 # ---------------------------------------------------------------------------

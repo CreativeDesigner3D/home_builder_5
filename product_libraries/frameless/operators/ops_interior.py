@@ -1878,6 +1878,7 @@ class hb_frameless_OT_add_opening_accessory(bpy.types.Operator):
         if item is None:
             self.report({'WARNING'}, "That accessory doesn't go in this opening")
             return {'CANCELLED'}
+        hb_utils.run_calc_fix(context, host)
         self.report({'INFO'}, "Added %s" % item.accessory_label)
         return {'FINISHED'}
 
@@ -1903,6 +1904,7 @@ class hb_frameless_OT_remove_opening_accessory(bpy.types.Operator):
         props.interior_items.remove(self.index)
         props.interior_items_index = min(props.interior_items_index,
                                          max(len(props.interior_items) - 1, 0))
+        hb_utils.run_calc_fix(context, host)
         return {'FINISHED'}
 
 
