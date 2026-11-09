@@ -1,4 +1,4 @@
-"""Grab for frameless cabinets: drag cabinet ends to resize them.
+"""Grab for frameless cabinets: drag cabinet ends and opening dividers.
 
 The frameless counterpart of the face frame library's Grab, for the
 Cabinets selection mode. Every cabinet gets a handle on each end. Where
@@ -14,6 +14,13 @@ menus and navigation keep working. Each drag is its own undo step.
 While dragging, type a width (inches, fractions, feet'inches") for the
 cabinet left of the handle; Shift turns the 1/8" snap off; Esc or
 right-click drops the drag; Enter or Esc with no drag ends the mode.
+
+In the Bays selection mode it offers the same end and joint handles
+(a frameless cabinet is one bay, so its bay width follows the cabinet).
+In the Openings mode every divider between two split openings is a
+handle: dragging it makes one opening bigger and its neighbor smaller
+by the same amount, so the rest of the split keeps its sizes. A typed
+value sets the opening above (or left of) the divider.
 """
 
 import math
@@ -66,10 +73,15 @@ def _ui_scale():
         return 1.0
 
 
+GRAB_MODES = ('Cabinets', 'Bays', 'Openings')
+MIN_OPENING = inch(2.0)
+
+
 def grab_mode_active(scene):
-    """True when the frameless selection mode is one Grab works in."""
+    """The frameless selection mode when Grab works in it, else None."""
     fl = getattr(scene, 'hb_frameless', None)
-    return getattr(fl, 'frameless_selection_mode', '') == 'Cabinets'
+    mode = getattr(fl, 'frameless_selection_mode', '')
+    return mode if mode in GRAB_MODES else None
 
 
 # ---------------------------------------------------------------------------
@@ -157,7 +169,18 @@ def _free_end_room(entries, a, side):
     return max(0.0, min(gaps)) if gaps else None
 
 
-def collect_handles(scene):
+def collect_handles(scene, mode='Cabinets'):
+    """Handle records for a selection mode: opening dividers in Openings
+    mode, cabinet ends and joints otherwise (no move handle in Bays)."""
+    if mode == 'Openings':
+        return collect_split_handles(scene)
+    handles = collect_cabinet_handles(scene)
+    if mode == 'Bays':
+        handles = [h for h in handles if h['kind'] != 'MOVE']
+    return handles
+
+
+def collect_cabinet_handles(scene):
     """Handle records for every frameless cabinet in the scene.
 
     kind 'JOINT' (left, right): the shared end of two butted cabinets.
@@ -245,6 +268,186 @@ def _front_point(frame, pos, z):
 
 
 # ---------------------------------------------------------------------------
+# Opening dividers (Openings mode)
+# ---------------------------------------------------------------------------
+
+def _overlay():
+    from .. import dim_edit_overlay
+    return dim_edit_overlay
+
+
+def _solver():
+    from .. import solver_frameless
+    return solver_frameless
+
+
+def _split_openings(splitter):
+    """{index: opening cage} for a splitter's own openings (1 is the
+    top of a vertical split, the left of a horizontal one)."""
+    sf = _solver()
+    out = {}
+    for ch in splitter.children:
+        if ch.get(sf.PART_ROLE_KEY) == 'OPENING':
+            idx = ch.get(sf.SPLIT_INDEX_KEY)
+            if idx is not None:
+                out[int(idx)] = ch
+    return out
+
+
+def _split_prompts(splitter, vertical):
+    """(calculator, {index: size prompt}) for a splitter."""
+    calc = _solver().splitter_calculator(splitter)
+    if calc is None:
+        return None, {}
+    suffix = 'Height' if vertical else 'Width'
+    out = {}
+    for i in _split_openings(splitter):
+        p = calc.get_calculator_prompt('Opening %d %s' % (i, suffix))
+        if p is not None:
+            out[i] = p
+    return calc, out
+
+
+def _divider_handle(splitter, vertical, i, a, b):
+    """Handle for the divider between opening i (above / left) and
+    opening i + 1 (below / right), drawn on the openings' front plane.
+    'axis' is the drag direction: up for a vertical split, right for a
+    horizontal one."""
+    ov = _overlay()
+    adx, _ady, adz = ov._cage_dims(a)
+    bdx, _bdy, bdz = ov._cage_dims(b)
+    if min(adx, adz, bdx, bdz) <= 0.0:
+        return None
+    amw, bmw = ov._world_matrix(a), ov._world_matrix(b)
+    rot = amw.to_3x3()
+    ax = (rot @ Vector((1.0, 0.0, 0.0))).normalized()
+    ay = (rot @ Vector((0.0, 1.0, 0.0))).normalized()
+    az = (rot @ Vector((0.0, 0.0, 1.0))).normalized()
+    if vertical:
+        mid = (amw @ Vector((0.0, -0.003, 0.0))
+               + bmw @ Vector((0.0, -0.003, bdz))) / 2.0
+        p_a, p_b, axis = mid, mid + ax * adx, az
+    else:
+        mid = (amw @ Vector((adx, -0.003, 0.0))
+               + bmw @ Vector((0.0, -0.003, 0.0))) / 2.0
+        p_a, p_b, axis = mid, mid + az * adz, ax
+    return {
+        'kind': 'SPLIT', 'splitter': splitter.name, 'vertical': vertical,
+        'index': i, 'openings': (a.name, b.name), 'frame': None,
+        'pos': 0.0, 'p_a': p_a, 'p_b': p_b, 'axis': axis, 'normal': ay,
+        'plane_p': p_a.copy(),
+    }
+
+
+def collect_split_handles(scene):
+    """A 'SPLIT' handle on every divider between two split openings of
+    every shown, editable frameless cabinet."""
+    ov, sf = _overlay(), _solver()
+    handles = []
+    for cab in scene.objects:
+        if not cab.get(TAG_CABINET):
+            continue
+        try:
+            if not ov._cabinet_shown(cab) or not ov._cabinet_editable(cab):
+                continue
+        except Exception:
+            continue
+        for splitter in cab.children_recursive:
+            if splitter.get(sf.SPLITTER_VERTICAL_TAG):
+                vertical = True
+            elif splitter.get(sf.SPLITTER_HORIZONTAL_TAG):
+                vertical = False
+            else:
+                continue
+            _calc, prompts = _split_prompts(splitter, vertical)
+            openings = _split_openings(splitter)
+            for i in sorted(openings):
+                if (i + 1 not in openings or i not in prompts
+                        or i + 1 not in prompts):
+                    continue
+                h = _divider_handle(splitter, vertical, i, openings[i],
+                                    openings[i + 1])
+                if h is not None:
+                    handles.append(h)
+    return handles
+
+
+def _split_start(handle):
+    splitter = bpy.data.objects[handle['splitter']]
+    _calc, prompts = _split_prompts(splitter, handle['vertical'])
+    i = handle['index']
+    return {
+        'a': prompts[i].distance_value, 'b': prompts[i + 1].distance_value,
+        'snapshot': {k: (p.equal, p.distance_value)
+                     for k, p in prompts.items()},
+    }
+
+
+def _resolve_split(context, splitter, calc):
+    """Same sequence as a typed opening size: recompute the calculator,
+    then re-solve the cabinet."""
+    try:
+        calc.calculate()
+    except Exception:
+        pass
+    cabinet_bp = hb_utils.get_cabinet_bp(splitter)
+    if cabinet_bp is not None:
+        hb_utils.run_calc_fix(context, cabinet_bp)
+
+
+def _split_sizes(handle, start, d):
+    """(opening above / left, opening below / right) after the divider
+    moved d along its axis (up / right)."""
+    if handle['vertical']:
+        return start['a'] - d, start['b'] + d
+    return start['a'] + d, start['b'] - d
+
+
+def _apply_split(context, handle, start, d):
+    # In terms of the change to opening a, clamped so both openings
+    # stay at least MIN_OPENING.
+    sign = -1.0 if handle['vertical'] else 1.0
+    da = min(max(sign * d, MIN_OPENING - start['a']),
+             start['b'] - MIN_OPENING)
+    d = sign * da
+    splitter = bpy.data.objects[handle['splitter']]
+    calc, prompts = _split_prompts(splitter, handle['vertical'])
+    i = handle['index']
+    size_a, size_b = _split_sizes(handle, start, d)
+    pa, pb = prompts[i], prompts[i + 1]
+    others_equal = any(p.equal and p.include for k, p in prompts.items()
+                       if k not in (i, i + 1))
+    # Normally both are held, so the openings still sharing equally keep
+    # the same remainder. When nothing else shares, one of the two that
+    # was sharing stays equal (b first) so the split still follows the
+    # cabinet if it is resized later; it takes exactly its new size.
+    spare = None
+    if not others_equal:
+        if start['snapshot'][i + 1][0]:
+            spare = pb
+        elif start['snapshot'][i][0]:
+            spare = pa
+    for p, size in ((pa, size_a), (pb, size_b)):
+        if p is spare:
+            p.equal = True
+        else:
+            p.equal = False
+            p.distance_value = size
+    _resolve_split(context, splitter, calc)
+    return d
+
+
+def _restore_split(context, handle, start):
+    splitter = bpy.data.objects[handle['splitter']]
+    calc, prompts = _split_prompts(splitter, handle['vertical'])
+    for k, (equal, value) in start['snapshot'].items():
+        if k in prompts:
+            prompts[k].equal = equal
+            prompts[k].distance_value = value
+    _resolve_split(context, splitter, calc)
+
+
+# ---------------------------------------------------------------------------
 # Edits
 # ---------------------------------------------------------------------------
 
@@ -280,7 +483,10 @@ def _clamp_delta(handle, start, d):
 
 def primary_width(handle, start, d):
     """The width the drag is setting: the cabinet left of a joint or a
-    right end, the cabinet itself for a left end."""
+    right end, the cabinet itself for a left end, the opening above or
+    left of a divider."""
+    if handle['kind'] == 'SPLIT':
+        return _split_sizes(handle, start, d)[0]
     if handle['kind'] == 'JOINT':
         return start['left_w'] + d
     if handle['kind'] == 'END_RIGHT':
@@ -289,6 +495,9 @@ def primary_width(handle, start, d):
 
 
 def delta_for_width(handle, start, width):
+    if handle['kind'] == 'SPLIT':
+        change = width - start['a']
+        return -change if handle['vertical'] else change
     if handle['kind'] == 'JOINT':
         return width - start['left_w']
     if handle['kind'] == 'END_RIGHT':
@@ -297,6 +506,8 @@ def delta_for_width(handle, start, width):
 
 
 def start_state(handle):
+    if handle['kind'] == 'SPLIT':
+        return _split_start(handle)
     if handle['kind'] == 'MOVE':
         cab = bpy.data.objects[handle['cab']]
         return {'world': cab.matrix_world.translation.copy(),
@@ -314,6 +525,8 @@ def start_state(handle):
 def apply_delta(context, handle, start, d):
     """Set the cabinets a handle owns to the start state moved by d
     (along the run). Returns the clamped d actually applied."""
+    if handle['kind'] == 'SPLIT':
+        return _apply_split(context, handle, start, d)
     d = _clamp_delta(handle, start, d)
     if handle['kind'] == 'JOINT':
         left = bpy.data.objects[handle['left']]
@@ -333,7 +546,9 @@ def apply_delta(context, handle, start, d):
 
 
 def restore(context, handle, start):
-    if handle['kind'] == 'MOVE':
+    if handle['kind'] == 'SPLIT':
+        _restore_split(context, handle, start)
+    elif handle['kind'] == 'MOVE':
         apply_move(handle['cab'], start, 0.0)
     else:
         apply_delta(context, handle, start, 0.0)
@@ -353,7 +568,7 @@ def resize_in_run(context, obj, width):
                             ((('JOINT', 'right'), ('END_LEFT', 'cab')), -1.0)):
         if abs(change) < 1e-6:
             break
-        handles = collect_handles(context.scene)
+        handles = collect_cabinet_handles(context.scene)
         h = next((h for kind, key in side_keys for h in handles
                   if h['kind'] == kind and h.get(key) == obj.name), None)
         if h is None:
@@ -374,6 +589,10 @@ def _to_screen(region, rv3d, p):
 
 
 def _handle_segment(region, rv3d, h, frame=None):
+    if h['kind'] == 'SPLIT':
+        off = h['axis'] * h['pos']
+        return (_to_screen(region, rv3d, h['p_a'] + off),
+                _to_screen(region, rv3d, h['p_b'] + off))
     frame = frame or h['frame']
     p1 = _to_screen(region, rv3d, _front_point(frame, h['pos'], h['z_low']))
     p2 = _to_screen(region, rv3d, _front_point(frame, h['pos'], h['z_high']))
@@ -464,6 +683,25 @@ def _draw_move_handle(shader, region, rv3d, h, frame, hot, s):
                    Vector((c.x + r * 0.6, c.y)), color, 2.0 * s)
 
 
+def _split_labels(region, rv3d, h):
+    """The two openings' sizes at their centres while a divider drags."""
+    splitter = bpy.data.objects.get(h['splitter'])
+    if splitter is None:
+        return
+    ov = _overlay()
+    _calc, prompts = _split_prompts(splitter, h['vertical'])
+    for n, (name, idx) in enumerate(zip(h['openings'],
+                                        (h['index'], h['index'] + 1))):
+        cage = bpy.data.objects.get(name)
+        if cage is None or idx not in prompts:
+            continue
+        anchor = ov._anchor_world(cage, 0.5, 0.5)
+        p = _to_screen(region, rv3d, anchor) if anchor is not None else None
+        if p is not None:
+            _draw_label(p.x, p.y, format_inches(prompts[idx].distance_value),
+                        ACTIVE_DIM_TEXT if n == 0 else DIM_TEXT)
+
+
 def _involves(h, name):
     return name in (h.get('cab'), h.get('left'), h.get('right'))
 
@@ -491,9 +729,9 @@ def _draw(op, context):
         if moving is not None and _involves(h, moving):
             continue      # its ends are travelling with the drag
         p1, p2 = _handle_segment(region, rv3d, h)
-        _draw_line(shader, p1, p2,
-                   JOINT_LINE if h['kind'] == 'JOINT' else GHOST_LINE,
-                   (2.0 if h['kind'] == 'JOINT' else 1.0) * s)
+        joint = h['kind'] in ('JOINT', 'SPLIT')
+        _draw_line(shader, p1, p2, JOINT_LINE if joint else GHOST_LINE,
+                   (2.0 if joint else 1.0) * s)
     for h in op._handles:
         if h['kind'] == 'MOVE' and h is not op._drag:
             if moving is not None and h['cab'] == moving:
@@ -526,9 +764,11 @@ def _draw(op, context):
             _draw_label(c.x, c.y - 28.0 * s,
                         ("\u2192 " if op._drag_d >= 0 else "\u2190 ")
                         + format_inches(abs(op._drag_d)), ACTIVE_DIM_TEXT)
+    elif op._drag is not None and op._drag['kind'] == 'SPLIT':
+        _split_labels(region, rv3d, op._drag)
     elif op._drag is not None:
         h = op._drag
-        names = ([h['left'], h['right']] if h['kind'] == 'JOINT'
+        names =([h['left'], h['right']] if h['kind'] == 'JOINT'
                  else [h['cab']])
         for i, name in enumerate(names):
             _width_label(region, rv3d, name,
@@ -561,8 +801,9 @@ class hb_frameless_OT_grab(bpy.types.Operator):
     bl_label = "Grab"
     bl_description = (
         "Drag cabinet ends to resize them. Where two cabinets are butted, "
-        "drag the joint to make one wider and the other narrower. Type a "
-        "width while dragging; Shift turns snapping off. Each drag is its "
+        "drag the joint to make one wider and the other narrower. In the "
+        "Openings mode, drag the divider between two openings. Type a "
+        "size while dragging; Shift turns snapping off. Each drag is its "
         "own undo step. Enter or Esc to finish"
     )
     # No 'UNDO': it pushes one step per drag instead.
@@ -597,9 +838,9 @@ class hb_frameless_OT_grab(bpy.types.Operator):
             _draw_callback, (self, context), 'WINDOW', 'POST_PIXEL')
         context.window_manager.modal_handler_add(self)
         context.area.header_text_set(
-            "Grab  |  LMB: drag a cabinet end or the joint between two "
-            "cabinets  |  Type: width  |  Shift: no snap  |  "
-            "Enter / Esc: done")
+            "Grab  |  LMB: drag a cabinet end, the joint between two "
+            "cabinets, or (Openings mode) a divider  |  Type: size  |  "
+            "Shift: no snap  |  Enter / Esc: done")
         from ....operators.viewport_hud import register_active_modal
         register_active_modal(self)
         self._exit_requested = False
@@ -637,8 +878,8 @@ class hb_frameless_OT_grab(bpy.types.Operator):
             pass
 
     def _collect(self, context):
-        self._handles = (collect_handles(context.scene)
-                         if grab_mode_active(context.scene) else [])
+        mode = grab_mode_active(context.scene)
+        self._handles = collect_handles(context.scene, mode) if mode else []
         self._hover = None
 
     # ---- undo ----
@@ -689,8 +930,13 @@ class hb_frameless_OT_grab(bpy.types.Operator):
         ray_o = view3d_utils.region_2d_to_origin_3d(region, rv3d, co)
         ray_d = view3d_utils.region_2d_to_vector_3d(region, rv3d, co)
         frame = self._drag_frame
-        normal = frame['y']
-        plane_p = _front_point(frame, 0.0, 0.0)
+        if frame.get('kind') == 'SPLIT':
+            normal, plane_p, axis = (frame['normal'], frame['plane_p'],
+                                     frame['axis'])
+        else:
+            normal = frame['y']
+            plane_p = _front_point(frame, 0.0, 0.0)
+            axis = frame['x']
         denom = ray_d.dot(normal)
         if abs(denom) < 1e-6:
             # Looking along the front: fall back to the ground plane.
@@ -700,11 +946,11 @@ class hb_frameless_OT_grab(bpy.types.Operator):
                 return None
         t = (plane_p - ray_o).dot(normal) / denom
         hit = ray_o + ray_d * t
-        return (hit - plane_p).dot(frame['x'])
+        return (hit - plane_p).dot(axis)
 
     def _start_drag(self, context, event, h):
         self._drag = h
-        self._drag_frame = dict(h['frame'])
+        self._drag_frame = dict(h['frame'] or h)
         self._drag_start = start_state(h)
         self._drag_d = 0.0
         self._typed = ''

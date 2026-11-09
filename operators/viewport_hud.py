@@ -1162,7 +1162,8 @@ class _ClosetGrabPill(_GrabPill):
 class _FramelessGrabPill(_GrabPill):
     """Grab, for the frameless library: the same arrow in the same place
     as face frame's, starting the frameless grab. It works on cabinet
-    ends, so it is offered in the Cabinets selection mode."""
+    ends and opening dividers, so it is offered in the Cabinets, Bays
+    and Openings selection modes."""
 
     OP = 'hb_frameless.grab'
 
@@ -1172,7 +1173,8 @@ class _FramelessGrabPill(_GrabPill):
         if self._active():
             return True          # always offer the way out
         fl = getattr(context.scene, 'hb_frameless', None)
-        return getattr(fl, 'frameless_selection_mode', '') == 'Cabinets'
+        return getattr(fl, 'frameless_selection_mode', '') in (
+            'Cabinets', 'Bays', 'Openings')
 
     def on_click(self, context, area, region):
         if self._active():
