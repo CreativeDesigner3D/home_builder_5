@@ -489,6 +489,7 @@ class hb_frameless_OT_interior_prompts(bpy.types.Operator):
             col.prop(self, 'shoe_angle', text="Angle (degrees)")
             col.prop(self, 'shoe_stop')
             self.draw_hooks(layout)
+            draw_opening_accessories(layout, self.interior.obj)
             return
         if interior_items.is_items_interior(self.interior.obj):
             items = interior_items.item_props(self.interior.obj).interior_items
@@ -497,6 +498,7 @@ class hb_frameless_OT_interior_prompts(bpy.types.Operator):
                     layout.separator()
             draw_interior_items(layout, self.interior.obj)
             self.draw_hooks(layout)
+            draw_opening_accessories(layout, self.interior.obj)
             return
         box = layout.box()
         col = box.column(align=True)
@@ -516,6 +518,7 @@ class hb_frameless_OT_interior_prompts(bpy.types.Operator):
             row.label(text="Shelf Clip Gap:")
             row.prop(self, 'shelf_clip_gap', text="")
         self.draw_hooks(layout)
+        draw_opening_accessories(layout, self.interior.obj)
 
 
 def _draw_hooks(self, layout):
@@ -1576,6 +1579,8 @@ def draw_interior_items(layout, interior_obj):
         return
     box = layout.box()
     for i, item in enumerate(props.interior_items):
+        if item.kind == 'ACCESSORY':
+            continue
         sub = box.column(align=True)
         header = sub.row(align=True)
         header.label(text=_ITEM_KIND_LABELS.get(item.kind, item.kind))
@@ -1752,6 +1757,184 @@ class hb_frameless_OT_remove_rollout_box(bpy.types.Operator):
         return {'FINISHED'}
 
 
+# ---------------------------------------------------------------------------
+# Catalog accessories in a door or open opening
+# ---------------------------------------------------------------------------
+
+# Enum item lists must stay alive at module scope (Blender keeps only the
+# char* of each string).
+_opening_section_items = []
+_opening_product_items = []
+
+
+def _accessory_host_obj(op, context):
+    name = getattr(op, 'host_name', '') or ''
+    obj = bpy.data.objects.get(name) if name else None
+    if obj is not None:
+        return interior_items.accessory_host(obj)
+    return interior_items.accessory_host(context.object)
+
+
+def _section_of(it):
+    return it.get('section') or it.get('category') or ''
+
+
+def _opening_section_enum(self, context):
+    _opening_section_items.clear()
+    _opening_section_items.append(
+        ('ALL', "All Sections", "Everything that goes in this opening"))
+    seen = []
+    for it in interior_items.catalog_for(_accessory_host_obj(self, context)):
+        sec = _section_of(it)
+        if sec and sec not in seen:
+            seen.append(sec)
+    for sec in seen:
+        _opening_section_items.append((sec, sec, ""))
+    return _opening_section_items
+
+
+def _opening_product_enum(self, context):
+    _opening_product_items.clear()
+    section = getattr(self, 'section', 'ALL')
+    for it in interior_items.catalog_for(_accessory_host_obj(self, context)):
+        if section not in ('ALL', '') and _section_of(it) != section:
+            continue
+        code = it['code']
+        name = it.get('name', code)
+        mw = it.get('min_opening_w')
+        label = name if mw is None else "%s  (min %g\")" % (name, mw)
+        _opening_product_items.append((code, label, code))
+    if not _opening_product_items:
+        _opening_product_items.append(
+            ('NONE', "(none)", "No accessories for this opening"))
+    return _opening_product_items
+
+
+def opening_accessories_available(obj):
+    """True when ``obj`` sits in a door or open opening the catalog has
+    accessories for. Menus use this to leave the entry out otherwise."""
+    host = interior_items.accessory_host(obj)
+    return host is not None and bool(interior_items.catalog_for(host))
+
+
+class hb_frameless_OT_add_opening_accessory(bpy.types.Operator):
+    """Add an accessory from the catalog to this door or open opening"""
+    bl_idname = "hb_frameless.add_opening_accessory"
+    bl_label = "Add Accessory"
+    bl_description = ("Add an accessory from the catalog to this opening "
+                      "and show its minimum opening width")
+    bl_options = {'UNDO'}
+
+    host_name: bpy.props.StringProperty(options={'HIDDEN', 'SKIP_SAVE'}) # type: ignore
+    section: bpy.props.EnumProperty(name="Section", items=_opening_section_enum) # type: ignore
+    product: bpy.props.EnumProperty(name="Accessory", items=_opening_product_enum) # type: ignore
+
+    @classmethod
+    def poll(cls, context):
+        return True
+
+    def invoke(self, context, event):
+        host = _accessory_host_obj(self, context)
+        if host is None:
+            self.report({'WARNING'}, "Select a door or open opening first")
+            return {'CANCELLED'}
+        if not interior_items.catalog_for(host):
+            self.report({'WARNING'}, "No accessories are available for this opening")
+            return {'CANCELLED'}
+        self.host_name = host.name
+        return context.window_manager.invoke_props_dialog(self, width=400)
+
+    def draw(self, context):
+        layout = self.layout
+        layout.prop(self, 'section')
+        layout.prop(self, 'product')
+        host = _accessory_host_obj(self, context)
+        entry = next((it for it in interior_items.catalog_for(host)
+                      if it.get('code') == self.product), None)
+        box = layout.box()
+        if entry is None:
+            box.label(text="No accessory selected")
+            return
+        box.label(text="Accessory: %s" % entry.get('name', self.product))
+        mw = entry.get('min_opening_w')
+        if mw is None:
+            box.label(text="Minimum opening width: not specified")
+            return
+        box.label(text="Minimum opening width: %g\"" % mw)
+        ow = solver_frameless.cage_dims(host)[0] / inch(1)
+        if ow + 1e-6 < mw:
+            box.label(text="Opening is %g\" wide - below the minimum" % round(ow, 3),
+                      icon='ERROR')
+
+    def execute(self, context):
+        host = _accessory_host_obj(self, context)
+        if host is None:
+            self.report({'WARNING'}, "Select a door or open opening first")
+            return {'CANCELLED'}
+        if self.product in ('NONE', ''):
+            self.report({'WARNING'}, "No accessory selected")
+            return {'CANCELLED'}
+        item = interior_items.add_opening_accessory(host, self.product)
+        if item is None:
+            self.report({'WARNING'}, "That accessory doesn't go in this opening")
+            return {'CANCELLED'}
+        self.report({'INFO'}, "Added %s" % item.accessory_label)
+        return {'FINISHED'}
+
+
+class hb_frameless_OT_remove_opening_accessory(bpy.types.Operator):
+    bl_idname = "hb_frameless.remove_opening_accessory"
+    bl_label = "Remove Accessory"
+    bl_description = "Remove this accessory from the opening"
+    bl_options = {'UNDO', 'INTERNAL'}
+
+    host_name: bpy.props.StringProperty(options={'HIDDEN'}) # type: ignore
+    index: bpy.props.IntProperty(default=-1, options={'HIDDEN'}) # type: ignore
+
+    def execute(self, context):
+        host = bpy.data.objects.get(self.host_name)
+        if host is None:
+            return {'CANCELLED'}
+        props = interior_items.item_props(host)
+        if not 0 <= self.index < len(props.interior_items):
+            return {'CANCELLED'}
+        if props.interior_items[self.index].kind != 'ACCESSORY':
+            return {'CANCELLED'}
+        props.interior_items.remove(self.index)
+        props.interior_items_index = min(props.interior_items_index,
+                                         max(len(props.interior_items) - 1, 0))
+        return {'FINISHED'}
+
+
+def draw_opening_accessories(layout, obj):
+    """The accessories kept on the opening ``obj`` sits in, each with a
+    remove button, and an Add button. Draws nothing outside a door or
+    open opening."""
+    host = interior_items.accessory_host(obj)
+    if host is None:
+        return
+    rows = interior_items.opening_accessories(host)
+    has_catalog = bool(interior_items.catalog_for(host))
+    if not rows and not has_catalog:
+        return
+    box = layout.box()
+    row = box.row()
+    row.label(text="Accessories")
+    if has_catalog:
+        row.operator("hb_frameless.add_opening_accessory", text="Add",
+                     icon='ADD').host_name = host.name
+    if not rows:
+        box.label(text="(none)")
+        return
+    col = box.column(align=True)
+    for i, item in rows:
+        r = col.row(align=True)
+        r.label(text=item.accessory_label or item.accessory_code)
+        rm = r.operator("hb_frameless.remove_opening_accessory", text="", icon='X')
+        rm.host_name = host.name
+        rm.index = i
+
+
 classes = (
     hb_frameless_AccessorySearchRow,
     hb_frameless_OT_drawer_add_accessory,
@@ -1771,6 +1954,8 @@ classes = (
     hb_frameless_OT_remove_interior_item,
     hb_frameless_OT_add_rollout_box,
     hb_frameless_OT_remove_rollout_box,
+    hb_frameless_OT_add_opening_accessory,
+    hb_frameless_OT_remove_opening_accessory,
 )
 
 register, unregister = bpy.utils.register_classes_factory(classes)

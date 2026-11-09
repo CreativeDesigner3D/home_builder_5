@@ -713,3 +713,102 @@ def add_drawer_accessory(opening_obj, code):
     finally:
         _SOLVING.discard(opening_obj.name)
     return item
+
+
+# ---------------------------------------------------------------------------
+# Catalog accessories in a door or open opening
+# ---------------------------------------------------------------------------
+#
+# Accessories picked from the host's catalog for a door or open opening
+# (pantry hardware, door-mounted racks, blind corner hardware and so on)
+# are kept on the opening itself, or on the division section they were
+# added to, as ACCESSORY items in the same property group the face frame
+# library uses. They live on the opening rather than its interior so that
+# changing or splitting the interior keeps them. They are data for
+# reports and drawings; nothing is built in 3D.
+
+# Host keys a door or open opening offers, as in the face frame library.
+OPENING_ACCESSORY_HOSTS = frozenset({
+    'opening_interior_accessory', 'tall_pantry', 'behind_door_rollout',
+    'pullout_board', 'tilt_out', 'closet_rod',
+})
+DOOR_ACCESSORY_HOST = 'door_mounted'
+BLIND_ACCESSORY_HOST = 'blind_corner_hardware'
+
+
+def accessory_host(obj):
+    """The door or open opening (or division section) at or above
+    ``obj`` that keeps catalog accessories, or None. Drawers and
+    pullouts keep theirs on the drawer (``drawer_accessories``), and an
+    opening split into smaller openings has none of its own."""
+    cur = obj
+    while cur is not None:
+        if (cur.get('IS_FRAMELESS_INTERIOR_SECTION')
+                or cur.get('IS_FRAMELESS_OPENING_CAGE')
+                or cur.get('IS_FRAMELESS_BAY_CAGE')):
+            break
+        cur = cur.parent
+    if cur is None:
+        return None
+    if cur.get('IS_FRAMELESS_INTERIOR_SECTION'):
+        return cur
+    if drawer_opening_for(cur) is not None:
+        return None
+    for child in cur.children:
+        if child.get('IS_FRAMELESS_INTERIOR_CAGE'):
+            continue
+        if (solver_frameless.is_cage_link(child)
+                or child.get('IS_DRAWER_FRONT')
+                or child.get('IS_PULLOUT_FRONT')):
+            return None
+    return cur
+
+
+def accessory_hosts_for(host_obj):
+    """Catalog host keys whose accessories go in ``host_obj``: blind
+    corner hardware in a blind corner's opening, otherwise the opening
+    accessories, plus door-mounted ones behind a door."""
+    if host_obj is None:
+        return set()
+    insert_obj, _x = _owning_insert(host_obj)
+    if insert_obj is None:
+        insert_obj = host_obj
+    if solver_frameless.blind_reach(insert_obj) is not None:
+        return {BLIND_ACCESSORY_HOST}
+    hosts = set(OPENING_ACCESSORY_HOSTS)
+    if 'Door Swing' in insert_obj:
+        hosts.add(DOOR_ACCESSORY_HOST)
+    return hosts
+
+
+def catalog_for(host_obj):
+    """Catalog entries (with their ``host``) that go in ``host_obj``."""
+    from ... import accessory_registry
+    hosts = accessory_hosts_for(host_obj)
+    return [it for it in accessory_registry.all_items()
+            if it.get('host') in hosts and it.get('code')]
+
+
+def opening_accessories(host_obj):
+    """(index, item) for each ACCESSORY item kept on ``host_obj``."""
+    if host_obj is None:
+        return []
+    return [(i, it) for i, it in enumerate(item_props(host_obj).interior_items)
+            if it.kind == 'ACCESSORY']
+
+
+def add_opening_accessory(host_obj, code):
+    """Append the catalog accessory ``code`` to a door or open opening.
+    Returns the item, or None when the code isn't one the opening takes."""
+    entry = next((it for it in catalog_for(host_obj)
+                  if it.get('code') == code), None)
+    if entry is None:
+        return None
+    props = item_props(host_obj)
+    item = props.interior_items.add()
+    item.kind = 'ACCESSORY'
+    item.accessory_label = entry.get('name', code)
+    item.accessory_code = code
+    item.accessory_render = (entry.get('render') or '').upper()
+    props.interior_items_index = len(props.interior_items) - 1
+    return item

@@ -276,6 +276,16 @@ def _draw_drawer_interior(layout, context):
     return True
 
 
+def _draw_opening_accessory(layout, context):
+    """Add Accessory for a door or open opening the catalog has
+    accessories for: the opening, its door, interior or a part in it."""
+    from .operators.ops_interior import opening_accessories_available
+    if not opening_accessories_available(context.object):
+        return False
+    layout.operator("hb_frameless.add_opening_accessory", text="Add Accessory...")
+    return True
+
+
 class HOME_BUILDER_MT_opening_commands(bpy.types.Menu):
     bl_label = "Opening Commands"
 
@@ -284,6 +294,7 @@ class HOME_BUILDER_MT_opening_commands(bpy.types.Menu):
         layout.operator("hb_frameless.opening_prompts", text="Opening Prompts")
         layout.operator("hb_frameless.edit_splitter_openings", text="Edit Opening Sizes")
         _draw_drawer_interior(layout, context)
+        _draw_opening_accessory(layout, context)
         _draw_open_close(layout, context)
         layout.operator("hb_frameless.finish_interior", text="Finish Interior")
         layout.separator()
@@ -332,6 +343,7 @@ class HOME_BUILDER_MT_door_front_commands(bpy.types.Menu):
                         text="Remove Lock" if obj is not None and obj.get(edge_pulls.LOCK_KEY)
                         else "Add Lock")
         _draw_drawer_interior(layout, context)
+        _draw_opening_accessory(layout, context)
         _draw_open_close(layout, context)
         layout.separator()
         layout.operator("hb_frameless.delete_front", text="Delete Front")
@@ -343,6 +355,7 @@ class HOME_BUILDER_MT_interior_commands(bpy.types.Menu):
     def draw(self, context):
         layout = self.layout
         layout.operator("hb_frameless.interior_prompts", text="Interior Options...")
+        _draw_opening_accessory(layout, context)
         layout.separator()
         layout.menu("HOME_BUILDER_MT_interior_change", text="Change Interior")
 
@@ -391,6 +404,7 @@ class HOME_BUILDER_MT_interior_part_commands(bpy.types.Menu):
             _draw_open_close(layout, context)
             layout.separator()
         layout.operator("hb_frameless.interior_prompts", text="Interior Options...")
+        _draw_opening_accessory(layout, context)
         layout.separator()
         layout.menu("HOME_BUILDER_MT_interior_change", text="Change Interior")
         layout.separator()
