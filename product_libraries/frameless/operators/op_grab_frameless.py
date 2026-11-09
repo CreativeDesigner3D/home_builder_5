@@ -226,18 +226,54 @@ def collect_cabinet_handles(scene):
     return handles
 
 
-def move_targets(scene, name):
+def move_group(scene, name):
+    """The cabinets a move handle slides together: just its own cabinet,
+    or, when that cabinet is selected, every selected frameless cabinet
+    facing the same way on the same wall plane (bases and uppers alike).
+    The dragged cabinet comes first."""
+    cab = bpy.data.objects.get(name)
+    if cab is None:
+        return [name]
+    try:
+        if not cab.select_get():
+            return [name]
+    except Exception:
+        return [name]
+    a = _entry(cab)
+    if a is None:
+        return [name]
+    out = [name]
+    for obj in scene.objects:
+        if obj is cab or not obj.get(TAG_CABINET) or not obj.visible_get():
+            continue
+        try:
+            if not obj.select_get():
+                continue
+        except Exception:
+            continue
+        b = _entry(obj)
+        if b is None or a['x'].dot(b['x']) < 0.999:
+            continue
+        if abs((b['origin'] - a['origin']).dot(a['y'])) >= RUN_PLANE_TOL:
+            continue
+        out.append(obj.name)
+    return out
+
+
+def move_targets(scene, name, group=None):
     """Run positions (along the cabinet's X, from its origin) a moved
     cabinet's ends snap to: the ends of every other cabinet or appliance
     on its run, base or wall, and its wall's ends and the sides of the
-    doors and windows in its way."""
+    doors and windows in its way. Cabinets in `group` move along and
+    are not targets."""
     entries = _run_entries(scene)
     a = next((e for e in entries if e['name'] == name), None)
     if a is None:
         return []
+    skip = set(group or ())
     out = []
     for b in entries:
-        if b is a or a['x'].dot(b['x']) < 0.999:
+        if b is a or b['name'] in skip or a['x'].dot(b['x']) < 0.999:
             continue
         if abs((b['origin'] - a['origin']).dot(a['y'])) >= RUN_PLANE_TOL:
             continue
@@ -251,13 +287,18 @@ def move_targets(scene, name):
 
 
 def apply_move(name, start, d):
-    """Put the cabinet d along its run from where the move started."""
-    cab = bpy.data.objects[name]
-    world = start['world'] + start['x'] * d
-    if cab.parent is not None:
-        cab.location = cab.parent.matrix_world.inverted_safe() @ world
-    else:
-        cab.location = world
+    """Put the cabinet (and the rest of its move group) d along the run
+    from where the move started."""
+    group = start.get('group') or {name: start['world']}
+    for member, origin in group.items():
+        cab = bpy.data.objects.get(member)
+        if cab is None:
+            continue
+        world = origin + start['x'] * d
+        if cab.parent is not None:
+            cab.location = cab.parent.matrix_world.inverted_safe() @ world
+        else:
+            cab.location = world
 
 
 def _front_point(frame, pos, z):
@@ -510,9 +551,20 @@ def start_state(handle):
         return _split_start(handle)
     if handle['kind'] == 'MOVE':
         cab = bpy.data.objects[handle['cab']]
-        return {'world': cab.matrix_world.translation.copy(),
-                'x': handle['frame']['x'].copy(),
-                'w': handle['frame']['dim_x']}
+        world = cab.matrix_world.translation.copy()
+        x = handle['frame']['x'].copy()
+        w = handle['frame']['dim_x']
+        group, lo, hi = {}, 0.0, w
+        for member in move_group(bpy.context.scene, cab.name):
+            obj = bpy.data.objects[member]
+            o = obj.matrix_world.translation.copy()
+            group[member] = o
+            if member != cab.name:
+                p = (o - world).dot(x)
+                lo = min(lo, p)
+                hi = max(hi, p + _dims(obj)[0])
+        return {'world': world, 'x': x, 'w': w,
+                'group': group, 'span': (lo, hi)}
     if handle['kind'] == 'JOINT':
         left = bpy.data.objects[handle['left']]
         right = bpy.data.objects[handle['right']]
@@ -957,8 +1009,10 @@ class hb_frameless_OT_grab(bpy.types.Operator):
         self._drag_origin = self._run_param(context, event)
         if self._drag_origin is None:
             self._drag = None
-        self._move_targets = (move_targets(context.scene, h['cab'])
-                              if h['kind'] == 'MOVE' else [])
+        self._move_targets = (
+            move_targets(context.scene, h['cab'],
+                         (self._drag_start or {}).get('group'))
+            if self._drag is not None and h['kind'] == 'MOVE' else [])
 
     def _snap_move(self, context, d):
         """d with the nearer end flush to a target when one is within
@@ -968,6 +1022,7 @@ class hb_frameless_OT_grab(bpy.types.Operator):
             return d
         region, rv3d = context.region, context.region_data
         frame, w = self._drag_frame, self._drag_start['w']
+        edges = self._drag_start.get('span') or (0.0, w)
         mid = _front_point(frame, d + w / 2.0, frame['dim_z'] / 2.0)
         a = _to_screen(region, rv3d, mid)
         z = _to_screen(region, rv3d, mid + frame['x'] * 0.1)
@@ -976,7 +1031,7 @@ class hb_frameless_OT_grab(bpy.types.Operator):
         reach = MOVE_SNAP_PX * _ui_scale() / ((z - a).length / 0.1)
         best = None
         for t in targets:
-            for edge in (0.0, w):
+            for edge in edges:
                 gap = abs(t - (edge + d))
                 if gap < reach and (best is None or gap < best[0]):
                     best = (gap, t - edge)
