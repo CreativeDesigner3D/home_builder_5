@@ -208,6 +208,31 @@ class _Frame:
             return None
         return box
 
+    def part_boxes(self, part):
+        """The part's boxes: one, or one per copy when an array repeats
+        it (adjustable shelves are a single shelf arrayed up the
+        interior, and its bounds would read as one solid block)."""
+        box = self.part_box(part)
+        if box is None:
+            return []
+        mod = next((md for md in part.modifiers
+                    if md.type == 'ARRAY' and md.show_viewport
+                    and md.count > 1 and md.use_constant_offset
+                    and not md.use_relative_offset), None)
+        m = self._to_host(part) if mod is not None else None
+        if m is None:
+            return [box]
+        n = mod.count
+        d = m.to_3x3() @ Vector(mod.constant_offset_displace)
+        w = (box[2] - box[0]) - (n - 1) * abs(d.x)
+        h = (box[3] - box[1]) - (n - 1) * abs(d.z)
+        if w <= 0 or h <= 0:
+            return [box]
+        x = box[0] if d.x >= 0 else box[2] - w
+        z = box[1] if d.z >= 0 else box[3] - h
+        return [(x + i * d.x, z + i * d.z, x + i * d.x + w, z + i * d.z + h)
+                for i in range(n)]
+
 
 def _bounds(pts):
     xs = [p.x for p in pts]
@@ -430,19 +455,17 @@ def _paint(shader, font_id, rect, mx, my, s, host_name, section_name, bar):
             draw_rect(shader, *r, Theme.ROW_HOVER_BG)
         draw_rect_outline(shader, *r, Theme.PANEL_BORDER)
     for part in _parts(host):
-        box = frame.part_box(part)
-        if box is None:
-            continue
-        if is_bar_part(part):
-            color = BAR_FILL
-        elif part.get('IS_DRAWER_BOX'):
-            color = BOX_FILL
-        else:
-            color = PART_FILL
-        r = view.rect(box, min_px=2.0 * s)
-        draw_rect(shader, *r, color)
-        if part.get('IS_DRAWER_BOX'):
-            draw_rect_outline(shader, *r, BAR_FILL)
+        for box in frame.part_boxes(part):
+            if is_bar_part(part):
+                color = BAR_FILL
+            elif part.get('IS_DRAWER_BOX'):
+                color = BOX_FILL
+            else:
+                color = PART_FILL
+            r = view.rect(box, min_px=2.0 * s)
+            draw_rect(shader, *r, color)
+            if part.get('IS_DRAWER_BOX'):
+                draw_rect_outline(shader, *r, BAR_FILL)
     picked = None
     for sp in splits:
         r = view.rect(sp['bar'], min_px=3.0 * s)
