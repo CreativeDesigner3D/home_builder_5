@@ -37,6 +37,10 @@ from . import ops_base_assembly
 from ...common import types_appliances, appliance_geo
 from .... import hb_utils, hb_project, hb_snap, hb_placement, hb_details, hb_types, units
 
+# The widest gap a wall scribe filler fills of its own accord; wider,
+# it comes in at its own width.
+SCRIBE_FILL_MAX = units.inch(6.0)
+
 def has_child_item_type(obj,item_type):
     for child in obj.children_recursive:
         if item_type in child:
@@ -1436,6 +1440,65 @@ class PlaceCabinetBase(WallObjectPlacementMixin):
         snap_x = max(gap_start, min(snap_x, gap_end - total))
         return gap_start, gap_end, snap_x
 
+    def is_scribe_filler(self):
+        """The library's wall scribe filler (or its old name)."""
+        return self.cabinet_name in ('Wall Scribe Filler', 'Corner Filler')
+
+    def find_scribe_neighbour(self, x0, x1):
+        """The cabinet on this side of the wall standing at either end of
+        wall-local x0..x1, as (cabinet, on_wall_right), or None. With one
+        at each end the taller is the one the filler is sized to."""
+        if not self.selected_wall:
+            return None
+        tol = units.inch(0.1)
+        side_rot = 0.0 if self.place_on_front else math.pi
+        found = []
+        for child in self.selected_wall.children:
+            if not child.get('IS_FRAMELESS_CABINET_CAGE'):
+                continue
+            turn = math.remainder(child.rotation_euler.z - side_rot, 2 * math.pi)
+            if abs(turn) > 0.1:
+                continue
+            cage = hb_types.GeoNodeCage(child)
+            xs = [(child.matrix_local @ Vector((x, 0.0, 0.0))).x
+                  for x in (0.0, cage.get_input('Dim X'))]
+            c0, c1 = min(xs), max(xs)
+            if abs(c0 - x1) <= tol:
+                found.append((cage.get_input('Dim Z'), child, True))
+            elif abs(c1 - x0) <= tol:
+                found.append((cage.get_input('Dim Z'), child, False))
+        if not found:
+            return None
+        found.sort(key=lambda f: f[0], reverse=True)
+        return found[0][1], found[0][2]
+
+    def fit_scribe_filler(self, context, filler_obj):
+        """Size a placed wall scribe filler to the cabinet it closes
+        against: its height, depth (to the door plane), height off the
+        floor, toe kick, and which side the cabinet is on."""
+        found = getattr(self, 'scribe_neighbour', None)
+        if found is None:
+            return
+        nb, on_wall_right = found
+        nb_cage = hb_types.GeoNodeCage(nb)
+        cage = hb_types.GeoNodeCage(filler_obj)
+        cage.set_input('Dim Z', nb_cage.get_input('Dim Z'))
+        cage.set_input('Dim Y', abs(nb_cage.get_input('Dim Y'))
+                       + types_products.FRONT_THICKNESS)
+        filler_obj.location.z = nb.location.z
+        has_kick = nb.get('CABINET_TYPE') in ('BASE', 'TALL')
+        props = context.scene.hb_frameless
+        filler_obj['Toe Kick Height'] = (
+            float(nb.get('Toe Kick Height', props.default_toe_kick_height))
+            if has_kick else 0.0)
+        filler_obj['Toe Kick Setback'] = (
+            float(nb.get('Toe Kick Setback', props.default_toe_kick_setback))
+            if has_kick else 0.0)
+        # A back-side filler is turned 180, which swaps its sides.
+        filler_obj['Cabinet On Right'] = (on_wall_right if self.place_on_front
+                                          else not on_wall_right)
+        types_products.recalculate_product(filler_obj)
+
     def create_corner_filler(self, context, wall_thickness, x, cabinet_on_right):
         """Build the filler for one corner, standing in the reserved filler width
         that starts at wall-local `x`, sized to the cabinet being placed
@@ -1649,9 +1712,28 @@ class PlaceCabinetBase(WallObjectPlacementMixin):
 
         gap_width = gap_end - gap_start
         self.current_gap_width = gap_width
-        
+
+        # A wall scribe filler takes the whole of a narrow gap -- the
+        # space beside a cabinet at a wall -- and the size of the
+        # cabinet it closes against.
+        self.scribe_neighbour = None
+        scribe_fill = (self.is_scribe_filler()
+                       and 0.0 < gap_width <= SCRIBE_FILL_MAX)
+        if self.is_scribe_filler():
+            if scribe_fill:
+                self.individual_cabinet_width = gap_width
+                self.scribe_neighbour = self.find_scribe_neighbour(
+                    gap_start, gap_end)
+            elif getattr(self, 'scribe_filled', False):
+                self.individual_cabinet_width = getattr(
+                    self, 'default_width', self.individual_cabinet_width)
+            self.scribe_filled = scribe_fill
+
+        if scribe_fill:
+            snap_x = gap_start
+            self.center_snap_state = None
         # If fill_mode (user hasn't typed a width), auto-calculate quantity and fill gap
-        if self.fill_mode and gap_width > 0:
+        elif self.fill_mode and gap_width > 0:
             if self.auto_quantity:
                 new_qty = self.calculate_auto_quantity(gap_width)
                 if new_qty != self.cabinet_quantity:
@@ -1769,7 +1851,16 @@ class PlaceCabinetBase(WallObjectPlacementMixin):
                 self.preview_cage.obj.location.x = snap_x + total_width
                 self.preview_cage.obj.location.y = wall_thickness
                 self.preview_cage.obj.rotation_euler = (0, 0, math.pi)
-        
+
+            if self.scribe_neighbour is not None:
+                nb = self.scribe_neighbour[0]
+                nb_cage = hb_types.GeoNodeCage(nb)
+                self.preview_cage.set_input('Dim Z', nb_cage.get_input('Dim Z'))
+                self.preview_cage.set_input(
+                    'Dim Y', abs(nb_cage.get_input('Dim Y'))
+                    + types_products.FRONT_THICKNESS)
+                self.preview_cage.obj.location.z = nb.location.z
+
         # Update dimensions
         self.update_dimensions(context)
 
@@ -2103,7 +2194,10 @@ class PlaceCabinetBase(WallObjectPlacementMixin):
                     cabinet.obj.location.x = current_x + self.individual_cabinet_width
                     cabinet.obj.location.y = wall_thickness
                     cabinet.obj.rotation_euler = (0, 0, math.pi)
-                
+
+                if self.is_scribe_filler() and not self.on_curved_wall():
+                    self.fit_scribe_filler(context, cabinet.obj)
+
                 cabinets.append(cabinet)
                 current_x += self.individual_cabinet_width
 
