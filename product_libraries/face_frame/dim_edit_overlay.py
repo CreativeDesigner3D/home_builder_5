@@ -51,6 +51,7 @@ from bpy_extras import view3d_utils
 from ... import units
 from ... import hb_utils
 from ... import hb_placement
+from ... import hb_dim_style
 from ...hb_gpu_draw import get_visible_window_bounds
 from ...hb_types import GeoNodeCage, GeoNodeCutpart
 from . import types_face_frame
@@ -151,6 +152,11 @@ def _active_mode(context):
     if ff is None or not getattr(ff, 'face_frame_selection_mode_enabled', False):
         return None
     mode = getattr(ff, 'face_frame_selection_mode', '')
+    if mode == 'Cabinets':
+        # A wall elevation dimensions the cabinets itself, drawing style.
+        from ...operators import elevation_mode
+        if elevation_mode.hides_cabinet_labels(context):
+            return None
     return (mode if mode in ('Cabinets', 'Bays', 'Openings', 'Face Frame')
             else None)
 
@@ -922,6 +928,11 @@ def _compute_labels(context, region, rv3d, lines_out=None):
         return (_edit is not None and _edit['name'] == cage.name
                 and _edit['kind'] == kind)
 
+    # A wall elevation looks straight down every depth line.
+    from ...operators import elevation_mode
+    skip_kinds = (('CAB_D', 'BAY_D')
+                  if elevation_mode.is_active(context) else ())
+
     def _emit(targets, keep=True):
         """Project a product's targets and add the ones on screen. One
         copy, so a cabinet label and an appliance label can't drift
@@ -936,6 +947,8 @@ def _compute_labels(context, region, rv3d, lines_out=None):
             # An optional 8th element carries the target's own world
             # dimension line (wall-run dims); else _dim_line_world.
             cage, kind, editable, locked, value, prefix, anchor = target[:7]
+            if kind in skip_kinds:
+                continue
             own_line = target[7] if len(target) > 7 else None
             # An optional 9th element: other places the label may sit,
             # tried in turn when the first lands on a label already out.
@@ -1207,43 +1220,24 @@ def _draw():
     font_sz = FONT_SIZE * s
     def _paint():
         gpu.state.blend_set('ALPHA')
-        shader = gpu.shader.from_builtin('UNIFORM_COLOR')
-        shader.bind()
-        from gpu_extras.batch import batch_for_shader
+        # Drawing style: the value sits in a break in its line, 45 degree
+        # ticks, no box (hb_dim_style). The rects stay the click targets.
+        rects = [label[4] for label in labels]
         for editable in (True, False):
             pts = [p for line, ed in dim_lines if ed == editable for p in line]
             if pts:
-                shader.uniform_float(
-                    "color", DIM_LINE_COLOR if editable else DIM_LINE_COLOR_DIM)
-                batch_for_shader(shader, 'LINES', {"pos": pts}).draw(shader)
-        # Plain labels: every box and border in one batch per colour
-        # rather than two draw calls a label, then their text.
-        fills = {True: [], False: []}
-        borders = []
-        plain = []
-        for label in labels:
-            name, kind, editable, _locked, rect, text = label
-            if _edit is not None and _edit['name'] == name                     and _edit['kind'] == kind:
+                hb_dim_style.paint_groups(
+                    region, pts, rects,
+                    DIM_LINE_COLOR if editable else DIM_LINE_COLOR_DIM, s)
+        for name, kind, editable, _locked, rect, text in labels:
+            if _edit is not None and _edit['name'] == name \
+                    and _edit['kind'] == kind:
                 continue
-            x, y, w, h = rect
-            fills[editable].extend(((x, y), (x + w, y), (x + w, y + h),
-                                    (x, y), (x + w, y + h), (x, y + h)))
-            borders.extend(((x, y), (x + w, y), (x + w, y), (x + w, y + h),
-                            (x + w, y + h), (x, y + h), (x, y + h), (x, y)))
-            plain.append(label)
-        for editable, tris in fills.items():
-            if tris:
-                shader.uniform_float(
-                    "color", LABEL_BG if editable else LABEL_BG_DIM)
-                batch_for_shader(shader, 'TRIS', {"pos": tris}).draw(shader)
-        if borders:
-            shader.uniform_float("color", LABEL_BORDER)
-            batch_for_shader(shader, 'LINES', {"pos": borders}).draw(shader)
-        blf.size(0, font_sz)
-        for name, kind, editable, _locked, rect, text in plain:
-            blf.color(0, *(TEXT_COLOR if editable else TEXT_COLOR_DIM))
-            blf.position(0, rect[0] + PAD_X * s, rect[1] + PAD_Y * s, 0)
-            blf.draw(0, text)
+            hb_dim_style.label_text(
+                rect, font_sz, TEXT_COLOR if editable else TEXT_COLOR_DIM,
+                text)
+        shader = gpu.shader.from_builtin('UNIFORM_COLOR')
+        shader.bind()
         for name, kind, editable, _locked, rect, text in labels:
             editing = (_edit is not None and _edit['name'] == name
                        and _edit['kind'] == kind)

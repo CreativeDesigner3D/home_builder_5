@@ -74,6 +74,9 @@ class HOME_BUILDER_MT_wall_commands(bpy.types.Menu):
     def draw(self, context):
         layout = self.layout
         layout.operator("home_builder_walls.wall_prompts", text="Wall Prompts")
+        op = layout.operator("home_builder.show_elevation", text="Show Elevation", icon='VIEW_ORTHO')
+        if context.object is not None:
+            op.wall_name = context.object.name
         layout.operator("home_builder_walls.change_room_size", text="Change Room Size", icon='ARROW_LEFTRIGHT')
         layout.operator("home_builder_walls.curve_wall", text="Curve Wall", icon='SPHERECURVE')
         layout.separator()

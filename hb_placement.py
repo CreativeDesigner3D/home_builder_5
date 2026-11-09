@@ -323,6 +323,13 @@ class PlacementMixin:
             if self.hit_location is not None:
                 self.hit_location = Vector((self.hit_location[0],
                                             self.hit_location[1], 0.0))
+        # In a wall elevation, whatever the cursor is over, the product
+        # lands on that wall.
+        try:
+            from .operators import elevation_mode
+            elevation_mode.constrain_snap(self, context)
+        except Exception as exc:
+            print("Elevation snap lock:", exc)
 
     # -------------------------------------------------------------------------
     # Typed Input Handling

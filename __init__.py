@@ -50,6 +50,7 @@ from .operators import style_editor
 from .operators import layout_lock
 from .operators import viewport_hud
 from .operators import room_dim_overlay
+from .operators import elevation_mode
 from .operators import wall_baseboard
 from .operators import ops_general
 from .operators import cabinet_clipboard
@@ -538,6 +539,7 @@ def register():
     thumb_picker.register()
     style_editor.register()
     room_dim_overlay.register()
+    elevation_mode.register()       # after the HUD: it adds a View toggle
     wall_baseboard.register()
     ops_general.register()
     cabinet_clipboard.register()
@@ -623,6 +625,7 @@ def unregister():
     scene_navigator.unregister()
     viewport_hud.unregister()
     layout_lock.unregister()
+    elevation_mode.unregister()
     room_dim_overlay.unregister()
     wall_baseboard.unregister()
     ops_furnish.unregister()

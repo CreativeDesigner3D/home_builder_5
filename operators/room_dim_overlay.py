@@ -45,6 +45,7 @@ from mathutils import Vector
 from bpy_extras import view3d_utils
 
 from .. import hb_placement, hb_types, hb_utils, units
+from .. import hb_dim_style
 from ..units import inch
 from ..product_libraries.common import door_window_geo
 
@@ -457,6 +458,10 @@ def compute_labels(context, region, rv3d):
     handler and the click operator so hits can't drift from pixels."""
     if rv3d is None:
         return []
+    from . import elevation_mode
+    if elevation_mode.hides_cabinet_labels(context):
+        # The elevation dimensions the wall and its openings itself.
+        return []
     targets = _selected_targets(context)
     if not targets:
         return []
@@ -623,10 +628,15 @@ def _draw():
         shader = gpu.shader.from_builtin('UNIFORM_COLOR')
         shader.bind()
         from gpu_extras.batch import batch_for_shader
-        for pts, color in ((dim_pts, DIM_LINE_COLOR), (cl_pts, CL_COLOR)):
-            if pts:
-                shader.uniform_float("color", color)
-                batch_for_shader(shader, 'LINES', {"pos": pts}).draw(shader)
+        if cl_pts:
+            shader.uniform_float("color", CL_COLOR)
+            batch_for_shader(shader, 'LINES', {"pos": cl_pts}).draw(shader)
+        # Drawing style: the value sits in a break in its line, 45 degree
+        # ticks, no box (hb_dim_style). The rects stay the click targets.
+        hb_dim_style.paint_groups(region, dim_pts,
+                                  [label[2] for label in labels],
+                                  DIM_LINE_COLOR, s)
+        shader.bind()
         for name, kind, rect, text in labels:
             editing = (_edit is not None and _edit['name'] == name
                        and _edit['kind'] == kind)
@@ -639,13 +649,16 @@ def _draw():
                 rect = (rect[0], rect[1], w, rect[3])
                 _draw_label_rect(shader, rect, EDIT_BG)
                 blf.color(0, *EDIT_TEXT_COLOR)
-            else:
-                is_cl = kind in _CL_KINDS
-                _draw_label_rect(shader, rect,
-                                 ACTION_BG if kind in _ACTION_KINDS else LABEL_BG,
-                                 CL_BORDER if is_cl else LABEL_BORDER)
+            elif kind in _ACTION_KINDS:
+                # A button, not a dimension: it keeps its box.
+                _draw_label_rect(shader, rect, ACTION_BG, LABEL_BORDER)
                 blf.size(0, font_sz)
-                blf.color(0, *(CL_TEXT_COLOR if is_cl else TEXT_COLOR))
+                blf.color(0, *TEXT_COLOR)
+            else:
+                hb_dim_style.label_text(
+                    rect, font_sz,
+                    CL_TEXT_COLOR if kind in _CL_KINDS else TEXT_COLOR, text)
+                continue
             blf.position(0, rect[0] + PAD_X * s, rect[1] + PAD_Y * s, 0)
             blf.draw(0, text if not editing else shown)
         gpu.state.blend_set('NONE')
