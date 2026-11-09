@@ -771,7 +771,8 @@ def _vertical_target(group, a, b, wall_name=None):
     bottoms stay put). A gap moves the hanging products beside it: the
     ones sitting on its top line move to keep the gap as typed, else the
     ones hanging from its bottom line. Floor-standing products are never
-    lifted. ``wall_name`` marks the overall height, which is the wall's."""
+    lifted, but a tall whose top is on that bottom line grows or shrinks
+    with it, so the clearance above uppers and talls is one number. ``wall_name`` marks the overall height, which is the wall's."""
     if wall_name is not None:
         return {'mode': 'WALL_H', 'obj': wall_name}
     spans = [it for it in group if not it.preview
@@ -788,8 +789,12 @@ def _vertical_target(group, a, b, wall_name=None):
     if above:
         return {'mode': 'LIFT', 'objs': [it.name for it in above], 'sign': 1}
     below = [it for it in group if hangs(it) and abs(it.z1 - a) <= MERGE]
-    if below:
+    talls = [it for it in group if it.tall and not hangs(it)
+             and not it.preview and abs(it.z1 - a) <= MERGE
+             and _height_editor(it.obj)]
+    if below or talls:
         return {'mode': 'LIFT', 'objs': [it.name for it in below],
+                'grow': [(it.name, it.z1 - it.z0) for it in talls],
                 'sign': -1}
     return None
 
@@ -1296,7 +1301,10 @@ def _commit_vertical(context, target, current, value):
         return room_dim_overlay._commit(wall, 'WALL_H', value)
     objs = [o for o in (bpy.data.objects.get(n) for n in target['objs'])
             if o is not None]
-    if not objs:
+    grow = [(o, h) for o, h in ((bpy.data.objects.get(n), h)
+                                for n, h in target.get('grow', ()))
+            if o is not None]
+    if not objs and not grow:
         return False
     if mode == 'HEIGHT':
         if value < units.inch(1.0):
@@ -1312,6 +1320,10 @@ def _commit_vertical(context, target, current, value):
     delta = (value - current) * target['sign']
     if any(o.location.z + delta < 0.0 for o in objs):
         return False
+    if any(h + delta < units.inch(1.0) for _o, h in grow):
+        return False
+    for obj, h in grow:
+        _set_height(context, obj, h + delta)
     for obj in objs:
         obj.location.z += delta
         if _is_opening(obj):
