@@ -1874,13 +1874,113 @@ class hb_frameless_OT_add_opening_accessory(bpy.types.Operator):
         if self.product in ('NONE', ''):
             self.report({'WARNING'}, "No accessory selected")
             return {'CANCELLED'}
-        item = interior_items.add_opening_accessory(host, self.product)
-        if item is None:
-            self.report({'WARNING'}, "That accessory doesn't go in this opening")
-            return {'CANCELLED'}
-        hb_utils.run_calc_fix(context, host)
-        self.report({'INFO'}, "Added %s" % item.accessory_label)
-        return {'FINISHED'}
+        ok, message = place_catalog_accessory(context, host, self.product)
+        self.report({'INFO'} if ok else {'WARNING'}, message)
+        return {'FINISHED'} if ok else {'CANCELLED'}
+
+
+# Interior item kinds that are shelving, cleared when a unit fills the
+# opening (as the face frame library sets such an opening's interior to
+# open).
+_SHELF_ITEM_KINDS = ('ADJUSTABLE_SHELF', 'HALF_DEPTH_SHELF',
+                     'QUARTER_DEPTH_SHELF', 'VANITY_SHELVES', 'GLASS_SHELF')
+
+
+def _fills_opening(code):
+    """True when the catalog product builds a unit inside the opening (a
+    door-mounted rack hangs on the door and leaves the shelves)."""
+    from ...face_frame import (accessory_models, corner_accessory_models,
+                               misc_accessory_models)
+    if corner_accessory_models.model_for(code) is not None:
+        return True
+    spec = accessory_models.model_for(code)
+    if spec is None:
+        return False
+    on_door = (misc_accessory_models.FRONT_MODELS
+               | (misc_accessory_models.DOOR_RACK_MODELS - {'swinger_pantry'}))
+    return spec[0] not in on_door
+
+
+def _clear_shelves(host):
+    """Take the shelving out of ``host``'s interior: a plain shelf
+    interior goes, an items interior loses its shelf items."""
+    for interior in [c for c in host.children
+                     if c.get('IS_FRAMELESS_INTERIOR_CAGE')]:
+        if interior_items.is_items_interior(interior):
+            items = interior_items.item_props(interior).interior_items
+            for i in range(len(items) - 1, -1, -1):
+                if items[i].kind in _SHELF_ITEM_KINDS:
+                    items.remove(i)
+        elif ('Shelf Quantity' in interior
+              or interior.get('IS_FRAMELESS_SHOE_SHELVES')):
+            for child in list(interior.children_recursive):
+                bpy.data.objects.remove(child, do_unlink=True)
+            bpy.data.objects.remove(interior, do_unlink=True)
+
+
+def _find_pullout(container):
+    for obj in [container] + list(container.children_recursive):
+        if (obj.get('IS_FRAMELESS_OPENING_CAGE')
+                and any(c.get('IS_PULLOUT_FRONT') for c in obj.children)):
+            return obj
+    return None
+
+
+def _convert_to_pullout(context, host):
+    """Change the door or open opening ``host`` to a pullout, the way the
+    opening's Change Opening command does. Returns the new pullout
+    opening, or None."""
+    parent = host.parent
+    if host.get('IS_FRAMELESS_BAY_CAGE'):
+        container, op = host, 'bay'
+    elif parent is not None and parent.get('IS_FRAMELESS_BAY_CAGE'):
+        container, op = parent, 'bay'
+    elif parent is not None and parent.get('IS_FRAMELESS_OPENING_CAGE'):
+        container, op = parent, 'opening'
+    else:
+        return None
+    with context.temp_override(object=container, active_object=container,
+                               selected_objects=[container]):
+        if op == 'bay':
+            result = bpy.ops.hb_frameless.change_bay_opening(
+                'EXEC_DEFAULT', opening_type='PULLOUT')
+        else:
+            result = bpy.ops.hb_frameless.change_opening_type(
+                'EXEC_DEFAULT', opening_type='PULLOUT')
+    if result != {'FINISHED'}:
+        return None
+    return _find_pullout(container)
+
+
+def place_catalog_accessory(context, host, code):
+    """Put catalog product ``code`` in the door or open opening (or
+    division section) ``host``: (ok, message).
+
+    A pull-out unit (trash roll-out, can storage...) turns a door or open
+    opening into a pullout carrying that unit, as in the face frame
+    library; in a division section the front belongs to the whole
+    opening, so there it is kept as an item. Any other unit that fills
+    the opening takes its shelves out. Everything else is an accessory
+    item on the opening."""
+    entry = next((it for it in interior_items.catalog_for(host)
+                  if it.get('code') == code), None)
+    if entry is None:
+        return False, "That accessory doesn't go in this opening"
+    name = entry.get('name', code)
+    if (entry.get('host') == interior_items.PULLOUT_ACCESSORY_HOST
+            and not host.get('IS_FRAMELESS_INTERIOR_SECTION')):
+        pullout = _convert_to_pullout(context, host)
+        if pullout is None:
+            return False, "Couldn't change this opening to a pullout"
+        interior_items.item_props(pullout).pullout_accessory_code = code
+        hb_utils.run_calc_fix(context, pullout)
+        return True, "Set pullout model: %s" % name
+    if interior_items.add_opening_accessory(host, code) is None:
+        return False, "That accessory doesn't go in this opening"
+    if _fills_opening(code):
+        _clear_shelves(host)
+    hb_utils.run_calc_fix(context, host)
+    return True, "Added %s" % name
 
 
 class hb_frameless_OT_remove_opening_accessory(bpy.types.Operator):

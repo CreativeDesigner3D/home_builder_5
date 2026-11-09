@@ -137,11 +137,11 @@ def apply_to_target(op, context, target, code, item):
         from ... import hb_utils
         hb_utils.run_calc_fix(context, target)
         return {'FINISHED'}
-    if fl.add_opening_accessory(target, code) is None:
-        return {'CANCELLED'}
-    from ... import hb_utils
-    hb_utils.run_calc_fix(context, target)
-    return {'FINISHED'}
+    from ..frameless.operators import ops_interior as fl_ops
+    ok, message = fl_ops.place_catalog_accessory(context, target, code)
+    if not ok:
+        op.report({'WARNING'}, message)
+    return {'FINISHED'} if ok else {'CANCELLED'}
 
 
 def _front_word(front):
