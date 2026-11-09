@@ -509,6 +509,8 @@ def _update_bay_depth(self, context):
 def _update_closet_selection_mode(self, context):
     """Apply visibility highlighting for the active closet selection
     mode (mirrors face_frame's update_face_frame_selection_mode)."""
+    from . import drill_closets
+    drill_closets.note_mode_change(self.closet_selection_mode)
     bpy.ops.hb_closets.toggle_mode(search_obj_name="")
 
 

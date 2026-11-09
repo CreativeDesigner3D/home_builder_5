@@ -110,7 +110,11 @@ def _parent_at(obj, level):
 
 def _applies(context):
     ff = _ff(context)
+    hb = getattr(context.scene, 'home_builder', None)
+    # The other libraries keep their own selection modes; a double-click
+    # there is theirs, not this one's.
     return (ff is not None and context.mode == 'OBJECT'
+            and getattr(hb, 'product_tab', '') == 'FACE FRAME'
             and ff.face_frame_selection_mode in LEVELS)
 
 
