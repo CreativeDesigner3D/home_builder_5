@@ -1159,6 +1159,32 @@ class _ClosetGrabPill(_GrabPill):
             pass
 
 
+class _FramelessGrabPill(_GrabPill):
+    """Grab, for the frameless library: the same arrow in the same place
+    as face frame's, starting the frameless grab. It works on cabinet
+    ends, so it is offered in the Cabinets selection mode."""
+
+    OP = 'hb_frameless.grab'
+
+    def visible(self, context):
+        if not _frameless_ui_visible(context):
+            return False
+        if self._active():
+            return True          # always offer the way out
+        fl = getattr(context.scene, 'hb_frameless', None)
+        return getattr(fl, 'frameless_selection_mode', '') == 'Cabinets'
+
+    def on_click(self, context, area, region):
+        if self._active():
+            request_exit_active_modal(context)
+            return
+        try:
+            with context.temp_override(area=area, region=region):
+                bpy.ops.hb_frameless.grab('INVOKE_DEFAULT')
+        except Exception:
+            pass
+
+
 class _ClosetDimsButton:
     """Cycles the closet dimension-label scope: All -> Selected -> Off.
 
@@ -1286,6 +1312,7 @@ _SIZES_BUTTON = _SizesButton()
 _FRAMELESS_SIZES_BUTTON = _FramelessSizesButton()
 _GRAB_PILL = _GrabPill()
 _CLOSET_GRAB_PILL = _ClosetGrabPill()
+_FRAMELESS_GRAB_PILL = _FramelessGrabPill()
 _CLOSET_DIMS_BUTTON = _ClosetDimsButton()
 _CLOSET_BOTTOMS_BUTTON = _ClosetBottomsButton()
 _OPEN_DOOR_BUTTON = _ModalToggleButton(
@@ -1518,7 +1545,8 @@ def _view_strip():
     which sizes are labelled, framing it all -- and nothing in it changes
     the design. An add-on's mode toggles are ways of looking too."""
     return [
-        ("Tools", _VIEW_TOOL_BUTTONS + [_GRAB_PILL, _CLOSET_GRAB_PILL]),
+        ("Tools", _VIEW_TOOL_BUTTONS + [_GRAB_PILL, _FRAMELESS_GRAB_PILL,
+                                        _CLOSET_GRAB_PILL]),
         ("View", [_OPEN_DOOR_BUTTON, _FRAMELESS_OPEN_DOOR_BUTTON,
                   _CLOSET_OPEN_DOOR_BUTTON, _CUTAWAY_BUTTON]
          + _mode_extra_widgets()

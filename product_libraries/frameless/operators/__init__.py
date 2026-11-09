@@ -19,6 +19,7 @@ from . import ops_snap_line
 from . import ops_molding
 from . import ops_thumbnails
 from . import op_open_mode
+from . import op_grab_frameless
 
 
 def register():
@@ -43,6 +44,7 @@ def register():
     ops_molding.register()
     ops_thumbnails.register()
     op_open_mode.register()
+    op_grab_frameless.register()
 
 
 def unregister():
@@ -65,5 +67,6 @@ def unregister():
     ops_cleanup.unregister()
     ops_snap_line.unregister()
     ops_molding.unregister()
+    op_grab_frameless.unregister()
     op_open_mode.unregister()
     ops_thumbnails.unregister()

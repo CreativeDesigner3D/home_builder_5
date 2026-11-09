@@ -1,0 +1,752 @@
+"""Grab for frameless cabinets: drag cabinet ends to resize them.
+
+The frameless counterpart of the face frame library's Grab, for the
+Cabinets selection mode. Every cabinet gets a handle on each end. Where
+two cabinets stand butted on one run the two coinciding end handles fold
+into one joint: dragging it widens one cabinet and narrows the other by
+the same amount, so the run keeps its overall length. A free end
+stretches its own cabinet and stops at the next cabinet or appliance on
+the run. A left end keeps the cabinet's right side where it is.
+
+Like the face frame Grab it is a mode you leave switched on: it only
+claims a left click that lands on a handle, so selecting, right-click
+menus and navigation keep working. Each drag is its own undo step.
+While dragging, type a width (inches, fractions, feet'inches") for the
+cabinet left of the handle; Shift turns the 1/8" snap off; Esc or
+right-click drops the drag; Enter or Esc with no drag ends the mode.
+"""
+
+import math
+import traceback
+
+import bpy
+import blf
+import gpu
+from bpy.app.handlers import persistent
+from bpy_extras import view3d_utils
+from gpu_extras.batch import batch_for_shader
+from mathutils import Vector
+
+from .... import hb_types
+from .... import hb_utils
+from ....units import inch
+
+
+TAG_CABINET = 'IS_FRAMELESS_CABINET_CAGE'
+
+HIT_TOLERANCE_PX = 12.0
+MIN_WIDTH = inch(3.0)
+SNAP_STEP = inch(0.125)
+# Two ends this close are butted: one joint instead of two end handles.
+BUTT_TOL = inch(0.0625)
+# Cabinets whose backs sit this close along the run's depth axis share
+# a run -- the ones an end stops at and a joint pairs with.
+RUN_PLANE_TOL = inch(4.0)
+
+GHOST_LINE = (0.85, 0.85, 0.85, 0.35)
+JOINT_LINE = (0.85, 0.85, 0.85, 0.60)
+HOVER_LINE = (1.00, 0.85, 0.20, 1.00)
+ACTIVE_LINE = (1.00, 0.65, 0.10, 1.00)
+DIM_TEXT = (1.00, 1.00, 1.00, 1.00)
+ACTIVE_DIM_TEXT = (0.40, 0.90, 1.00, 1.00)
+LABEL_BG = (0.13, 0.13, 0.14, 0.85)
+LABEL_BORDER = (1.0, 1.0, 1.0, 0.25)
+
+
+def _ui_scale():
+    try:
+        return bpy.context.preferences.system.ui_scale
+    except AttributeError:
+        return 1.0
+
+
+def grab_mode_active(scene):
+    """True when the frameless selection mode is one Grab works in."""
+    fl = getattr(scene, 'hb_frameless', None)
+    return getattr(fl, 'frameless_selection_mode', '') == 'Cabinets'
+
+
+# ---------------------------------------------------------------------------
+# Runs
+# ---------------------------------------------------------------------------
+
+def _dims(obj):
+    geo = hb_types.GeoNodeObject(obj)
+    return (geo.get_input('Dim X'), geo.get_input('Dim Y'),
+            geo.get_input('Dim Z'))
+
+
+def _entry(obj, appliance=False):
+    try:
+        dim_x, dim_y, dim_z = _dims(obj)
+    except Exception:
+        return None
+    if not dim_x:
+        return None
+    mw = obj.matrix_world
+    rot = mw.to_3x3()
+    return {
+        'name': obj.name,
+        'origin': mw.translation.copy(),
+        'x': (rot @ Vector((1.0, 0.0, 0.0))).normalized(),
+        'y': (rot @ Vector((0.0, 1.0, 0.0))).normalized(),
+        'dim_x': dim_x,
+        'dim_y': dim_y,
+        'dim_z': dim_z,
+        'z_low': mw.translation.z,
+        'z_high': mw.translation.z + dim_z,
+        'appliance': appliance,
+    }
+
+
+def _run_entries(scene):
+    """Frameless cabinets, plus the freestanding appliances that stand in
+    a run: an end stops against them, but they never join a joint."""
+    out = []
+    for obj in scene.objects:
+        if obj.get(TAG_CABINET):
+            if not obj.visible_get():
+                continue
+            e = _entry(obj)
+        elif (obj.get('IS_APPLIANCE') and obj.get('APPLIANCE_TYPE')
+                and not obj.get('IS_COUNTERTOP_APPLIANCE')):
+            if not obj.visible_get():
+                continue
+            e = _entry(obj, appliance=True)
+        else:
+            continue
+        if e is not None:
+            out.append(e)
+    return out
+
+
+def _same_run(a, b):
+    if a['x'].dot(b['x']) < 0.999:
+        return False
+    if abs((b['origin'] - a['origin']).dot(a['y'])) >= RUN_PLANE_TOL:
+        return False
+    return min(a['z_high'], b['z_high']) - max(a['z_low'], b['z_low']) > inch(1.0)
+
+
+def _span_in(a, b):
+    """b's (left, right) along a's X, measured from a's origin."""
+    p = (b['origin'] - a['origin']).dot(a['x'])
+    return p, p + b['dim_x']
+
+
+def _neighbors(entries, a):
+    return [(b,) + _span_in(a, b) for b in entries
+            if b is not a and _same_run(a, b)]
+
+
+def _free_end_room(entries, a, side):
+    """How far a's free end can travel outward before it meets the next
+    thing on the run, or None when nothing is in the way."""
+    gaps = []
+    for _b, left, right in _neighbors(entries, a):
+        if side == 'RIGHT' and left >= a['dim_x'] - BUTT_TOL:
+            gaps.append(left - a['dim_x'])
+        elif side == 'LEFT' and right <= BUTT_TOL:
+            gaps.append(-right)
+    return max(0.0, min(gaps)) if gaps else None
+
+
+def collect_handles(scene):
+    """Handle records for every frameless cabinet in the scene.
+
+    kind 'JOINT' (left, right): the shared end of two butted cabinets.
+    kind 'END_RIGHT' / 'END_LEFT' (cab): a free end, with 'room' -- how
+    far it may grow outward (None = unlimited).
+    Every record carries the frame it is drawn and dragged in: the
+    owning cabinet's origin / x / front offset and its z span."""
+    entries = _run_entries(scene)
+    folded = set()
+    handles = []
+    for a in entries:
+        if a['appliance']:
+            continue
+        for b, left, _right in _neighbors(entries, a):
+            if b['appliance'] or abs(left - a['dim_x']) > BUTT_TOL:
+                continue
+            folded.add((a['name'], 'RIGHT'))
+            folded.add((b['name'], 'LEFT'))
+            handles.append({
+                'kind': 'JOINT', 'left': a['name'], 'right': b['name'],
+                'frame': a, 'pos': a['dim_x'],
+                'z_low': max(a['z_low'], b['z_low']) - a['z_low'],
+                'z_high': min(a['z_high'], b['z_high']) - a['z_low'],
+            })
+    for a in entries:
+        if a['appliance']:
+            continue
+        for side, pos in (('LEFT', 0.0), ('RIGHT', a['dim_x'])):
+            if (a['name'], side) in folded:
+                continue
+            handles.append({
+                'kind': 'END_' + side, 'cab': a['name'], 'frame': a,
+                'pos': pos, 'z_low': 0.0, 'z_high': a['dim_z'],
+                'room': _free_end_room(entries, a, side),
+            })
+    return handles
+
+
+def _front_point(frame, pos, z):
+    """World point on a cabinet's front plane (the root cage is built
+    with Mirror Y, so its front is at local y = -depth)."""
+    return (frame['origin'] + frame['x'] * pos
+            - frame['y'] * frame['dim_y'] + Vector((0.0, 0.0, z)))
+
+
+# ---------------------------------------------------------------------------
+# Edits
+# ---------------------------------------------------------------------------
+
+def _set_width(context, obj, width):
+    # The same input + re-solve a typed Cabinet Width edit makes.
+    hb_types.GeoNodeCage(obj).set_input('Dim X', width)
+    hb_utils.run_calc_fix(context, obj)
+
+
+def _shift_along_own_x(obj, distance):
+    """Move obj by distance along its own X, in its parent's space."""
+    axis = obj.matrix_basis.to_3x3() @ Vector((1.0, 0.0, 0.0))
+    obj.location = obj.location + axis.normalized() * distance
+
+
+def _clamp_delta(handle, start, d):
+    """Clamp the drag distance so no cabinet goes under MIN_WIDTH and a
+    free end stops where the next cabinet starts."""
+    kind = handle['kind']
+    if kind == 'JOINT':
+        lo = MIN_WIDTH - start['left_w']
+        hi = start['right_w'] - MIN_WIDTH
+    elif kind == 'END_RIGHT':
+        lo = MIN_WIDTH - start['w']
+        room = handle.get('room')
+        hi = room if room is not None else math.inf
+    else:  # END_LEFT: dragging right narrows
+        room = handle.get('room')
+        lo = -room if room is not None else -math.inf
+        hi = start['w'] - MIN_WIDTH
+    return min(max(d, lo), hi)
+
+
+def primary_width(handle, start, d):
+    """The width the drag is setting: the cabinet left of a joint or a
+    right end, the cabinet itself for a left end."""
+    if handle['kind'] == 'JOINT':
+        return start['left_w'] + d
+    if handle['kind'] == 'END_RIGHT':
+        return start['w'] + d
+    return start['w'] - d
+
+
+def delta_for_width(handle, start, width):
+    if handle['kind'] == 'JOINT':
+        return width - start['left_w']
+    if handle['kind'] == 'END_RIGHT':
+        return width - start['w']
+    return start['w'] - width
+
+
+def start_state(handle):
+    if handle['kind'] == 'JOINT':
+        left = bpy.data.objects[handle['left']]
+        right = bpy.data.objects[handle['right']]
+        return {'left_w': _dims(left)[0], 'right_w': _dims(right)[0],
+                'right_loc': right.location.copy()}
+    cab = bpy.data.objects[handle['cab']]
+    return {'w': _dims(cab)[0], 'loc': cab.location.copy()}
+
+
+def apply_delta(context, handle, start, d):
+    """Set the cabinets a handle owns to the start state moved by d
+    (along the run). Returns the clamped d actually applied."""
+    d = _clamp_delta(handle, start, d)
+    if handle['kind'] == 'JOINT':
+        left = bpy.data.objects[handle['left']]
+        right = bpy.data.objects[handle['right']]
+        _set_width(context, left, start['left_w'] + d)
+        right.location = start['right_loc']
+        _shift_along_own_x(right, d)
+        _set_width(context, right, start['right_w'] - d)
+    elif handle['kind'] == 'END_RIGHT':
+        _set_width(context, bpy.data.objects[handle['cab']], start['w'] + d)
+    else:
+        cab = bpy.data.objects[handle['cab']]
+        cab.location = start['loc']
+        _shift_along_own_x(cab, d)
+        _set_width(context, cab, start['w'] - d)
+    return d
+
+
+def restore(context, handle, start):
+    apply_delta(context, handle, start, 0.0)
+
+
+# ---------------------------------------------------------------------------
+# Drawing
+# ---------------------------------------------------------------------------
+
+def _to_screen(region, rv3d, p):
+    return view3d_utils.location_3d_to_region_2d(region, rv3d, p)
+
+
+def _handle_segment(region, rv3d, h, frame=None):
+    frame = frame or h['frame']
+    p1 = _to_screen(region, rv3d, _front_point(frame, h['pos'], h['z_low']))
+    p2 = _to_screen(region, rv3d, _front_point(frame, h['pos'], h['z_high']))
+    return p1, p2
+
+
+def _seg_distance(p, a, b):
+    ab = b - a
+    denom = ab.length_squared
+    t = 0.0 if denom == 0.0 else max(0.0, min(1.0, (p - a).dot(ab) / denom))
+    return (p - (a + ab * t)).length
+
+
+def _draw_line(shader, p1, p2, color, width):
+    if p1 is None or p2 is None:
+        return
+    gpu.state.line_width_set(width)
+    shader.uniform_float("color", color)
+    batch_for_shader(shader, 'LINES',
+                     {"pos": [(p1.x, p1.y), (p2.x, p2.y)]}).draw(shader)
+
+
+def _draw_label(x, y, text, color):
+    s = _ui_scale()
+    blf.size(0, 12 * s)
+    w, h = blf.dimensions(0, text)
+    hw, hh = w / 2 + 6 * s, h / 2 + 4 * s
+    verts = ((x - hw, y - hh), (x + hw, y - hh),
+             (x + hw, y + hh), (x - hw, y + hh))
+    shader = gpu.shader.from_builtin('UNIFORM_COLOR')
+    shader.bind()
+    shader.uniform_float("color", LABEL_BG)
+    batch_for_shader(shader, 'TRI_FAN', {"pos": verts}).draw(shader)
+    shader.uniform_float("color", LABEL_BORDER)
+    batch_for_shader(shader, 'LINE_LOOP', {"pos": verts}).draw(shader)
+    blf.color(0, *color)
+    blf.position(0, x - w / 2, y - h / 2, 0)
+    blf.draw(0, text)
+
+
+def format_inches(meters):
+    inches = meters / 0.0254
+    whole = int(inches)
+    sixteenths = round((inches - whole) * 16)
+    if sixteenths == 16:
+        whole, sixteenths = whole + 1, 0
+    if sixteenths == 0:
+        return f'{whole}"'
+    g = math.gcd(sixteenths, 16)
+    return f'{whole} {sixteenths // g}/{16 // g}"'
+
+
+def _width_label(region, rv3d, name, color):
+    obj = bpy.data.objects.get(name)
+    if obj is None:
+        return
+    e = _entry(obj)
+    if e is None:
+        return
+    p = _to_screen(region, rv3d,
+                   _front_point(e, e['dim_x'] / 2.0, e['dim_z'] / 2.0))
+    if p is not None:
+        _draw_label(p.x, p.y, format_inches(e['dim_x']), color)
+
+
+def _draw_callback(op, context):
+    try:
+        _draw(op, context)
+    except Exception:
+        traceback.print_exc()
+
+
+def _draw(op, context):
+    region, rv3d = context.region, context.region_data
+    if region is None or rv3d is None or not op._handles:
+        return
+    s = _ui_scale()
+    shader = gpu.shader.from_builtin('UNIFORM_COLOR')
+    shader.bind()
+    gpu.state.blend_set('ALPHA')
+    for h in op._handles:
+        if h is op._drag or h is op._hover:
+            continue
+        p1, p2 = _handle_segment(region, rv3d, h)
+        _draw_line(shader, p1, p2,
+                   JOINT_LINE if h['kind'] == 'JOINT' else GHOST_LINE,
+                   (2.0 if h['kind'] == 'JOINT' else 1.0) * s)
+    hot = op._drag or op._hover
+    if hot is not None:
+        frame = op._drag_frame if op._drag is not None else None
+        h = hot
+        if frame is not None:
+            # Draw the dragged handle where the end now is.
+            h = dict(hot, pos=hot['pos'] + op._drag_d)
+        p1, p2 = _handle_segment(region, rv3d, h, frame)
+        _draw_line(shader, p1, p2,
+                   ACTIVE_LINE if op._drag is not None else HOVER_LINE,
+                   3.0 * s)
+    gpu.state.line_width_set(1.0)
+    gpu.state.blend_set('NONE')
+    if op._drag is not None:
+        h = op._drag
+        names = ([h['left'], h['right']] if h['kind'] == 'JOINT'
+                 else [h['cab']])
+        for i, name in enumerate(names):
+            _width_label(region, rv3d, name,
+                         ACTIVE_DIM_TEXT if i == 0 else DIM_TEXT)
+        if op._typed:
+            mx, my = op._mouse
+            _draw_label(mx + 30 * s, my + 24 * s, op._typed + '_',
+                        ACTIVE_DIM_TEXT)
+
+
+# ---------------------------------------------------------------------------
+# Operator
+# ---------------------------------------------------------------------------
+
+_TYPE_CHARS = {
+    'ZERO': '0', 'ONE': '1', 'TWO': '2', 'THREE': '3', 'FOUR': '4',
+    'FIVE': '5', 'SIX': '6', 'SEVEN': '7', 'EIGHT': '8', 'NINE': '9',
+    'PERIOD': '.', 'NUMPAD_PERIOD': '.', 'SLASH': '/', 'NUMPAD_SLASH': '/',
+    'SPACE': ' ', 'MINUS': '-', 'NUMPAD_MINUS': '-',
+}
+for _i in range(10):
+    _TYPE_CHARS['NUMPAD_%d' % _i] = str(_i)
+
+
+class hb_frameless_OT_grab(bpy.types.Operator):
+    """Drag frameless cabinet ends to resize them. Where two cabinets
+    are butted, dragging the joint between them moves width from one to
+    the other"""
+    bl_idname = "hb_frameless.grab"
+    bl_label = "Grab"
+    bl_description = (
+        "Drag cabinet ends to resize them. Where two cabinets are butted, "
+        "drag the joint to make one wider and the other narrower. Type a "
+        "width while dragging; Shift turns snapping off. Each drag is its "
+        "own undo step. Enter or Esc to finish"
+    )
+    # No 'UNDO': it pushes one step per drag instead.
+    bl_options = {'REGISTER'}
+
+    _handles = None
+    _hover = None
+    _drag = None
+    _drag_frame = None
+    _drag_start = None
+    _drag_origin = None
+    _drag_d = 0.0
+    _typed = ''
+    _mouse = (0, 0)
+    _draw_handle = None
+    _last_mode = None
+
+    @classmethod
+    def poll(cls, context):
+        return any(o.get(TAG_CABINET) for o in context.scene.objects)
+
+    # ---- lifecycle ----
+
+    def invoke(self, context, event):
+        if context.area is None or context.area.type != 'VIEW_3D':
+            self.report({'WARNING'}, "Run from a 3D Viewport")
+            return {'CANCELLED'}
+        self._last_mode = grab_mode_active(context.scene)
+        self._collect(context)
+        self._draw_handle = bpy.types.SpaceView3D.draw_handler_add(
+            _draw_callback, (self, context), 'WINDOW', 'POST_PIXEL')
+        context.window_manager.modal_handler_add(self)
+        context.area.header_text_set(
+            "Grab  |  LMB: drag a cabinet end or the joint between two "
+            "cabinets  |  Type: width  |  Shift: no snap  |  "
+            "Enter / Esc: done")
+        from ....operators.viewport_hud import register_active_modal
+        register_active_modal(self)
+        self._exit_requested = False
+        self._exit_timer = None
+        _live_grabs.add(self)
+        context.area.tag_redraw()
+        return {'RUNNING_MODAL'}
+
+    def cancel(self, context):
+        self._cleanup(context)
+
+    def _cleanup(self, context):
+        _live_grabs.discard(self)
+        from ....operators.viewport_hud import unregister_active_modal
+        unregister_active_modal(self)
+        if self._draw_handle is not None:
+            try:
+                bpy.types.SpaceView3D.draw_handler_remove(
+                    self._draw_handle, 'WINDOW')
+            except Exception:
+                pass
+            self._draw_handle = None
+        timer = getattr(self, '_exit_timer', None)
+        if timer is not None:
+            try:
+                context.window_manager.event_timer_remove(timer)
+            except Exception:
+                pass
+            self._exit_timer = None
+        try:
+            if context.area is not None:
+                context.area.header_text_set(None)
+                context.area.tag_redraw()
+        except Exception:
+            pass
+
+    def _collect(self, context):
+        self._handles = (collect_handles(context.scene)
+                         if grab_mode_active(context.scene) else [])
+        self._hover = None
+
+    # ---- undo ----
+
+    def forget_scene_refs(self):
+        self._handles = []
+        self._hover = None
+        self._drag = None
+        self._drag_frame = None
+        self._typed = ''
+
+    def refresh_after_undo(self):
+        self._collect(bpy.context)
+
+    # ---- picking / dragging ----
+
+    def _pick(self, context, event):
+        region, rv3d = context.region, context.region_data
+        if region is None or rv3d is None:
+            return None
+        mouse = Vector((event.mouse_region_x, event.mouse_region_y))
+        best, best_d = None, HIT_TOLERANCE_PX * _ui_scale()
+        for h in self._handles or ():
+            p1, p2 = _handle_segment(region, rv3d, h)
+            if p1 is None or p2 is None:
+                continue
+            d = _seg_distance(mouse, p1, p2)
+            if d < best_d:
+                best, best_d = h, d
+        return best
+
+    def _run_param(self, context, event):
+        """Where the cursor ray meets the dragged handle's front plane,
+        as a distance along the run from the drag's frozen origin."""
+        region, rv3d = context.region, context.region_data
+        co = (event.mouse_region_x, event.mouse_region_y)
+        ray_o = view3d_utils.region_2d_to_origin_3d(region, rv3d, co)
+        ray_d = view3d_utils.region_2d_to_vector_3d(region, rv3d, co)
+        frame = self._drag_frame
+        normal = frame['y']
+        plane_p = _front_point(frame, 0.0, 0.0)
+        denom = ray_d.dot(normal)
+        if abs(denom) < 1e-6:
+            # Looking along the front: fall back to the ground plane.
+            normal = Vector((0.0, 0.0, 1.0))
+            denom = ray_d.dot(normal)
+            if abs(denom) < 1e-6:
+                return None
+        t = (plane_p - ray_o).dot(normal) / denom
+        hit = ray_o + ray_d * t
+        return (hit - plane_p).dot(frame['x'])
+
+    def _start_drag(self, context, event, h):
+        self._drag = h
+        self._drag_frame = dict(h['frame'])
+        self._drag_start = start_state(h)
+        self._drag_d = 0.0
+        self._typed = ''
+        self._drag_origin = self._run_param(context, event)
+        if self._drag_origin is None:
+            self._drag = None
+
+    def _update_drag(self, context, event):
+        if self._typed:
+            try:
+                from ..dim_edit_overlay import parse_distance
+                width = parse_distance(self._typed)
+            except Exception:
+                width = None
+            if not width:
+                return
+            d = delta_for_width(self._drag, self._drag_start, width)
+        else:
+            p = self._run_param(context, event)
+            if p is None:
+                return
+            d = p - self._drag_origin
+            if not event.shift:
+                width = primary_width(self._drag, self._drag_start, d)
+                snapped = round(width / SNAP_STEP) * SNAP_STEP
+                d = delta_for_width(self._drag, self._drag_start, snapped)
+        self._drag_d = apply_delta(context, self._drag, self._drag_start, d)
+
+    def _end_drag(self, context, commit):
+        h, start = self._drag, self._drag_start
+        self._drag = None
+        self._drag_frame = None
+        self._typed = ''
+        if h is None:
+            return
+        if not commit:
+            restore(context, h, start)
+        elif abs(self._drag_d) > 1e-6:
+            try:
+                bpy.ops.ed.undo_push(message="Grab")
+            except Exception:
+                traceback.print_exc()
+        self._drag_d = 0.0
+        self._collect(context)
+
+    # ---- events ----
+
+    def modal(self, context, event):
+        try:
+            return self._modal(context, event)
+        except Exception:
+            traceback.print_exc()
+            try:
+                self._cleanup(context)
+            except Exception:
+                traceback.print_exc()
+            return {'CANCELLED'}
+
+    def _modal(self, context, event):
+        if getattr(self, '_exit_requested', False):
+            self._exit_requested = False
+            if self._drag is not None:
+                self._end_drag(context, commit=True)
+            self._cleanup(context)
+            return {'FINISHED'}
+
+        mode = grab_mode_active(context.scene)
+        if mode != self._last_mode:
+            self._last_mode = mode
+            if self._drag is not None:
+                self._end_drag(context, commit=True)
+            self._collect(context)
+            context.area.tag_redraw()
+
+        self._mouse = (event.mouse_region_x, event.mouse_region_y)
+
+        if event.type == 'MOUSEMOVE':
+            if self._drag is not None:
+                self._update_drag(context, event)
+            else:
+                self._hover = self._pick(context, event)
+            context.area.tag_redraw()
+            return {'PASS_THROUGH'} if self._drag is None else {'RUNNING_MODAL'}
+
+        if self._drag is None:
+            # A mode you leave on claims only presses on its handles.
+            if event.type == 'LEFTMOUSE' and event.value == 'PRESS':
+                try:
+                    from ....operators.viewport_hud import click_hits_widget
+                    if click_hits_widget(context, context.area,
+                                         event.mouse_region_x,
+                                         event.mouse_region_y):
+                        return {'PASS_THROUGH'}
+                except Exception:
+                    pass
+                h = self._pick(context, event)
+                if h is None:
+                    return {'PASS_THROUGH'}
+                self._start_drag(context, event, h)
+                context.area.tag_redraw()
+                return {'RUNNING_MODAL'}
+            if event.type in ('RET', 'NUMPAD_ENTER', 'ESC') \
+                    and event.value == 'PRESS':
+                self._cleanup(context)
+                return {'FINISHED'}
+            return {'PASS_THROUGH'}
+
+        # ---- dragging ----
+        if event.type == 'LEFTMOUSE' and event.value == 'RELEASE':
+            self._end_drag(context, commit=True)
+            context.area.tag_redraw()
+            return {'RUNNING_MODAL'}
+        if event.type in ('ESC', 'RIGHTMOUSE') and event.value == 'PRESS':
+            self._end_drag(context, commit=False)
+            context.area.tag_redraw()
+            return {'RUNNING_MODAL'}
+        if event.type in ('RET', 'NUMPAD_ENTER') and event.value == 'PRESS':
+            self._end_drag(context, commit=True)
+            context.area.tag_redraw()
+            return {'RUNNING_MODAL'}
+        if event.value == 'PRESS':
+            if event.type in _TYPE_CHARS:
+                self._typed += _TYPE_CHARS[event.type]
+                self._update_drag(context, event)
+                context.area.tag_redraw()
+                return {'RUNNING_MODAL'}
+            if event.type == 'QUOTE':
+                self._typed += '"' if event.shift else "'"
+                self._update_drag(context, event)
+                context.area.tag_redraw()
+                return {'RUNNING_MODAL'}
+            if event.type == 'BACK_SPACE':
+                self._typed = self._typed[:-1]
+                self._update_drag(context, event)
+                context.area.tag_redraw()
+                return {'RUNNING_MODAL'}
+            if event.ctrl or event.oskey:
+                # Undo mid-drag would pull the cabinets out from under it.
+                return {'RUNNING_MODAL'}
+        if event.type in ('LEFT_SHIFT', 'RIGHT_SHIFT'):
+            self._update_drag(context, event)
+            context.area.tag_redraw()
+            return {'RUNNING_MODAL'}
+        return {'PASS_THROUGH'}
+
+
+# Running grabs, so undo / redo can drop and rebuild their handles (the
+# records name objects that undo replaces).
+_live_grabs = set()
+
+
+@persistent
+def _undo_pre(scene, *args):
+    for op in list(_live_grabs):
+        try:
+            op.forget_scene_refs()
+        except Exception:
+            _live_grabs.discard(op)
+
+
+@persistent
+def _undo_post(scene, *args):
+    for op in list(_live_grabs):
+        try:
+            op.refresh_after_undo()
+        except Exception:
+            traceback.print_exc()
+
+
+_UNDO_HANDLERS = (
+    (bpy.app.handlers.undo_pre, _undo_pre),
+    (bpy.app.handlers.redo_pre, _undo_pre),
+    (bpy.app.handlers.undo_post, _undo_post),
+    (bpy.app.handlers.redo_post, _undo_post),
+)
+
+
+def register():
+    bpy.utils.register_class(hb_frameless_OT_grab)
+    for handlers, fn in _UNDO_HANDLERS:
+        if fn not in handlers:
+            handlers.append(fn)
+
+
+def unregister():
+    for handlers, fn in _UNDO_HANDLERS:
+        if fn in handlers:
+            handlers.remove(fn)
+    _live_grabs.clear()
+    bpy.utils.unregister_class(hb_frameless_OT_grab)
