@@ -284,6 +284,32 @@ def restore(context, handle, start):
     apply_delta(context, handle, start, 0.0)
 
 
+def resize_in_run(context, obj, width):
+    """Set a cabinet's width the way Grab would: a butted neighbor takes
+    up the change (the right one first, then the left), so the run keeps
+    its length. A free end stretches only into open space. Whatever the
+    neighbors and open space can't absorb is applied to the right end
+    on its own, as a plain width edit always was. Returns True."""
+    change = width - _dims(obj)[0]
+    # Right side first, then the left. The run is re-read between the two,
+    # since the first step moves things. sign: the drag on that handle
+    # that grows obj.
+    for side_keys, sign in (((('JOINT', 'left'), ('END_RIGHT', 'cab')), 1.0),
+                            ((('JOINT', 'right'), ('END_LEFT', 'cab')), -1.0)):
+        if abs(change) < 1e-6:
+            break
+        handles = collect_handles(context.scene)
+        h = next((h for kind, key in side_keys for h in handles
+                  if h['kind'] == kind and h.get(key) == obj.name), None)
+        if h is None:
+            continue
+        d = apply_delta(context, h, start_state(h), change * sign)
+        change -= d * sign
+    if abs(change) > 1e-6:
+        _set_width(context, obj, _dims(obj)[0] + change)
+    return True
+
+
 # ---------------------------------------------------------------------------
 # Drawing
 # ---------------------------------------------------------------------------

@@ -1349,8 +1349,10 @@ def _commit(context, target, current, value):
             from ..product_libraries.face_frame import dim_edit_overlay as ff
             return ff._commit(obj, 'CAB_W', value) is not False
         if obj.get('IS_FRAMELESS_CABINET_CAGE'):
-            from ..product_libraries.frameless import dim_edit_overlay as fl
-            return fl._commit(context, obj, 'CAB_W', value) is not False
+            # As Grab does it: a butted neighbor takes up the change.
+            from ..product_libraries.frameless.operators import (
+                op_grab_frameless)
+            return op_grab_frameless.resize_in_run(context, obj, value)
         return False
     # A gap: slide the product along the wall by the change.
     if value < 0.0:
