@@ -19,9 +19,14 @@ class hb_frameless_OT_update_toe_kick_prompts(bpy.types.Operator):
         new_type_index = type_map.get(frameless_props.default_toe_kick_type, 0)
 
         for obj in context.scene.objects:
-            if 'Toe Kick Height' in obj:
+            # A filler, panel or corner standing off the floor (beside an
+            # upper) is built with no toe kick: it keeps none.
+            no_kick = (not obj.get('IS_FRAMELESS_CABINET_CAGE')
+                       and 'Toe Kick Height' in obj
+                       and float(obj['Toe Kick Height']) <= 0.0)
+            if 'Toe Kick Height' in obj and not no_kick:
                 obj['Toe Kick Height'] = frameless_props.default_toe_kick_height
-            if 'Toe Kick Setback' in obj:
+            if 'Toe Kick Setback' in obj and not no_kick:
                 obj['Toe Kick Setback'] = frameless_props.default_toe_kick_setback
             if 'Toe Kick Type' in obj:
                 obj['Toe Kick Type'] = new_type_index
