@@ -1024,30 +1024,43 @@ def corner_filler_return():
     """The room's corner filler return depth (Cabinet Sizes)."""
     props = getattr(bpy.context.scene, 'hb_frameless', None)
     return float(getattr(props, 'corner_filler_return', CORNER_FILLER_RETURN))
+
+
+def scribe_filler_flush_with_doors():
+    """Whether the room's new wall scribe fillers stand out in the door
+    plane (Cabinet Sizes); otherwise their face is flush with the
+    carcass front."""
+    props = getattr(bpy.context.scene, 'hb_frameless', None)
+    return bool(getattr(props, 'scribe_filler_flush_with_doors', False))
 # How far the door fronts stand off the carcass; the filler's face is
 # set to line up with them.
 FRONT_THICKNESS = inch(0.75)
 
 
 def _solve_corner_filler(root, parts, dim_x, dim_y, dim_z):
-    """An L in plan. The face runs across the front at the door plane
-    (Dim Y reaches from the wall to that plane); the return leg stands
-    behind it against the cabinet's side, on whichever side the cabinet
-    is; a kick piece sits set back below the face on a base or tall."""
+    """An L in plan. The face runs across the front, in the door plane
+    or flush with the carcass front (Dim Y always reaches from the wall
+    to the door plane, so the option can be switched either way); the
+    return leg stands behind it against the cabinet's side, on whichever
+    side the cabinet is; a kick piece sits set back below the face on a
+    base or tall."""
     mt = float(_prompt(root, 'Material Thickness', inch(0.75)))
     tkh = float(_prompt(root, 'Toe Kick Height', 0.0))
     tks = float(_prompt(root, 'Toe Kick Setback', 0.0))
     ret = float(_prompt(root, 'Return Depth', CORNER_FILLER_RETURN))
     cab_right = bool(root.get('Cabinet On Right', True))
+    # Fillers built before the option stood in the door plane.
+    on_doors = bool(root.get('Flush With Doors', True))
+    face_y = -dim_y + (0.0 if on_doors else FRONT_THICKNESS)
 
     part = parts.get('FILLER_FACE')
     if part is not None:
-        _set_part(part, (0.0, -dim_y, tkh),
+        _set_part(part, (0.0, face_y, tkh),
                   length=dim_z - tkh, width=dim_x, thickness=mt)
 
     part = parts.get('FILLER_KICK')
     if part is not None:
-        _set_part(part, (0.0, -dim_y + tks, 0.0),
+        _set_part(part, (0.0, face_y + tks, 0.0),
                   length=tkh, width=dim_x, thickness=mt, visible=tkh > 0.0)
 
     # The return is inside the filler's own width, so it lies against
@@ -1059,18 +1072,19 @@ def _solve_corner_filler(root, parts, dim_x, dim_y, dim_z):
             # A side panel's width runs toward -Y from where it is set,
             # so it is set at its back edge to run from the face's back
             # toward the wall.
-            _set_part(part, (x, -dim_y + mt + ret, tkh),
+            _set_part(part, (x, face_y + mt + ret, tkh),
                       length=dim_z - tkh, width=ret, thickness=mt,
                       visible=on)
 
 
 class CornerFiller(Product):
-    """The filler that closes an inside corner.
+    """The wall scribe filler that closes an inside corner.
 
     Where a run meets the wall it stands against, a plain cabinet cannot
     open its door into the corner. This stands between the cabinet's
-    end and the wall: a face in the plane of the doors (1.5" unless the
-    room's Corner Filler width says otherwise), with a
+    end and the wall: a face flush with the carcass front, or in the
+    plane of the doors with its Flush With Doors option on (1.5" wide
+    unless the room's filler width says otherwise), with a
     return leg behind it to fix to the cabinet side. Placement adds one
     of its own accord when a cabinet lands in an inside corner.
     Dim X = width, Dim Y = reach from the wall to the door face,
@@ -1087,14 +1101,16 @@ class CornerFiller(Product):
         self.toe_kick_height = props.default_toe_kick_height
         self.toe_kick_setback = props.default_toe_kick_setback
         self.cabinet_on_right = True
+        self.flush_with_doors = scribe_filler_flush_with_doors()
 
     def add_properties(self):
         self.add_property('Toe Kick Height', 'DISTANCE', self.toe_kick_height)
         self.add_property('Toe Kick Setback', 'DISTANCE', self.toe_kick_setback)
         self.add_property('Return Depth', 'DISTANCE', self.return_depth)
         self.add_property('Cabinet On Right', 'CHECKBOX', self.cabinet_on_right)
+        self.add_property('Flush With Doors', 'CHECKBOX', self.flush_with_doors)
 
-    def create(self, name="Corner Filler"):
+    def create(self, name="Wall Scribe Filler"):
         self.create_product(name)
         self.obj['PART_TYPE'] = 'CORNER_FILLER'
         self.obj['IS_CORNER_FILLER'] = True

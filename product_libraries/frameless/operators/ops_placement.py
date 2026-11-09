@@ -19,6 +19,8 @@ PART_CLASS_MAP = {
     'Tall Leg': types_products.TallLeg,
     'Upper Leg': types_products.UpperLeg,
     'Panel': types_products.Panel,
+    'Wall Scribe Filler': types_products.CornerFiller,
+    # The name it had before, for anything that still asks for it.
     'Corner Filler': types_products.CornerFiller,
     'Base Assembly': types_products.BaseAssembly,
     'Voided Corner Base': types_products.VoidedCornerBase,
@@ -1449,7 +1451,7 @@ class PlaceCabinetBase(WallObjectPlacementMixin):
         # A back-side run is turned 180, which swaps which local side
         # the cabinet is on.
         filler.cabinet_on_right = cabinet_on_right if self.place_on_front else not cabinet_on_right
-        filler.create('Corner Filler')
+        filler.create('Wall Scribe Filler')
         filler.obj.parent = self.selected_wall
         filler.obj.location.z = self.get_cabinet_z_location(context)
         if self.place_on_front:

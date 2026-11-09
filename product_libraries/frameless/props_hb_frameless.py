@@ -1915,17 +1915,22 @@ class Frameless_Scene_Props(PropertyGroup):
     fill_cabinets: bpy.props.BoolProperty(name="Fill Cabinets",default = True)# type: ignore
 
     # The filler placement stands in an inside corner, and the one the
-    # library's Corner Filler part comes in at.
+    # library's Wall Scribe Filler part comes in at.
     corner_filler_width: FloatProperty(
-        name="Corner Filler Width",
+        name="Wall Scribe Filler Width",
         description="Face width of the filler that closes an inside corner",
         default=units.inch(1.5), min=0.0, unit='LENGTH',
         precision=4)  # type: ignore
     corner_filler_return: FloatProperty(
-        name="Corner Filler Return",
-        description="Depth of the return leg behind a corner filler's face",
+        name="Wall Scribe Filler Return",
+        description="Depth of the return leg behind a wall scribe filler's face",
         default=units.inch(3.0), min=0.0, unit='LENGTH',
         precision=4)  # type: ignore
+    scribe_filler_flush_with_doors: BoolProperty(
+        name="Flush With Doors",
+        description=("New wall scribe fillers stand out in the plane of the "
+                     "doors. Off, their face is flush with the carcass front"),
+        default=False)  # type: ignore
 
     base_exterior: EnumProperty(name="Base Exterior",
                                items=[('Doors',"Doors","Doors"),
@@ -2458,9 +2463,10 @@ class Frameless_Scene_Props(PropertyGroup):
         row.label(text="Tall Split Height:")
         row.prop(self,'tall_cabinet_split_height',text="")
         row = layout.row()
-        row.label(text="Corner Filler:")
+        row.label(text="Wall Scribe Filler:")
         row.prop(self,'corner_filler_width',text="Width")
         row.prop(self,'corner_filler_return',text="Return")
+        row.prop(self,'scribe_filler_flush_with_doors',text="Flush With Doors")
 
     def draw_user_library_ui(self,layout,context):
         from .operators import ops_library

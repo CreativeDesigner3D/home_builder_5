@@ -147,6 +147,8 @@ class hb_frameless_OT_product_prompts(bpy.types.Operator):
             self.draw_upper_leg(layout, obj)
         elif self.part_type == 'VOIDED_CORNER':
             self.draw_voided_corner(layout, obj)
+        elif self.part_type == 'CORNER_FILLER':
+            self.draw_corner_filler(layout, obj)
 
     def draw_floating_shelf(self, layout, obj):
         box = layout.box()
@@ -237,6 +239,27 @@ class hb_frameless_OT_product_prompts(bpy.types.Operator):
             row.label(text=f"{corner} Leg:")
             row.prop(obj, f'["{corner} Leg"]', text="")
             row.prop(obj, f'["{corner} Leg Type"]', text="")
+
+    def draw_corner_filler(self, layout, obj):
+        box = layout.box()
+        box.label(text="Filler")
+        col = box.column(align=True)
+        row = col.row(align=True)
+        row.label(text="Return Depth:")
+        row.prop(obj, '["Return Depth"]', text="")
+        row = col.row(align=True)
+        if 'Flush With Doors' in obj:   # fillers built before the option
+            row.prop(obj, '["Flush With Doors"]', text="Flush With Doors")
+        row.prop(obj, '["Cabinet On Right"]', text="Cabinet On Right")
+        if float(obj.get('Toe Kick Height', 0.0)) > 0.0:
+            box = layout.box()
+            box.label(text="Toe Kick")
+            col = box.column(align=True)
+            for label, key in (("Height:", "Toe Kick Height"),
+                               ("Setback:", "Toe Kick Setback")):
+                row = col.row(align=True)
+                row.label(text=label)
+                row.prop(obj, '["%s"]' % key, text="")
 
     def draw_voided_corner(self, layout, obj):
         box = layout.box()
