@@ -838,7 +838,7 @@ class hb_frameless_OT_opening_prompts(bpy.types.Operator):
 class hb_frameless_OT_change_opening_type(bpy.types.Operator):
     bl_idname = "hb_frameless.change_opening_type"
     bl_label = "Change Opening Type"
-    bl_description = "Change this opening to a different type"
+    bl_description = "Change this opening, and any other selected openings, to a different type"
     bl_options = {'UNDO'}
 
     opening_type: bpy.props.EnumProperty(
@@ -1034,12 +1034,56 @@ class hb_frameless_OT_change_opening_type(bpy.types.Operator):
         
         self.add_insert_to_opening(opening, false_front)
 
+    @staticmethod
+    def _target_openings(context):
+        """The opening under the cursor plus every other selected
+        opening, so one pick changes them all. A selected cabinet with a
+        single opening counts as that opening. An opening inside another
+        target is left to its outer one, which rebuilds it anyway."""
+        found = []
+
+        def add(obj):
+            if obj is not None and obj not in found:
+                found.append(obj)
+
+        def single_opening(cab):
+            leaves = [o for o in cab.children_recursive
+                      if 'IS_FRAMELESS_OPENING_CAGE' in o
+                      and not any('IS_FRAMELESS_OPENING_CAGE' in c
+                                  for c in o.children_recursive)]
+            return leaves[0] if len(leaves) == 1 else None
+
+        add(hb_utils.get_opening_bp(context.object))
+        for obj in getattr(context, 'selected_objects', None) or []:
+            opening = hb_utils.get_opening_bp(obj)
+            if opening is None:
+                cab = hb_utils.get_cabinet_bp(obj)
+                if cab is obj:
+                    opening = single_opening(cab)
+            add(opening)
+
+        def inside_other(obj):
+            parent = obj.parent
+            while parent is not None:
+                if parent in found:
+                    return True
+                parent = parent.parent
+            return False
+
+        return [o.name for o in found if not inside_other(o)]
+
     def execute(self, context):
-        opening_obj = context.object if 'IS_FRAMELESS_OPENING_CAGE' in context.object else hb_utils.get_opening_bp(context.object)
-        if not opening_obj:
+        names = self._target_openings(context)
+        if not names:
             self.report({'ERROR'}, "Could not find opening")
             return {'CANCELLED'}
-        
+        for name in names:
+            opening_obj = bpy.data.objects.get(name)
+            if opening_obj is not None:
+                self._change_opening(context, opening_obj)
+        return {'FINISHED'}
+
+    def _change_opening(self, context, opening_obj):
         opening = types_frameless.CabinetOpening(opening_obj)
         
         # Read half overlay from the opening's own custom properties
@@ -1115,8 +1159,6 @@ class hb_frameless_OT_change_opening_type(bpy.types.Operator):
             hb_utils.run_calc_fix(context, cabinet_bp)
             # Assign pull locations based on world position
             assign_pull_locations_to_cabinet(cabinet_bp)
-        
-        return {'FINISHED'}
 
 
 
