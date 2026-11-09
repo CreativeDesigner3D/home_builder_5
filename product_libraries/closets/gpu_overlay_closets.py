@@ -237,9 +237,10 @@ def _filter_pill_rects(context, area, mode):
     for label, key, _p, modes in _FILTERS:
         if mode not in modes:
             continue
-        if key == _DIMS_KEY:
+        if key in (_DIMS_KEY, 'hb_ov_show_mount'):
             # The family entry stays - the label filter still reads it -
-            # but its pill is the HUD's now.
+            # but its pill is the HUD's now (_ClosetDimsButton,
+            # _ClosetBottomsButton).
             continue
         pills.append((label, key))
     # Open Door is a HUD icon on the mode row now (viewport_hud's

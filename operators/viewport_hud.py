@@ -1209,6 +1209,48 @@ class _ClosetDimsButton:
             options_panel._open_popup("Dimensions", _draw_closet_dims_menu)
 
 
+class _ClosetBottomsButton:
+    """Shows or hides the closet bottom-mount toggles in Bays mode.
+
+    It was the last pill the overlay module still drew for itself, on a
+    row of its own under the mode picker, and that row ran into the mode
+    row. It sits beside Dims now, drawn like the other pills on the row:
+    lit while the toggles are shown. The state stays in the scene idprop
+    the overlay's filter reads.
+    """
+
+    KEY = 'hb_ov_show_mount'
+    LABEL = 'Bottoms'
+
+    def _on(self, context):
+        return bool(context.scene.get(self.KEY, 1))
+
+    @property
+    def width(self):
+        s = _s()
+        blf.size(0, FONT_SIZE * s)
+        return int(blf.dimensions(0, self.LABEL)[0] + 24 * s)
+
+    def visible(self, context):
+        return (_closet_ui_visible(context)
+                and _closet_mode(context) == 'Bays')
+
+    def draw(self, shader, font_id, rect, context, mouse):
+        rx, ry, rw, rh = rect
+        on = self._on(context)
+        hovered = point_in_rect(mouse[0], mouse[1], rect)
+        bg = (BTN_ACTIVE_BG if on else (BTN_HOVER_BG if hovered else BTN_BG))
+        _paint_btn(shader, rx, ry, rw, rh, bg)
+        _draw_centered_text(font_id, rect, FONT_SIZE * _s(),
+                            TEXT_ACTIVE if on else TEXT_NORMAL, self.LABEL)
+
+    def on_click(self, context, area, region):
+        context.scene[self.KEY] = 0 if self._on(context) else 1
+        for a in context.screen.areas if context.screen else ():
+            if a.type == 'VIEW_3D':
+                a.tag_redraw()
+
+
 # The closet Dims dropdown: (scope, idprop value, label)
 _CLOSET_DIMS = (('ALL', 1, "All"), ('SELECTED', 2, "Selected"),
                 ('OFF', 0, "None"))
@@ -1245,6 +1287,7 @@ _FRAMELESS_SIZES_BUTTON = _FramelessSizesButton()
 _GRAB_PILL = _GrabPill()
 _CLOSET_GRAB_PILL = _ClosetGrabPill()
 _CLOSET_DIMS_BUTTON = _ClosetDimsButton()
+_CLOSET_BOTTOMS_BUTTON = _ClosetBottomsButton()
 _OPEN_DOOR_BUTTON = _ModalToggleButton(
     'hb_face_frame.open_mode', None,
     enable_label="Enable Open Door Mode",
@@ -1480,7 +1523,7 @@ def _view_strip():
                   _CLOSET_OPEN_DOOR_BUTTON, _CUTAWAY_BUTTON]
          + _mode_extra_widgets()
          + [_SIZES_BUTTON, _FRAMELESS_SIZES_BUTTON, _CLOSET_DIMS_BUTTON,
-            _WALK_BUTTON, _VIEW_ALL_BUTTON]),
+            _CLOSET_BOTTOMS_BUTTON, _WALK_BUTTON, _VIEW_ALL_BUTTON]),
     ]
 
 
