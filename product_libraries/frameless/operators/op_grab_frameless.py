@@ -27,6 +27,7 @@ from bpy_extras import view3d_utils
 from gpu_extras.batch import batch_for_shader
 from mathutils import Vector
 
+from .... import hb_icons
 from .... import hb_types
 from .... import hb_utils
 from ....units import inch
@@ -42,6 +43,11 @@ BUTT_TOL = inch(0.0625)
 # Cabinets whose backs sit this close along the run's depth axis share
 # a run -- the ones an end stops at and a joint pairs with.
 RUN_PLANE_TOL = inch(4.0)
+# A moved cabinet's end snaps to another end inside this many pixels.
+MOVE_SNAP_PX = 14.0
+# Radius of the move handle at a cabinet's centre (unscaled px).
+MOVE_HANDLE_R = 13.0
+MOVE_CHIP = (0.13, 0.13, 0.14, 0.85)
 
 GHOST_LINE = (0.85, 0.85, 0.85, 0.35)
 JOINT_LINE = (0.85, 0.85, 0.85, 0.60)
@@ -157,6 +163,8 @@ def collect_handles(scene):
     kind 'JOINT' (left, right): the shared end of two butted cabinets.
     kind 'END_RIGHT' / 'END_LEFT' (cab): a free end, with 'room' -- how
     far it may grow outward (None = unlimited).
+    kind 'MOVE' (cab): the handle at the cabinet's centre that slides
+    the whole cabinet along its run.
     Every record carries the frame it is drawn and dragged in: the
     owning cabinet's origin / x / front offset and its z span."""
     entries = _run_entries(scene)
@@ -187,7 +195,46 @@ def collect_handles(scene):
                 'pos': pos, 'z_low': 0.0, 'z_high': a['dim_z'],
                 'room': _free_end_room(entries, a, side),
             })
+        handles.append({
+            'kind': 'MOVE', 'cab': a['name'], 'frame': a,
+            'pos': a['dim_x'] / 2.0,
+            'z_low': a['dim_z'] / 2.0, 'z_high': a['dim_z'] / 2.0,
+        })
     return handles
+
+
+def move_targets(scene, name):
+    """Run positions (along the cabinet's X, from its origin) a moved
+    cabinet's ends snap to: the ends of every other cabinet or appliance
+    on its run, base or wall, and its wall's ends and the sides of the
+    doors and windows in its way."""
+    entries = _run_entries(scene)
+    a = next((e for e in entries if e['name'] == name), None)
+    if a is None:
+        return []
+    out = []
+    for b in entries:
+        if b is a or a['x'].dot(b['x']) < 0.999:
+            continue
+        if abs((b['origin'] - a['origin']).dot(a['y'])) >= RUN_PLANE_TOL:
+            continue
+        out.extend(_span_in(a, b))
+    try:
+        from ...face_frame.operators.op_modify_cabinet import wall_targets
+        out.extend(wall_targets(dict(a, obj=bpy.data.objects[name])))
+    except Exception:
+        pass
+    return out
+
+
+def apply_move(name, start, d):
+    """Put the cabinet d along its run from where the move started."""
+    cab = bpy.data.objects[name]
+    world = start['world'] + start['x'] * d
+    if cab.parent is not None:
+        cab.location = cab.parent.matrix_world.inverted_safe() @ world
+    else:
+        cab.location = world
 
 
 def _front_point(frame, pos, z):
@@ -250,6 +297,11 @@ def delta_for_width(handle, start, width):
 
 
 def start_state(handle):
+    if handle['kind'] == 'MOVE':
+        cab = bpy.data.objects[handle['cab']]
+        return {'world': cab.matrix_world.translation.copy(),
+                'x': handle['frame']['x'].copy(),
+                'w': handle['frame']['dim_x']}
     if handle['kind'] == 'JOINT':
         left = bpy.data.objects[handle['left']]
         right = bpy.data.objects[handle['right']]
@@ -281,7 +333,10 @@ def apply_delta(context, handle, start, d):
 
 
 def restore(context, handle, start):
-    apply_delta(context, handle, start, 0.0)
+    if handle['kind'] == 'MOVE':
+        apply_move(handle['cab'], start, 0.0)
+    else:
+        apply_delta(context, handle, start, 0.0)
 
 
 def resize_in_run(context, obj, width):
@@ -384,6 +439,35 @@ def _width_label(region, rv3d, name, color):
         _draw_label(p.x, p.y, format_inches(e['dim_x']), color)
 
 
+def _draw_move_handle(shader, region, rv3d, h, frame, hot, s):
+    """The move icon on a chip at the cabinet's centre, lit while
+    hovered or dragged -- the face frame Grab's move handle."""
+    c = _to_screen(region, rv3d,
+                   _front_point(frame, h['pos'], h['z_low']))
+    if c is None:
+        return
+    r = MOVE_HANDLE_R * s
+    chip = ((ACTIVE_LINE[0], ACTIVE_LINE[1], ACTIVE_LINE[2], 0.95)
+            if hot else MOVE_CHIP)
+    pts = [(c.x, c.y)] + [(c.x + r * math.cos(2.0 * math.pi * i / 24),
+                           c.y + r * math.sin(2.0 * math.pi * i / 24))
+                          for i in range(25)]
+    shader.uniform_float("color", chip)
+    batch_for_shader(shader, 'TRI_FAN', {"pos": pts}).draw(shader)
+    color = (0.08, 0.08, 0.09, 1.0) if hot else (1.0, 1.0, 1.0, 0.92)
+    px = r * 1.5
+    drawn = hb_icons.draw_icon('move', (c.x - px / 2.0, c.y - px / 2.0,
+                                        px, px), color, size=16)
+    shader.bind()
+    if not drawn:
+        _draw_line(shader, Vector((c.x - r * 0.6, c.y)),
+                   Vector((c.x + r * 0.6, c.y)), color, 2.0 * s)
+
+
+def _involves(h, name):
+    return name in (h.get('cab'), h.get('left'), h.get('right'))
+
+
 def _draw_callback(op, context):
     try:
         _draw(op, context)
@@ -399,15 +483,30 @@ def _draw(op, context):
     shader = gpu.shader.from_builtin('UNIFORM_COLOR')
     shader.bind()
     gpu.state.blend_set('ALPHA')
+    moving = (op._drag['cab'] if op._drag is not None
+              and op._drag['kind'] == 'MOVE' else None)
     for h in op._handles:
-        if h is op._drag or h is op._hover:
+        if h is op._drag or h is op._hover or h['kind'] == 'MOVE':
             continue
+        if moving is not None and _involves(h, moving):
+            continue      # its ends are travelling with the drag
         p1, p2 = _handle_segment(region, rv3d, h)
         _draw_line(shader, p1, p2,
                    JOINT_LINE if h['kind'] == 'JOINT' else GHOST_LINE,
                    (2.0 if h['kind'] == 'JOINT' else 1.0) * s)
+    for h in op._handles:
+        if h['kind'] == 'MOVE' and h is not op._drag:
+            if moving is not None and h['cab'] == moving:
+                continue
+            _draw_move_handle(shader, region, rv3d, h, h['frame'],
+                              h is op._hover, s)
     hot = op._drag or op._hover
-    if hot is not None:
+    if hot is not None and hot['kind'] == 'MOVE':
+        if op._drag is not None:
+            _draw_move_handle(shader, region, rv3d,
+                              dict(hot, pos=hot['pos'] + op._drag_d),
+                              op._drag_frame, True, s)
+    elif hot is not None:
         frame = op._drag_frame if op._drag is not None else None
         h = hot
         if frame is not None:
@@ -419,17 +518,25 @@ def _draw(op, context):
                    3.0 * s)
     gpu.state.line_width_set(1.0)
     gpu.state.blend_set('NONE')
-    if op._drag is not None:
+    if op._drag is not None and op._drag['kind'] == 'MOVE':
+        h = op._drag
+        c = _to_screen(region, rv3d, _front_point(
+            op._drag_frame, h['pos'] + op._drag_d, h['z_low']))
+        if c is not None:
+            _draw_label(c.x, c.y - 28.0 * s,
+                        ("\u2192 " if op._drag_d >= 0 else "\u2190 ")
+                        + format_inches(abs(op._drag_d)), ACTIVE_DIM_TEXT)
+    elif op._drag is not None:
         h = op._drag
         names = ([h['left'], h['right']] if h['kind'] == 'JOINT'
                  else [h['cab']])
         for i, name in enumerate(names):
             _width_label(region, rv3d, name,
                          ACTIVE_DIM_TEXT if i == 0 else DIM_TEXT)
-        if op._typed:
-            mx, my = op._mouse
-            _draw_label(mx + 30 * s, my + 24 * s, op._typed + '_',
-                        ACTIVE_DIM_TEXT)
+    if op._drag is not None and op._typed:
+        mx, my = op._mouse
+        _draw_label(mx + 30 * s, my + 24 * s, op._typed + '_',
+                    ACTIVE_DIM_TEXT)
 
 
 # ---------------------------------------------------------------------------
@@ -468,6 +575,7 @@ class hb_frameless_OT_grab(bpy.types.Operator):
     _drag_start = None
     _drag_origin = None
     _drag_d = 0.0
+    _move_targets = None
     _typed = ''
     _mouse = (0, 0)
     _draw_handle = None
@@ -552,8 +660,19 @@ class hb_frameless_OT_grab(bpy.types.Operator):
         if region is None or rv3d is None:
             return None
         mouse = Vector((event.mouse_region_x, event.mouse_region_y))
-        best, best_d = None, HIT_TOLERANCE_PX * _ui_scale()
+        s = _ui_scale()
+        # A move disc wins over the lines inside it.
         for h in self._handles or ():
+            if h['kind'] != 'MOVE':
+                continue
+            c = _to_screen(region, rv3d,
+                           _front_point(h['frame'], h['pos'], h['z_low']))
+            if c is not None and (c - mouse).length <= MOVE_HANDLE_R * s:
+                return h
+        best, best_d = None, HIT_TOLERANCE_PX * s
+        for h in self._handles or ():
+            if h['kind'] == 'MOVE':
+                continue
             p1, p2 = _handle_segment(region, rv3d, h)
             if p1 is None or p2 is None:
                 continue
@@ -592,8 +711,56 @@ class hb_frameless_OT_grab(bpy.types.Operator):
         self._drag_origin = self._run_param(context, event)
         if self._drag_origin is None:
             self._drag = None
+        self._move_targets = (move_targets(context.scene, h['cab'])
+                              if h['kind'] == 'MOVE' else [])
+
+    def _snap_move(self, context, d):
+        """d with the nearer end flush to a target when one is within
+        MOVE_SNAP_PX on screen."""
+        targets = self._move_targets or []
+        if not targets:
+            return d
+        region, rv3d = context.region, context.region_data
+        frame, w = self._drag_frame, self._drag_start['w']
+        mid = _front_point(frame, d + w / 2.0, frame['dim_z'] / 2.0)
+        a = _to_screen(region, rv3d, mid)
+        z = _to_screen(region, rv3d, mid + frame['x'] * 0.1)
+        if a is None or z is None or (z - a).length < 1e-6:
+            return d
+        reach = MOVE_SNAP_PX * _ui_scale() / ((z - a).length / 0.1)
+        best = None
+        for t in targets:
+            for edge in (0.0, w):
+                gap = abs(t - (edge + d))
+                if gap < reach and (best is None or gap < best[0]):
+                    best = (gap, t - edge)
+        return best[1] if best else d
+
+    def _update_move(self, context, event):
+        if self._typed:
+            try:
+                from ..dim_edit_overlay import parse_distance
+                dist = parse_distance(self._typed)
+            except Exception:
+                dist = None
+            if dist is None:
+                return
+            # Typed: that far in the way the drag is heading.
+            d = -abs(dist) if self._drag_d < 0 else abs(dist)
+        else:
+            p = self._run_param(context, event)
+            if p is None:
+                return
+            d = p - self._drag_origin
+            if not event.shift:
+                d = self._snap_move(context, d)
+        apply_move(self._drag['cab'], self._drag_start, d)
+        self._drag_d = d
 
     def _update_drag(self, context, event):
+        if self._drag['kind'] == 'MOVE':
+            self._update_move(context, event)
+            return
         if self._typed:
             try:
                 from ..dim_edit_overlay import parse_distance
