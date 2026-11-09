@@ -2152,6 +2152,22 @@ class Frameless_Scene_Props(PropertyGroup):
                        default='Full Top',
                        update=update_base_top_default)# type: ignore
 
+    # A rectangular hole through a base cabinet's full top: a hand hold
+    # for moving the cabinet and a reach-in for screwing it to the wall.
+    base_top_hand_hole: BoolProperty(name="Hand Hole in Base Tops",
+                       description="Cut a rectangular hand hole through the full top of base cabinets. "
+                                   "Skipped on finished interiors, cabinets under 16in wide or deep, "
+                                   "and cabinets over 60in tall",
+                       default=False,
+                       update=update_back_tongue_length)# type: ignore
+
+    base_top_hand_hole_margin: FloatProperty(name="Hand Hole Margin",
+                       description="Material left around the hand hole on every side of the top",
+                       default=units.inch(5.0),
+                       min=units.inch(1.0),
+                       unit='LENGTH',
+                       update=update_back_tongue_length)# type: ignore
+
     equal_drawer_stack_heights: BoolProperty(name="Equal Drawer Stack Heights", 
                                              description="Check this make all drawer stack heights equal. Otherwise the Top Drawer Height will be set.", 
                                                         default=False)# type: ignore
@@ -2610,7 +2626,12 @@ class Frameless_Scene_Props(PropertyGroup):
         row = size_box.row()
         row.label(text="Base Top Construction:")
         row.prop(self,'base_top_construction',text="")
-        row.operator('hb_frameless.update_base_top_construction_prompts',text="",icon='FILE_REFRESH')        
+        row.operator('hb_frameless.update_base_top_construction_prompts',text="",icon='FILE_REFRESH')
+        row = size_box.row()
+        row.prop(self,'base_top_hand_hole',text="Hand Hole")
+        sub = row.row()
+        sub.enabled = self.base_top_hand_hole
+        sub.prop(self,'base_top_hand_hole_margin',text="Margin")
         size_box = layout.box()            
         row = size_box.row()
         row.label(text="Drawers:")

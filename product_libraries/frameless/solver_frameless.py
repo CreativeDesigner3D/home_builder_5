@@ -573,6 +573,8 @@ def _solve_base(root, parts, p, dim_x, dim_y, dim_z):
         set_part(part, (mt, top_y, dim_z), length=inner,
                  width=dim_y + top_y, thickness=mt,
                  visible=p.btc == TOP_FULL)
+        _solve_hand_hole(root, part, p, dim_x, dim_y, dim_z,
+                         length=inner, width=dim_y + top_y)
 
     _solve_top_options(parts, p, dim_x, dim_y, dim_z, -p.sw - mt)
 
@@ -584,6 +586,40 @@ def _solve_base(root, parts, p, dim_x, dim_y, dim_z):
         _sync_bay_sink(root, part, dim_z - tkh - bottom_t)
 
     _solve_toe_kick_extras(parts, p, dim_x, dim_y, root)
+
+
+# Hand hole: a rectangle cut through a base cabinet's full top, leaving
+# the margin of material on every side - something to grab when the
+# cabinet is moved and a way to reach in and fasten it to the wall.
+HAND_HOLE_MOD_NAME = 'Hand Hole'
+HAND_HOLE_MIN_CASE = inch(16)    # narrower or shallower cases skip it
+HAND_HOLE_MAX_HEIGHT = inch(60)  # taller cases skip it
+HAND_HOLE_MIN_OPENING = inch(1)  # less than this left over is no hole
+
+
+def _solve_hand_hole(root, top, p, dim_x, dim_y, dim_z, length, width):
+    props = getattr(bpy.context.scene, 'hb_frameless', None)
+    margin = float(getattr(props, 'base_top_hand_hole_margin', inch(5)))
+    want = (bool(getattr(props, 'base_top_hand_hole', False))
+            and p.btc == TOP_FULL
+            and not root.get('Finished Interior', False)
+            and dim_x >= HAND_HOLE_MIN_CASE
+            and dim_y >= HAND_HOLE_MIN_CASE
+            and dim_z <= HAND_HOLE_MAX_HEIGHT
+            and length - margin * 2.0 >= HAND_HOLE_MIN_OPENING
+            and width - margin * 2.0 >= HAND_HOLE_MIN_OPENING)
+    mod = top.modifiers.get(HAND_HOLE_MOD_NAME)
+    if want and mod is None:
+        GeoNodeCutpart(top).add_part_modifier('CPM_CUTOUT', HAND_HOLE_MOD_NAME)
+        mod = top.modifiers.get(HAND_HOLE_MOD_NAME)
+    if mod is None:
+        return
+    # Through the board: the route runs a little past its thickness.
+    set_modifier(top, HAND_HOLE_MOD_NAME,
+                 (('X', margin), ('End X', length - margin),
+                  ('Y', margin), ('End Y', width - margin),
+                  ('Route Depth', p.mt + inch(0.0625))),
+                 visible=want)
 
 
 def _sync_bay_sink(root, bay_obj, top_z):
