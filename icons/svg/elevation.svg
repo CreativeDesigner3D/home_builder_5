@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="none" stroke="#fff" stroke-width="1" stroke-linecap="butt" stroke-linejoin="miter">
+  <!-- A wall face-on: its outline, a cabinet against it, a width dim below -->
+  <rect x="1.5" y="1.5" width="13" height="9"/>
+  <rect x="4" y="7" width="8" height="3" fill="#fff" fill-opacity=".35" stroke="none"/>
+  <path d="M3.5 10.5v-4h9v4M8 6.5v4M1.5 13.5h13M1.5 12v3M14.5 12v3"/>
+</svg>

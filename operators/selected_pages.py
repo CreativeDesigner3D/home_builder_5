@@ -666,6 +666,47 @@ _PAGES = {
 }
 
 
+# ---- Wall commands ---------------------------------------------------------------
+# The wall's right-click menu read straight onto the page came out as
+# fourteen buttons two to a row, with odd ones left alone on a row. The
+# page groups them instead: the elevation first, then what changes the
+# room, what is shown, what goes on the wall, and the rare ones in a
+# list beside Delete.
+
+def _wall_act(label, op_id, kwargs=None, icon=None, weight=1.0):
+    return (label, op_id, dict(kwargs or {}), None, weight, icon)
+
+
+def _wall_more(context):
+    return [("Wall Prompts", "home_builder_walls.wall_prompts", {'INVOKE': True}),
+            ("Delete All Snap Lines", "hb_frameless.delete_all_snap_lines",
+             {'INVOKE': True})]
+
+
+def _wall_commands(obj):
+    act = _wall_act
+    return [
+        ('actions', (act("Show Elevation", "home_builder.show_elevation",
+                         {'wall_name': obj.name}, 'elevation'),)),
+        ('gap', None),
+        ('label', "Room"),
+        ('actions', (act("Room Size", "home_builder_walls.change_room_size"),
+                     act("Curve Wall", "home_builder_walls.curve_wall"),
+                     act("Fix Corners", "home_builder_walls.update_wall_miters"))),
+        ('label', "Visibility"),
+        ('actions', (act("Hide", "home_builder_walls.hide_wall"),
+                     act("Isolate", "home_builder_walls.isolate_selected_walls"),
+                     act("Show All", "home_builder_walls.show_all_walls"))),
+        ('label', "Add to Wall"),
+        ('actions', (act("Cutter", "home_builder_walls.draw_wall_cutter"),
+                     act("Soffit", "home_builder_walls.add_soffit"),
+                     act("Snap Line", "hb_frameless.place_snap_line"))),
+        ('gap', None),
+        ('actions', (("More  ›", _wall_more, None, None, 1.0, None),
+                     act("Delete Wall", "home_builder_walls.delete_wall"))),
+    ]
+
+
 # ---- The page --------------------------------------------------------------------
 
 _opened = set()
@@ -687,6 +728,10 @@ def blocks(context, item):
     out.extend(options_panel.field_blocks(context, (
         ('group', key, label_fn(obj), options),
     ), owner))
+    if kind == 'wall':
+        out.append(('gap', None))
+        out.extend(_wall_commands(obj))
+        return out
     menu = generic_page.menu_id(context.active_object) or generic_page.menu_id(obj)
     if menu:
         out.append(('gap', None))

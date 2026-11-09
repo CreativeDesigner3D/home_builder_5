@@ -530,6 +530,13 @@ def _style_settings(owner):
             'settings', "Style Settings")
 
 
+def _style_menu_actions(owner):
+    """Under the styles in the Style dropdown: start a new one."""
+    cs = _cabinet_style(owner)[1]
+    return [("Add Style Section", 'hb_face_frame.add_style_section',
+             {'source': cs.name if cs is not None else ""}, 'ADD')]
+
+
 def style_blocks(context, owner, prop='style_section'):
     """The style section row: which style the pick carries, switched in
     place, with its everyday settings a click away. `owner` is a
@@ -540,7 +547,7 @@ def style_blocks(context, owner, prop='style_section'):
     return options_panel.field_blocks(context, (
         ('enum', prop, "Style",
          {'when': _has_styles, 'color': _style_color, 'tip': _style_details,
-          'action': _style_settings}),
+          'action': _style_settings, 'menu_actions': _style_menu_actions}),
     ), owner)
 
 

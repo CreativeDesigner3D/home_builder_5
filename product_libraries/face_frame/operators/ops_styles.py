@@ -831,6 +831,63 @@ class hb_face_frame_OT_assign_style_to_selected_cabinets(Operator):
         return {'FINISHED'}
 
 
+class hb_face_frame_OT_add_style_section(Operator):
+    """Add a new style section and put it on what is picked"""
+    bl_idname = "hb_face_frame.add_style_section"
+    bl_label = "Add Style Section"
+    bl_description = ("Add a new style section, copied from the picked "
+                      "cabinet's style, and assign it to the picked cabinets")
+    bl_options = {'REGISTER', 'UNDO'}
+
+    # The style the copy starts from; empty uses the active one.
+    source: bpy.props.StringProperty()  # type: ignore
+
+    def _targets(self, context):
+        targets = {}
+        objs = list(context.selected_objects)
+        if context.active_object is not None and not objs:
+            objs = [context.active_object]
+        for obj in objs:
+            target = props_hb_face_frame.style_target(obj)
+            if target is not None:
+                targets.setdefault(target[1].name, target[1])
+        return list(targets.values())
+
+    def execute(self, context):
+        ff = get_style_props(context)
+        styles = ff.cabinet_styles
+        src_i = _style_named(context, self.source)[0] if self.source else -1
+        if src_i >= 0:
+            ff.active_cabinet_style_index = src_i
+        before = len(styles)
+        bpy.ops.hb_face_frame.add_cabinet_style()
+        if len(styles) == before:
+            self.report({'WARNING'}, "No style section was added")
+            return {'CANCELLED'}
+        style = styles[len(styles) - 1]
+        targets = self._targets(context)
+        for obj in targets:
+            props_hb_face_frame.assign_style_to_object(style, obj)
+        _refresh_style_colors(context)
+        self._added = style.name
+        self.report({'INFO'}, "Added %s%s" % (
+            style.name, " to %d item(s)" % len(targets) if targets else ""))
+        return {'FINISHED'}
+
+    def invoke(self, context, event):
+        self._added = ""
+        result = self.execute(context)
+        # Straight into the new style's everyday settings: a copy is
+        # only made to be changed.
+        if 'FINISHED' in result and self._added:
+            try:
+                bpy.ops.hb_face_frame.style_quick_settings(
+                    'INVOKE_DEFAULT', style_name=self._added)
+            except Exception as ex:
+                print('Home Builder: style settings failed:', ex)
+        return result
+
+
 def _style_named(context, name):
     for i, cs in enumerate(get_style_props(context).cabinet_styles):
         if cs.name == name:
@@ -2459,6 +2516,7 @@ classes = (
     hb_face_frame_OT_matching_drawer_front,
     hb_face_frame_OT_front_style_wizard,
     hb_face_frame_OT_assign_style_to_selected_cabinets,
+    hb_face_frame_OT_add_style_section,
     hb_face_frame_OT_style_quick_settings,
     hb_face_frame_OT_style_open_full_settings,
     hb_face_frame_OT_update_cabinets_from_style,

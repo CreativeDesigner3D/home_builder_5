@@ -54,6 +54,7 @@ from bpy_extras import view3d_utils
 from .. import hb_types
 from .. import units
 from .. import hb_dim_style
+from ..hb_icons import icon_glyph
 from ..hb_gpu_draw import (get_visible_window_bounds, draw_round_rect,
                            draw_soft_shadow, draw_glyphs, draw_lines,
                            point_in_rect)
@@ -1654,7 +1655,7 @@ def _register_hud():
         from . import viewport_hud
         viewport_hud.register_mode_glyph_toggle(
             'hb_elevation', 'hb_elevation_mode', "Show Elevation",
-            "Exit Elevation", glyph=_glyph_elevation,
+            "Exit Elevation", glyph=icon_glyph('elevation', _glyph_elevation),
             ui_visible=_hud_visible, order=40)
     except Exception as exc:
         print("Elevation HUD toggle skipped:", exc)

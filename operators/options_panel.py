@@ -2780,7 +2780,8 @@ def hit(context, mx, my, entries):
             if fkind == 'enum' and point_in_rect(mx, my, value_rect):
                 open_enum_menu(context, owner, prop, label,
                                custom=options.get('custom_toggle'),
-                               icon=options.get('swatch_icon'))
+                               icon=options.get('swatch_icon'),
+                               extra=options.get('menu_actions'))
                 return True
             if fkind == 'thumb' and point_in_rect(mx, my, value_rect):
                 from . import thumb_picker
@@ -3022,15 +3023,27 @@ def _set_target(owner, prop):
 # turns the field into typed text, or None for a plain list.
 _menu_custom = None
 _menu_icon = None
+# Commands listed under the values: fn(owner) -> [(label, operator,
+# kwargs, icon)], read as the menu opens (an enum field's 'menu_actions').
+_menu_extra = ()
 
 
-def open_enum_menu(context, owner, prop, title="", custom=None, icon=None):
+def open_enum_menu(context, owner, prop, title="", custom=None, icon=None,
+                   extra=None):
     """``icon`` is fn(owner, identifier) -> icon_id, for a menu whose
-    items have pictures (finish colours); the pick is shown pressed."""
-    global _menu_custom, _menu_icon
+    items have pictures (finish colours); the pick is shown pressed.
+    ``extra`` is fn(owner) -> [(label, operator, kwargs, icon)]: commands
+    listed under the values, such as adding a new one."""
+    global _menu_custom, _menu_icon, _menu_extra
     if _set_target(owner, prop):
         _menu_custom = custom
         _menu_icon = icon
+        _menu_extra = ()
+        if extra is not None:
+            try:
+                _menu_extra = tuple(extra(owner) or ())
+            except Exception as ex:
+                print('Home Builder: %s menu commands failed: %s' % (prop, ex))
         _open_popup(title, _draw_enum_menu)
 
 
@@ -3153,6 +3166,13 @@ def _draw_enum_menu(menu, context):
         layout.separator()
         layout.operator('home_builder.options_set_custom',
                         text="Type a Custom Value", icon='GREASEPENCIL')
+    if _menu_extra:
+        layout.separator()
+        layout.operator_context = 'INVOKE_DEFAULT'
+        for label, op_id, kwargs, icon in _menu_extra:
+            op = layout.operator(op_id, text=label, icon=icon or 'NONE')
+            for key, value in (kwargs or {}).items():
+                setattr(op, key, value)
 
 
 def _draw_native(popover, context):
