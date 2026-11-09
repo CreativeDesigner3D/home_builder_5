@@ -736,6 +736,8 @@ def update_show_machining(self,context):
     print('UPDATE SHOW MACHINING',self.show_machining)
 
 def update_frameless_selection_mode(self,context):
+    from . import drill_frameless
+    drill_frameless.note_mode_change(self.frameless_selection_mode)
     bpy.ops.hb_frameless.toggle_mode(search_obj_name="")
 
 

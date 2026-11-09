@@ -7,6 +7,7 @@ from . import types_products
 from . import dim_edit_overlay
 from . import quiet_cages
 from . import selected_card
+from . import drill_frameless
 
 NAMESPACE = "hb_frameless"
 MENU_NAME = "Frameless"
@@ -19,8 +20,10 @@ def register():
     dim_edit_overlay.register()
     quiet_cages.register()
     selected_card.register()
+    drill_frameless.register()
 
 def unregister():
+    drill_frameless.unregister()
     selected_card.unregister()
     quiet_cages.unregister()
     dim_edit_overlay.unregister()
