@@ -225,6 +225,33 @@ def exposed_ends(context, frame, members):
     return not closed(first.x0, 'left'), not closed(last.x1, 'right')
 
 
+def end_fillers(context, frame, members):
+    """(left, right): the wall scribe filler standing against each end
+    of the stretch, on the same floor and in line with it, or None."""
+    first, last = members[0], members[-1]
+    y_back, y_front = first.y, first.y - first.depth
+    to_frame = frame.inverted()
+    left = right = None
+    for obj in context.scene.objects:
+        if obj.get('PART_TYPE') != 'CORNER_FILLER':
+            continue
+        try:
+            points = [to_frame @ p for p in countertop_common.footprint(obj)]
+        except Exception:
+            continue
+        if abs(points[0].z - first.z) > units.inch(1.0):
+            continue
+        xs = [p.x for p in points]
+        ys = [p.y for p in points]
+        if max(ys) <= y_front + ALIGN_TOL or min(ys) >= y_back - ALIGN_TOL:
+            continue
+        if abs(max(xs) - first.x0) <= JOIN_GAP:
+            left = obj
+        elif abs(min(xs) - last.x1) <= JOIN_GAP:
+            right = obj
+    return left, right
+
+
 # ---------------------------------------------------------------------------
 # Building
 # ---------------------------------------------------------------------------
@@ -257,6 +284,19 @@ def create_base_assembly(context, frame, members):
     obj.matrix_parent_inverse.identity()
     obj.location = local.to_translation()
     obj.rotation_euler = local.to_euler()
+
+    # Under a wall scribe filler the kick face runs on to the wall by the
+    # filler's width, and the filler leaves out its own kick piece.
+    fillers = end_fillers(context, frame, members)
+    for filler, key in zip(fillers, ('Left Front Extension',
+                                     'Right Front Extension')):
+        if filler is None:
+            continue
+        obj[key] = hb_types.GeoNodeCage(filler).get_input('Dim X')
+        filler['Toe Kick Piece'] = False
+        types_products.recalculate_product(filler)
+    if any(fillers):
+        types_products.recalculate_product(obj)
     return obj
 
 

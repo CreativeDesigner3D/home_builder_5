@@ -1494,7 +1494,10 @@ class PlaceCabinetBase(WallObjectPlacementMixin):
         filler_obj['Toe Kick Setback'] = (
             float(nb.get('Toe Kick Setback', props.default_toe_kick_setback))
             if has_kick else 0.0)
-        # A back-side filler is turned 180, which swaps its sides.
+        # A separate toe kick platform runs on under the filler.
+        filler_obj['Toe Kick Piece'] = (
+            int(nb.get('Toe Kick Type', -1)) != ops_base_assembly.LADDER_STYLE)
+# A back-side filler is turned 180, which swaps its sides.
         filler_obj['Cabinet On Right'] = (on_wall_right if self.place_on_front
                                           else not on_wall_right)
         types_products.recalculate_product(filler_obj)
@@ -1511,7 +1514,9 @@ class PlaceCabinetBase(WallObjectPlacementMixin):
         has_kick = self.cabinet_type in ('BASE', 'TALL')
         filler.toe_kick_height = props.default_toe_kick_height if has_kick else 0.0
         filler.toe_kick_setback = props.default_toe_kick_setback if has_kick else 0.0
-        # A back-side run is turned 180, which swaps which local side
+        # A separate toe kick platform runs on under the filler.
+        filler.kick_piece = props.default_toe_kick_type != 'Ladder Style'
+# A back-side run is turned 180, which swaps which local side
         # the cabinet is on.
         filler.cabinet_on_right = cabinet_on_right if self.place_on_front else not cabinet_on_right
         filler.create('Wall Scribe Filler')

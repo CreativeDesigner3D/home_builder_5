@@ -1051,6 +1051,8 @@ def _solve_corner_filler(root, parts, dim_x, dim_y, dim_z):
     cab_right = bool(root.get('Cabinet On Right', True))
     # Fillers built before the option stood in the door plane.
     on_doors = bool(root.get('Flush With Doors', True))
+    # Off over a separate toe kick platform, which runs on under it.
+    kick_on = bool(root.get('Toe Kick Piece', True))
     face_y = -dim_y + (0.0 if on_doors else FRONT_THICKNESS)
 
     part = parts.get('FILLER_FACE')
@@ -1061,7 +1063,8 @@ def _solve_corner_filler(root, parts, dim_x, dim_y, dim_z):
     part = parts.get('FILLER_KICK')
     if part is not None:
         _set_part(part, (0.0, face_y + tks, 0.0),
-                  length=tkh, width=dim_x, thickness=mt, visible=tkh > 0.0)
+                  length=tkh, width=dim_x, thickness=mt,
+                  visible=tkh > 0.0 and kick_on)
 
     # The return is inside the filler's own width, so it lies against
     # the cabinet side rather than into the cabinet.
@@ -1102,6 +1105,7 @@ class CornerFiller(Product):
         self.toe_kick_setback = props.default_toe_kick_setback
         self.cabinet_on_right = True
         self.flush_with_doors = scribe_filler_flush_with_doors()
+        self.kick_piece = True
 
     def add_properties(self):
         self.add_property('Toe Kick Height', 'DISTANCE', self.toe_kick_height)
@@ -1109,6 +1113,7 @@ class CornerFiller(Product):
         self.add_property('Return Depth', 'DISTANCE', self.return_depth)
         self.add_property('Cabinet On Right', 'CHECKBOX', self.cabinet_on_right)
         self.add_property('Flush With Doors', 'CHECKBOX', self.flush_with_doors)
+        self.add_property('Toe Kick Piece', 'CHECKBOX', self.kick_piece)
 
     def create(self, name="Wall Scribe Filler"):
         self.create_product(name)
@@ -1341,10 +1346,14 @@ def _solve_base_assembly(root, parts, dim_x, dim_y, dim_z):
     spacing = float(_prompt(root, 'Support Spacing',
                             BASE_ASSEMBLY_SUPPORT_SPACING))
 
+    # The kick face runs on past an end under a wall scribe filler, to
+    # the wall; the end itself stays under the cabinet side.
+    ext_l = float(_prompt(root, 'Left Front Extension', 0.0))
+    ext_r = float(_prompt(root, 'Right Front Extension', 0.0))
     part = parts.get('BASE_FRONT')
     if part is not None:
-        _set_part(part, (0.0, -dim_y, 0.0),
-                  length=dim_x, width=dim_z, thickness=mt)
+        _set_part(part, (-ext_l, -dim_y, 0.0),
+                  length=dim_x + ext_l + ext_r, width=dim_z, thickness=mt)
 
     part = parts.get('BASE_BACK')
     if part is not None:
@@ -1399,6 +1408,8 @@ class BaseAssembly(Product):
         self.add_properties_common()
         self.add_property('Support Spacing', 'DISTANCE',
                           BASE_ASSEMBLY_SUPPORT_SPACING)
+        self.add_property('Left Front Extension', 'DISTANCE', 0.0)
+        self.add_property('Right Front Extension', 'DISTANCE', 0.0)
 
         self.add_part('Front', 'BASE_FRONT', rotation=(90, 0, 0), mirror='Z',
                       finish=BASE_ASSEMBLY_FINISH['BASE_FRONT'])

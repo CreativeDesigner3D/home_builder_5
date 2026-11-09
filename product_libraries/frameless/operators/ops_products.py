@@ -260,6 +260,8 @@ class hb_frameless_OT_product_prompts(bpy.types.Operator):
                 row = col.row(align=True)
                 row.label(text=label)
                 row.prop(obj, '["%s"]' % key, text="")
+            if 'Toe Kick Piece' in obj:
+                col.prop(obj, '["Toe Kick Piece"]', text="Toe Kick Piece")
 
     def draw_voided_corner(self, layout, obj):
         box = layout.box()
