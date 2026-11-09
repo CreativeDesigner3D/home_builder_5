@@ -28,6 +28,15 @@ PART_CLASS_MAP = {
     'Voided Corner Upper': types_products.VoidedCornerUpper,
 }
 
+
+def wall_filler_name(cabinet_type):
+    """A placed wall scribe filler is named for the cabinet it stands
+    beside ("Base Wall Filler", "Upper Wall Filler", "Tall Wall Filler"),
+    which is the name it carries into the cut list."""
+    kind = {'BASE': 'Base', 'UPPER': 'Upper', 'TALL': 'Tall'}.get(
+        str(cabinet_type or '').upper())
+    return f"{kind} Wall Filler" if kind else "Wall Scribe Filler"
+
 # Products placed into a corner the way a corner cabinet is.
 CORNER_PRODUCTS = ('Voided Corner Base', 'Voided Corner Tall',
                    'Voided Corner Upper')
@@ -1500,6 +1509,7 @@ class PlaceCabinetBase(WallObjectPlacementMixin):
 # A back-side filler is turned 180, which swaps its sides.
         filler_obj['Cabinet On Right'] = (on_wall_right if self.place_on_front
                                           else not on_wall_right)
+        filler_obj.name = wall_filler_name(nb.get('CABINET_TYPE'))
         types_products.recalculate_product(filler_obj)
 
     def create_corner_filler(self, context, wall_thickness, x, cabinet_on_right):
@@ -1519,7 +1529,7 @@ class PlaceCabinetBase(WallObjectPlacementMixin):
 # A back-side run is turned 180, which swaps which local side
         # the cabinet is on.
         filler.cabinet_on_right = cabinet_on_right if self.place_on_front else not cabinet_on_right
-        filler.create('Wall Scribe Filler')
+        filler.create(wall_filler_name(self.cabinet_type))
         filler.obj.parent = self.selected_wall
         filler.obj.location.z = self.get_cabinet_z_location(context)
         if self.place_on_front:
