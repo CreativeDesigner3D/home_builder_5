@@ -177,6 +177,8 @@ def _draw_add_part_entries(layout):
                     text="Adjustable Shelves...", icon='ALIGN_JUSTIFY')
     layout.operator("hb_closets.divide_opening",
                     text="Divide Opening...", icon='MOD_ARRAY')
+    layout.operator("hb_closets.split_opening",
+                    text="Split with Fixed Shelf...", icon='SPLIT_HORIZONTAL')
     # A column of a divided opening can open the division that made
     # it again, as the reference's splitter did on right-click.
     if types_closets.division_to_edit(bpy.context.active_object):

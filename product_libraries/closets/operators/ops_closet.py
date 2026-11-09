@@ -4072,6 +4072,91 @@ class hb_closets_OT_divide_opening(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class hb_closets_OT_split_opening(bpy.types.Operator):
+    """Split the active opening top and bottom with a fixed shelf at a
+    set height. Each part is an opening of its own and takes its own
+    contents - the same split a fixed shelf from the library makes,
+    typed in rather than placed with the mouse."""
+    bl_idname = "hb_closets.split_opening"
+    bl_label = "Split with Fixed Shelf"
+    bl_options = {'UNDO'}
+
+    height: bpy.props.FloatProperty(
+        name="Opening Below",
+        description="Room under the shelf, from the bottom of the "
+                    "opening. Snaps to the nearest system hole",
+        default=0.0, min=0.0, unit='LENGTH',
+        precision=4)  # type: ignore
+
+    @classmethod
+    def poll(cls, context):
+        opening = _active_opening_for_insert(context)
+        if opening is None:
+            return False
+        if opening.get(types_closets.TAG_CORNER_OPENING_CAGE):
+            cls.poll_message_set(
+                "Place a corner shelf from the library instead")
+            return False
+        return True
+
+    @staticmethod
+    def _interior_h(opening):
+        try:
+            return float(hb_types.GeoNodeCage(opening).get_input('Dim Z'))
+        except Exception:
+            return 0.0
+
+    @staticmethod
+    def _snap(opening, z):
+        # Holes are laid out from the bay interior bottom, so snap in
+        # bay terms and come back to the opening.
+        seg_bottom = float(opening.get('hb_seg_bottom', 0.0))
+        return const.snap_system_hole(seg_bottom + z) - seg_bottom
+
+    def invoke(self, context, event):
+        opening = _active_opening_for_insert(context)
+        h = self._interior_h(opening)
+        st = float(types_closets.run_sizes(opening).shelf_thickness)
+        self.height = max(0.0, self._snap(opening, (h - st) / 2.0))
+        return context.window_manager.invoke_props_dialog(self)
+
+    def draw(self, context):
+        layout = self.layout
+        layout.prop(self, 'height')
+        opening = _active_opening_for_insert(context)
+        if opening is not None:
+            h = self._interior_h(opening)
+            st = float(types_closets.run_sizes(opening).shelf_thickness)
+            z = self._snap(opening, self.height)
+            unit_settings = context.scene.unit_settings
+            layout.label(text="Opening Above: " + units.unit_to_string(
+                unit_settings, max(0.0, h - z - st)))
+
+    def execute(self, context):
+        opening = _active_opening_for_insert(context)
+        if opening is None:
+            return {'CANCELLED'}
+        root = types_closets.find_starter_root(opening)
+        if root is None:
+            return {'CANCELLED'}
+        h = self._interior_h(opening)
+        st = float(types_closets.run_sizes(opening).shelf_thickness)
+        z = self._snap(opening, float(self.height))
+        if z < const.SYSTEM_PITCH or z + st > h - const.SYSTEM_PITCH:
+            self.report({'WARNING'},
+                        "Put the shelf inside the opening, clear of its "
+                        "top and bottom")
+            return {'CANCELLED'}
+        shelf = types_closets.add_fixed_shelf(opening, z)
+        # A lock shelf, like one dropped from the library, so it can be
+        # put back on clips later.
+        shelf[types_closets.PROP_SHELF_LOCKED] = 1
+        _apply_finish(root)
+        types_closets.recalculate_closet_starter(root)
+        _apply_selection_shading(context, root, keep_active=False)
+        return {'FINISHED'}
+
+
 class hb_closets_OT_add_rollouts(_ClosetInsertDialog, bpy.types.Operator):
     """Set the pull-out (rollout) trays for the active opening. A tray
     stands the given Rollout Height and the stack is spaced evenly (0
@@ -12311,6 +12396,7 @@ classes = (
     hb_closets_OT_add_doors,
     hb_closets_OT_add_cubbies,
     hb_closets_OT_divide_opening,
+    hb_closets_OT_split_opening,
     hb_closets_OT_add_rollouts,
     hb_closets_OT_add_slanted_shelves,
     hb_closets_OT_add_accessory,
