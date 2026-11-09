@@ -9729,20 +9729,23 @@ class hb_closets_OT_starter_prompts(bpy.types.Operator):
         # what happens at the top first - the accent shelf, then the
         # hang rail it mounts by - the panels and what hangs on them in
         # the middle, and the floor - insets, then the toe kick - last.
-        # Per Bay stands between the middle and the floor.
-        if not is_corner:
+        # Per Bay stands between the middle and the floor. A corner
+        # unit builds its own L-shaped accent shelf, so it gets the
+        # section too; a corner filler has no accent shelf to build.
+        box = None
+        if not getattr(cls, 'is_filler', False):
             box = _section(layout, sp, 'show_top', "Top")
-            if box is not None:
-                col = box.column(align=True)
-                col.prop(sp, 'add_top_accent_shelf')
-                sub = col.column(align=True)
-                sub.enabled = sp.add_top_accent_shelf
-                sub.prop(sp, 'top_accent_overhang')
-                sub.prop(sp, 'top_accent_set_sides')
-                row = sub.row(align=True)
-                row.enabled = sp.top_accent_set_sides
-                row.prop(sp, 'top_accent_overhang_left')
-                row.prop(sp, 'top_accent_overhang_right')
+        if box is not None:
+            col = box.column(align=True)
+            col.prop(sp, 'add_top_accent_shelf')
+            sub = col.column(align=True)
+            sub.enabled = sp.add_top_accent_shelf
+            sub.prop(sp, 'top_accent_overhang')
+            sub.prop(sp, 'top_accent_set_sides')
+            row = sub.row(align=True)
+            row.enabled = sp.top_accent_set_sides
+            row.prop(sp, 'top_accent_overhang_left')
+            row.prop(sp, 'top_accent_overhang_right')
 
         if getattr(cls, 'has_hang_rail', False):
             box = _section(layout, sp, 'show_hang_rail', "Hang Rail")
