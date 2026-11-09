@@ -902,11 +902,25 @@ class hb_face_frame_OT_style_quick_settings(Operator):
     bl_options = {'INTERNAL'}
 
     style_name: bpy.props.StringProperty()  # type: ignore
+    # Where the style sits, so the popup keeps it after the name field
+    # renames it.
+    style_index: bpy.props.IntProperty(default=-1)  # type: ignore
+
+    def _style(self, context):
+        i, cs = _style_named(context, self.style_name)
+        if cs is None:
+            styles = get_style_props(context).cabinet_styles
+            if 0 <= self.style_index < len(styles):
+                i, cs = self.style_index, styles[self.style_index]
+                self.style_name = cs.name
+        return i, cs
 
     def invoke(self, context, event):
-        if _style_named(context, self.style_name)[1] is None:
+        i, cs = _style_named(context, self.style_name)
+        if cs is None:
             self.report({'WARNING'}, "No style to edit")
             return {'CANCELLED'}
+        self.style_index = i
         return context.window_manager.invoke_popup(self, width=320)
 
     def execute(self, context):
@@ -915,11 +929,11 @@ class hb_face_frame_OT_style_quick_settings(Operator):
     def draw(self, context):
         from .. import style_options
         layout = self.layout
-        _i, cs = _style_named(context, self.style_name)
+        _i, cs = self._style(context)
         if cs is None:
             layout.label(text="This style was removed", icon='ERROR')
             return
-        layout.label(text=cs.name, icon='MATERIAL')
+        layout.prop(cs, "name", text="", icon='MATERIAL')
         col = layout.column(align=True)
         cs._draw_toggle_field(col, "finish_wood", "Wood", "ss_wood")
         cs._draw_toggle_field(col, "finish_color", "Color", "ss_color")
