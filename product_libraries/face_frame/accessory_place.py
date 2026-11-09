@@ -34,14 +34,96 @@ DRAWER_BOX_MENU = 'HOME_BUILDER_MT_face_frame_drawer_box_commands'
 
 def target_for(obj):
     """The interior region or opening cage owning ``obj`` (itself
-    included), or None."""
+    included), or None. On a frameless cabinet: the drawer opening, or
+    the door / open opening (or division section) that keeps catalog
+    accessories."""
     cur = obj
     while cur is not None:
         if (cur.get(types_face_frame.TAG_INTERIOR_REGION)
                 or cur.get(types_face_frame.TAG_OPENING_CAGE)):
             return cur
         cur = cur.parent
-    return None
+    if obj is None:
+        return None
+    fl = _frameless_items()
+    if fl is None:
+        return None
+    drawer = fl.drawer_opening_for(obj)
+    if drawer is not None:
+        return drawer
+    return fl.accessory_host(obj)
+
+
+# ---- Frameless targets --------------------------------------------------------
+# Frameless openings keep catalog accessories on the opening cage (drawers
+# and pullouts on the drawer opening, the rest on the door / open opening
+# or division section), as the frameless right-click menus add them. The
+# panel browser and placing go through the same functions.
+
+_FRAMELESS_DRAWER_HOST = 'drawer_accessory'
+
+
+def _frameless_items():
+    try:
+        from ..frameless import interior_items
+    except Exception:
+        return None
+    return interior_items
+
+
+def _is_frameless(target):
+    return bool(target is not None and (
+        target.get('IS_FRAMELESS_OPENING_CAGE')
+        or target.get('IS_FRAMELESS_INTERIOR_SECTION')
+        or target.get('IS_FRAMELESS_BAY_CAGE')))
+
+
+def _is_frameless_drawer(target):
+    fl = _frameless_items()
+    return fl is not None and fl.drawer_opening_for(target) is target
+
+
+def _target_hosts(target):
+    """Catalog host keys ``target`` takes."""
+    if _is_frameless(target):
+        if _is_frameless_drawer(target):
+            return {_FRAMELESS_DRAWER_HOST}
+        return set(_frameless_items().accessory_hosts_for(target))
+    return ops_cabinet._valid_accessory_hosts(target)
+
+
+def _check_fit_frameless(target, item):
+    host = item.get('host')
+    if host not in _target_hosts(target):
+        return False, ("Doesn't go in a drawer"
+                       if _is_frameless_drawer(target)
+                       else "Doesn't go in this opening")
+    mw = item.get('min_opening_w')
+    if mw:
+        from ..frameless import solver_frameless
+        ow = meter_to_inch(solver_frameless.cage_dims(target)[0])
+        if ow + 1e-6 < mw:
+            return False, 'Opening is %g" wide, needs %g"' % (
+                round(ow, 3), mw)
+    return True, ""
+
+
+def apply_to_target(op, context, target, code, item):
+    """Add catalog accessory ``code`` to ``target``; {'FINISHED'} when
+    it went on."""
+    if not _is_frameless(target):
+        return ops_cabinet._apply_accessory_choice(
+            op, context, target, code, item, 0.0)
+    fl = _frameless_items()
+    if _is_frameless_drawer(target):
+        if fl.add_drawer_accessory(target, code) is None:
+            return {'CANCELLED'}
+        from ... import hb_utils
+        hb_utils.run_calc_fix(context, target)
+        return {'FINISHED'}
+    if fl.add_opening_accessory(target, code) is None:
+        return {'CANCELLED'}
+    return {'FINISHED'}
 
 
 def _front_word(front):
@@ -55,6 +137,8 @@ def check_fit(target, item):
     cage or interior region)."""
     if target is None:
         return False, "Point at an opening or a drawer"
+    if _is_frameless(target):
+        return _check_fit_frameless(target, item)
     host = item.get('host')
     if host not in ops_cabinet._valid_accessory_hosts(target):
         opening = ops_cabinet._find_owning_opening(target)
@@ -98,7 +182,7 @@ def _valid_hosts(targets):
         return set(ops_cabinet._ALL_ACCESSORY_HOSTS)
     valid = set()
     for t in targets:
-        valid |= ops_cabinet._valid_accessory_hosts(t)
+        valid |= _target_hosts(t)
     return valid
 
 
@@ -232,8 +316,8 @@ class hb_face_frame_OT_apply_accessory(bpy.types.Operator):
             if not ok:
                 skipped.append(why)
                 continue
-            if ops_cabinet._apply_accessory_choice(
-                    self, context, t, self.code, item, 0.0) == {'FINISHED'}:
+            if apply_to_target(
+                    self, context, t, self.code, item) == {'FINISHED'}:
                 added += 1
         msg = "Added %s to %d" % (item.get('name', self.code), added)
         if skipped:
@@ -409,9 +493,9 @@ class hb_face_frame_OT_place_accessory(bpy.types.Operator):
             if not _hover['ok']:
                 self.report({'WARNING'}, _hover['why'])
                 return {'RUNNING_MODAL'}
-            if ops_cabinet._apply_accessory_choice(
-                    self, context, target, self.code, self.item,
-                    0.0) == {'FINISHED'}:
+            if apply_to_target(
+                    self, context, target, self.code,
+                    self.item) == {'FINISHED'}:
                 self.added += 1
                 bpy.ops.ed.undo_push(message="Add Accessory")
             self._update(context, event)

@@ -246,10 +246,18 @@ OPTION_FORMS = (
     ("Handles", 'draw_cabinet_options_handles'),
     ("General Construction", 'draw_cabinet_options_general'),
     ("Drawer Boxes", 'draw_drawer_box_ui'),
+    ("Accessories", 'draw_accessories_ui'),
     ("Molding", 'draw_molding_ui'),
     ("Light Rail", 'draw_light_rail_ui'),
     ("Countertops & Backsplash", 'draw_countertop_ui'),
 )
+
+
+def _accessory_blocks(context):
+    # The catalog browser is shared with the face frame library; it
+    # knows frameless drawers and door / open openings as targets.
+    from ..face_frame import accessory_place
+    return accessory_place.browse_blocks(context, 'options')
 
 # Sections drawn INSIDE the viewport panel rather than opened as a
 # dialog, keyed by the same draw-method name as OPTION_FORMS: a row
@@ -259,6 +267,12 @@ OPTION_FORMS = (
 # commands below it. Fields are (kind, property, label); actions are
 # rows of (label, operator).
 OPTION_PAGES = {
+    # The catalog's accessories, browsed in the panel: a click adds one
+    # to the selected openings and drawers, or starts placing it.
+    'draw_accessories_ui': {
+        'kind': 'blocks',
+        'blocks': _accessory_blocks,
+    },
     'draw_cabinet_styles_ui': {
         'kind': 'pool',
         'title': "Cabinet Styles",
