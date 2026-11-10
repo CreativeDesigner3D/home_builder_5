@@ -5355,6 +5355,22 @@ class hb_closets_OT_misc_part_prompts(bpy.types.Operator):
         name="Part Thickness", min=0.0,
         unit='LENGTH', precision=4,
         options={'SKIP_SAVE'})  # type: ignore
+    l_left_depth: bpy.props.FloatProperty(
+        name="Side Wall Wing Depth",
+        description="How deep the wing along the side wall is",
+        min=0.0, unit='LENGTH', precision=4)  # type: ignore
+    l_right_depth: bpy.props.FloatProperty(
+        name="Back Wall Wing Depth",
+        description="How deep the wing along the back wall is",
+        min=0.0, unit='LENGTH', precision=4)  # type: ignore
+    l_use_radius: bpy.props.BoolProperty(
+        name="Radius Front Corner",
+        description="Round the inside front corner instead of cutting "
+                    "it square")  # type: ignore
+    l_corner_radius: bpy.props.FloatProperty(
+        name="Corner Radius",
+        description="Radius of the rounded inside front corner",
+        min=0.0, unit='LENGTH', precision=4)  # type: ignore
     band_w1: bpy.props.BoolProperty(
         name="W1", description="Edgeband the first width edge")  # type: ignore
     band_w2: bpy.props.BoolProperty(
@@ -5407,6 +5423,15 @@ class hb_closets_OT_misc_part_prompts(bpy.types.Operator):
         self.rot_x = float(obj.rotation_euler.x)
         self.rot_y = float(obj.rotation_euler.y)
         self.rot_z = float(obj.rotation_euler.z)
+        if types_closets.is_loose_l_shelf(obj):
+            self.l_left_depth = float(
+                obj.get(types_closets.PROP_LOOSE_L_LEFT, 0.0))
+            self.l_right_depth = float(
+                obj.get(types_closets.PROP_LOOSE_L_RIGHT, 0.0))
+            self.l_use_radius = bool(
+                obj.get(types_closets.PROP_LOOSE_L_ROUND, True))
+            self.l_corner_radius = float(
+                obj.get(types_closets.PROP_LOOSE_L_RADIUS, 0.0))
         # Banded edges are the part's own choice, unbanded until told.
         for key in MISC_BAND_EDGES:
             setattr(self, 'band_' + key.lower(), bool(obj.get('hb_band_' + key)))
@@ -5425,6 +5450,17 @@ class hb_closets_OT_misc_part_prompts(bpy.types.Operator):
         row = col.row()
         row.enabled = False
         row.prop(self, 'thickness')
+        if types_closets.is_loose_l_shelf(context.active_object):
+            box = layout.box()
+            box.label(text="Corner", icon='MOD_BEVEL')
+            col = box.column(align=True)
+            col.prop(self, 'l_left_depth')
+            col.prop(self, 'l_right_depth')
+            col = box.column(align=True)
+            col.prop(self, 'l_use_radius')
+            sub = col.column(align=True)
+            sub.enabled = self.l_use_radius
+            sub.prop(self, 'l_corner_radius')
         box = layout.box()
         box.label(text="Location", icon='ORIENTATION_LOCAL')
         col = box.column(align=True)
@@ -5459,6 +5495,13 @@ class hb_closets_OT_misc_part_prompts(bpy.types.Operator):
             part.set_input('Width', float(self.width))
         except Exception:
             pass
+        if types_closets.is_loose_l_shelf(obj):
+            obj[types_closets.PROP_LOOSE_L_LEFT] = float(self.l_left_depth)
+            obj[types_closets.PROP_LOOSE_L_RIGHT] = float(self.l_right_depth)
+            obj[types_closets.PROP_LOOSE_L_ROUND] = bool(self.l_use_radius)
+            obj[types_closets.PROP_LOOSE_L_RADIUS] = float(
+                self.l_corner_radius)
+            types_closets.layout_loose_l_shelf(obj)
         if materials_closets.is_bandable_misc_part(obj):
             for key in MISC_BAND_EDGES:
                 obj['hb_band_' + key] = bool(

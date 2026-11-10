@@ -51,6 +51,11 @@ PART_SECTIONS = [
          "A shelf. Dropped in an opening it is cut to it and lands "
          "on the nearest system hole; anywhere else it stands alone",
          'hb_closets.place_misc_part', {'kind': 'SHELF'}),
+        ('Loose L Shelf', "L Shelf",
+         "A corner L shelf as a part of its own, for a corner with no "
+         "corner unit under it. Size it and its two wings with Part "
+         "Properties on its right-click menu",
+         'hb_closets.place_misc_part', {'kind': 'L_SHELF'}),
         ('Countertop', "Countertop",
          "A countertop over some of a run's bays: hover a bay lower "
          "than its run and it covers that bay and its neighbours of "

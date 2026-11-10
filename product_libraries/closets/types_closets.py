@@ -1567,6 +1567,8 @@ LOOSE_PARTS = {
               const.SHELF_THICKNESS, True),
     'SHELF': ("Shelf", inch(30), inch(14), const.SHELF_THICKNESS,
               False),
+    'L_SHELF': ("L Shelf", const.L_SHELF_SIZE, const.L_SHELF_SIZE,
+                const.SHELF_THICKNESS, False),
 }
 
 # The loose parts that have somewhere to belong. Dropped into an
@@ -1601,7 +1603,84 @@ def add_misc_part(name='Misc Part', kind='MISC'):
         # Stood on its long edge, the way it is fixed - a back against
         # the wall, a cleat along it.
         part.obj.rotation_euler.x = math.radians(90)
+    if kind == L_SHELF_KIND:
+        part.add_part_modifier('CPM_CORNERNOTCH', 'L Notch')
+        part.add_part_modifier('CPM_RADIUSNOTCH', 'L Radius')
+        part.obj[PROP_LOOSE_L_LEFT] = const.DEFAULT_DEPTH
+        part.obj[PROP_LOOSE_L_RIGHT] = const.DEFAULT_DEPTH
+        part.obj[PROP_LOOSE_L_ROUND] = True
+        part.obj[PROP_LOOSE_L_RADIUS] = const.L_CORNER_RADIUS
+        layout_loose_l_shelf(part.obj)
     return part.obj
+
+
+# A loose L shelf: the corner shelf of an L unit as a part of its own,
+# for a corner that has no unit under it. Its back corner is the
+# part's origin and its two wings run out along the walls from there;
+# each wing's depth, and whether the inside front corner is cut square
+# or rounded, are the part's own settings.
+L_SHELF_KIND = 'L_SHELF'
+PROP_LOOSE_L_LEFT = 'hb_loose_l_left_depth'
+PROP_LOOSE_L_RIGHT = 'hb_loose_l_right_depth'
+PROP_LOOSE_L_ROUND = 'hb_loose_l_round'
+PROP_LOOSE_L_RADIUS = 'hb_loose_l_radius'
+
+
+def is_loose_l_shelf(obj):
+    return (obj is not None
+            and obj.get('hb_part_role') == PART_ROLE_MISC
+            and obj.get('hb_loose_kind') == L_SHELF_KIND)
+
+
+def layout_loose_l_shelf(obj):
+    """Cut a loose L shelf's inside front corner from its settings.
+
+    The part's Length runs along the back wall and its Width along the
+    side wall. The side wall wing is the left depth wide and the back
+    wall wing the right depth deep, so the cut takes what is left of
+    each. A wing as deep as the part leaves nothing to cut, and the
+    shelf is then the plain rectangle. The corner is rounded when asked
+    for and when the radius fits with a flat left on each wing's front
+    edge; otherwise it is cut square."""
+    part = GeoNodeCutpart(obj)
+    length = float(part.get_input('Length'))
+    width = float(part.get_input('Width'))
+    thickness = float(part.get_input('Thickness'))
+    left = float(obj.get(PROP_LOOSE_L_LEFT, const.DEFAULT_DEPTH))
+    right = float(obj.get(PROP_LOOSE_L_RIGHT, const.DEFAULT_DEPTH))
+    cut_x = length - left
+    cut_y = width - right
+    has_cut = cut_x > 0.001 and cut_y > 0.001
+    rad = min(float(obj.get(PROP_LOOSE_L_RADIUS, const.L_CORNER_RADIUS)),
+              cut_x - const.L_CORNER_MIN_FLAT,
+              cut_y - const.L_CORNER_MIN_FLAT)
+    round_it = (has_cut and bool(obj.get(PROP_LOOSE_L_ROUND, True))
+                and rad >= const.L_CORNER_RADIUS_MIN)
+    notch = obj.modifiers.get('L Notch')
+    if notch is not None:
+        cpm = CabinetPartModifier(obj)
+        cpm.mod = notch
+        cpm.set_input('X', max(cut_x, 0.001))
+        cpm.set_input('Y', max(cut_y, 0.001))
+        cpm.set_input('Route Depth', thickness + 0.001)
+        cpm.set_input('Flip X', True)
+        cpm.set_input('Flip Y', True)
+        notch.show_viewport = has_cut and not round_it
+        notch.show_render = has_cut and not round_it
+    lrad = obj.modifiers.get('L Radius')
+    if lrad is not None:
+        cpm = CabinetPartModifier(obj)
+        cpm.mod = lrad
+        cpm.set_input('X', max(cut_x, 0.001))
+        cpm.set_input('Y', max(cut_y, 0.001))
+        cpm.set_input('Route Depth', thickness + 0.001)
+        cpm.set_input('Radius', max(rad, 0.0))
+        cpm.set_input('Resolution', const.L_CORNER_RADIUS_SEGMENTS)
+        cpm.set_input('Turn On', True)
+        cpm.set_input('Flip X', True)
+        cpm.set_input('Flip Y', False)
+        lrad.show_viewport = round_it
+        lrad.show_render = round_it
 
 
 # A slab countertop: the 1 1/8" laminate top as a part of its own,

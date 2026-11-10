@@ -42,6 +42,7 @@ _LOOSE_KINDS = {
     'Back': 'BACK',
     'Cleat': 'CLEAT',
     'Shelf': 'SHELF',
+    'Loose L Shelf': 'L_SHELF',
 }
 
 # Parts that live in an opening, as (the starter to show it in, how
