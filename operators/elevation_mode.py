@@ -55,6 +55,7 @@ an id-prop tag, so a save made mid-elevation is cleaned up on load) and
 the view the room had before.
 """
 
+import json
 import math
 import re
 
@@ -133,6 +134,9 @@ _state = None
 _edit = None            # {'index': dim key, 'typed': str, 'owner': id}
 _mouse = (-1, -1)
 _hover = None           # dim key or bar part under the cursor
+_hover_chain = None     # the height string under the cursor (its chain id)
+_drag = None            # a height string being dragged sideways
+_adding = None          # a height string being clicked in
 _gen = 0
 _print_scale = None    # set while printing: px -> pt
 _item_cache = {}
@@ -153,6 +157,48 @@ def _s():
 def _bump_gen(*_args):
     global _gen
     _gen += 1
+
+
+# ---- Height strings the user moved or added --------------------------------
+#
+# Kept on the wall, so every view of it (this one, a print, a sheet) lays
+# out the same: {'moved': {chain id: sideways offset}, 'added': [{'x': m
+# along the wall, 'levels': [m off the floor, ...]}]}. A rule-made
+# string's offset is in style units (pixels at interface scale 1, the
+# unit the tiers are spaced in); an added string stands at a place on
+# the wall.
+
+HEIGHTS_PROP = 'HB_ELEVATION_HEIGHTS'
+
+
+def _chain_id(chain):
+    return ':'.join(str(c) for c in chain)
+
+
+def _heights(wall):
+    data = {}
+    try:
+        raw = wall.get(HEIGHTS_PROP)
+        if raw:
+            data = json.loads(raw)
+    except Exception:
+        data = {}
+    if not isinstance(data, dict):
+        data = {}
+    moved = data.get('moved')
+    added = data.get('added')
+    return {'moved': moved if isinstance(moved, dict) else {},
+            'added': [u for u in added if isinstance(u, dict)
+                      and len(u.get('levels') or ()) >= 2]
+            if isinstance(added, list) else []}
+
+
+def _set_heights(wall, data):
+    if data['moved'] or data['added']:
+        wall[HEIGHTS_PROP] = json.dumps(data)
+    elif HEIGHTS_PROP in wall:
+        del wall[HEIGHTS_PROP]
+    _bump_gen()
 
 
 # ---- Wall frame ------------------------------------------------------------
@@ -1901,18 +1947,30 @@ def _layout_wall(scene, wall, region, rv3d, selected=(), extra=None,
                          'side': side, 'value': b - a, 'target': target,
                          'item': item, 'w0': a})
 
-    def add_v(levels, pos, side, group, overall=False):
-        for z in levels:
-            ex = sx(wx1) if side > 0 else sx(wx0)
+    store = _heights(wall)
+    moved = store['moved']
+
+    def ext_v(side, pos, z):
+        """The extension line of a height string at level z: from the
+        wall's end out to the string, or a stub across it when the
+        string was dragged in over the wall."""
+        ex = sx(wx1) if side > 0 else sx(wx0)
+        if (pos - ex) * side > gap:
             dims_ext.append(((ex + side * gap, sy(z)),
                              (pos + side * over, sy(z))))
+        else:
+            dims_ext.append(((pos - over, sy(z)), (pos + over, sy(z))))
+
+    def add_v(levels, pos, side, group, overall=False, chain=None):
+        for z in levels:
+            ext_v(side, pos, z)
         for a, b in zip(levels, levels[1:]):
             target = _vertical_target(group, a, b,
                                       wall.name if overall else None)
             item = target.pop('item', None) if target else None
             dims.append({'axis': 'V', 'a': sy(a), 'b': sy(b), 'pos': pos,
                          'side': side, 'value': b - a, 'target': target,
-                         'item': item, 'w0': a})
+                         'item': item, 'w0': a, 'chain': chain})
 
     dims_ext = []
     lower = [it for it in items if it.kind == 'LOWER']
@@ -2063,10 +2121,12 @@ def _layout_wall(scene, wall, region, rv3d, selected=(), extra=None,
     v_clear = (TICK_PX + 3) * 2 * s + 2 * BREAK_GAP_PX * s
     reach = {}
 
-    def v_line(side, segs):
+    def v_line(side, segs, chain=None):
         """Screen x of the next vertical chain out on `side`: its values
         sit centred on the line when they fit and beside it, outward,
-        when they don't, so it stands clear of the chain inside it."""
+        when they don't, so it stands clear of the chain inside it. A
+        chain the user dragged stands where it was put; the ones after
+        it keep their places."""
         w, beside = 0.0, False
         for a, b in segs:
             w = max(w, value_runs(format_length(scene, b - a),
@@ -2076,24 +2136,29 @@ def _layout_wall(scene, wall, region, rv3d, selected=(), extra=None,
         pos = reach[side] + side * max(w / 2.0 + pad, 0.0)
         reach[side] = pos + side * ((w + 2 * pad) if beside
                                     else (w / 2.0 + pad))
+        if chain is not None:
+            try:
+                pos += float(moved.get(_chain_id(chain), 0.0)) * s
+            except (TypeError, ValueError):
+                pass
         return pos
 
     def ff_side(side, edge):
         reach[side] = edge + side * (first - pad)
         ex = sx(wx1) if side > 0 else sx(wx0)
         kicks = set()
-        for tr in side_tiers[side]:
+        for ti, tr in enumerate(side_tiers[side]):
             segs = []
             for zs, _it in tr:
                 for a, b in zip(zs, zs[1:]):
                     if a <= MERGE and b < KICK_MAX and round(b, 4) in kicks:
                         continue
                     segs.append((a, b))
-            cursor = v_line(side, segs)
+            chain = ('FF', side, ti)
+            cursor = v_line(side, segs, chain)
             for zs, it in tr:
                 for z in zs:
-                    dims_ext.append(((ex + side * gap, sy(z)),
-                                     (cursor + side * over, sy(z))))
+                    ext_v(side, cursor, z)
                 for a, b in zip(zs, zs[1:]):
                     if a <= MERGE and b < KICK_MAX:
                         # One kick per side: the next chain out starts
@@ -2105,7 +2170,7 @@ def _layout_wall(scene, wall, region, rv3d, selected=(), extra=None,
                                  'pos': cursor, 'side': side,
                                  'value': b - a, 'target': None,
                                  'item': it, 'w0': a, 'horiz': True,
-                                 'outward': True,
+                                 'outward': True, 'chain': chain,
                                  'key': ('FF_S', side, round(cursor),
                                          round(a, 4))})
 
@@ -2141,7 +2206,9 @@ def _layout_wall(scene, wall, region, rv3d, selected=(), extra=None,
     for side, group in ((1, right_group), (-1, left_group)):
         stack, at_end, whole = side_levels[side]
         if len(at_end) > 2:
-            add_v(at_end, v_line(side, pairs(at_end)), side, stack)
+            chain = ('END', side)
+            add_v(at_end, v_line(side, pairs(at_end), chain), side, stack,
+                  chain=chain)
             shown[side] |= level_set(at_end)
         if len(whole) > 2 and not level_set(whole) <= shown[side]:
             # The right is laid out first: of the left only its end
@@ -2149,11 +2216,14 @@ def _layout_wall(scene, wall, region, rv3d, selected=(), extra=None,
             other = (level_set(side_levels[-1][1]) if side > 0
                      else shown[1])
             if not level_set(whole) <= other:
-                add_v(whole, v_line(side, pairs(whole)), side, group)
+                chain = ('HALF', side)
+                add_v(whole, v_line(side, pairs(whole), chain), side, group,
+                      chain=chain)
                 shown[side] |= level_set(whole)
         if side > 0:
-            add_v([0.0, height], v_line(1, [(0.0, height)]), 1, [],
-                  overall=True)
+            chain = ('WALL', 1)
+            add_v([0.0, height], v_line(1, [(0.0, height)], chain), 1, [],
+                  overall=True, chain=chain)
 
     # Left, further out: window and door sills and heads.
     if openings:
@@ -2161,7 +2231,27 @@ def _layout_wall(scene, wall, region, rv3d, selected=(), extra=None,
         for it in openings:
             lv.update((max(it.z0, 0.0), it.z1))
         lv = _chain(lv, 0.0, max(lv))
-        add_v(lv, v_line(-1, pairs(lv)), -1, openings)
+        chain = ('OPEN', -1)
+        add_v(lv, v_line(-1, pairs(lv), chain), -1, openings, chain=chain)
+
+    # Strings the user clicked in: each at its place on the wall.
+    for i, u in enumerate(store['added']):
+        try:
+            x = float(u.get('x', 0.0))
+            lv = sorted({round(float(z), 5) for z in u['levels']})
+        except (TypeError, ValueError):
+            continue
+        if len(lv) < 2:
+            continue
+        pos = sx(x)
+        for z in lv:
+            dims_ext.append(((pos - over, sy(z)), (pos + over, sy(z))))
+        for a, b in zip(lv, lv[1:]):
+            dims.append({'axis': 'V', 'a': sy(a), 'b': sy(b), 'pos': pos,
+                         'side': 1, 'value': b - a, 'target': None,
+                         'item': None, 'w0': a, 'horiz': True,
+                         'chain': ('USER', i),
+                         'key': ('USER', i, round(a, 4))})
 
     if ff:
         _face_frame_height_dims(on_frame, dims, sx, sy, s)
@@ -2507,7 +2597,11 @@ def _bar_layout(context, area):
     chips = [('SHOW:' + key, label, h)
              for key, label, _default in SHOW_OPTIONS
              if _option_available(key)]
-    total = title_w + exit_w + gap + (2 * (arrow_w + gap) if many else 0)         + sum(w + gap for _p, _l, w in chips) + print_w + gap
+    add_label = "+ Height"
+    add_w = blf.dimensions(0, add_label)[0] + 24 * s
+    total = (title_w + exit_w + gap + (2 * (arrow_w + gap) if many else 0)
+             + sum(w + gap for _p, _l, w in chips) + print_w + gap
+             + add_w + gap)
     xmin, xmax, ymin, _ymax = get_visible_window_bounds(area)
     x = (xmin + xmax) / 2.0 - total / 2.0
     y = ymin + 18 * s
@@ -2523,6 +2617,8 @@ def _bar_layout(context, area):
     for part, label, w in chips:
         parts.append((part, (x, y, w, h), label))
         x += w + gap
+    parts.append(('ADD_V', (x, y, add_w, h), add_label))
+    x += add_w + gap
     parts.append(('PRINT', (x, y, print_w, h), print_label))
     x += print_w + gap
     parts.append(('EXIT', (x, y, exit_w, h), exit_label))
@@ -2553,6 +2649,7 @@ def _draw_bar(context, area):
         hovered = _hover == ('BAR', part)
         on = part.startswith('SHOW:') and show_option(context.scene,
                                                       part[5:])
+        on = on or (part == 'ADD_V' and _adding is not None)
         if part == 'TITLE':
             bg = Theme.ACCENT_BG
         elif on:
@@ -2602,6 +2699,28 @@ def _draw_chip_hint(shader, rect, label):
     blf.color(0, *Theme.TEXT_PRIMARY)
     blf.position(0, x + 7 * s, y + (h - th) / 2.0 + 1, 0)
     draw_glyphs(0, label)
+
+
+def _draw_adding(region, extra, s):
+    """The height string being clicked in: the level under the cursor
+    as a guide across the wall, and the levels picked so far."""
+    sx, sy = extra['sx'], extra['sy']
+    fx0, fx1, _fy = extra['floor']
+    hot = _adding.get('hot')
+    if hot is not None:
+        _stroke(region, [(fx0 - 24 * s, sy(hot)), (fx1 + 24 * s, sy(hot))],
+                1.5 * s, HOVER)
+    levels = sorted(_adding['levels'])
+    if not levels or _adding.get('x') is None:
+        return
+    x = sx(_adding['x'])
+    t = TICK_PX * s
+    pts = []
+    for z in levels:
+        pts += [(x - t, sy(z) - t), (x + t, sy(z) + t)]
+    if len(levels) > 1:
+        pts += [(x, sy(levels[0])), (x, sy(levels[-1]))]
+    _stroke(region, pts, 2.0 * s, HOVER)
 
 
 def _draw():
@@ -2666,7 +2785,9 @@ def _draw():
         hot_lines, hot_ticks = [], []
         for d in dims:
             line, ticks = _dim_lines(d, s)
-            if _hover == ('DIM', d['key']) and d['target'] is not None:
+            if (_hover == ('DIM', d['key']) and d['target'] is not None) \
+                    or (_hover_chain is not None
+                        and d.get('chain') == _hover_chain):
                 hot_lines += line
                 hot_ticks += ticks
             else:
@@ -2706,6 +2827,8 @@ def _draw():
             _draw_annotations(context, region, rv3d)
         except Exception as exc:
             print(f"Elevation annotations: {exc}")
+        if _adding is not None and extra is not None:
+            _draw_adding(region, extra, s)
         _draw_bar(context, area)
         gpu.state.blend_set('NONE')
 
@@ -3530,6 +3653,83 @@ def _hit(context, mx, my):
     return None
 
 
+def _hit_chain(context, mx, my, got=None):
+    """The height string at a region point: one of its values, or its
+    line. None off every string."""
+    if got is not None and got[0] == 'DIM':
+        return got[1].get('chain')
+    if got is not None:
+        return None
+    dims, _extra = _layout(context, context.region, context.region_data)
+    p = 6 * _s()
+    for d in dims:
+        if d.get('chain') is None:
+            continue
+        lo, hi = min(d['a'], d['b']), max(d['a'], d['b'])
+        if abs(mx - d['pos']) <= p and lo - p <= my <= hi + p:
+            return d['chain']
+    return None
+
+
+def _chain_place(wall, chain):
+    """Where a string stands, in the unit it is stored in."""
+    data = _heights(wall)
+    if chain[0] == 'USER':
+        try:
+            return float(data['added'][chain[1]].get('x', 0.0))
+        except (IndexError, TypeError, ValueError):
+            return None
+    try:
+        return float(data['moved'].get(_chain_id(chain), 0.0))
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _chain_put(wall, chain, value):
+    data = _heights(wall)
+    if chain[0] == 'USER':
+        if not 0 <= chain[1] < len(data['added']):
+            return
+        data['added'][chain[1]]['x'] = round(value, 5)
+    elif abs(value) < 0.5:
+        data['moved'].pop(_chain_id(chain), None)
+    else:
+        data['moved'][_chain_id(chain)] = round(value, 2)
+    _set_heights(wall, data)
+
+
+def _level_candidates(context, wall, x):
+    """Heights off the floor a clicked-in string can catch: the floor,
+    the wall's top, and the tops, bottoms, kicks and rail lines of the
+    products at `x` along the wall (of every product when none stands
+    there)."""
+    fr = _frame(wall)
+    if fr is None:
+        return []
+    _F, Fi, _length, height = fr
+    items = [it for it in _items(context.scene, wall) if not it.preview]
+    here = [it for it in items if it.x0 - MERGE <= x <= it.x1 + MERGE]
+    use = here or items
+    levels = {0.0, height}
+    names = set()
+    for it in use:
+        levels.update((max(it.z0, 0.0), it.z1))
+        names.add(it.name)
+        k = _kick_height(it)
+        if k:
+            levels.add(k)
+    try:
+        with hb_utils.children_index():
+            cols = _face_frame_layout(items, Fi)['columns']
+        for it, c0, c1, zs in cols:
+            if it.name in names and (not here
+                                     or c0 - MERGE <= x <= c1 + MERGE):
+                levels.update(zs)
+    except Exception:
+        pass
+    return sorted(levels)
+
+
 # ---- Commit ------------------------------------------------------------------------
 
 def _set_appliance_height(appliance, height):
@@ -3745,12 +3945,25 @@ class home_builder_OT_elevation_hover(bpy.types.Operator):
     def invoke(self, context, event):
         global _hover, _mouse
         _mouse = (event.mouse_region_x, event.mouse_region_y)
+        global _hover_chain
         got = _hit(context, *_mouse)
         key = None
         if got is not None:
             key = (got[0], got[1]) if got[0] == 'BAR' else (
                 ('DIM', got[1]['key']) if got[1]['target'] is not None
                 else None)
+        chain = None
+        if _drag is None and _adding is None and _edit is None:
+            chain = _hit_chain(context, *_mouse, got=got)
+        if chain != _hover_chain:
+            # A string that can be dragged shows the sideways cursor.
+            try:
+                context.window.cursor_set(
+                    'MOVE_X' if chain is not None else 'DEFAULT')
+            except Exception:
+                pass
+            _hover_chain = chain
+            context.area.tag_redraw()
         if key != _hover:
             _hover = key
             context.area.tag_redraw()
@@ -3779,12 +3992,29 @@ class home_builder_OT_elevation_click(bpy.types.Operator):
                 return {'PASS_THROUGH'}
         except Exception:
             pass
+        global _drag
+        if _drag is not None or _adding is not None:
+            return {'PASS_THROUGH'}
         got = _hit(context, mx, my)
+        chain = _hit_chain(context, mx, my, got=got)
+        if chain is not None:
+            # A press on a height string: drag moves it sideways, a
+            # plain click on an editable value still edits it.
+            wall = active_wall(context)
+            start = _chain_place(wall, chain) if wall is not None else None
+            if start is not None:
+                _drag = {'chain': chain, 'mx': mx, 'start': start,
+                         'moved': False,
+                         'dim': got[1] if got is not None else None}
+                bpy.ops.home_builder.elevation_drag_height('INVOKE_DEFAULT')
+                return {'FINISHED'}
         if got is None:
             return {'PASS_THROUGH'}
         if got[0] == 'BAR':
             if got[1] == 'EXIT':
                 leave(context)
+            elif got[1] == 'ADD_V':
+                bpy.ops.home_builder.elevation_add_height('INVOKE_DEFAULT')
             elif got[1].startswith('SHOW:'):
                 toggle_show_option(context.scene, got[1][5:])
             elif got[1] == 'PRINT':
@@ -3799,6 +4029,214 @@ class home_builder_OT_elevation_click(bpy.types.Operator):
         bpy.ops.home_builder.elevation_edit_dim('INVOKE_DEFAULT')
         _edit_begin(d)
         return {'FINISHED'}
+
+
+class home_builder_OT_elevation_drag_height(bpy.types.Operator):
+    """Drag a height string sideways to where it reads best. The move is
+    kept with the wall. Esc or right-click puts it back"""
+    bl_idname = "home_builder.elevation_drag_height"
+    bl_label = "Move Height Dimensions"
+    bl_options = {'INTERNAL', 'UNDO'}
+
+    def invoke(self, context, event):
+        if _drag is None:
+            return {'CANCELLED'}
+        _drag['owner'] = id(self)
+        context.window_manager.modal_handler_add(self)
+        return {'RUNNING_MODAL'}
+
+    def _end(self, context):
+        global _drag
+        _drag = None
+        if context.area:
+            context.area.tag_redraw()
+
+    def modal(self, context, event):
+        if _drag is None or _drag.get('owner') != id(self):
+            return {'CANCELLED'}
+        wall = active_wall(context)
+        if wall is None:
+            self._end(context)
+            return {'CANCELLED'}
+        chain = _drag['chain']
+        if event.type in {'MOUSEMOVE', 'INBETWEEN_MOUSEMOVE'}:
+            dx = event.mouse_region_x - _drag['mx']
+            s = _s()
+            if not _drag['moved'] and abs(dx) < 4 * s:
+                return {'RUNNING_MODAL'}
+            _drag['moved'] = True
+            if chain[0] == 'USER':
+                _dims, extra = _layout(context, context.region,
+                                       context.region_data)
+                if extra is None:
+                    return {'RUNNING_MODAL'}
+                per_m = extra['sx'](1.0) - extra['sx'](0.0)
+                if abs(per_m) < 1e-9:
+                    return {'RUNNING_MODAL'}
+                value = _drag['start'] + dx / per_m
+            else:
+                value = _drag['start'] + dx / max(s, 1e-6)
+            _chain_put(wall, chain, value)
+            context.area.tag_redraw()
+            return {'RUNNING_MODAL'}
+        if event.type == 'LEFTMOUSE' and event.value == 'RELEASE':
+            moved, d = _drag['moved'], _drag.get('dim')
+            self._end(context)
+            if moved:
+                return {'FINISHED'}
+            if d is not None and d.get('target') is not None:
+                bpy.ops.home_builder.elevation_edit_dim('INVOKE_DEFAULT')
+                _edit_begin(d)
+            return {'CANCELLED'}
+        if event.type in {'ESC', 'RIGHTMOUSE'} and event.value == 'PRESS':
+            if _drag['moved']:
+                _chain_put(wall, chain, _drag['start'])
+            self._end(context)
+            return {'CANCELLED'}
+        return {'RUNNING_MODAL'}
+
+
+class home_builder_OT_elevation_reset_height(bpy.types.Operator):
+    """Remove the height string under the cursor if you added it, or put
+    it back where the rules place it if you moved it"""
+    bl_idname = "home_builder.elevation_reset_height"
+    bl_label = "Remove or Reset Height Dimensions"
+    bl_options = {'INTERNAL', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        return (is_active(context) and _hover_chain is not None
+                and _edit is None and _drag is None and _adding is None)
+
+    def execute(self, context):
+        global _hover_chain
+        wall = active_wall(context)
+        chain = _hover_chain
+        if wall is None or chain is None:
+            return {'CANCELLED'}
+        data = _heights(wall)
+        if chain[0] == 'USER':
+            if not 0 <= chain[1] < len(data['added']):
+                return {'CANCELLED'}
+            del data['added'][chain[1]]
+        elif data['moved'].pop(_chain_id(chain), None) is None:
+            return {'PASS_THROUGH'}
+        _set_heights(wall, data)
+        _hover_chain = None
+        context.area.tag_redraw()
+        return {'FINISHED'}
+
+
+ADD_SNAP_PX = 14
+
+
+class home_builder_OT_elevation_add_height(bpy.types.Operator):
+    """Click the levels to dimension, bottom to top or in any order. The
+    string stands where you first click. Enter or right-click finishes,
+    Esc cancels"""
+    bl_idname = "home_builder.elevation_add_height"
+    bl_label = "Add Height Dimensions"
+    bl_options = {'INTERNAL', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        return is_active(context) and _edit is None and _adding is None
+
+    def invoke(self, context, event):
+        global _adding
+        _adding = {'x': None, 'levels': [], 'hot': None, 'owner': id(self)}
+        context.window_manager.modal_handler_add(self)
+        try:
+            context.window.cursor_set('CROSSHAIR')
+            context.workspace.status_text_set(
+                "Add height dimensions: click each level  |  Enter or "
+                "right-click to finish  |  Backspace removes the last  |  "
+                "Esc to cancel")
+        except Exception:
+            pass
+        context.area.tag_redraw()
+        return {'RUNNING_MODAL'}
+
+    def _end(self, context):
+        global _adding
+        _adding = None
+        try:
+            context.window.cursor_set('DEFAULT')
+            context.workspace.status_text_set(None)
+        except Exception:
+            pass
+        if context.area:
+            context.area.tag_redraw()
+
+    def _snap(self, context, wall, mx, my):
+        """(x along the wall, level) under the cursor; level None when
+        nothing is near enough to catch."""
+        _dims, extra = _layout(context, context.region, context.region_data)
+        if extra is None:
+            return None, None
+        sx, sy = extra['sx'], extra['sy']
+        per_m = sx(1.0) - sx(0.0)
+        if abs(per_m) < 1e-9:
+            return None, None
+        x = (mx - sx(0.0)) / per_m
+        best, best_d = None, ADD_SNAP_PX * _s()
+        for z in _level_candidates(context, wall, x):
+            d = abs(sy(z) - my)
+            if d < best_d:
+                best, best_d = z, d
+        return x, best
+
+    def modal(self, context, event):
+        if _adding is None or _adding.get('owner') != id(self):
+            return {'CANCELLED'}
+        wall = active_wall(context)
+        if wall is None or context.region is None \
+                or context.region_data is None:
+            self._end(context)
+            return {'CANCELLED'}
+        if event.type in {'MIDDLEMOUSE', 'WHEELUPMOUSE', 'WHEELDOWNMOUSE',
+                          'TRACKPADPAN', 'TRACKPADZOOM', 'TIMER'}:
+            return {'PASS_THROUGH'}
+        mx, my = event.mouse_region_x, event.mouse_region_y
+        if event.type in {'MOUSEMOVE', 'INBETWEEN_MOUSEMOVE'}:
+            _x, z = self._snap(context, wall, mx, my)
+            if z != _adding['hot']:
+                _adding['hot'] = z
+                context.area.tag_redraw()
+            return {'RUNNING_MODAL'}
+        if event.value != 'PRESS':
+            return {'RUNNING_MODAL'}
+        if event.type == 'LEFTMOUSE':
+            x, z = self._snap(context, wall, mx, my)
+            if z is None:
+                return {'RUNNING_MODAL'}
+            if _adding['x'] is None:
+                _adding['x'] = x
+            if all(abs(z - o) > MERGE for o in _adding['levels']):
+                _adding['levels'].append(z)
+            context.area.tag_redraw()
+            return {'RUNNING_MODAL'}
+        if event.type == 'BACK_SPACE':
+            if _adding['levels']:
+                _adding['levels'].pop()
+                if not _adding['levels']:
+                    _adding['x'] = None
+                context.area.tag_redraw()
+            return {'RUNNING_MODAL'}
+        if event.type in {'RET', 'NUMPAD_ENTER', 'RIGHTMOUSE'}:
+            levels, x = sorted(_adding['levels']), _adding['x']
+            self._end(context)
+            if len(levels) < 2 or x is None:
+                return {'CANCELLED'}
+            data = _heights(wall)
+            data['added'].append({'x': round(x, 5),
+                                  'levels': [round(z, 5) for z in levels]})
+            _set_heights(wall, data)
+            return {'FINISHED'}
+        if event.type == 'ESC':
+            self._end(context)
+            return {'CANCELLED'}
+        return {'RUNNING_MODAL'}
 
 
 def _edit_begin(d):
@@ -4033,6 +4471,9 @@ classes = (
     home_builder_OT_elevation_hover,
     home_builder_OT_elevation_click,
     home_builder_OT_elevation_edit_dim,
+    home_builder_OT_elevation_drag_height,
+    home_builder_OT_elevation_reset_height,
+    home_builder_OT_elevation_add_height,
     home_builder_OT_elevation_print,
 )
 
@@ -4048,6 +4489,10 @@ def _register_keymaps():
             (home_builder_OT_elevation_hover.bl_idname, 'MOUSEMOVE', 'ANY',
              {'any': True, 'head': True}),
             (home_builder_OT_exit_elevation.bl_idname, 'ESC', 'PRESS', {}),
+            (home_builder_OT_elevation_reset_height.bl_idname, 'X', 'PRESS',
+             {'head': True}),
+            (home_builder_OT_elevation_reset_height.bl_idname, 'DEL', 'PRESS',
+             {'head': True}),
             (home_builder_OT_elevation_frame.bl_idname, 'HOME', 'PRESS',
              {'head': True})):
         kmi = km.keymap_items.new(idname, key, value, **kw)
