@@ -401,13 +401,13 @@ def _paint_like_cabinet(root, part_obj):
     finish, _ = style.get_finish_material()
     edge, _front_edge = style.get_edge_materials()
     part = GeoNodeCutpart(part_obj)
-    for name, mat in (('Top Surface', finish), ('Bottom Surface', finish),
-                      ('Edge W1', edge), ('Edge W2', edge),
-                      ('Edge L1', edge), ('Edge L2', edge)):
+    for name, mat in (('Top Surface', finish), ('Bottom Surface', finish)):
         try:
             part.set_input(name, mat)
         except Exception:
             pass
+    from . import edgebanding_frameless
+    edgebanding_frameless.apply_edges(part_obj, edge)
 
 
 def _solve_toe_kick(root, parts, p, dim_x, dim_y):
