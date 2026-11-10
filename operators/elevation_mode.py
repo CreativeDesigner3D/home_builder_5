@@ -1174,14 +1174,17 @@ def _text_object_notes(scene, wall):
             seen.add(obj.name)
             if scene.objects.get(obj.name) is None:
                 continue
-            if not obj.get(HIDE_TAG):
-                try:
-                    if obj.hide_viewport or obj.hide_get():
-                        continue
-                except Exception:
-                    continue
+            try:
+                hidden = obj.hide_viewport or obj.hide_get()
+            except Exception:
+                continue
+            if not hidden:
+                # New on the wall, or shown again behind the view's back
+                # (an appliance's model switched off and on).
                 if on_screen:
                     loose.append(obj.name)
+            elif not obj.get(HIDE_TAG):
+                continue
             body = obj.data.body.strip()
             if not body:
                 continue
@@ -1214,7 +1217,7 @@ def _hide_text_objects(scene_name, names):
         return None
     for name in names:
         obj = scene.objects.get(name)
-        if obj is None or obj.type != 'FONT' or obj.get(HIDE_TAG):
+        if obj is None or obj.type != 'FONT':
             continue
         try:
             if obj.hide_get():
@@ -2112,16 +2115,47 @@ def _layout_wall(scene, wall, region, rv3d, selected=(), extra=None,
     def pairs(levels):
         return list(zip(levels, levels[1:]))
 
-    levels = _height_levels(right_group, height)
-    if len(levels) > 2:
-        add_v(levels, v_line(1, pairs(levels)), 1, right_group)
-    add_v([0.0, height], v_line(1, [(0.0, height)]), 1, [], overall=True)
+    # Heights: nearest each wall end, the chain of what stands at that
+    # end (a tall there reads as one height, not cut at the counter and
+    # upper lines of the cabinets beside it). The levels of the rest of
+    # that half follow on a second line, unless the other side of the
+    # wall already shows them.
+    def end_stack(group, side):
+        solid = [it for it in group if not it.shelf and not _is_hood(it)]
+        if not solid:
+            return []
+        end = (min(solid, key=lambda i: i.x0) if side < 0
+               else max(solid, key=lambda i: i.x1))
+        return [it for it in solid
+                if it.x0 < end.x1 - MERGE and it.x1 > end.x0 + MERGE]
 
-    # Left: the left half's height chain, then window and door sills
-    # and heads.
-    levels = _height_levels(left_group, height)
-    if len(levels) > 2:
-        add_v(levels, v_line(-1, pairs(levels)), -1, left_group)
+    def level_set(levels):
+        return {round(z, 3) for z in levels}
+
+    side_levels = {}
+    for side, group in ((1, right_group), (-1, left_group)):
+        stack = end_stack(group, side)
+        side_levels[side] = (stack, _height_levels(stack, height),
+                             _height_levels(group, height))
+    shown = {1: set(), -1: set()}
+    for side, group in ((1, right_group), (-1, left_group)):
+        stack, at_end, whole = side_levels[side]
+        if len(at_end) > 2:
+            add_v(at_end, v_line(side, pairs(at_end)), side, stack)
+            shown[side] |= level_set(at_end)
+        if len(whole) > 2 and not level_set(whole) <= shown[side]:
+            # The right is laid out first: of the left only its end
+            # chain is certain to be drawn.
+            other = (level_set(side_levels[-1][1]) if side > 0
+                     else shown[1])
+            if not level_set(whole) <= other:
+                add_v(whole, v_line(side, pairs(whole)), side, group)
+                shown[side] |= level_set(whole)
+        if side > 0:
+            add_v([0.0, height], v_line(1, [(0.0, height)]), 1, [],
+                  overall=True)
+
+    # Left, further out: window and door sills and heads.
     if openings:
         lv = {0.0, height}
         for it in openings:
