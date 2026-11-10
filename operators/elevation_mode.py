@@ -1587,24 +1587,35 @@ def _upper_sections(it, cols, bottoms, stiles):
 
 
 # Face frame height chains each side of the wall may take, as lines.
-FF_SIDE_TIERS = 2
+FF_SIDE_TIERS = 1
 
 
 def _pack_face_frame_sides(columns, length):
     """({1: tiers, -1: tiers}, columns left on the frame). Columns with
     the same rail breaks (same heights off the floor) make one chain;
-    the most shared go out first, to the side of the wall their
-    cabinets stand on, else the other side. A tier is a list of
-    (zs, item) whose height ranges don't overlap, so an upper's chain
-    and a base's share a line."""
+    the most shared go out first, then the ones nearest a wall end, to
+    the side of the wall their cabinets stand on, else the other side.
+    A tier is a list of (zs, item) whose height ranges don't overlap,
+    so an upper's chain and a base's share a line. Each side holds one
+    line: a second one out there reads as belonging to the end
+    cabinet, so a chain that finds no room is dimensioned on its own
+    bay instead."""
     groups = {}
     for col in columns:
         groups.setdefault(tuple(round(z, 4) for z in col[3]), []).append(col)
+
+    def centre(cols):
+        return sum((c[1] + c[2]) / 2.0 for c in cols) / len(cols)
+
+    def order(kv):
+        cx = centre(kv[1])
+        return (-len(kv[1]), min(cx, length - cx))
+
     tiers = {1: [], -1: []}
     left = []
-    for _sig, cols in sorted(groups.items(), key=lambda kv: -len(kv[1])):
+    for _sig, cols in sorted(groups.items(), key=order):
         zs = cols[0][3]
-        cx = sum((c[1] + c[2]) / 2.0 for c in cols) / len(cols)
+        cx = centre(cols)
         pref = -1 if cx < length / 2.0 else 1
         placed = False
         for side in (pref, -pref):
