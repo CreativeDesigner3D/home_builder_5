@@ -67,6 +67,7 @@ from mathutils.geometry import intersect_line_plane
 from bpy_extras import view3d_utils
 
 from .. import hb_types
+from .. import hb_utils
 from .. import units
 from .. import hb_dim_style
 from .. import hb_pdf
@@ -509,6 +510,7 @@ def _in_front_roots(scene, wall, Fi, length, height):
     return roots
 
 
+@hb_utils.with_children_index
 def _isolate(context, wall):
     fr = _frame(wall)
     _F, Fi, length, height = fr
@@ -1155,8 +1157,11 @@ def _text_object_notes(scene, wall):
     them in its own style. Text lying flat or facing another way is
     left out."""
     roots = [wall]
+    on_screen = _state is not None and _state.get('wall') == wall.name \
+        and _print_scale is None
     if _state is not None and _state.get('wall') == wall.name:
         roots += [scene.objects.get(n) for n in _state.get('extra', ())]
+    loose = []
     front = -(wall.matrix_world.col[1].xyz.normalized())
     prims = []
     seen = set()
@@ -1175,6 +1180,8 @@ def _text_object_notes(scene, wall):
                         continue
                 except Exception:
                     continue
+                if on_screen:
+                    loose.append(obj.name)
             body = obj.data.body.strip()
             if not body:
                 continue
@@ -1193,7 +1200,30 @@ def _text_object_notes(scene, wall):
                 'origin': mw @ Vector((x, (min(ys) + max(ys)) / 2.0, 0.0)),
                 'x_axis': mw.col[0].xyz.normalized(),
                 'text': body, 'align': align})
+    if loose:
+        bpy.app.timers.register(lambda: _hide_text_objects(scene.name, loose),
+                                first_interval=0.0)
     return prims
+
+
+def _hide_text_objects(scene_name, names):
+    """Off the draw: hide text objects that turned up on the wall while
+    its elevation is showing."""
+    scene = bpy.data.scenes.get(scene_name)
+    if scene is None or _state is None or _state.get('scene') != scene_name:
+        return None
+    for name in names:
+        obj = scene.objects.get(name)
+        if obj is None or obj.type != 'FONT' or obj.get(HIDE_TAG):
+            continue
+        try:
+            if obj.hide_get():
+                continue
+            obj.hide_set(True)
+            obj[HIDE_TAG] = True
+        except Exception:
+            continue
+    return None
 
 
 # A text object and a source's note for it within this of each other say
@@ -1201,6 +1231,7 @@ def _text_object_notes(scene, wall):
 NOTE_SAME = 0.15
 
 
+@hb_utils.with_children_index
 def _annotations(scene, wall):
     key = (_gen, scene.name, wall.name, len(_annotation_sources))
     if _annotation_cache.get('key') == key:
@@ -1456,7 +1487,20 @@ def unregister_centerline_source(fn):
 CENTERLINE_APPLIANCES = ('RANGE', 'COOKTOP', 'SINK')
 
 
+_centerline_cache = {}
+
+
 def _centerlines(scene, wall, length, items):
+    key = (_gen, scene.name, wall.name, round(length, 5),
+           len(_centerline_sources), tuple(it.obj.name for it in items))
+    if _centerline_cache.get('key') != key:
+        _centerline_cache['key'] = key
+        _centerline_cache['lines'] = _centerlines_now(scene, wall, length,
+                                                      items)
+    return _centerline_cache['lines']
+
+
+def _centerlines_now(scene, wall, length, items):
     for fn in list(_centerline_sources):
         try:
             got = fn(scene, wall, length)
@@ -1763,16 +1807,31 @@ def _face_frame_height_dims(columns, dims, sx, sy, s):
                                  round(a, 4))})
 
 
+_layout_cache = {}
+
+
 def _layout(context, region, rv3d):
     """Every dimension on screen, its text placed. Shared by draw and
     click so hits cannot drift from pixels."""
     wall = active_wall(context)
-    if wall is None:
+    if wall is None or rv3d is None:
         return [], None
-    return _layout_wall(context.scene, wall, region, rv3d,
-                        selected={o.name for o in context.selected_objects})
+    scene = context.scene
+    selected = frozenset(o.name for o in context.selected_objects)
+    st = _state or {}
+    key = (_gen, scene.name, wall.name, region.width, region.height,
+           tuple(round(v, 5) for row in rv3d.perspective_matrix for v in row),
+           selected, show_option(scene, 'FACE_FRAME'),
+           frozenset(st.get('preview', ())), _s())
+    if _layout_cache.get('key') == key:
+        return _layout_cache['result']
+    result = _layout_wall(scene, wall, region, rv3d, selected=selected)
+    _layout_cache['key'] = key
+    _layout_cache['result'] = result
+    return result
 
 
+@hb_utils.with_children_index
 def _layout_wall(scene, wall, region, rv3d, selected=(), extra=None,
                  preview=None, face_frame=None):
     """_layout for any wall of `scene`, through any view. `extra` and
@@ -2927,6 +2986,7 @@ INTERIOR_REFRESH = 0.6              # s between reads while editing
 _interior_cache = {}
 
 
+@hb_utils.with_children_index
 def _interior_names(items):
     """Names of the objects that stand inside the wall's cabinets: the
     interior parts and everything under them."""
