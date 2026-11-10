@@ -27,7 +27,7 @@ TICK_PX = 4.5            # half-length of a tick, per axis
 LINE_PX = 1.0
 TICK_LINE_PX = 2.0
 HALO = (0.0, 0.0, 0.0, 0.55)
-TEXT_HALO = (0.0, 0.0, 0.0, 0.95)
+TEXT_HALO = (0.0, 0.0, 0.0, 1.0)
 BREAK_PAD_PX = 3         # clear space either side of a value in its line
 
 
@@ -130,19 +130,29 @@ def paint_groups(region, pts, rects, color, s=1.0):
     stroke(region, ticks, TICK_LINE_PX * s, color, s)
 
 
+OUTLINE_LEVEL = 6        # blf shadow level that draws a crisp outline
+
+
 def text(x, y, size, color, string):
-    """A value with a dark halo, baseline at (x, y)."""
+    """A value with a dark outline and halo, baseline at (x, y)."""
     previous = gpu.state.blend_get()
+    halo = (*TEXT_HALO[:3], TEXT_HALO[3] * color[3])
     blf.size(0, size)
     blf.enable(0, blf.SHADOW)
-    blf.shadow_offset(0, 0, 0)
-    blf.shadow(0, 5, *TEXT_HALO[:3], TEXT_HALO[3] * color[3])
     blf.color(0, *color)
     blf.position(0, x, y, 0)
-    # Twice: one blurred shadow pass is too faint over a white face.
+    # A soft halo first, then a hard outline stamped a pixel to each
+    # side: a blurred shadow alone is too faint to carry a light value
+    # over a white face.
+    blf.shadow_offset(0, 0, 0)
+    blf.shadow(0, 5, *halo)
     blf.draw(0, string)
-    blf.shadow(0, 3, *TEXT_HALO[:3], TEXT_HALO[3] * color[3])
-    blf.draw(0, string)
+    r = max(1, int(round(size / 14.0)))
+    blf.shadow(0, OUTLINE_LEVEL, *halo)
+    for dx, dy in ((r, 0), (-r, 0), (0, r), (0, -r)):
+        blf.shadow_offset(0, dx, dy)
+        blf.draw(0, string)
+    blf.shadow_offset(0, 0, 0)
     blf.disable(0, blf.SHADOW)
     gpu.state.blend_set(previous)
 
