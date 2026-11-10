@@ -1689,6 +1689,20 @@ def solve_calculator(calc, total):
     return [p.distance_value for p in calc.prompts]
 
 
+def _sink_split_board(splitter_obj, opening_above):
+    """True for a front split board in a sink base that sits under a false
+    front: the bowl and trap need that space, so it is not built."""
+    if splitter_obj.get(INTERIOR_SPLITTER_VERTICAL_TAG):
+        return False
+    root = cabinet_root(splitter_obj)
+    if root is None or not root.get('IS_SINK_CABINET'):
+        return False
+    if opening_above is None:
+        return False
+    return any(o.get('False Front', False)
+               for o in opening_above.children_recursive)
+
+
 def _solve_splitter(splitter_obj, vertical):
     parts = split_parts(splitter_obj)
     calc = splitter_calculator(splitter_obj)
@@ -1717,8 +1731,12 @@ def _solve_splitter(splitter_obj, vertical):
                          dim_z=size)
             board = parts.get(('SPLITTER', i))
             if board is not None:
+                # Under a sink's false front the bowl takes the space:
+                # the split stays (the fronts keep their reveal) but no
+                # fixed shelf is built there.
                 set_part(board, (0.0, 0.0, top - size - mt), length=dim_x,
-                         width=dim_y, thickness=mt)
+                         width=dim_y, thickness=mt,
+                         visible=not _sink_split_board(splitter_obj, opening))
             top -= size + mt
     else:
         x = 0.0
