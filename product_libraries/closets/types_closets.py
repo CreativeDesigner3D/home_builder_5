@@ -8711,6 +8711,21 @@ def corner_dividers(root):
     return divs
 
 
+def corner_rod_cfg(root, rod):
+    """The settings that hang this corner rod: the unit's own for an
+    undivided corner, else the entry of the opening the rod is in. Rods
+    are numbered bottom opening first, and a double hang's two together.
+    None if no opening accounts for the rod."""
+    n = len(corner_dividers(root)) + 1
+    index = int(rod.get('hb_l_index', 0))
+    for cfg in _wrap_starter(root)._l_segment_cfgs(n):
+        held = {'ROD': 1, 'DOUBLE': 2}.get(cfg.l_interior, 0)
+        if index < held:
+            return cfg
+        index -= held
+    return None
+
+
 def add_l_divider_preview(root):
     """The fixed L shelf that follows the cursor while one is placed in
     a corner unit."""

@@ -8701,6 +8701,22 @@ class hb_closets_OT_delete_part(bpy.types.Operator):
                 if root is not None:
                     types_closets.recalculate_closet_starter(root)
             return {'FINISHED'}
+        if (role == types_closets.PART_ROLE_ROD and root is not None
+                and obj.get('hb_l_index') is not None
+                and not obj.get(types_closets.PROP_WALL_ROD)):
+            # A corner unit's rods are what its opening is set to hold,
+            # so the setting is what takes one out; removing the object
+            # by hand would only have the next pass hang it again. One
+            # rod off a double hang leaves a single hang.
+            cfg = types_closets.corner_rod_cfg(root, obj)
+            if cfg is not None:
+                was_double = cfg.l_interior == 'DOUBLE'
+                with types_closets.suspend_recalc():
+                    cfg.l_interior = 'ROD' if was_double else 'NONE'
+                types_closets.recalculate_closet_starter(root)
+                self.report({'INFO'}, "Corner set to a single hanging rod"
+                            if was_double else "Corner rod removed")
+                return {'FINISHED'}
         opening = types_closets.find_opening_cage(obj)
         remove_obj = True
 
