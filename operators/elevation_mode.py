@@ -679,11 +679,17 @@ def constrain_snap(op, context):
 
 class _Item:
     __slots__ = ('obj', 'name', 'x0', 'x1', 'z0', 'z1', 'kind', 'tall',
-                 'movable', 'width_edit', 'preview')
+                 'movable', 'width_edit', 'preview', 'shelf')
+
+
+def _is_floating_shelf(obj):
+    return bool(obj.get('IS_FLOATING_SHELF')
+                or (obj.get('IS_FRAMELESS_PRODUCT_CAGE')
+                    and obj.get('PART_TYPE') == 'FLOATING_SHELF'))
 
 
 def _is_product(obj):
-    return any(obj.get(m) for m in PRODUCT_MARKERS)
+    return any(obj.get(m) for m in PRODUCT_MARKERS) or _is_floating_shelf(obj)
 
 
 def _is_opening(obj):
@@ -715,11 +721,13 @@ def _make_item(obj, Fi, wall, preview=False):
     it.obj, it.name = obj, obj.name
     it.x0, it.x1, it.z0, it.z1 = min(xs), max(xs), min(zs), max(zs)
     it.preview = preview
+    it.shelf = _is_floating_shelf(obj)
     if _is_opening(obj):
         it.kind = 'OPENING'
-    elif it.z0 < FLOOR_STANDING_Z:
+    elif it.z0 < FLOOR_STANDING_Z and not it.shelf:
         it.kind = 'LOWER'
     else:
+        # A floating shelf hangs on the wall, however low.
         it.kind = 'UPPER'
     it.tall = it.kind == 'LOWER' and it.z1 > TALL_Z
     # Square to the wall and hung straight off it: a typed gap can slide
@@ -1042,6 +1050,8 @@ def _height_levels(group, height):
     cabinets' top; a dishwasher or range a fraction under it is not a
     level of its own), upper bottoms and tops, tall tops, wall height."""
     levels = {0.0, height}
+    # Floating shelves carry their own chain (see _shelf_stacks).
+    group = [it for it in group if not it.shelf]
     lows = [it for it in group if it.kind == 'LOWER' and not it.tall]
     base_tops = [it.z1 for it in lows if not it.obj.get('IS_APPLIANCE')] \
         or [it.z1 for it in lows]
@@ -1057,6 +1067,95 @@ def _height_levels(group, height):
 
 # A face frame's own dims stand this far inside its edges, in pixels.
 FF_INSET_PX = 16
+
+# A recess under a floor-standing cabinet taller than this is not a kick.
+KICK_MAX = 0.3
+
+
+def _kick_height(it):
+    """The toe kick under a floor-standing cabinet, or 0.0 (an upper,
+    an appliance, a flush kick that runs the front to the floor)."""
+    obj = it.obj
+    if it.kind != 'LOWER' or it.shelf or it.preview \
+            or obj.get('IS_APPLIANCE'):
+        return 0.0
+    value = 0.0
+    try:
+        if obj.get('IS_FRAMELESS_CABINET_CAGE'):
+            value = float(obj.get('Toe Kick Height') or 0.0)
+        elif obj.get('IS_FACE_FRAME_CABINET_CAGE'):
+            ffc = getattr(obj, 'face_frame_cabinet', None)
+            if ffc is not None and getattr(ffc, 'toe_kick_type', '') != 'FLUSH':
+                value = float(getattr(ffc, 'toe_kick_height', 0.0) or 0.0)
+    except Exception:
+        return 0.0
+    return value if MERGE < value < KICK_MAX else 0.0
+
+
+def _shelf_stacks(items):
+    """Floating shelves in stacks (shelves whose spans along the wall
+    overlap), each stack bottom to top."""
+    stacks = []
+    for it in sorted((i for i in items if i.shelf and not i.preview),
+                     key=lambda i: i.x0):
+        for st in stacks:
+            if it.x0 < max(o.x1 for o in st) - MERGE \
+                    and it.x1 > min(o.x0 for o in st) + MERGE:
+                st.append(it)
+                break
+        else:
+            stacks.append([it])
+    for st in stacks:
+        st.sort(key=lambda i: i.z0)
+    return stacks
+
+
+# ---- Centerline sources ------------------------------------------------------------
+# Where a wall's sinks and ranges centre, measured from a wall end. A
+# source is fn(scene, wall, length) returning [{'x': along the wall,
+# 'from_x': the end (or stop) it measures from, 'obj': the fixture's
+# object name}], or None to leave it to the next source. With no source
+# answering, sinks, ranges and cooktops measure from the nearer end.
+
+_centerline_sources = []
+
+
+def register_centerline_source(fn):
+    if fn not in _centerline_sources:
+        _centerline_sources.append(fn)
+    _bump_gen()
+
+
+def unregister_centerline_source(fn):
+    if fn in _centerline_sources:
+        _centerline_sources.remove(fn)
+    _bump_gen()
+
+
+CENTERLINE_APPLIANCES = ('RANGE', 'COOKTOP', 'SINK')
+
+
+def _centerlines(scene, wall, length, items):
+    for fn in list(_centerline_sources):
+        try:
+            got = fn(scene, wall, length)
+        except Exception as exc:
+            print(f"Elevation centerlines: {exc}")
+            continue
+        if got is not None:
+            return got
+    out = []
+    for it in items:
+        if it.kind != 'LOWER' or it.preview:
+            continue
+        obj = it.obj
+        if obj.get('APPLIANCE_TYPE') not in CENTERLINE_APPLIANCES \
+                and 'Sink' not in str(obj.get('CLASS_NAME', '')):
+            continue
+        x = (it.x0 + it.x1) / 2.0
+        out.append({'x': x, 'from_x': 0.0 if x <= length - x else length,
+                    'obj': obj.name})
+    return out
 
 
 def _merge(spans):
@@ -1099,7 +1198,8 @@ def _face_frame_layout(items, Fi):
     rail / opening breaks up each opening column}."""
     out = {'lower': [], 'upper': [], 'columns': []}
     for it in items:
-        if it.preview or not it.obj.get('IS_FACE_FRAME_CABINET_CAGE'):
+        if it.preview or it.shelf \
+                or not it.obj.get('IS_FACE_FRAME_CABINET_CAGE'):
             continue
         boxes = _face_frame_boxes(it.obj, Fi)
         if not boxes:
@@ -1114,6 +1214,9 @@ def _face_frame_layout(items, Fi):
         xs = _chain([v for a, b in stiles for v in (a, b)], fx0, fx1)
         row = 'upper' if (it.kind == 'UPPER' or it.tall) else 'lower'
         out[row] += [(a, b, it) for a, b in zip(xs, xs[1:])]
+        # A frame standing on a kick: its column chains start at the
+        # floor, so the kick reads with the rails above it.
+        kick = it.kind == 'LOWER' and MERGE < fz0 < KICK_MAX
         cols = []
         prev = fx0
         for a, b in stiles:
@@ -1127,6 +1230,8 @@ def _face_frame_layout(items, Fi):
             spans = _merge([(b[2], b[3]) for b in rails
                             if b[0] <= mid <= b[1]])
             zs = _chain([v for a, b in spans for v in (a, b)], fz0, fz1)
+            if kick:
+                zs = [0.0] + zs
             if len(zs) >= 3:
                 out['columns'].append((it, c0, c1, zs))
     return out
@@ -1362,6 +1467,25 @@ def _layout(context, region, rv3d):
     # sharing a line. What doesn't fit stays on the frame.
     side_tiers, on_frame = (_pack_face_frame_sides(ff['columns'], length)
                             if ff else ({1: [], -1: []}, []))
+    # Toe kicks the face frame chains don't already carry: one per
+    # distinct kick on each half, sharing a line with a chain clear of
+    # the floor, else on a line of its own nearest the wall.
+    covered = {id(c[0]) for c in ff['columns']} if ff else set()
+    for side, group in ((-1, left_group), (1, right_group)):
+        seen = set()
+        for it in sorted(group, key=lambda i: i.x0):
+            k = 0.0 if id(it) in covered else _kick_height(it)
+            if not k or round(k, 4) in seen:
+                continue
+            seen.add(round(k, 4))
+            zs = [0.0, k]
+            for tr in side_tiers[side]:
+                if all(k <= o[0] + MERGE for o, _it in tr):
+                    tr.append((zs, it))
+                    break
+            else:
+                side_tiers[side].insert(0, [(zs, it)])
+
     pad = TEXT_GAP_PX * s
     blf.size(0, FONT_SIZE * s)
     th = blf.dimensions(0, "0123456789\"")[1]
@@ -1369,6 +1493,7 @@ def _layout(context, region, rv3d):
     def ff_side(side, edge):
         cursor = edge + side * first
         ex = sx(wx1) if side > 0 else sx(wx0)
+        kicks = set()
         for tr in side_tiers[side]:
             widest = 0.0
             for zs, it in tr:
@@ -1376,6 +1501,12 @@ def _layout(context, region, rv3d):
                     dims_ext.append(((ex + side * gap, sy(z)),
                                      (cursor + side * over, sy(z))))
                 for a, b in zip(zs, zs[1:]):
+                    if a <= MERGE and b < KICK_MAX:
+                        # One kick per side: the next chain out starts
+                        # its values at the kick's top.
+                        if round(b, 4) in kicks:
+                            continue
+                        kicks.add(round(b, 4))
                     widest = max(widest, blf.dimensions(
                         0, format_length(scene, b - a))[0])
                     dims.append({'axis': 'V', 'a': sy(a), 'b': sy(b),
@@ -1419,6 +1550,47 @@ def _layout(context, region, rv3d):
     if ff:
         _face_frame_height_dims(on_frame, dims, sx, sy, s)
 
+    # Sink and range centerlines, from the wall end they measure off,
+    # just above the fixture. Lines that would overlap step up.
+    by_name = {it.name: it for it in items}
+    counter = max([it.z1 for it in lower if not it.tall] or [0.0])
+    cl_rows = []
+    for cl in sorted(_centerlines(scene, wall, length, items),
+                     key=lambda c: abs(c['x'] - c['from_x'])):
+        x, x_end = cl['x'], cl['from_x']
+        if abs(x - x_end) <= MERGE:
+            continue
+        it = by_name.get(cl.get('obj'))
+        top = it.z1 if it is not None else counter
+        lo, hi = min(x, x_end), max(x, x_end)
+        row = 0
+        while any(r == row and abs(z - top) <= MERGE
+                  and lo < h - MERGE and hi > l + MERGE
+                  for r, z, l, h in cl_rows):
+            row += 1
+        cl_rows.append((row, top, lo, hi))
+        pos = sy(top) + first + row * tier
+        dims_ext.append(((sx(x), sy(top) + gap), (sx(x), pos + over)))
+        dims_ext.append(((sx(x_end), pos - 2 * over),
+                         (sx(x_end), pos + over)))
+        dims.append({'axis': 'H', 'a': sx(x_end), 'b': sx(x), 'pos': pos,
+                     'side': 1, 'value': hi - lo, 'target': None,
+                     'item': it, 'w0': lo, 'suffix': " CL",
+                     'key': ('CL', cl.get('obj'), round(x, 4))})
+
+    # Floating shelves: per stack, floor to the lowest shelf, then each
+    # shelf and the clear gap above it, inside the stack's right end.
+    for st in _shelf_stacks(items):
+        zs = _chain([0.0] + [z for it in st for z in (it.z0, it.z1)],
+                    0.0, max(it.z1 for it in st))
+        x = sx(max(it.x1 for it in st)) - FF_INSET_PX * s
+        for a, b in zip(zs, zs[1:]):
+            dims.append({'axis': 'V', 'a': sy(a), 'b': sy(b), 'pos': x,
+                         'side': -1, 'value': b - a, 'target': None,
+                         'item': st[0], 'w0': a, 'horiz': True,
+                         'outward': True,
+                         'key': ('SHELF', st[0].name, round(a, 4))})
+
     # A selected product carries its own height, just inside its right
     # edge, so a tall or an odd-height cabinet can be sized here too.
     inset = 14 * s
@@ -1458,7 +1630,7 @@ def _place_text(scene, dims, region):
     clear = (TICK_PX + 3) * 2 * s
     placed = []
     for d in dims:
-        d['text'] = format_length(scene, d['value'])
+        d['text'] = format_length(scene, d['value']) + d.get('suffix', '')
         tw = blf.dimensions(0, d['text'])[0]
         span = abs(d['b'] - d['a'])
         lo, hi = min(d['a'], d['b']), max(d['a'], d['b'])
