@@ -1611,41 +1611,44 @@ FF_SIDE_TIERS = 1
 
 def _pack_face_frame_sides(columns, length):
     """({1: tiers, -1: tiers}, columns left on the frame). Columns with
-    the same rail breaks (same heights off the floor) make one chain;
-    the most shared go out first, then the ones nearest a wall end, to
-    the side of the wall their cabinets stand on, else the other side.
-    A tier is a list of (zs, item) whose height ranges don't overlap,
-    so an upper's chain and a base's share a line. Each side holds one
-    line: a second one out there reads as belonging to the end
+    the same rail breaks (same heights off the floor) make one chain.
+    Each side holds one line, and the cabinet standing at that end of
+    the wall has first call on it: chains go out nearest end first,
+    the more shared ahead on a tie, to the side they stand nearest,
+    else the other side. A tier is a list of (zs, item) whose height
+    ranges don't overlap, so an upper's chain and a base's share the
+    line. A second line out there would read as belonging to the end
     cabinet, so a chain that finds no room is dimensioned on its own
     bay instead."""
     groups = {}
     for col in columns:
         groups.setdefault(tuple(round(z, 4) for z in col[3]), []).append(col)
 
-    def centre(cols):
-        return sum((c[1] + c[2]) / 2.0 for c in cols) / len(cols)
+    def nearest(cols):
+        """(distance to a wall end, that side, the column)."""
+        ends = [(c[1], -1, c) for c in cols]
+        ends += [(length - c[2], 1, c) for c in cols]
+        return min(ends, key=lambda t: t[0])
 
     def order(kv):
-        cx = centre(kv[1])
-        return (-len(kv[1]), min(cx, length - cx))
+        return (round(nearest(kv[1])[0], 3), -len(kv[1]))
 
     tiers = {1: [], -1: []}
     left = []
     for _sig, cols in sorted(groups.items(), key=order):
         zs = cols[0][3]
-        cx = centre(cols)
-        pref = -1 if cx < length / 2.0 else 1
+        _dist, pref, col = nearest(cols)
+        owner = col[0]
         placed = False
         for side in (pref, -pref):
             for tr in tiers[side]:
                 if all(zs[-1] <= o[0] + MERGE or zs[0] >= o[-1] - MERGE
                        for o, _it in tr):
-                    tr.append((zs, cols[0][0]))
+                    tr.append((zs, owner))
                     placed = True
                     break
             if not placed and len(tiers[side]) < FF_SIDE_TIERS:
-                tiers[side].append([(zs, cols[0][0])])
+                tiers[side].append([(zs, owner)])
                 placed = True
             if placed:
                 break
