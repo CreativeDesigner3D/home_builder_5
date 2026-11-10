@@ -2495,6 +2495,14 @@ def _bar_layout(context, area):
     return parts
 
 
+CHIP_OFF = (0.55, 0.55, 0.57, 1.0)     # a toggle's icon while it is off
+
+
+def _lifted(color, amount=0.18):
+    """`color` a step toward white, alpha kept."""
+    return tuple(c + (1.0 - c) * amount for c in color[:3]) + tuple(color[3:])
+
+
 def _draw_bar(context, area):
     parts = _bar_layout(context, area)
     if not parts:
@@ -2514,15 +2522,17 @@ def _draw_bar(context, area):
         if part == 'TITLE':
             bg = Theme.ACCENT_BG
         elif on:
-            bg = Theme.BTN_HOVER_BG if hovered else Theme.ACCENT_BG
+            # A toggle that is on keeps its fill under the cursor (only
+            # lifted a little), so hovering never reads as switching off.
+            bg = _lifted(Theme.ACCENT_BG) if hovered else Theme.ACCENT_BG
         else:
             bg = Theme.BTN_HOVER_BG if hovered else Theme.BTN_BG
         draw_round_rect(shader, rx, ry, rw, rh, 5 * s, bg)
         glyph = (_SHOW_GLYPHS.get(part[5:]) if part.startswith('SHOW:')
                  else None)
         if glyph is not None:
-            glyph(shader, rect, Theme.TEXT_PRIMARY if hovered or on
-                  else Theme.TEXT_NORMAL)
+            glyph(shader, rect, Theme.TEXT_PRIMARY if on
+                  else Theme.TEXT_NORMAL if hovered else CHIP_OFF)
             shader.bind()
             if hovered:
                 _draw_chip_hint(shader, rect, label)
