@@ -5069,6 +5069,22 @@ def front_round_top(front_obj, store=None):
             'radius_mode': store.get(k_radius) or 'OUTSIDE'}
 
 
+def _seat_front_pulls(front_obj, proud):
+    """Keep a front's pulls on its face when the face stands ``proud``
+    of the front stock (a raised slab face is thicker than the part it
+    is built on). The amount is stamped on the front so a later rebuild
+    moves the pulls by the difference only, and new pulls start there."""
+    was = front_obj.get('HB_FRONT_PROUD', 0.0)
+    if abs(proud - was) > 1e-9:
+        for child in front_obj.children:
+            if child.get('hb_part_role') == 'PULL':
+                child.location.z += proud - was
+    if proud > 1e-9:
+        front_obj['HB_FRONT_PROUD'] = proud
+    elif 'HB_FRONT_PROUD' in front_obj:
+        del front_obj['HB_FRONT_PROUD']
+
+
 def _clear_static_door(front_obj):
     """Undo a python-built door on a front: drop the HB_DOOR_FRAME /
     HB_STATIC_SLAB stamp and the static mesh, and re-enable the cutpart
@@ -5793,9 +5809,14 @@ class Face_Frame_Door_Style(PropertyGroup):
             if mod.type == 'NODES' and 'Door Style' in mod.name:
                 front_obj.modifiers.remove(mod)
         edge_sec = None
+        build_thickness = front_thickness
+        # A raised slab face is thicker than the front stock, its border
+        # milled down to it, so it builds as a mesh even with a square
+        # edge.
+        raised = style_options.raised_slab_kind(self.front_panel)
         if door_builder.USE_PYTHON_DOORS:
             _edge_name = self._cabinet_edge_profile(front_obj)
-            if _edge_name is not None:
+            if _edge_name is not None or raised:
                 if front_width is None:
                     slab_part = hb_types.GeoNodeCutpart(front_obj)
                     try:
@@ -5809,14 +5830,20 @@ class Face_Frame_Door_Style(PropertyGroup):
                         front_thickness = units.inch(0.75)
                 if front_width is not None:
                     from ..common import door_profiles
-                    edge_sec = door_profiles.named_edge_section(
-                        _edge_name, front_thickness)
+                    build_thickness = front_thickness
+                    if raised:
+                        edge_sec, build_thickness = (
+                            door_profiles.raised_slab_section(
+                                raised, front_thickness, _edge_name))
+                    else:
+                        edge_sec = door_profiles.named_edge_section(
+                            _edge_name, front_thickness)
         if edge_sec is not None:
             info = door_builder.door_style_info(self)
             info['door_type'] = 'SLAB'
             door_builder.build_door_mesh(front_obj.data, info,
                                          front_width, front_length,
-                                         front_thickness,
+                                         build_thickness,
                                          outer_section=edge_sec)
             _mirror_front_mesh_y_if_unmirrored(front_obj)
             cut = _front_cutpart_mod(front_obj)
@@ -5826,8 +5853,10 @@ class Face_Frame_Door_Style(PropertyGroup):
             if 'HB_DOOR_FRAME' in front_obj:
                 del front_obj['HB_DOOR_FRAME']
             front_obj['HB_STATIC_SLAB'] = True
+            _seat_front_pulls(front_obj, build_thickness - front_thickness)
         else:
             _clear_static_door(front_obj)
+            _seat_front_pulls(front_obj, 0.0)
         # Slabs carry no rails; drop a stale rail-size callout left
         # over from a live 5-piece -> slab edit.
         _sync_rail_size_annotation(front_obj, None, 0.0, 0.0, False)
@@ -6426,6 +6455,7 @@ class Face_Frame_Door_Style(PropertyGroup):
                 cut.show_render = False
             if 'HB_STATIC_SLAB' in front_obj:
                 del front_obj['HB_STATIC_SLAB']
+            _seat_front_pulls(front_obj, 0.0)
             # Effective frame record for readers that used to consult the
             # modifier inputs (Set Door Frame dialog, panel-opening readout,
             # the host add-on's glass-hatch pass).

@@ -14970,7 +14970,7 @@ class FaceFrameCabinet(GeoNodeCage):
         # part-local origin, so part-local z=0 is the BACK face
         # (against the cabinet) and z=+thickness is the FRONT face
         # (toward the viewer). The pull mounts on the front face.
-        z = thickness
+        z = thickness + front_part.obj.get('HB_FRONT_PROUD', 0.0)
 
         instance = hb_utils.new_object(f"Pull - {front_part.obj.name}", pull_obj.data)
         bpy.context.scene.collection.objects.link(instance)

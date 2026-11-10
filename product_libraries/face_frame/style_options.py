@@ -5213,6 +5213,26 @@ def series_is_slab(series, panel=None):
     return SERIES_FRAME.get(series, {}).get('is_slab', False)
 
 
+# Slab panel choices that build as a raised slab face: a thick slab
+# with its border milled down to the edge stock (door_profiles.
+# raised_slab_section kinds).
+RAISED_SLAB_PANELS = {
+    'Deluxe Classic Slab': 'CLASSIC',
+    'Deluxe Colonial Slab': 'COLONIAL',
+    'Deluxe Havana Slab': 'HAVANA',
+    'Deluxe Raised Slab': 'RAISED',
+    'Deluxe Waterford Slab': 'WATERFORD',
+    'Deluxe Joviso Slab': 'JOVISO',
+    'Deluxe Melville Slab': 'MELVILLE',
+}
+
+
+def raised_slab_kind(panel):
+    """The raised slab face a panel choice builds, or None for a plain
+    slab."""
+    return RAISED_SLAB_PANELS.get((panel or '').strip())
+
+
 # Profile picks per series: names into the face_frame_assets/
 # door_profiles library (outside / inside edge sweeps, raised panel).
 # A missing key means square edge / flat panel. The 'panel' entry only

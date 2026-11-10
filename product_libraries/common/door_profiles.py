@@ -841,6 +841,104 @@ def named_edge_section(name, thickness):
     return pts
 
 
+# ---- Raised slab faces ----------------------------------------------
+# A thick solid slab whose border is milled down to a standard-thickness
+# edge, leaving a raised field (the "deluxe" slab drawer faces). Each
+# entry, in INCHES: ``rise`` is how far the field stands proud of the
+# edge stock, ``border`` the width from the outer edge to the field,
+# ``land`` the least flat left at the edge, and ``run`` the milled shape
+# as (x, y) fractions -- x from the field edge outward across the shaped
+# span, y of the rise dropped. ``border_plus_edge`` faces grow their
+# border by the edge profile's width; ``edge`` forces a built-in edge
+# run and ignores the ordered one. Shapes read off the catalog sections.
+def _cove_run(segs=8):
+    """Concave quarter sweep: plumb at the field, level at the land."""
+    return [(1.0 - math.cos(0.5 * math.pi * i / segs),
+             math.sin(0.5 * math.pi * i / segs)) for i in range(segs + 1)]
+
+
+def _ogee_run(segs=10):
+    """Rounded over at the field, flaring level into the land."""
+    out = []
+    for i in range(segs + 1):
+        x = i / segs
+        out.append((x, x * x * (3.0 - 2.0 * x)))
+    return out
+
+
+_RAISED_SLABS = {
+    'CLASSIC': dict(rise=0.25, border=1.625, land=0.0,
+                    run=[(0.0, 0.0), (0.012, 0.10), (0.03, 0.20),
+                         (0.06, 0.25), (1.0, 1.0)]),
+    'COLONIAL': dict(rise=0.25, border=1.75, land=0.0,
+                     run=[(0.0, 0.0), (0.0, 0.25), (1.0, 1.0)]),
+    'HAVANA': dict(rise=0.375, border=1.375, land=0.55, run=_ogee_run()),
+    'RAISED': dict(rise=0.25, border=1.5, land=0.5, run=_cove_run()),
+    # 3/16 radius worked into the edge itself; ordered with no edge
+    # profile.
+    'WATERFORD': dict(rise=0.375, border=1.5, land=1.3125,
+                      run=[(0.0, 0.0), (0.0, 0.70), (0.35, 0.92),
+                           (1.0, 1.0)],
+                      edge='3/8" radius', edge_scale=0.5),
+    'JOVISO': dict(rise=0.375, border=0.875, land=0.375,
+                   border_plus_edge=True,
+                   run=[(0.0, 0.0), (0.0, 0.45), (1.0, 1.0)]),
+    'MELVILLE': dict(rise=0.1875, border=0.875, land=0.0,
+                     border_plus_edge=True,
+                     run=[(0.0, 0.0), (1.0, 1.0)]),
+}
+
+
+def raised_slab_rise(kind):
+    """How far a raised slab face's field stands proud of its edge
+    stock (meters), 0.0 for an unknown kind."""
+    spec = _RAISED_SLABS.get((kind or '').strip().upper())
+    return spec['rise'] * _INCH if spec else 0.0
+
+
+def raised_slab_section(kind, edge_thickness, edge_name=None):
+    """Sweep section for a raised slab face, in named_edge_section's
+    space (u inward from the outer edge, v into the thickness from the
+    FIELD face, front end first, ending at the back edge corner), and
+    the face's full thickness: (section, thickness). ``edge_thickness``
+    is the stock the edge is left at; ``edge_name`` the ordered edge
+    profile, cut on that edge. (None, edge_thickness) for an unknown
+    kind."""
+    spec = _RAISED_SLABS.get((kind or '').strip().upper())
+    if spec is None:
+        return None, edge_thickness
+    rise = spec['rise'] * _INCH
+    total = edge_thickness + rise
+    edge = None
+    if spec.get('edge'):
+        k = spec.get('edge_scale', 1.0)
+        edge = [(u * k, v * k) for (u, v) in named_edge_run(spec['edge'])]
+    elif edge_name:
+        edge = named_edge_section(edge_name, edge_thickness)
+    edge_w = edge[0][0] if edge else 0.0
+    border = spec['border'] * _INCH
+    if spec.get('border_plus_edge'):
+        border += edge_w
+    land = max(spec['land'] * _INCH, edge_w)
+    if land > border - 0.125 * _INCH:
+        # The edge cut would eat the shaped span: leave the edge square.
+        edge, edge_w = None, 0.0
+        land = min(spec['land'] * _INCH, border - 0.125 * _INCH)
+    span = border - land
+    pts = [(border - x * span, y * rise) for (x, y) in spec['run']]
+    if edge:
+        if pts[-1][0] > edge_w + 1e-9:
+            pts.append((edge_w, rise))
+        else:
+            pts.pop()
+        pts.extend((u, v + rise) for (u, v) in edge)
+    elif pts[-1][0] > 1e-9:
+        pts.append((0.0, rise))
+    if pts[-1][1] < total - 1e-9:
+        pts.append((pts[-1][0], total))
+    return pts, total
+
+
 def sweep_edge_frame(section, width, height, inner=False):
     """Mitred sweep of an edge section around a width x height rect,
     for review builds and tests. Plane space: x across [0, width],
