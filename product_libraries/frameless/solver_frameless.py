@@ -1910,6 +1910,38 @@ def _drawer_box_system():
     return getattr(props, 'drawer_box_system', DRAWER_BOX_PARAMETRIC)
 
 
+# What a parametric box is built from (GeoNodeDrawerBox.create), put
+# back when a box leaves a bought system so it does not keep that
+# system's boards and finish.
+_PARAMETRIC_BOX_INPUTS = (
+    ("Material Thickness", inch(0.625)),
+    ("Bottom Thickness", inch(0.25)),
+    ("Drawer Bottom Z Location", inch(0.5)),
+    ("Material", None),
+    ("Side Material", None),
+    ("Use Side Material", False),
+    ("Side Outset", 0.0),
+    ("Side Thickness", 0.0),
+    ("Side Height Reduce", 0.0),
+)
+
+
+def _style_drawer_box(box_obj, system):
+    """Boards and finish for the box: the closet library's for a bought
+    system or wood box, the parametric box's own otherwise."""
+    from ...hb_types import GeoNodeObject
+    gb = GeoNodeObject(box_obj)
+    if system is not None:
+        from ..closets import drawer_boxes_closets as boxes
+        boxes.style_box(gb, system)
+        return
+    for socket, value in _PARAMETRIC_BOX_INPUTS:
+        try:
+            gb.set_input(socket, value)
+        except Exception:
+            pass
+
+
 def _solve_drawer_box(front_obj, box_obj, insert_obj, length, width,
                       overlays, hidden):
     clear_drivers(box_obj)
@@ -1925,27 +1957,46 @@ def _solve_drawer_box(front_obj, box_obj, insert_obj, length, width,
             max(length - top - bottom - top_clr - bottom_clr, 0.0))
     location = (bottom + bottom_clr, -left - side, 0.0)
     system = _drawer_box_system()
-    for key in ('hb_drawer_box_type', 'hb_drawer_box_size'):
+    for key in ('hb_drawer_box_type', 'hb_drawer_box_size',
+                'hb_box_warning', 'hb_open_height'):
         if key in box_obj:
             del box_obj[key]
+    styled = None
     if system == 'NONE':
         hidden = True
     elif system != DRAWER_BOX_PARAMETRIC:
-        # A bought system (or standard wood boxes): the box takes the
-        # system's standard size for the opening it sits in and the
-        # system's own clearances, the way the closet library sizes one.
+        # A bought system (or standard wood boxes) is built exactly the
+        # way the closet library builds one: the system's standard size
+        # for the clear opening the front covers, the closet's wood box
+        # deducts where a wood box falls short of a standard, the
+        # system's side gap and floor stand-off (giving way when the
+        # opening is tighter than it), its board thicknesses and finish,
+        # and the warning that says when a size cannot be bought.
         from ..closets import drawer_boxes_closets as boxes
+        from ..closets import const_closets
         clear_h = max(length - top - bottom, 0.0)
         clear_w = max(width - left - right, 0.0)
-        sized = boxes.size_box(system, clear_h, depth, dims[2], dims[1])
+        wood_h = max(clear_h - const_closets.DRAWER_BOX_HEIGHT_DEDUCT,
+                     inch(2.0))
+        wood_d = max(depth - const_closets.DRAWER_BOX_DEPTH_DEDUCT,
+                     inch(2.0))
+        sized = boxes.size_box(system, clear_h, depth, wood_h, wood_d)
         if sized is not None:
             box_h, box_d, tag = sized
             gap = boxes.side_gap(system)
-            dims = (max(clear_w - gap * 2.0, 0.0), box_d, box_h)
-            location = (bottom + boxes.floor_gap(system), -left - gap, 0.0)
+            room = max(clear_h, inch(1.0))
+            lift = min(boxes.floor_gap(system), max(0.0, room - box_h))
+            dims = (max(clear_w - gap * 2.0, inch(2.0)), box_d, box_h)
+            location = (bottom + lift, -left - gap, 0.0)
             box_obj['hb_drawer_box_type'] = system
             box_obj['hb_drawer_box_size'] = tag
+            box_obj['hb_open_height'] = clear_h
+            warning = boxes.box_warning(system, clear_h, depth, wood_d)
+            if warning:
+                box_obj['hb_box_warning'] = warning
+            styled = boxes
     set_cage(box_obj, location, *dims)
+    _style_drawer_box(box_obj, system if styled is not None else None)
     box_obj.hide_viewport = hidden
     box_obj.hide_render = hidden
     # The box construction pick and the inserts inside the box.
