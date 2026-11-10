@@ -32,6 +32,12 @@ class hb_frameless_OT_product_prompts(bpy.types.Operator):
         name="Height Off Floor",
         description="How high the bottom of the product sits off the floor",
         unit='LENGTH', precision=5)  # type: ignore
+    # A misc part's banded edges, its own choice and unbanded until told
+    # (as a closet misc part's are).
+    band_w1: bpy.props.BoolProperty(name="W1")  # type: ignore
+    band_w2: bpy.props.BoolProperty(name="W2")  # type: ignore
+    band_l1: bpy.props.BoolProperty(name="L1")  # type: ignore
+    band_l2: bpy.props.BoolProperty(name="L2")  # type: ignore
 
     product = None
     part_type = ""
@@ -55,6 +61,10 @@ class hb_frameless_OT_product_prompts(bpy.types.Operator):
             self.width = self.product.get_input('Length')
             self.height = self.product.get_input('Thickness')
             self.depth = self.product.get_input('Width')
+            from .. import edgebanding_frameless as eb
+            for key in eb.EDGE_SOCKETS:
+                setattr(self, 'band_' + key.lower(),
+                        bool(product_bp.get(eb.MISC_FLAG + key)))
         else:
             self.product = hb_types.GeoNodeCage(product_bp)
             self.width = self.product.get_input('Dim X')
@@ -70,6 +80,13 @@ class hb_frameless_OT_product_prompts(bpy.types.Operator):
             self.product.set_input('Length', self.width)
             self.product.set_input('Thickness', self.height)
             self.product.set_input('Width', self.depth)
+            from .. import edgebanding_frameless as eb
+            obj = self.product.obj
+            for key in eb.EDGE_SOCKETS:
+                obj[eb.MISC_FLAG + key] = bool(
+                    getattr(self, 'band_' + key.lower()))
+            # Show the banded edges in the band, the rest as bare core.
+            eb.refresh_banding(obj)
         else:
             self.product.set_input('Dim X', self.width)
             self.product.set_input('Dim Z', self.height)
@@ -131,6 +148,13 @@ class hb_frameless_OT_product_prompts(bpy.types.Operator):
         row = col.row(align=True)
         row.label(text="Height Off Floor:")
         row.prop(self, 'height_off_floor', text="")
+
+        if obj.get('IS_FRAMELESS_MISC_PART'):
+            box = layout.box()
+            box.label(text="Edgebanding", icon='MOD_EDGESPLIT')
+            row = box.row()
+            for key in ('W1', 'W2', 'L1', 'L2'):
+                row.prop(self, 'band_' + key.lower())
 
         # --- Product-specific properties ---
         if self.part_type == 'FLOATING_SHELF':
