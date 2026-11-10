@@ -2084,10 +2084,15 @@ def _place_text(scene, dims, region, ext=()):
             if d.get('outward'):
                 # Out past the wall: the value stays on the open side.
                 xo = x_r if d['side'] > 0 else x_l
+                # A crowded run then steps to the side towards the
+                # wall rather than set one value on another.
+                xi = x_l if d['side'] > 0 else x_r
                 cands = inline + [(xo, mid - th / 2.0), (xo, hi + 2 * s),
                                   (xo, lo - 2 * s - th),
+                                  (xi, mid - th / 2.0),
                                   (xo, hi + 4 * s + th),
-                                  (xo, lo - 4 * s - 2 * th)]
+                                  (xo, lo - 4 * s - 2 * th),
+                                  (xi, hi + 2 * s), (xi, lo - 2 * s - th)]
             else:
                 cands = inline + [(x_r, mid - th / 2.0),
                                   (x_l, mid - th / 2.0),
@@ -2740,6 +2745,9 @@ def _print_outlines(page, extra, Fi, L, H):
             page.rect(sx(x0), sy(z0), sx(x1) - sx(x0), sy(z1) - sy(z0))
 
 
+PRINT_MASK_PAD = 1.5        # px of paper kept clear round a value
+
+
 def _print_text_halo(ps):
     return (PAPER, 2.5 * ps)
 
@@ -2750,6 +2758,7 @@ def dim_primitives(dims, extra, scale=1.0):
 
     {'kind': 'LINES', 'role': 'FLOOR' | 'EXT' | 'DIM' | 'TICK',
      'segments': [((x, y), (x, y)), ...], 'width', 'color'}
+    {'kind': 'MASK', 'rect': (x, y, w, h), 'color'} to fill, no stroke
     {'kind': 'TEXT', 'text', 'x', 'y' (baseline start), 'size', 'angle',
      'font': 'Helvetica', 'color', 'halo': (colour, width),
      'rect': the value's (x, y, w, h), 'key': its dimension's}
@@ -2766,6 +2775,14 @@ def dim_primitives(dims, extra, scale=1.0):
          'segments': [((fx0 - 24 * ps, fy), (fx1 + 24 * ps, fy))]},
         {'kind': 'LINES', 'role': 'EXT', 'color': LINE, 'width': 1.0 * ps,
          'segments': list(extra['ext'])}]
+    # Paper behind each value, over the extension lines and the drawing
+    # but under the dimension lines and ticks: whatever runs behind a
+    # value breaks round it, the way its own line does.
+    mp = PRINT_MASK_PAD * ps
+    for d in dims:
+        x, y, w, h = d['rect']
+        prims.append({'kind': 'MASK', 'color': PAPER,
+                      'rect': (x - mp, y - mp, w + 2 * mp, h + 2 * mp)})
     lines, ticks = [], []
     for d in dims:
         line, tk = _dim_lines(d, ps)
@@ -2803,6 +2820,9 @@ def _print_dims(page, scene, dims, extra, ps):
                 width = pr['width']
                 page.line_width(width)
             page.lines(pr['segments'])
+        elif pr['kind'] == 'MASK':
+            page.fill_color(pr['color'])
+            page.rect(*pr['rect'], fill=True, stroke=False)
         else:
             page.fill_color(pr['color'])
             page.text(pr['x'], pr['y'], pr['text'], pr['size'],
