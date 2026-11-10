@@ -1050,8 +1050,8 @@ def _height_levels(group, height):
     cabinets' top; a dishwasher or range a fraction under it is not a
     level of its own), upper bottoms and tops, tall tops, wall height."""
     levels = {0.0, height}
-    # Floating shelves carry their own chain (see _shelf_stacks).
-    group = [it for it in group if not it.shelf]
+    # Floating shelves and range hoods carry their own dims.
+    group = [it for it in group if not it.shelf and not _is_hood(it)]
     lows = [it for it in group if it.kind == 'LOWER' and not it.tall]
     base_tops = [it.z1 for it in lows if not it.obj.get('IS_APPLIANCE')] \
         or [it.z1 for it in lows]
@@ -1202,8 +1202,58 @@ def _face_frame_boxes_now(cabinet, Fi):
         zs = [p.z for p in pts]
         if max(xs) - min(xs) < MERGE or max(zs) - min(zs) < MERGE:
             continue
-        boxes.append((min(xs), max(xs), min(zs), max(zs)))
+        boxes.append((min(xs), max(xs), min(zs), max(zs), part))
     return boxes
+
+
+def _wall_box(obj, Fi):
+    """(x0, x1, z0, z1) of an object's bounds in the wall frame."""
+    try:
+        mw = obj.matrix_world
+        pts = [Fi @ (mw @ Vector(c)) for c in obj.bound_box]
+    except Exception:
+        return None
+    return (min(p.x for p in pts), max(p.x for p in pts),
+            min(p.z for p in pts), max(p.z for p in pts))
+
+
+def _front_drops(it, cols, fillers, Fi):
+    """[(item, c0, c1, clear0, clear1, z_bot, z_top)] for each bay of a
+    face frame cabinet whose front (top rail and stretcher) is dropped
+    for a sink or cooktop: the bay's opening c0..c1, the clear width
+    between its drop fillers, and the dropped band."""
+    out = []
+    for bay in it.obj.children:
+        ffb = getattr(bay, 'face_frame_bay', None)
+        if not bay.get('IS_FACE_FRAME_BAY_CAGE') or ffb is None:
+            continue
+        drop = getattr(ffb, 'front_drop', 0.0) or 0.0
+        if drop <= MERGE:
+            continue
+        box = _wall_box(bay, Fi)
+        if box is None:
+            continue
+        col = next(((c0, c1) for c0, c1 in cols
+                    if box[0] - MERGE <= (c0 + c1) / 2.0 <= box[1] + MERGE),
+                   None)
+        if col is None:
+            continue
+        c0, c1 = col
+        z_top = it.z0 + ffb.height
+        mine = [b for b, part in fillers
+                if part.get('hb_segment_start_bay') == bay.get('hb_bay_index')
+                and c0 - MERGE <= (b[0] + b[1]) / 2.0 <= c1 + MERGE]
+        mid = (c0 + c1) / 2.0
+        clear0 = max([b[1] for b in mine if (b[0] + b[1]) / 2.0 < mid]
+                     or [c0])
+        clear1 = min([b[0] for b in mine if (b[0] + b[1]) / 2.0 >= mid]
+                     or [c1])
+        out.append((it, c0, c1, clear0, clear1, z_top - drop, z_top))
+    return out
+
+
+def _is_hood(it):
+    return it.kind == 'UPPER' and it.obj.get('APPLIANCE_TYPE') == 'HOOD'
 
 
 def _face_frame_layout(items, Fi):
@@ -1214,13 +1264,20 @@ def _face_frame_layout(items, Fi):
     x0, x1, z)] the end sections of an upper whose bays step, each
     across its stiles' outer edges, z its bottom}. A blind cabinet's
     hidden blind strip leads (or ends) its row's segments, so the chain
-    reads blind, stile, opening ... to the cabinet's edge."""
-    out = {'lower': [], 'upper': [], 'columns': [], 'sections': []}
+    reads blind, stile, opening ... to the cabinet's edge. 'drops':
+    see _front_drops; a drop's filler stiles stand in the dropped band
+    only, so they are not stiles of the frame."""
+    out = {'lower': [], 'upper': [], 'columns': [], 'sections': [],
+           'drops': []}
     for it in items:
         if it.preview or it.shelf \
                 or not it.obj.get('IS_FACE_FRAME_CABINET_CAGE'):
             continue
         boxes = _face_frame_boxes(it.obj, Fi)
+        fillers = [(b, b[4]) for b in boxes
+                   if b[4].get('hb_part_role') == 'FRONT_DROP_FILLER']
+        boxes = [b for b in boxes
+                 if b[4].get('hb_part_role') != 'FRONT_DROP_FILLER']
         if not boxes:
             continue
         fx0 = min(b[0] for b in boxes)
@@ -1266,6 +1323,8 @@ def _face_frame_layout(items, Fi):
                 out['columns'].append((it, c0, c1, zs))
         if it.kind == 'UPPER' and len(cols) >= 2:
             out['sections'] += _upper_sections(it, cols, bottoms, stiles)
+        if it.kind == 'LOWER':
+            out['drops'] += _front_drops(it, cols, fillers, Fi)
     return out
 
 
@@ -1627,11 +1686,61 @@ def _layout(context, region, rv3d):
                      'item': it, 'w0': x0,
                      'key': ('SECTION', it.name, round(x0, 4))})
 
+    # A sink or cooktop front drop: the drop down the middle of the
+    # clear band, always; with Face Frame on, the drop fillers and the
+    # clear width between them just above the bay.
+    cl_rows = []
+    for it, c0, c1, clear0, clear1, z_bot, z_top in ff_all['drops']:
+        dims.append({'axis': 'V', 'a': sy(z_bot), 'b': sy(z_top),
+                     'pos': sx((clear0 + clear1) / 2.0), 'side': 1,
+                     'value': z_top - z_bot, 'target': None, 'item': it,
+                     'w0': z_bot, 'horiz': True,
+                     'key': ('DROP', it.name, round(c0, 4))})
+        if ff is None or (clear0 - c0 <= MERGE and c1 - clear1 <= MERGE):
+            continue
+        pos = sy(z_top) + first
+        pts = _chain([c0, clear0, clear1, c1], c0, c1)
+        for x in pts:
+            dims_ext.append(((sx(x), sy(z_top) + gap), (sx(x), pos + over)))
+        for a, b in zip(pts, pts[1:]):
+            dims.append({'axis': 'H', 'a': sx(a), 'b': sx(b), 'pos': pos,
+                         'side': 1, 'value': b - a, 'target': None,
+                         'item': it, 'w0': a,
+                         'key': ('DROP_W', it.name, round(a, 4))})
+        # The CL over this fixture steps up past the filler chain.
+        cl_rows.append((0, it.z1, c0, c1))
+
+    # A range hood: its height on its open side (the side no upper
+    # butts), else down its middle. Its width rides the upper chain.
+    uppers = [u for u in items if u.kind == 'UPPER' and not _is_hood(u)]
+    for it in items:
+        if not _is_hood(it) or it.preview:
+            continue
+
+        def butts(x):
+            return any(u.x0 - MERGE <= x <= u.x1 + MERGE
+                       and u.z0 < it.z1 and u.z1 > it.z0 for u in uppers)
+        if not butts(it.x1):
+            pos, side = sx(it.x1) + first, 1
+        elif not butts(it.x0):
+            pos, side = sx(it.x0) - first, -1
+        else:
+            pos, side = sx((it.x0 + it.x1) / 2.0), 1
+        for z in (it.z0, it.z1):
+            edge = sx(it.x1) if side > 0 else sx(it.x0)
+            if abs(pos - edge) > first / 2.0:
+                dims_ext.append(((edge + side * gap, sy(z)),
+                                 (pos + side * over, sy(z))))
+        dims.append({'axis': 'V', 'a': sy(it.z0), 'b': sy(it.z1),
+                     'pos': pos, 'side': side, 'value': it.z1 - it.z0,
+                     'target': None, 'item': it, 'w0': it.z0,
+                     'horiz': True, 'outward': True,
+                     'key': ('HOOD', it.name)})
+
     # Sink and range centerlines, from the wall end they measure off,
     # just above the fixture. Lines that would overlap step up.
     by_name = {it.name: it for it in items}
     counter = max([it.z1 for it in lower if not it.tall] or [0.0])
-    cl_rows = []
     for cl in sorted(_centerlines(scene, wall, length, items),
                      key=lambda c: abs(c['x'] - c['from_x'])):
         x, x_end = cl['x'], cl['from_x']
@@ -1706,6 +1815,7 @@ def _place_text(scene, dims, region):
     # A value fits between its ticks with this much clear either side.
     clear = (TICK_PX + 3) * 2 * s
     placed = []
+    pending = []
     for d in dims:
         d['text'] = format_length(scene, d['value']) + d.get('suffix', '')
         tw = blf.dimensions(0, d['text'])[0]
@@ -1745,6 +1855,11 @@ def _place_text(scene, dims, region):
                 cands.append((x_text - th, mid - tw / 2.0))
             cands += [(x_text - th, hi + 4 * s), (x_text - th, lo - 4 * s - tw)]
             rects = [(x, y, th, tw) for x, y in cands]
+        fits = d.get('horiz') or tw + clear <= span
+        pending.append((0 if fits else 1, len(pending), d, rects))
+    # A value that fits between its ticks has one good spot; it claims
+    # it before a neighbour too narrow for its own value spills over.
+    for _order, _i, d, rects in sorted(pending, key=lambda p: p[:2]):
         chosen = rects[0]
         for r in rects:
             if not any(_rects_overlap(r, p) for p in placed):
