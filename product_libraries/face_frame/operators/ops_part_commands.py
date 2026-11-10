@@ -2563,7 +2563,7 @@ class hb_face_frame_OT_remove_glass_door(bpy.types.Operator):
 
 
 # ---------------------------------------------------------------------------
-# Diamond vent: a fixed four-diamond hole pattern cut through a door
+# Diamond vent: a four-diamond hole pattern cut through a door
 # (door_vents.py). Applies to every selected door.
 # ---------------------------------------------------------------------------
 
@@ -2600,6 +2600,70 @@ class hb_face_frame_OT_set_door_vent(bpy.types.Operator):
         self.report({'INFO'}, "Diamond vent %s %d door%s" % (
             "added to" if self.add else "removed from", n,
             "" if n == 1 else "s"))
+        return {'FINISHED'}
+
+
+class hb_face_frame_OT_door_vent_options(bpy.types.Operator):
+    """Size and position of the diamond vent on the selected doors"""
+    bl_idname = "hb_face_frame.door_vent_options"
+    bl_label = "Diamond Vent Options"
+    bl_description = ("Set the size of one diamond and how far the "
+                      "pattern sits above or below the panel centre. The "
+                      "pattern is three diamonds wide and three tall")
+    bl_options = {'UNDO'}
+
+    diamond_width: FloatProperty(
+        name="Diamond Width", subtype='DISTANCE', unit='LENGTH',
+        min=0.00635, precision=4,
+        description="Width of one diamond; the pattern is three wide")  # type: ignore
+    diamond_height: FloatProperty(
+        name="Diamond Height", subtype='DISTANCE', unit='LENGTH',
+        min=0.00635, precision=4,
+        description="Height of one diamond; the pattern is three tall")  # type: ignore
+    rise: FloatProperty(
+        name="Move Up", subtype='DISTANCE', unit='LENGTH', precision=4,
+        description="How far the pattern sits above the panel centre. "
+                    "Negative moves it down")  # type: ignore
+
+    @staticmethod
+    def _vented(context):
+        from .. import door_vents
+        return [d for d in _selected_doors(context)
+                if door_vents.has_vent(d)]
+
+    @classmethod
+    def poll(cls, context):
+        return bool(cls._vented(context))
+
+    def invoke(self, context, event):
+        from .. import door_vents
+        doors = self._vented(context)
+        obj = context.active_object
+        first = obj if obj in doors else doors[0]
+        (self.diamond_width, self.diamond_height,
+         self.rise) = door_vents.vent_settings(first)
+        return context.window_manager.invoke_props_dialog(self, width=280)
+
+    def draw(self, context):
+        layout = self.layout
+        layout.use_property_split = True
+        layout.use_property_decorate = False
+        col = layout.column()
+        col.prop(self, "diamond_width")
+        col.prop(self, "diamond_height")
+        col.prop(self, "rise")
+        system = context.scene.unit_settings.system
+        col.label(text="Pattern: %s x %s" % (
+            bpy.utils.units.to_string(
+                system, 'LENGTH', self.diamond_width * 3.0, precision=4),
+            bpy.utils.units.to_string(
+                system, 'LENGTH', self.diamond_height * 3.0, precision=4)))
+
+    def execute(self, context):
+        from .. import door_vents
+        for door in self._vented(context):
+            door_vents.set_vent_settings(
+                door, self.diamond_width, self.diamond_height, self.rise)
         return {'FINISHED'}
 
 
@@ -5036,6 +5100,7 @@ classes = (
     hb_face_frame_OT_set_door_frame,
     hb_face_frame_OT_set_door_hardware,
     hb_face_frame_OT_set_door_vent,
+    hb_face_frame_OT_door_vent_options,
     hb_face_frame_OT_make_glass_door,
     hb_face_frame_OT_remove_glass_door,
     hb_face_frame_OT_set_door_shape,

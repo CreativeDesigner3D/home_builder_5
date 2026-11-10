@@ -1,12 +1,16 @@
 """
-Diamond vent: a fixed pattern of four diamond holes cut through a door.
+Diamond vent: a pattern of four diamond holes cut through a door.
 
-The pattern is a static shop detail, not a parametric one: four
-diamonds 1.20" wide by 0.90" tall, set out as a larger diamond in a
-4.00" by 3.00" box - left / right diamonds 1.40" either side of centre,
-top / bottom diamonds 1.05" above and below it. It sits centred on the
-door's panel field (the slab itself on a slab door) and cuts all the
-way through the part.
+The pattern is set out in thirds: four equal diamonds in a box three
+diamonds wide and three tall - one in the middle of the top third, one
+in the middle of the bottom third, one at each end of the middle third.
+Neighbouring diamonds meet on the third lines, so the bottom point of
+the top diamond is level with the top points of the side ones, and its
+side points are plumb with their inner points. One diamond's width and
+height (2" by 2-2/3" unless set per door, a 6" by 8" pattern) size the
+whole thing. It sits centred on the door's panel field (the slab itself
+on a slab door), moved up or down by a per-door amount, and cuts all
+the way through the part.
 
 The cut is a geometry node modifier ('Diamond Vent', node group
 CPM_DIAMONDVENT) at the end of the front's stack, built in Python like
@@ -30,22 +34,28 @@ from ... import hb_utils
 from ...units import inch
 
 NODE_GROUP_NAME = 'CPM_DIAMONDVENT'
-VERSION = 3
+VERSION = 4
 VERSION_KEY = 'HB_DIAMOND_VENT_VERSION'
 MODIFIER_NAME = 'Diamond Vent'
 
-# Per-leaf store key prefix: '<key>_<leaf index>' = True.
+# Per-leaf store key prefix: '<key>_<leaf index>' = True, with the
+# optional per-door settings under '<key>_<leaf index>_<suffix>'.
 VENT_KEY = 'HB_DOOR_VENT'
+_WIDTH_SUFFIX = '_W'
+_HEIGHT_SUFFIX = '_H'
+_RISE_SUFFIX = '_Z'
 
-# The pattern, in front-local (X up the door, Y across it), from its
-# centre: (centre x, centre y) of each diamond.
-DIAMOND_HALF_HEIGHT = inch(0.90) / 2.0
-DIAMOND_HALF_WIDTH = inch(1.20) / 2.0
+# One diamond. The pattern is three of these wide and three tall.
+DEFAULT_DIAMOND_WIDTH = inch(2.0)
+DEFAULT_DIAMOND_HEIGHT = inch(8.0) / 3.0
+MIN_DIAMOND_SIZE = inch(0.25)
+# Diamond centres, in front-local (X up the door, Y across it), from
+# the pattern centre, in whole diamonds: (heights up, widths across).
 DIAMOND_CENTRES = (
-    (inch(1.05), 0.0),     # top
-    (-inch(1.05), 0.0),    # bottom
-    (0.0, inch(1.40)),
-    (0.0, -inch(1.40)),
+    (1.0, 0.0),     # top
+    (-1.0, 0.0),    # bottom
+    (0.0, 1.0),
+    (0.0, -1.0),
 )
 # How far each cutter runs past the door's faces, so the cut never
 # shares a face with them.
@@ -64,7 +74,13 @@ _SOCKETS = (
     ('Geometry', 'INPUT', 'NodeSocketGeometry'),
     ('Offset X', 'INPUT', 'NodeSocketFloat'),
     ('Offset Y', 'INPUT', 'NodeSocketFloat'),
+    ('Diamond Width', 'INPUT', 'NodeSocketFloat'),
+    ('Diamond Height', 'INPUT', 'NodeSocketFloat'),
 )
+_SOCKET_DEFAULTS = {
+    'Diamond Width': DEFAULT_DIAMOND_WIDTH,
+    'Diamond Height': DEFAULT_DIAMOND_HEIGHT,
+}
 
 
 # ---- Node group --------------------------------------------------------
@@ -81,8 +97,10 @@ def ensure_node_group():
             if i.item_type == 'SOCKET'}
     for name, in_out, socket_type in _SOCKETS:
         if (name, in_out) not in have:
-            ng.interface.new_socket(name, in_out=in_out,
-                                    socket_type=socket_type)
+            sock = ng.interface.new_socket(name, in_out=in_out,
+                                           socket_type=socket_type)
+            if name in _SOCKET_DEFAULTS:
+                sock.default_value = _SOCKET_DEFAULTS[name]
     ng.nodes.clear()
     _build(ng)
     ng[VERSION_KEY] = VERSION
@@ -130,16 +148,30 @@ def _build(ng):
     prism.inputs['Vertices'].default_value = 4
     prism.inputs['Radius'].default_value = 1.0
     prism.inputs['Depth'].default_value = 1.0
+
+    def times(sock, factor):
+        n = nodes.new('ShaderNodeMath')
+        n.operation = 'MULTIPLY'
+        links.new(sock, n.inputs[0])
+        n.inputs[1].default_value = factor
+        return n.outputs[0]
+
     scale = nodes.new('ShaderNodeCombineXYZ')
-    scale.inputs[0].default_value = DIAMOND_HALF_HEIGHT
-    scale.inputs[1].default_value = DIAMOND_HALF_WIDTH
+    links.new(times(gi.outputs['Diamond Height'], 0.5), scale.inputs[0])
+    links.new(times(gi.outputs['Diamond Width'], 0.5), scale.inputs[1])
     links.new(depth.outputs[0], scale.inputs[2])
+    # One diamond's size as a vector, so each centre is a whole number
+    # of diamonds from the pattern centre.
+    step = nodes.new('ShaderNodeCombineXYZ')
+    links.new(gi.outputs['Diamond Height'], step.inputs[0])
+    links.new(gi.outputs['Diamond Width'], step.inputs[1])
 
     join = nodes.new('GeometryNodeJoinGeometry')
     for cx, cy in DIAMOND_CENTRES:
         xf = nodes.new('GeometryNodeTransform')
         links.new(prism.outputs['Mesh'], xf.inputs['Geometry'])
-        links.new(vmath('ADD', centre, (cx, cy, 0.0)),
+        links.new(vmath('ADD', centre,
+                        vmath('MULTIPLY', step.outputs[0], (cx, cy, 0.0))),
                   xf.inputs['Translation'])
         links.new(scale.outputs[0], xf.inputs['Scale'])
         links.new(xf.outputs['Geometry'], join.inputs['Geometry'])
@@ -207,12 +239,38 @@ def has_vent(front_obj):
 
 
 def set_vent(front_obj, on):
-    """Stamp (or clear) the vent on this door's leaf and apply it now."""
+    """Stamp (or clear) the vent on this door's leaf and apply it now.
+    Clearing it drops the door's own size and position too."""
     store, key = _store_and_key(front_obj)
     if on:
         store[key] = True
-    elif key in store:
-        del store[key]
+    else:
+        for k in (key, key + _WIDTH_SUFFIX, key + _HEIGHT_SUFFIX,
+                  key + _RISE_SUFFIX):
+            if k in store:
+                del store[k]
+    sync(front_obj)
+
+
+def vent_settings(front_obj):
+    """(diamond width, diamond height, rise) of this door's vent: one
+    diamond's size, and how far the pattern sits above the panel centre
+    (negative = below)."""
+    store, key = _store_and_key(front_obj)
+    width = float(store.get(key + _WIDTH_SUFFIX, DEFAULT_DIAMOND_WIDTH))
+    height = float(store.get(key + _HEIGHT_SUFFIX, DEFAULT_DIAMOND_HEIGHT))
+    rise = float(store.get(key + _RISE_SUFFIX, 0.0))
+    return (max(width, MIN_DIAMOND_SIZE), max(height, MIN_DIAMOND_SIZE),
+            rise)
+
+
+def set_vent_settings(front_obj, width, height, rise):
+    """Keep this door's diamond size and rise and apply them now. The
+    door needs the vent already (set_vent)."""
+    store, key = _store_and_key(front_obj)
+    store[key + _WIDTH_SUFFIX] = max(float(width), MIN_DIAMOND_SIZE)
+    store[key + _HEIGHT_SUFFIX] = max(float(height), MIN_DIAMOND_SIZE)
+    store[key + _RISE_SUFFIX] = float(rise)
     sync(front_obj)
 
 
@@ -268,13 +326,18 @@ def sync(front_obj):
     if front_obj.modifiers.find(mod.name) != last:
         front_obj.modifiers.move(front_obj.modifiers.find(mod.name), last)
     off_x, off_y = _panel_offset(front_obj)
+    width, height, rise = vent_settings(front_obj)
+    values = {
+        'Offset X': off_x + rise,
+        'Offset Y': off_y,
+        'Diamond Width': width,
+        'Diamond Height': height,
+    }
     for item in mod.node_group.interface.items_tree:
         if item.item_type != 'SOCKET' or item.in_out != 'INPUT':
             continue
-        if item.name == 'Offset X':
-            hb_utils.set_gn_input(mod, item.identifier, off_x)
-        elif item.name == 'Offset Y':
-            hb_utils.set_gn_input(mod, item.identifier, off_y)
+        if item.name in values:
+            hb_utils.set_gn_input(mod, item.identifier, values[item.name])
     front_obj.update_tag()
 
 

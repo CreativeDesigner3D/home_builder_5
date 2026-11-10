@@ -519,6 +519,9 @@ class HOME_BUILDER_MT_face_frame_part_commands(bpy.types.Menu):
             # Diamond vent cutout, on every selected door.
             from . import door_vents
             if door_vents.has_vent(obj):
+                layout.operator("hb_face_frame.door_vent_options",
+                                text="Diamond Vent Options...",
+                                icon='MESH_GRID')
                 op = layout.operator("hb_face_frame.set_door_vent",
                                      text="Remove Diamond Vent", icon='X')
                 op.add = False
@@ -1227,6 +1230,10 @@ class HOME_BUILDER_MT_face_frame_door_part_commands(bpy.types.Menu):
         if obj is not None and obj.get('hb_part_role') == 'DOOR':
             from . import door_vents
             on = door_vents.has_vent(obj)
+            if on:
+                layout.operator("hb_face_frame.door_vent_options",
+                                text="Diamond Vent Options...",
+                                icon='MESH_GRID')
             op = layout.operator(
                 "hb_face_frame.set_door_vent",
                 text="Remove Diamond Vent" if on else "Add Diamond Vent",
