@@ -98,6 +98,40 @@ EDIT_HALO = (0.0, 0.0, 0.0, 0.6)
 FLOOR_LINE = (0.07, 0.07, 0.08, 0.9)
 PREVIEW = (1.0, 0.62, 0.20, 1.0)
 
+# Material Preview and Rendered show the world, not paper: dark ink is
+# lost on it, so there the view draws light with a dark halo.
+_INK_NAMES = ('LINE', 'TEXT', 'TEXT_READONLY', 'HALO', 'TEXT_HALO',
+              'FLOOR_LINE', 'ANNOTATION_LINE', 'INTERIOR_LINE', 'HOVER',
+              'HOVER_TEXT')
+_INK_LIGHT = {
+    'LINE': (0.96, 0.96, 0.96, 1.0),
+    'TEXT': (1.0, 1.0, 1.0, 1.0),
+    'TEXT_READONLY': (0.90, 0.90, 0.90, 1.0),
+    'HALO': (0.0, 0.0, 0.0, 0.55),
+    'TEXT_HALO': (0.0, 0.0, 0.0, 0.85),
+    'FLOOR_LINE': (0.96, 0.96, 0.96, 0.9),
+    'ANNOTATION_LINE': (0.94, 0.94, 0.94, 0.9),
+    'INTERIOR_LINE': (0.94, 0.94, 0.94, 0.95),
+    'HOVER': (0.45, 0.72, 1.0, 1.0),
+    'HOVER_TEXT': (0.45, 0.72, 1.0, 1.0),
+}
+
+
+def _ink_swap(light):
+    """Put the light ink in place of the drafting ink; returns what to
+    hand back to _ink_restore. Nothing changes when `light` is False."""
+    if not light:
+        return None
+    g = globals()
+    saved = {name: g[name] for name in _INK_NAMES}
+    g.update(_INK_LIGHT)
+    return saved
+
+
+def _ink_restore(saved):
+    if saved:
+        globals().update(saved)
+
 FIRST_TIER_PX = 30      # geometry to the first dimension line
 TIER_PX = 30            # between stacked dimension lines
 EXT_GAP_PX = 5          # extension line stands off the geometry
@@ -162,8 +196,10 @@ def _bump_gen(*_args):
 # ---- Height strings the user moved or added --------------------------------
 #
 # Kept on the wall, so every view of it (this one, a print, a sheet) lays
-# out the same: {'moved': {chain id: sideways offset}, 'added': [{'x': m
-# along the wall, 'levels': [m off the floor, ...]}]}. A rule-made
+# out the same: {'moved': {chain id: sideways offset}, 'hidden': [chain
+# id, ...], 'added': [{'x': m along the wall, 'levels': [m off the
+# floor, ...]}]}. A rule-made string the user removed is listed in
+# 'hidden' (the strings after it close up). A rule-made
 # string's offset is in style units (pixels at interface scale 1, the
 # unit the tiers are spaced in); an added string stands at a place on
 # the wall.
@@ -187,14 +223,17 @@ def _heights(wall):
         data = {}
     moved = data.get('moved')
     added = data.get('added')
+    hidden = data.get('hidden')
     return {'moved': moved if isinstance(moved, dict) else {},
+            'hidden': [str(h) for h in hidden]
+            if isinstance(hidden, list) else [],
             'added': [u for u in added if isinstance(u, dict)
                       and len(u.get('levels') or ()) >= 2]
             if isinstance(added, list) else []}
 
 
 def _set_heights(wall, data):
-    if data['moved'] or data['added']:
+    if data['moved'] or data['added'] or data.get('hidden'):
         wall[HEIGHTS_PROP] = json.dumps(data)
     elif HEIGHTS_PROP in wall:
         del wall[HEIGHTS_PROP]
@@ -1949,6 +1988,7 @@ def _layout_wall(scene, wall, region, rv3d, selected=(), extra=None,
 
     store = _heights(wall)
     moved = store['moved']
+    hidden = set(store['hidden'])
 
     def ext_v(side, pos, z):
         """The extension line of a height string at level z: from the
@@ -1962,6 +2002,8 @@ def _layout_wall(scene, wall, region, rv3d, selected=(), extra=None,
             dims_ext.append(((pos - over, sy(z)), (pos + over, sy(z))))
 
     def add_v(levels, pos, side, group, overall=False, chain=None):
+        if pos is None:
+            return                      # a string the user removed
         for z in levels:
             ext_v(side, pos, z)
         for a, b in zip(levels, levels[1:]):
@@ -2126,7 +2168,10 @@ def _layout_wall(scene, wall, region, rv3d, selected=(), extra=None,
         sit centred on the line when they fit and beside it, outward,
         when they don't, so it stands clear of the chain inside it. A
         chain the user dragged stands where it was put; the ones after
-        it keep their places."""
+        it keep their places. None for a chain the user removed, which
+        takes no room."""
+        if chain is not None and _chain_id(chain) in hidden:
+            return None
         w, beside = 0.0, False
         for a, b in segs:
             w = max(w, value_runs(format_length(scene, b - a),
@@ -2156,6 +2201,8 @@ def _layout_wall(scene, wall, region, rv3d, selected=(), extra=None,
                     segs.append((a, b))
             chain = ('FF', side, ti)
             cursor = v_line(side, segs, chain)
+            if cursor is None:
+                continue
             for zs, it in tr:
                 for z in zs:
                     ext_v(side, cursor, z)
@@ -2547,14 +2594,17 @@ def _dim_lines(d, s):
     return line, ticks
 
 
-def _text(d, color, s, halo=TEXT_HALO, plain=False):
+def _text(d, color, s, halo=None, plain=False):
     """A dimension's value at its rect. `plain` sets the text as typed
     (the edit field), with no small fraction."""
     x, y, w, h = d['rect']
     blf.size(0, FONT_SIZE * s)
     blf.color(0, *color)
     blf.enable(0, blf.SHADOW)
-    blf.shadow(0, TEXT_HALO_BLUR if halo is TEXT_HALO else 5, *halo)
+    own = halo is None
+    if own:
+        halo = TEXT_HALO
+    blf.shadow(0, TEXT_HALO_BLUR if own else 5, *halo)
     blf.shadow_offset(0, 0, 0)
     if d['axis'] == 'V' and not d.get('horiz'):
         blf.enable(0, blf.ROTATION)
@@ -2599,9 +2649,13 @@ def _bar_layout(context, area):
              if _option_available(key)]
     add_label = "+ Height"
     add_w = blf.dimensions(0, add_label)[0] + 24 * s
+    store = _heights(wall)
+    changed = len(store['moved']) + len(store['hidden'])
+    reset_label = "Reset Heights"
+    reset_w = (blf.dimensions(0, reset_label)[0] + 24 * s) if changed else 0
     total = (title_w + exit_w + gap + (2 * (arrow_w + gap) if many else 0)
              + sum(w + gap for _p, _l, w in chips) + print_w + gap
-             + add_w + gap)
+             + add_w + gap + ((reset_w + gap) if changed else 0))
     xmin, xmax, ymin, _ymax = get_visible_window_bounds(area)
     x = (xmin + xmax) / 2.0 - total / 2.0
     y = ymin + 18 * s
@@ -2619,6 +2673,9 @@ def _bar_layout(context, area):
         x += w + gap
     parts.append(('ADD_V', (x, y, add_w, h), add_label))
     x += add_w + gap
+    if changed:
+        parts.append(('RESET_V', (x, y, reset_w, h), reset_label))
+        x += reset_w + gap
     parts.append(('PRINT', (x, y, print_w, h), print_label))
     x += print_w + gap
     parts.append(('EXIT', (x, y, exit_w, h), exit_label))
@@ -2832,11 +2889,20 @@ def _draw():
         _draw_bar(context, area)
         gpu.state.blend_set('NONE')
 
+    ink = None
     try:
-        from . import viewport_hud
-        viewport_hud.paint_clear_of_panel(context, area, paint)
+        ink = _ink_swap(area.spaces.active.shading.type
+                        in {'MATERIAL', 'RENDERED'})
     except Exception:
-        paint()
+        pass
+    try:
+        try:
+            from . import viewport_hud
+            viewport_hud.paint_clear_of_panel(context, area, paint)
+        except Exception:
+            paint()
+    finally:
+        _ink_restore(ink)
 
 
 # ---- Print -----------------------------------------------------------------------
@@ -4015,6 +4081,16 @@ class home_builder_OT_elevation_click(bpy.types.Operator):
                 leave(context)
             elif got[1] == 'ADD_V':
                 bpy.ops.home_builder.elevation_add_height('INVOKE_DEFAULT')
+            elif got[1] == 'RESET_V':
+                wall = active_wall(context)
+                if wall is not None:
+                    data = _heights(wall)
+                    data['moved'], data['hidden'] = {}, []
+                    _set_heights(wall, data)
+                    try:
+                        bpy.ops.ed.undo_push(message="Reset Heights")
+                    except Exception:
+                        pass
             elif got[1].startswith('SHOW:'):
                 toggle_show_option(context.scene, got[1][5:])
             elif got[1] == 'PRINT':
@@ -4097,10 +4173,10 @@ class home_builder_OT_elevation_drag_height(bpy.types.Operator):
 
 
 class home_builder_OT_elevation_reset_height(bpy.types.Operator):
-    """Remove the height string under the cursor if you added it, or put
-    it back where the rules place it if you moved it"""
+    """Remove the height string under the cursor. Reset Heights on the
+    bar brings back the ones the rules place"""
     bl_idname = "home_builder.elevation_reset_height"
-    bl_label = "Remove or Reset Height Dimensions"
+    bl_label = "Remove Height Dimensions"
     bl_options = {'INTERNAL', 'UNDO'}
 
     @classmethod
@@ -4119,8 +4195,11 @@ class home_builder_OT_elevation_reset_height(bpy.types.Operator):
             if not 0 <= chain[1] < len(data['added']):
                 return {'CANCELLED'}
             del data['added'][chain[1]]
-        elif data['moved'].pop(_chain_id(chain), None) is None:
-            return {'PASS_THROUGH'}
+        else:
+            cid = _chain_id(chain)
+            data['moved'].pop(cid, None)
+            if cid not in data['hidden']:
+                data['hidden'].append(cid)
         _set_heights(wall, data)
         _hover_chain = None
         context.area.tag_redraw()
