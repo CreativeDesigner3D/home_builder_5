@@ -2764,6 +2764,26 @@ def _draw_chip_hint(shader, rect, label):
     draw_glyphs(0, label)
 
 
+def _draw_remove_chip(dims, s):
+    """The remove button of the height string under the cursor: a
+    round red button with a cross, just above the string."""
+    rect = _remove_chip(dims, _hover_chain, s)
+    if rect is None:
+        return
+    x, y, w, h = rect
+    over = (x - 3 * s <= _mouse[0] <= x + w + 3 * s
+            and y - 3 * s <= _mouse[1] <= y + h + 3 * s)
+    shader = gpu.shader.from_builtin('UNIFORM_COLOR')
+    shader.bind()
+    draw_round_rect(shader, x, y, w, h, w / 2.0,
+                    (0.92, 0.26, 0.22, 1.0) if over
+                    else (0.74, 0.20, 0.18, 0.95))
+    m = w * 0.30
+    draw_lines(shader, [(x + m, y + m), (x + w - m, y + h - m),
+                        (x + m, y + h - m), (x + w - m, y + m)],
+               (1.0, 1.0, 1.0, 1.0))
+
+
 def _draw_adding(region, extra, s):
     """The height string being clicked in: the level under the cursor
     as a guide across the wall, and the levels picked so far."""
@@ -2892,6 +2912,8 @@ def _draw():
             print(f"Elevation annotations: {exc}")
         if _adding is not None and extra is not None:
             _draw_adding(region, extra, s)
+        if _hover_chain is not None and _drag is None and _adding is None:
+            _draw_remove_chip(dims, s)
         _draw_bar(context, area)
         gpu.state.blend_set('NONE')
 
@@ -3727,9 +3749,54 @@ def _hit(context, mx, my):
     return None
 
 
+REMOVE_CHIP_PX = 18
+
+
+def _remove_chip(dims, chain, s):
+    """(x, y, w, h) of the remove button a pointed-at height string
+    shows just above its top end, or None."""
+    own = [d for d in dims if d.get('chain') == chain]
+    if chain is None or not own:
+        return None
+    top = max(max(d['a'], d['b']) for d in own)
+    size = REMOVE_CHIP_PX * s
+    return (own[0]['pos'] - size / 2.0, top + 6 * s, size, size)
+
+
+def _on_remove_chip(context, mx, my):
+    """True over the remove button of the string under the cursor."""
+    if _hover_chain is None:
+        return False
+    dims, _extra = _layout(context, context.region, context.region_data)
+    rect = _remove_chip(dims, _hover_chain, _s())
+    p = 3 * _s()
+    return rect is not None and (rect[0] - p <= mx <= rect[0] + rect[2] + p
+                                 and rect[1] - p <= my
+                                 <= rect[1] + rect[3] + p)
+
+
+def _remove_chain(wall, chain):
+    """Take a height string off the wall: one that was clicked in is
+    deleted, one the rules place is hidden."""
+    data = _heights(wall)
+    if chain[0] == 'USER':
+        if not 0 <= chain[1] < len(data['added']):
+            return False
+        del data['added'][chain[1]]
+    else:
+        cid = _chain_id(chain)
+        data['moved'].pop(cid, None)
+        if cid not in data['hidden']:
+            data['hidden'].append(cid)
+    _set_heights(wall, data)
+    return True
+
+
 def _hit_chain(context, mx, my, got=None):
-    """The height string at a region point: one of its values, or its
-    line. None off every string."""
+    """The height string at a region point: one of its values, its
+    line, or the remove button it is showing. None off every string."""
+    if _on_remove_chip(context, mx, my):
+        return _hover_chain
     if got is not None and got[0] == 'DIM':
         return got[1].get('chain')
     if got is not None:
@@ -4066,10 +4133,21 @@ class home_builder_OT_elevation_click(bpy.types.Operator):
                 return {'PASS_THROUGH'}
         except Exception:
             pass
-        global _drag
+        global _drag, _hover_chain
         if _drag is not None or _adding is not None:
             return {'PASS_THROUGH'}
         got = _hit(context, mx, my)
+        if _on_remove_chip(context, mx, my):
+            wall = active_wall(context)
+            if wall is not None and _remove_chain(wall, _hover_chain):
+                _hover_chain = None
+                try:
+                    context.window.cursor_set('DEFAULT')
+                    bpy.ops.ed.undo_push(message="Remove Height Dimensions")
+                except Exception:
+                    pass
+                context.area.tag_redraw()
+            return {'FINISHED'}
         chain = _hit_chain(context, mx, my, got=got)
         if chain is not None:
             # A press on a height string: drag moves it sideways, a
@@ -4198,17 +4276,8 @@ class home_builder_OT_elevation_reset_height(bpy.types.Operator):
         chain = _hover_chain
         if wall is None or chain is None:
             return {'CANCELLED'}
-        data = _heights(wall)
-        if chain[0] == 'USER':
-            if not 0 <= chain[1] < len(data['added']):
-                return {'CANCELLED'}
-            del data['added'][chain[1]]
-        else:
-            cid = _chain_id(chain)
-            data['moved'].pop(cid, None)
-            if cid not in data['hidden']:
-                data['hidden'].append(cid)
-        _set_heights(wall, data)
+        if not _remove_chain(wall, chain):
+            return {'CANCELLED'}
         _hover_chain = None
         context.area.tag_redraw()
         return {'FINISHED'}
@@ -4584,6 +4653,12 @@ def _register_keymaps():
              {'head': True})):
         kmi = km.keymap_items.new(idname, key, value, **kw)
         _addon_keymaps.append((km, kmi))
+    km_obj = kc.keymaps.new(name='Object Mode', space_type='EMPTY')
+    for key in ('X', 'DEL'):
+        kmi = km_obj.keymap_items.new(
+            home_builder_OT_elevation_reset_height.bl_idname, key, 'PRESS',
+            head=True)
+        _addon_keymaps.append((km_obj, kmi))
     for key, direction in (('LEFT_ARROW', -1), ('RIGHT_ARROW', 1)):
         kmi = km.keymap_items.new(home_builder_OT_elevation_step.bl_idname,
                                   key, 'PRESS', head=True)
