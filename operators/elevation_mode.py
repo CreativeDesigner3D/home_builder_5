@@ -2711,33 +2711,69 @@ def _print_text_halo(ps):
     return (PAPER, 2.5 * ps)
 
 
-def _print_dims(page, scene, dims, extra, ps):
+def dim_primitives(dims, extra, scale=1.0):
+    """layout_wall's result as finished drawing primitives, in the order
+    to draw them, in the layout's sheet units (origin bottom left):
+
+    {'kind': 'LINES', 'role': 'FLOOR' | 'EXT' | 'DIM' | 'TICK',
+     'segments': [((x, y), (x, y)), ...], 'width', 'color'}
+    {'kind': 'TEXT', 'text', 'x', 'y' (baseline start), 'size', 'angle',
+     'font': 'Helvetica', 'color', 'halo': (colour, width),
+     'rect': the value's (x, y, w, h), 'key': its dimension's}
+
+    `scale` is the one the layout was made with. A TEXT's x centres it
+    in its rect in Helvetica; set in another face, centre it in `rect`."""
+    if extra is None:
+        return []
+    ps = scale
     fx0, fx1, fy = extra['floor']
-    page.stroke_color(FLOOR_LINE)
-    page.line_width(2.0 * ps)
-    page.lines([((fx0 - 24 * ps, fy), (fx1 + 24 * ps, fy))])
-    page.stroke_color(LINE)
-    page.line_width(1.0 * ps)
-    page.lines(extra['ext'])
+    prims = [
+        {'kind': 'LINES', 'role': 'FLOOR', 'color': FLOOR_LINE,
+         'width': 2.0 * ps,
+         'segments': [((fx0 - 24 * ps, fy), (fx1 + 24 * ps, fy))]},
+        {'kind': 'LINES', 'role': 'EXT', 'color': LINE, 'width': 1.0 * ps,
+         'segments': list(extra['ext'])}]
     lines, ticks = [], []
     for d in dims:
         line, tk = _dim_lines(d, ps)
         lines += list(zip(line[0::2], line[1::2]))
         ticks += list(zip(tk[0::2], tk[1::2]))
-    page.lines(lines)
-    page.line_width(2.0 * ps)
-    page.lines(ticks)
+    prims.append({'kind': 'LINES', 'role': 'DIM', 'color': LINE,
+                  'width': 1.0 * ps, 'segments': lines})
+    prims.append({'kind': 'LINES', 'role': 'TICK', 'color': LINE,
+                  'width': 2.0 * ps, 'segments': ticks})
     fs = FONT_SIZE * ps
     halo = _print_text_halo(ps)
     for d in dims:
         x, y, w, h = d['rect']
         tw = hb_pdf.text_width(d['text'], fs)
-        page.fill_color(TEXT if d['target'] is not None else TEXT_READONLY)
         if d['axis'] == 'V' and not d.get('horiz'):
-            page.text(x + w, y + (h - tw) / 2.0, d['text'], fs,
-                      angle=math.pi / 2.0, halo=halo)
+            tx, ty, angle = x + w, y + (h - tw) / 2.0, math.pi / 2.0
         else:
-            page.text(x + (w - tw) / 2.0, y, d['text'], fs, halo=halo)
+            tx, ty, angle = x + (w - tw) / 2.0, y, 0.0
+        prims.append({
+            'kind': 'TEXT', 'text': d['text'], 'x': tx, 'y': ty,
+            'size': fs, 'angle': angle, 'font': 'Helvetica',
+            'color': TEXT if d['target'] is not None else TEXT_READONLY,
+            'halo': halo, 'rect': (x, y, w, h), 'key': d.get('key')})
+    return prims
+
+
+def _print_dims(page, scene, dims, extra, ps):
+    color = width = None
+    for pr in dim_primitives(dims, extra, ps):
+        if pr['kind'] == 'LINES':
+            if pr['color'] != color:
+                color = pr['color']
+                page.stroke_color(color)
+            if pr['width'] != width:
+                width = pr['width']
+                page.line_width(width)
+            page.lines(pr['segments'])
+        else:
+            page.fill_color(pr['color'])
+            page.text(pr['x'], pr['y'], pr['text'], pr['size'],
+                      angle=pr['angle'], halo=pr['halo'])
 
 
 def _print_annotations(page, scene, wall, region, view, ps):
