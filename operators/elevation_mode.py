@@ -44,6 +44,10 @@ cursor is, a product lands on this wall. The view's own placement
 preview is dimensioned live, so a cabinet being placed shows its gaps
 to its neighbours as it moves.
 
+While it is up the view's background is white, like the sheet, and the
+dims and notes are drawn in drafting ink; leaving puts the view's own
+background back.
+
 Leave with Esc, the Exit button on the elevation bar, or the HUD View
 toggle; Left / Right arrows (or the bar's arrows) step to the next wall
 of the room without leaving. Exiting puts back exactly what it hid (by
@@ -271,6 +275,66 @@ def _restore_view(r3d, view):
         r3d.is_orthographic_side_view = view['side_view']
     except Exception:
         pass
+
+
+# While an elevation is up its view is paper: a white background, so the
+# drawing-ink dims and notes read the way they do on the sheet. Solid and
+# Wireframe shading honour it (Material Preview / Rendered show the world).
+PAPER = (1.0, 1.0, 1.0)
+# Where the view's own background is kept while it shows paper, so a
+# file saved mid-elevation gets it back on load.
+PAPER_PROP = 'HB_ELEVATION_BACKGROUND'
+
+
+def _paper_on(space, scene):
+    """Turn the view to paper; returns what it had."""
+    sh = space.shading
+    saved = {'type': sh.background_type,
+             'color': tuple(sh.background_color)}
+    try:
+        scene[PAPER_PROP] = {'type': saved['type'],
+                             'color': list(saved['color'])}
+    except Exception:
+        pass
+    sh.background_type = 'VIEWPORT'
+    sh.background_color = PAPER
+    return saved
+
+
+def _paper_off(space, saved, scene=None):
+    if saved is None:
+        return
+    sh = space.shading
+    try:
+        sh.background_color = saved['color']
+        sh.background_type = saved['type']
+    except Exception:
+        pass
+    if scene is not None and PAPER_PROP in scene:
+        del scene[PAPER_PROP]
+
+
+def _paper_restore_on_load():
+    """Views left on paper by a save mid-elevation get their own
+    background back."""
+    saved = None
+    for scene in bpy.data.scenes:
+        if PAPER_PROP in scene:
+            group = scene[PAPER_PROP]
+            saved = {'type': group.get('type', 'THEME'),
+                     'color': tuple(group.get('color', (0.05,) * 3))}
+            del scene[PAPER_PROP]
+    if saved is None:
+        return
+    for win in bpy.context.window_manager.windows:
+        for area in win.screen.areas:
+            if area.type != 'VIEW_3D':
+                continue
+            sh = area.spaces.active.shading
+            if sh.background_type == 'VIEWPORT' and all(
+                    abs(c - p) < 1e-4 for c, p in
+                    zip(sh.background_color, PAPER)):
+                _paper_off(area.spaces.active, saved)
 
 
 def _aim(r3d, wall_obj):
@@ -502,14 +566,19 @@ def enter(context, wall, keep_view=None):
     if _frame(wall) is None:
         return False
     saved = keep_view if keep_view is not None else _save_view(r3d)
+    paper = None
     if _state is not None:
+        # Stepping to another wall keeps the background it saved first.
+        paper = _state.get('paper')
         scene = bpy.data.scenes.get(_state['scene'])
         if scene is not None:
             _unisolate(scene)
+    if paper is None:
+        paper = _paper_on(area.spaces.active, context.scene)
     extra = _isolate(context, wall)
     _state = {'scene': context.scene.name, 'wall': wall.name,
               'r3d': r3d.as_pointer(), 'view': saved, 'extra': extra,
-              'preview': set(), 'fit': 2}
+              'preview': set(), 'fit': 2, 'paper': paper}
     _aim(r3d, wall)
     _bump_gen()
     area.tag_redraw()
@@ -525,6 +594,8 @@ def leave(context=None, restore_view=True):
     if scene is not None:
         _unisolate(scene)
     area, r3d = _find_r3d(st['r3d'])
+    if area is not None:
+        _paper_off(area.spaces.active, st.get('paper'), scene)
     if r3d is not None:
         if restore_view:
             _restore_view(r3d, st['view'])
@@ -2119,6 +2190,10 @@ def _on_load(*_args):
     _state, _edit = None, None
     for scene in bpy.data.scenes:
         _unisolate(scene)
+    try:
+        _paper_restore_on_load()
+    except Exception:
+        pass
 
 
 classes = (
