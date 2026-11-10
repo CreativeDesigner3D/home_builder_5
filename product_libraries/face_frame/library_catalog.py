@@ -357,9 +357,12 @@ def _front_style_fields(kind):
     def grained(p):
         # MDF panels have no grain; still shown if an older file left a
         # direction set on one.
-        from .props_hb_face_frame import panel_is_mdf
-        return not (panel_is_mdf(p.front_panel)
-                    and p.grain_direction == 'NONE')
+        from .props_hb_face_frame import (panel_is_mdf,
+                                          panel_grain_is_horizontal)
+        return not ((panel_is_mdf(p.front_panel)
+                     and p.grain_direction == 'NONE')
+                    or (panel_grain_is_horizontal(p.front_panel)
+                        and p.grain_direction == 'HORIZONTAL'))
 
     fields = [
         ('label', None, "Catalog"),
@@ -784,12 +787,19 @@ def _front_picture(kind, style):
         info = door_builder.door_style_info(style)
         info['door_type'] = 'SLAB'
         outer = None
-        if edge is not None:
-            from ..common import door_profiles
-            try:
+        from ..common import door_profiles
+        from . import style_options
+        raised = style_options.raised_slab_kind(style.front_panel)
+        try:
+            if raised:
+                # Raised slab face: thicker than the stock, its border
+                # milled down to it.
+                outer, t = door_profiles.raised_slab_section(
+                    raised, t, edge)
+            elif edge is not None:
                 outer = door_profiles.named_edge_section(edge, t)
-            except Exception:
-                outer = None
+        except Exception:
+            outer = None
         geo = door_builder.build_door_geometry(info, w, h, t,
                                                outer_section=outer)
     else:

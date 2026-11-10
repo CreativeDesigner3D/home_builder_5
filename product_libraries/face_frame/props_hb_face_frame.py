@@ -603,10 +603,27 @@ def panel_is_mdf(panel):
     return 'MDF' in (panel or '')
 
 
+def panel_grain_is_horizontal(panel):
+    """True for the panel choices made with horizontal grain only (the
+    raised slab faces)."""
+    return style_options.raised_slab_kind(panel) is not None
+
+
 def _sync_grain_to_panel(ds):
     """An MDF panel has no grain: switch the style to grain NONE. The
     style remembers that the switch was automatic, so moving back to a
-    grained panel restores VERTICAL; a NONE the user picked stays."""
+    grained panel restores VERTICAL; a NONE the user picked stays. A
+    horizontal-only panel switches to HORIZONTAL the same way, and
+    leaving it restores the direction the style had."""
+    if panel_grain_is_horizontal(ds.front_panel):
+        if ds.grain_direction != 'HORIZONTAL':
+            ds['_grain_auto_horizontal'] = ds.grain_direction
+            ds.grain_direction = 'HORIZONTAL'
+    elif ds.get('_grain_auto_horizontal'):
+        was = ds['_grain_auto_horizontal']
+        del ds['_grain_auto_horizontal']
+        if ds.grain_direction == 'HORIZONTAL':
+            ds.grain_direction = was if was in ('NONE', 'VERTICAL') else 'VERTICAL'
     if panel_is_mdf(ds.front_panel):
         if ds.grain_direction != 'NONE':
             ds['_grain_auto_none'] = True
@@ -770,7 +787,8 @@ def front_edge_profile(door_style, cs, drawer=False):
         return None if ovr == 'None' else ovr
     edge = cabinet_style_edge_profile(cs, drawer)
     series = getattr(door_style, 'front_series', '') if door_style else ''
-    return style_options.edge_profile_for_series(series, edge)
+    panel = getattr(door_style, 'front_panel', '') if door_style else ''
+    return style_options.edge_profile_for_series(series, edge, panel)
 
 
 def _propagate_cabinet_style(self, context):
@@ -1871,14 +1889,17 @@ def _update_cabinet_extra_front_style(self, context):
         _propagate_cabinet_style(style, context)
 
 
-def front_style_min_height(ds):
+def front_style_min_height(ds, cs=None):
     """Smallest drawer face height (meters) a drawer-front style builds
-    at, or None when its series gives no single figure."""
+    at, or None when its series gives no single figure. ``cs`` is the
+    cabinet style the fronts sit under, for the faces whose minimum
+    follows the edge profile."""
     if ds is None:
         return None
     h = style_options.drawer_min_height(
         ds.front_series, ds.front_shape, ds.front_panel,
-        slab=getattr(ds, 'door_type', '') == 'SLAB')
+        slab=getattr(ds, 'door_type', '') == 'SLAB',
+        edge=front_edge_profile(ds, cs, True))
     return units.inch(h) if h else None
 
 
@@ -1901,7 +1922,8 @@ def fill_alternate_drawer_height(style, context=None):
     """Set the alternate-style height to the alternate style's minimum
     drawer height. Returns True when it wrote a value (the write itself
     re-propagates the cabinet style)."""
-    h = front_style_min_height(alternate_drawer_style(style, context))
+    h = front_style_min_height(alternate_drawer_style(style, context),
+                               style)
     if not h:
         return False
     style.extra_drawer_front_height = h
@@ -1928,7 +1950,7 @@ def alternate_drawer_notes(style, context=None):
     if h <= 0.0:
         return ['Set a height to use %s on taller drawers' % ds.name]
     lines = ['Drawer openings %s and up use %s' % (_inches_text(h), ds.name)]
-    min_h = front_style_min_height(ds)
+    min_h = front_style_min_height(ds, style)
     if min_h and h < min_h - 1e-5:
         lines.append('Below the %s minimum front of %s'
                      % (ds.name, _inches_text(min_h)))
@@ -3312,6 +3334,8 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
                 else ff.door_styles)
         for ds in pool:
             if ds.name == ds_name:
+                if panel_grain_is_horizontal(ds.front_panel):
+                    return 'HORIZONTAL'
                 return ds.grain_direction
         return 'VERTICAL'
 
@@ -6559,8 +6583,11 @@ class Face_Frame_Door_Style(PropertyGroup):
         grain_row = box.row()
         # MDF panels have no grain; still editable if an older file left
         # a direction set on one.
-        grain_row.enabled = not (panel_is_mdf(self.front_panel)
-                                 and self.grain_direction == 'NONE')
+        grain_row.enabled = not (
+            (panel_is_mdf(self.front_panel)
+             and self.grain_direction == 'NONE')
+            or (panel_grain_is_horizontal(self.front_panel)
+                and self.grain_direction == 'HORIZONTAL'))
         grain_row.prop(self, "grain_direction", text="Grain Direction")
 
         # Hardware callouts: the checkbox DECLARES the option for the

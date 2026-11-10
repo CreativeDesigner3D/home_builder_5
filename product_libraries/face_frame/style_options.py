@@ -5233,6 +5233,26 @@ def raised_slab_kind(panel):
     return RAISED_SLAB_PANELS.get((panel or '').strip())
 
 
+# Edge profiles a slab panel choice can be ordered with, as
+# EDGE_PROFILE_ITEMS identifiers. Panels not listed take any edge the
+# series does; an empty tuple means the face's own edge is fixed.
+_SLAB_EDGES_BASIC = ('Square', '1/8" Radius', 'Classic Cut', 'Estate',
+                     'Drop Radius')
+SLAB_PANEL_EDGE_PROFILES = {
+    'Deluxe Classic Slab': _SLAB_EDGES_BASIC,
+    'Deluxe Colonial Slab': _SLAB_EDGES_BASIC + ('Chamfer',),
+    'Deluxe Waterford Slab': (),
+    'Deluxe Joviso Slab': (
+        'Square', '1/8" Radius', 'Chamfer', '3/8" Inset square',
+        '3/8" Inset 1/8" Radius', '1/4" Radius', '3/8" Radius',
+        '3/8" Inset Radius', 'Bay', 'Classic Cut', 'Drop Radius',
+        'Eclipse', 'Estate', 'New Cut'),
+    'Deluxe Melville Slab': (
+        'Square', '1/8" Radius', '3/8" Inset square',
+        '3/8" Inset 1/8" Radius'),
+}
+
+
 # Profile picks per series: names into the face_frame_assets/
 # door_profiles library (outside / inside edge sweeps, raised panel).
 # A missing key means square edge / flat panel. The 'panel' entry only
@@ -5319,14 +5339,18 @@ SERIES_EDGE_PROFILES = {
 }
 
 
-def edge_profile_for_series(series, edge_name):
+def edge_profile_for_series(series, edge_name, panel=None):
     """The edge profile a front of ``series`` actually gets when the
     cabinet calls for ``edge_name`` (None = unset). A pick the series
     allows passes through; otherwise the series' first allowed edge, or
-    None (its own edge) when the series has no edge options."""
+    None (its own edge) when the series has no edge options. A slab
+    ``panel`` with its own edge list (SLAB_PANEL_EDGE_PROFILES) is
+    limited to that list instead."""
     if edge_name is None:
         return None
-    allowed = SERIES_EDGE_PROFILES.get(series)
+    allowed = SLAB_PANEL_EDGE_PROFILES.get((panel or '').strip())
+    if allowed is None:
+        allowed = SERIES_EDGE_PROFILES.get(series)
     if allowed is None:
         return edge_name
     for name in allowed:
@@ -5496,18 +5520,44 @@ DRAWER_SLAB_PANEL_MIN_HEIGHT = {
     'Deluxe Waterford Slab': 4.5,
     'Deluxe Joviso Slab': None, 'Deluxe Melville Slab': None,
 }
+# Slab drawer faces whose minimum height follows the edge profile
+# (EDGE_PROFILE_ITEMS identifiers).
+DRAWER_SLAB_PANEL_EDGE_MIN_HEIGHT = {
+    'Deluxe Joviso Slab': {
+        'Square': 4.125, '1/8" Radius': 4.125, 'Chamfer': 4.125,
+        '3/8" Inset square': 4.125, '3/8" Inset 1/8" Radius': 4.125,
+        '1/4" Radius': 4.625, '3/8" Radius': 4.625,
+        '3/8" Inset Radius': 4.625, 'Bay': 4.625, 'Classic Cut': 4.625,
+        'Drop Radius': 4.75,
+        'Eclipse': 5.125, 'Estate': 5.125, 'New Cut': 5.125,
+    },
+    'Deluxe Melville Slab': {
+        'Square': 3.25, '3/8" Inset square': 3.25,
+        '1/8" Radius': 3.375, '3/8" Inset 1/8" Radius': 3.375,
+    },
+}
 
 
-def drawer_min_height(series, shape=None, panel=None, slab=False):
+def drawer_min_height(series, shape=None, panel=None, slab=False,
+                      edge=None):
     """Smallest drawer face height (inches) the series builds with this
     shape / panel, or None when the catalog gives no single figure.
-    ``slab`` marks a front built as a slab whatever its series."""
+    ``slab`` marks a front built as a slab whatever its series.
+    ``edge`` is the front's edge profile (None = square), for the slab
+    faces whose minimum follows it."""
     series = (series or '').strip()
     shape = (shape or '').strip()
     panel = (panel or '').strip()
     if series in DRAWER_SLAB_SERIES_MIN_HEIGHT:
         return DRAWER_SLAB_SERIES_MIN_HEIGHT[series]
     if series == 'Slab Drawers':
+        by_edge = DRAWER_SLAB_PANEL_EDGE_MIN_HEIGHT.get(panel)
+        if by_edge is not None:
+            key = (edge or 'Square').lower()
+            for name, height in by_edge.items():
+                if name.lower() == key:
+                    return height
+            return None
         return DRAWER_SLAB_PANEL_MIN_HEIGHT.get(panel, SLAB_MIN_HEIGHT)
     if slab or series == 'Slab':
         return SLAB_MIN_HEIGHT
