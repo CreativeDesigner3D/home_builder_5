@@ -291,20 +291,29 @@ PAPER = (1.0, 1.0, 1.0)
 # Where the view's own background is kept while it shows paper, so a
 # file saved mid-elevation gets it back on load.
 PAPER_PROP = 'HB_ELEVATION_BACKGROUND'
+# The grid, floor and axis lines are off on paper: they are not part of
+# the drawing.
+PAPER_OVERLAYS = ('show_ortho_grid', 'show_floor', 'show_axis_x',
+                  'show_axis_y', 'show_axis_z')
 
 
 def _paper_on(space, scene):
     """Turn the view to paper; returns what it had."""
     sh = space.shading
+    ov = space.overlay
     saved = {'type': sh.background_type,
-             'color': tuple(sh.background_color)}
+             'color': tuple(sh.background_color),
+             'overlays': {k: bool(getattr(ov, k)) for k in PAPER_OVERLAYS}}
     try:
         scene[PAPER_PROP] = {'type': saved['type'],
-                             'color': list(saved['color'])}
+                             'color': list(saved['color']),
+                             'overlays': dict(saved['overlays'])}
     except Exception:
         pass
     sh.background_type = 'VIEWPORT'
     sh.background_color = PAPER
+    for k in PAPER_OVERLAYS:
+        setattr(ov, k, False)
     return saved
 
 
@@ -315,6 +324,9 @@ def _paper_off(space, saved, scene=None):
     try:
         sh.background_color = saved['color']
         sh.background_type = saved['type']
+        for k, v in (saved.get('overlays') or {}).items():
+            if k in PAPER_OVERLAYS:
+                setattr(space.overlay, k, bool(v))
     except Exception:
         pass
     if scene is not None and PAPER_PROP in scene:
@@ -330,6 +342,10 @@ def _paper_restore_on_load():
             group = scene[PAPER_PROP]
             saved = {'type': group.get('type', 'THEME'),
                      'color': tuple(group.get('color', (0.05,) * 3))}
+            shown = group.get('overlays')
+            if shown is not None:
+                saved['overlays'] = {k: bool(shown.get(k, True))
+                                     for k in PAPER_OVERLAYS}
             del scene[PAPER_PROP]
     if saved is None:
         return
