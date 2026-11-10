@@ -1877,7 +1877,8 @@ def _pack_face_frame_sides(columns, length):
     return tiers, left
 
 
-def _face_frame_height_dims(columns, dims, sx, sy, s):
+def _face_frame_height_dims(columns, dims, sx, sy, s, moved=None,
+                            hidden=(), keep_out=(), scene=None):
     """Rails and openings up each opening column, on the frame. A column
     whose breaks repeat one already dimensioned (the next door of a
     run, the other bay of a cabinet) is not dimensioned again. Values
@@ -1892,11 +1893,48 @@ def _face_frame_height_dims(columns, dims, sx, sy, s):
         if abs(sx(c1) - sx(c0)) < 2 * inset:
             continue
         done.add(sig)
+        # A string on its bay can be dragged along it or removed, like
+        # the ones out past the wall's ends.
+        chain = ('BAY', it.name, round(c0, 3))
+        cid = _chain_id(chain)
+        if cid in hidden:
+            continue
         x = sx(c0) + inset
+        if cid in (moved or {}):
+            try:
+                x += float(moved[cid]) * s
+            except (TypeError, ValueError):
+                pass
+        elif keep_out and scene is not None:
+            # A note in the string's way (the cabinet's depth, down in
+            # the kick): the string steps along the bay past it, while
+            # there is bay left to step along.
+            pad = TEXT_GAP_PX * s
+            th = FONT_SIZE * s * 0.75
+            spots = []          # (mid height, value width) per value
+            for a, b in zip(zs, zs[1:]):
+                w = value_runs(format_length(scene, b - a),
+                               FONT_SIZE * s, _blf_measure)[1]
+                spots.append(((sy(a) + sy(b)) / 2.0, w))
+            limit = sx(c1) - inset - max(w for _m, w in spots) - pad
+            for _pass in range(3):
+                hit = [n for n in keep_out for m, w in spots
+                       if n[1] < m + th / 2.0 and n[1] + n[3] > m - th / 2.0
+                       and n[0] < x + pad + w and n[0] + n[2] > x - 2 * s]
+                if not hit:
+                    break
+                nx = max(n[0] + n[2] for n in hit) + 4 * s
+                if nx > limit:
+                    break
+                x = nx
         for a, b in zip(zs, zs[1:]):
             dims.append({'axis': 'V', 'a': sy(a), 'b': sy(b), 'pos': x,
                          'side': 1, 'value': b - a, 'target': None,
                          'item': it, 'w0': a, 'horiz': True,
+                         'chain': chain,
+                         # Where the string stands off its plain place,
+                         # for a drag to start from.
+                         'auto': (x - sx(c0) - inset) / max(s, 1e-6),
                          'key': ('FF_H', it.name, round(c0, 4),
                                  round(a, 4))})
 
@@ -1995,6 +2033,7 @@ def _layout_wall(scene, wall, region, rv3d, selected=(), extra=None,
     store = _heights(wall)
     moved = store['moved']
     hidden = set(store['hidden'])
+    keep_out = []
 
     def ext_v(side, pos, z):
         """The extension line of a height string at level z: from the
@@ -2307,7 +2346,12 @@ def _layout_wall(scene, wall, region, rv3d, selected=(), extra=None,
                          'key': ('USER', i, round(a, 4))})
 
     if ff:
-        _face_frame_height_dims(on_frame, dims, sx, sy, s)
+        try:
+            keep_out = _note_rects(scene, wall, fr[1], sx, sy, s)
+        except Exception as exc:
+            print(f"Elevation notes: {exc}")
+        _face_frame_height_dims(on_frame, dims, sx, sy, s, moved, hidden,
+                                keep_out, scene)
 
     # A stepped upper: the overall width of each end section, just
     # under it, so a raised section reads against what stands below.
@@ -2426,7 +2470,12 @@ def _layout_wall(scene, wall, region, rv3d, selected=(), extra=None,
                      'target': {'mode': 'HEIGHT', 'objs': [it.name]},
                      'item': it, 'w0': it.z0, 'key': ('SEL', it.name)})
 
-    _place_text(scene, dims, region, dims_ext)
+    if not keep_out:
+        try:
+            keep_out = _note_rects(scene, wall, fr[1], sx, sy, s)
+        except Exception as exc:
+            print(f"Elevation notes: {exc}")
+    _place_text(scene, dims, region, dims_ext, keep_out)
     for d in dims:
         if 'key' not in d:
             d['key'] = (d['axis'], round(d['pos'] / max(tier, 1)),
@@ -2441,7 +2490,38 @@ def _rects_overlap(a, b, m=2.0):
                 or a[1] + a[3] + m <= b[1] or b[1] + b[3] + m <= a[1])
 
 
-def _place_text(scene, dims, region, ext=()):
+def _note_rects(scene, wall, Fi, sx, sy, s):
+    """(x, y, w, h) on the sheet of each note lettered on the wall (a
+    depth, a finished end, an appliance's name): the values are kept
+    off them."""
+    if not show_option(scene, 'ANNOTATIONS'):
+        return []
+    size = ANNOTATION_FONT_SIZE * s
+    th = size * 0.75
+    lh = th * 1.35
+    out = []
+    for pr in _annotations(scene, wall):
+        if pr.get('kind') != 'TEXT' or not pr.get('text'):
+            continue
+        o = Fi @ pr['origin']
+        ax = Fi.to_3x3() @ pr.get('x_axis', Vector((1.0, 0.0, 0.0)))
+        if abs(ax.x) < 1e-3 and abs(ax.z) < 1e-3:
+            continue                    # seen edge-on: not drawn
+        rows = pr['text'].splitlines()
+        tw = max(_blf_measure(row, size) for row in rows)
+        tall = lh * len(rows)
+        cx, cy = sx(o.x), sy(o.z)
+        if abs(ax.z) > abs(ax.x):
+            # Reads up the wall (a finished end): turned a quarter.
+            out.append((cx - tall / 2.0, cy - tw / 2.0, tall, tw))
+            continue
+        align = pr.get('align', 'CENTER')
+        x0 = {'LEFT': cx, 'RIGHT': cx - tw}.get(align, cx - tw / 2.0)
+        out.append((x0, cy - tall / 2.0, tw, tall))
+    return out
+
+
+def _place_text(scene, dims, region, ext=(), keep_out=()):
     s = _s()
     blf.size(0, FONT_SIZE * s)
     th = blf.dimensions(0, "0123456789\"")[1]
@@ -2449,7 +2529,7 @@ def _place_text(scene, dims, region, ext=()):
     # A value fits between its ticks with this much clear either side.
     clear = (TICK_PX + 3) * 2 * s
     gap = BREAK_GAP_PX * s
-    placed = []
+    placed = list(keep_out)     # notes on the wall: values stay off them
     pending = []
     for d in dims:
         if d['axis'] == 'V':
@@ -2560,6 +2640,11 @@ def _place_text(scene, dims, region, ext=()):
                                                 key=lambda p: p[:2]):
         free = [r for r in rects
                 if not any(_rects_overlap(r, p) for p in placed)]
+        if not free:
+            # Nowhere clear: on a note rather than on another value.
+            free = [r for r in rects
+                    if not any(_rects_overlap(r, p)
+                               for p in placed[len(keep_out):])]
         chosen = next((r for r in free if not struck(r)),
                       free[0] if free else rects[0])
         d['rect'] = chosen
@@ -4154,6 +4239,12 @@ class home_builder_OT_elevation_click(bpy.types.Operator):
             # plain click on an editable value still edits it.
             wall = active_wall(context)
             start = _chain_place(wall, chain) if wall is not None else None
+            if start is not None and chain[0] == 'BAY'                     and _chain_id(chain) not in _heights(wall)['moved']:
+                dims, _extra = _layout(context, context.region,
+                                       context.region_data)
+                start = next((d['auto'] for d in dims
+                              if d.get('chain') == chain and 'auto' in d),
+                             start)
             if start is not None:
                 _drag = {'chain': chain, 'mx': mx, 'start': start,
                          'moved': False,
