@@ -173,6 +173,7 @@ _drag = None            # a height string being dragged sideways
 _adding = None          # a height string being clicked in
 _gen = 0
 _print_scale = None    # set while printing: px -> pt
+_print_measure = None  # (text, size) -> width in the face a sheet is set in
 _item_cache = {}
 _draw_handle = None
 _addon_keymaps = []
@@ -1089,6 +1090,11 @@ def value_runs(text, size, measure):
 
 
 def _blf_measure(text, size):
+    """A value's width in the face it will be drawn in: the interface
+    font on screen; on paper the print's own face (or the caller's), so
+    a value sits where the layout put it and its paper patch fits it."""
+    if _print_scale is not None:
+        return (_print_measure or hb_pdf.text_width)(text, size)
     blf.size(0, size)
     return blf.dimensions(0, text)[0]
 
@@ -2475,8 +2481,8 @@ def _place_text(scene, dims, region, ext=()):
             # so the two never crowd each other out.
             stile = d.get('stile')
             if stile:
-                over_s = d['pos'] + th / 2.0 + 3.0
-                under_s = d['pos'] - th / 2.0 - 3.0 - th
+                over_s = d['pos'] + th / 2.0 + 3.0 * s
+                under_s = d['pos'] - th / 2.0 - 3.0 * s - th
                 near, far = ((over_s, under_s) if d['side'] > 0
                              else (under_s, over_s))
                 centred = [(mid - tw / 2.0, near), (mid - tw / 2.0, far)]
@@ -2975,7 +2981,7 @@ def wall_view(wall, k, ox, oy, width, height):
 
 
 def layout_wall(scene, wall, view, width, height, scale=1.0,
-                face_frame=None):
+                face_frame=None, measure=None):
     """The dimensions of `wall` laid out on a width x height sheet,
     whether or not an elevation is on screen: (dims, extra) as the view
     draws them, in sheet units with the origin bottom left.
@@ -2983,16 +2989,18 @@ def layout_wall(scene, wall, view, width, height, scale=1.0,
     `view` is wall_view's, or anything with a `perspective_matrix` that
     takes world space to the sheet's -1..1 square. `scale` sizes the
     tiers, ticks and text (1.0 = the view's sizes in sheet units).
-    `face_frame` overrides the scene's Face Frame toggle."""
-    global _print_scale
-    saved = _print_scale
-    _print_scale = scale
+    `face_frame` overrides the scene's Face Frame toggle.
+    `measure(text, size)` is the width of text in the face the caller
+    will set the values in (the print's own face when None)."""
+    global _print_scale, _print_measure
+    saved = _print_scale, _print_measure
+    _print_scale, _print_measure = scale, measure
     try:
         return _layout_wall(scene, wall, _PrintRegion(width, height), view,
                             extra=_front_names(scene, wall), preview=(),
                             face_frame=face_frame)
     finally:
-        _print_scale = saved
+        _print_scale, _print_measure = saved
 
 
 def _print_layout(scene, wall, region, view, extra=None):
