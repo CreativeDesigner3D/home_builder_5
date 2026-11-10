@@ -101,6 +101,7 @@ EXT_GAP_PX = 5          # extension line stands off the geometry
 EXT_OVER_PX = 5         # and runs past the dimension line
 TICK_PX = 4.5           # half-length of the 45 degree tick, per axis
 TEXT_GAP_PX = 4         # value above its line
+BREAK_GAP_PX = 4        # line stops this short of a value set in it
 
 # Products below this off the floor are floor standing (bases, talls,
 # appliances); anything higher hangs (uppers, hoods).
@@ -2009,6 +2010,7 @@ def _place_text(scene, dims, region):
     pad = TEXT_GAP_PX * s
     # A value fits between its ticks with this much clear either side.
     clear = (TICK_PX + 3) * 2 * s
+    gap = BREAK_GAP_PX * s
     placed = []
     pending = []
     for d in dims:
@@ -2020,6 +2022,9 @@ def _place_text(scene, dims, region):
         if d['axis'] == 'H':
             base = d['pos'] + pad
             cands = []
+            if tw + clear + 2 * gap <= span:
+                # Long enough: the value sits in a break in the line.
+                cands.append((mid - tw / 2.0, d['pos'] - th / 2.0))
             if tw + clear <= span:
                 cands.append((mid - tw / 2.0, base))
             cands += [(hi + 4 * s, base), (lo - 4 * s - tw, base),
@@ -2046,21 +2051,26 @@ def _place_text(scene, dims, region):
             # its outer side, so it occupies th wide x tw tall.
             x_text = d['pos'] - pad if d['side'] > 0 else d['pos'] - pad
             cands = []
+            if tw + clear + 2 * gap <= span:
+                cands.append((d['pos'] - th / 2.0, mid - tw / 2.0))
             if tw + clear <= span:
                 cands.append((x_text - th, mid - tw / 2.0))
             cands += [(x_text - th, hi + 4 * s), (x_text - th, lo - 4 * s - tw)]
             rects = [(x, y, th, tw) for x, y in cands]
         fits = d.get('horiz') or tw + clear <= span
-        pending.append((0 if fits else 1, len(pending), d, rects))
+        inline = not d.get('horiz') and tw + clear + 2 * gap <= span
+        pending.append((0 if fits else 1, len(pending), d, rects, inline))
     # A value that fits between its ticks has one good spot; it claims
     # it before a neighbour too narrow for its own value spills over.
-    for _order, _i, d, rects in sorted(pending, key=lambda p: p[:2]):
+    for _order, _i, d, rects, inline in sorted(pending,
+                                                key=lambda p: p[:2]):
         chosen = rects[0]
         for r in rects:
             if not any(_rects_overlap(r, p) for p in placed):
                 chosen = r
                 break
         d['rect'] = chosen
+        d['inline'] = inline and chosen is rects[0]
         placed.append(chosen)
 
 
@@ -2077,13 +2087,22 @@ def _tick(x, y, s):
 
 
 def _dim_lines(d, s):
+    """(line, ticks) as point pairs; a value set in the line breaks
+    it."""
+    lo, hi = min(d['a'], d['b']), max(d['a'], d['b'])
+    spans = [(lo, hi)]
+    if d.get('inline') and d.get('rect'):
+        x, y, w, h = d['rect']
+        t0, t1 = (x, x + w) if d['axis'] == 'H' else (y, y + h)
+        g = BREAK_GAP_PX * s
+        spans = [(lo, t0 - g), (t1 + g, hi)]
     if d['axis'] == 'H':
         y = d['pos']
-        line = [(d['a'], y), (d['b'], y)]
+        line = [p for a, b in spans for p in ((a, y), (b, y))]
         ticks = _tick(d['a'], y, s) + _tick(d['b'], y, s)
     else:
         x = d['pos']
-        line = [(x, d['a']), (x, d['b'])]
+        line = [p for a, b in spans for p in ((x, a), (x, b))]
         ticks = _tick(x, d['a'], s) + _tick(x, d['b'], s)
     return line, ticks
 
@@ -2427,9 +2446,52 @@ def _print_fit(context, wall, W, H):
     return _print_view(Fi, k, ox, oy, W, H), label
 
 
+# The view as a line drawing: every part a white face with a black
+# outline, no lighting, no grid or other overlays.
+_PRINT_SHADING = (
+    ('shading', 'type', 'SOLID'),
+    ('shading', 'light', 'FLAT'),
+    ('shading', 'color_type', 'SINGLE'),
+    ('shading', 'single_color', (1.0, 1.0, 1.0)),
+    ('shading', 'background_type', 'VIEWPORT'),
+    ('shading', 'background_color', (1.0, 1.0, 1.0)),
+    ('shading', 'show_object_outline', True),
+    ('shading', 'object_outline_color', (0.0, 0.0, 0.0)),
+    ('shading', 'show_cavity', False),
+    ('shading', 'show_shadows', False),
+    ('shading', 'show_specular_highlight', False),
+    ('shading', 'show_xray', False),
+    ('shading', 'use_dof', False),
+    ('overlay', 'show_overlays', False),
+)
+
+
+def _print_shading(space, on, saved=None):
+    """Switch the view to line drawing (returns what it replaced), or
+    put back `saved`."""
+    if not on:
+        for (group, attr, _v), old in zip(_PRINT_SHADING, saved or ()):
+            try:
+                setattr(getattr(space, group), attr, old)
+            except Exception:
+                pass
+        return None
+    saved = []
+    for group, attr, value in _PRINT_SHADING:
+        owner = getattr(space, group)
+        try:
+            old = getattr(owner, attr)
+            saved.append(tuple(old) if hasattr(old, '__len__')
+                         and not isinstance(old, str) else old)
+            setattr(owner, attr, value)
+        except Exception:
+            saved.append(None)
+    return saved
+
+
 def _print_capture(context, view, W, H, dpi):
-    """The 3D view as the elevation shows it, rendered square onto the
-    wall at the page's size: (rgb bytes, px w, px h), or None."""
+    """The 3D view as a line drawing, rendered square onto the wall at
+    the page's size: (rgb bytes, px w, px h), or None."""
     if bpy.app.background:
         return None
     space = context.space_data
@@ -2441,12 +2503,15 @@ def _print_capture(context, view, W, H, dpi):
     try:
         import numpy as np
         off = gpu.types.GPUOffScreen(pw, ph)
+        saved = _print_shading(space, True)
         try:
+            # Black and white only: no view transform to grey the paper.
             off.draw_view3d(context.scene, context.view_layer, space,
                             region, view.view_matrix, view.window_matrix,
-                            do_color_management=True)
+                            do_color_management=False)
             buf = off.texture_color.read()
         finally:
+            _print_shading(space, False, saved)
             off.free()
         px = np.asarray(buf)
         if px.dtype != np.uint8:
@@ -2486,7 +2551,7 @@ def _print_dims(page, scene, dims, extra, ps):
     lines, ticks = [], []
     for d in dims:
         line, tk = _dim_lines(d, ps)
-        lines.append(tuple(line))
+        lines += list(zip(line[0::2], line[1::2]))
         ticks += list(zip(tk[0::2], tk[1::2]))
     page.lines(lines)
     page.line_width(2.0 * ps)
