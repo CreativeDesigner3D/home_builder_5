@@ -118,16 +118,18 @@ def _entry(obj, appliance=False):
 
 
 def _run_entries(scene):
-    """Frameless cabinets, plus the freestanding appliances that stand in
-    a run: an end stops against them, but they never join a joint."""
+    """Frameless cabinets, plus the freestanding appliances and wall
+    scribe fillers that stand in a run: an end stops against them and
+    snaps to their sides, but they never join a joint."""
     out = []
     for obj in scene.objects:
         if obj.get(TAG_CABINET):
             if not obj.visible_get():
                 continue
             e = _entry(obj)
-        elif (obj.get('IS_APPLIANCE') and obj.get('APPLIANCE_TYPE')
-                and not obj.get('IS_COUNTERTOP_APPLIANCE')):
+        elif ((obj.get('IS_APPLIANCE') and obj.get('APPLIANCE_TYPE')
+                and not obj.get('IS_COUNTERTOP_APPLIANCE'))
+                or obj.get('IS_CORNER_FILLER')):
             if not obj.visible_get():
                 continue
             e = _entry(obj, appliance=True)
