@@ -75,6 +75,11 @@ def _ui_scale():
 
 GRAB_MODES = ('Cabinets', 'Bays', 'Openings')
 MIN_OPENING = inch(2.0)
+MIN_HEIGHT = inch(6.0)
+# A cabinet whose bottom sits this far off the floor hangs on the wall:
+# it gets a bottom handle as well as a top one.
+HUNG_MIN_Z = inch(1.0)
+HEIGHT_KINDS = ('TOP', 'BOTTOM')
 
 
 def grab_mode_active(scene):
@@ -190,6 +195,10 @@ def collect_cabinet_handles(scene):
     far it may grow outward (None = unlimited).
     kind 'MOVE' (cab): the handle at the cabinet's centre that slides
     the whole cabinet along its run.
+    kind 'TOP' (cab): the top edge; dragging it sets the height and the
+    bottom stays. kind 'BOTTOM' (cab), on a cabinet hung off the floor:
+    the bottom edge; dragging it sets the height and the top stays.
+    These two lie across the front at height 'z' (from the origin).
     Every record carries the frame it is drawn and dragged in: the
     owning cabinet's origin / x / front offset and its z span."""
     entries = _run_entries(scene)
@@ -225,6 +234,11 @@ def collect_cabinet_handles(scene):
             'pos': a['dim_x'] / 2.0,
             'z_low': a['dim_z'] / 2.0, 'z_high': a['dim_z'] / 2.0,
         })
+        handles.append({'kind': 'TOP', 'cab': a['name'], 'frame': a,
+                        'pos': 0.0, 'z': a['dim_z']})
+        if a['z_low'] > HUNG_MIN_Z:
+            handles.append({'kind': 'BOTTOM', 'cab': a['name'], 'frame': a,
+                            'pos': 0.0, 'z': 0.0})
     return handles
 
 
@@ -506,10 +520,21 @@ def _shift_along_own_x(obj, distance):
     obj.location = obj.location + axis.normalized() * distance
 
 
+def _set_height(context, obj, height):
+    # The same input + re-solve a typed Cabinet Height edit makes.
+    hb_types.GeoNodeCage(obj).set_input('Dim Z', height)
+    hb_utils.run_calc_fix(context, obj)
+
+
 def _clamp_delta(handle, start, d):
     """Clamp the drag distance so no cabinet goes under MIN_WIDTH and a
-    free end stops where the next cabinet starts."""
+    free end stops where the next cabinet starts. A height drag keeps
+    MIN_HEIGHT, and a bottom stops at the floor."""
     kind = handle['kind']
+    if kind == 'TOP':
+        return max(d, MIN_HEIGHT - start['h'])
+    if kind == 'BOTTOM':
+        return min(max(d, -start['z_world']), start['h'] - MIN_HEIGHT)
     if kind == 'JOINT':
         lo = MIN_WIDTH - start['left_w']
         hi = start['right_w'] - MIN_WIDTH
@@ -530,6 +555,10 @@ def primary_width(handle, start, d):
     left of a divider."""
     if handle['kind'] == 'SPLIT':
         return _split_sizes(handle, start, d)[0]
+    if handle['kind'] == 'TOP':
+        return start['h'] + d
+    if handle['kind'] == 'BOTTOM':
+        return start['h'] - d
     if handle['kind'] == 'JOINT':
         return start['left_w'] + d
     if handle['kind'] == 'END_RIGHT':
@@ -541,6 +570,10 @@ def delta_for_width(handle, start, width):
     if handle['kind'] == 'SPLIT':
         change = width - start['a']
         return -change if handle['vertical'] else change
+    if handle['kind'] == 'TOP':
+        return width - start['h']
+    if handle['kind'] == 'BOTTOM':
+        return start['h'] - width
     if handle['kind'] == 'JOINT':
         return width - start['left_w']
     if handle['kind'] == 'END_RIGHT':
@@ -573,16 +606,30 @@ def start_state(handle):
         return {'left_w': _dims(left)[0], 'right_w': _dims(right)[0],
                 'right_loc': right.location.copy()}
     cab = bpy.data.objects[handle['cab']]
-    return {'w': _dims(cab)[0], 'loc': cab.location.copy()}
+    w, _dy, h = _dims(cab)
+    return {'w': w, 'h': h, 'loc': cab.location.copy(),
+            'world': cab.matrix_world.translation.copy(),
+            'z_world': cab.matrix_world.translation.z}
 
 
 def apply_delta(context, handle, start, d):
     """Set the cabinets a handle owns to the start state moved by d
-    (along the run). Returns the clamped d actually applied."""
+    (along the run, or up for a top / bottom handle). Returns the
+    clamped d actually applied."""
     if handle['kind'] == 'SPLIT':
         return _apply_split(context, handle, start, d)
     d = _clamp_delta(handle, start, d)
-    if handle['kind'] == 'JOINT':
+    if handle['kind'] == 'TOP':
+        _set_height(context, bpy.data.objects[handle['cab']], start['h'] + d)
+    elif handle['kind'] == 'BOTTOM':
+        cab = bpy.data.objects[handle['cab']]
+        world = start['world'] + Vector((0.0, 0.0, d))
+        if cab.parent is not None:
+            cab.location = cab.parent.matrix_world.inverted_safe() @ world
+        else:
+            cab.location = world
+        _set_height(context, cab, start['h'] - d)
+    elif handle['kind'] == 'JOINT':
         left = bpy.data.objects[handle['left']]
         right = bpy.data.objects[handle['right']]
         _set_width(context, left, start['left_w'] + d)
@@ -648,6 +695,12 @@ def _handle_segment(region, rv3d, h, frame=None):
         return (_to_screen(region, rv3d, h['p_a'] + off),
                 _to_screen(region, rv3d, h['p_b'] + off))
     frame = frame or h['frame']
+    if h['kind'] in HEIGHT_KINDS:
+        # Across the front at its height; a drag shifts it by 'pos'.
+        z = h['z'] + h['pos']
+        return (_to_screen(region, rv3d, _front_point(frame, 0.0, z)),
+                _to_screen(region, rv3d,
+                           _front_point(frame, frame['dim_x'], z)))
     p1 = _to_screen(region, rv3d, _front_point(frame, h['pos'], h['z_low']))
     p2 = _to_screen(region, rv3d, _front_point(frame, h['pos'], h['z_high']))
     return p1, p2
@@ -710,6 +763,25 @@ def _width_label(region, rv3d, name, color):
                    _front_point(e, e['dim_x'] / 2.0, e['dim_z'] / 2.0))
     if p is not None:
         _draw_label(p.x, p.y, format_inches(e['dim_x']), color)
+
+
+def _height_label(region, rv3d, name, color):
+    """The cabinet's height, and its bottom off the floor when it hangs,
+    at its centre while a top or bottom edge drags."""
+    obj = bpy.data.objects.get(name)
+    if obj is None:
+        return
+    e = _entry(obj)
+    if e is None:
+        return
+    p = _to_screen(region, rv3d,
+                   _front_point(e, e['dim_x'] / 2.0, e['dim_z'] / 2.0))
+    if p is None:
+        return
+    text = "H " + format_inches(e['dim_z'])
+    if e['z_low'] > HUNG_MIN_Z:
+        text += "  |  off floor " + format_inches(e['z_low'])
+    _draw_label(p.x, p.y, text, color)
 
 
 def _draw_move_handle(shader, region, rv3d, h, frame, hot, s):
@@ -820,6 +892,8 @@ def _draw(op, context):
                         + format_inches(abs(op._drag_d)), ACTIVE_DIM_TEXT)
     elif op._drag is not None and op._drag['kind'] == 'SPLIT':
         _split_labels(region, rv3d, op._drag)
+    elif op._drag is not None and op._drag['kind'] in HEIGHT_KINDS:
+        _height_label(region, rv3d, op._drag['cab'], ACTIVE_DIM_TEXT)
     elif op._drag is not None:
         h = op._drag
         names =([h['left'], h['right']] if h['kind'] == 'JOINT'
@@ -854,7 +928,8 @@ class hb_frameless_OT_grab(bpy.types.Operator):
     bl_idname = "hb_frameless.grab"
     bl_label = "Grab"
     bl_description = (
-        "Drag cabinet ends to resize them. Where two cabinets are butted, "
+        "Drag cabinet ends to resize them, or a top or bottom edge to "
+        "change the height. Where two cabinets are butted, "
         "drag the joint to make one wider and the other narrower. In the "
         "Openings mode, drag the divider between two openings. Type a "
         "size while dragging; Shift turns snapping off. Each drag is its "
@@ -892,8 +967,9 @@ class hb_frameless_OT_grab(bpy.types.Operator):
             _draw_callback, (self, context), 'WINDOW', 'POST_PIXEL')
         context.window_manager.modal_handler_add(self)
         context.area.header_text_set(
-            "Grab  |  LMB: drag a cabinet end, the joint between two "
-            "cabinets, or (Openings mode) a divider  |  Type: size  |  "
+            "Grab  |  LMB: drag a cabinet end, top or bottom, the joint "
+            "between two cabinets, or (Openings mode) a divider  |  "
+            "Type: size  |  "
             "Shift: no snap  |  Enter / Esc: done")
         from ....operators.viewport_hud import register_active_modal
         register_active_modal(self)
@@ -987,6 +1063,10 @@ class hb_frameless_OT_grab(bpy.types.Operator):
         if frame.get('kind') == 'SPLIT':
             normal, plane_p, axis = (frame['normal'], frame['plane_p'],
                                      frame['axis'])
+        elif self._drag is not None and self._drag['kind'] in HEIGHT_KINDS:
+            normal = frame['y']
+            plane_p = _front_point(frame, 0.0, 0.0)
+            axis = Vector((0.0, 0.0, 1.0))
         else:
             normal = frame['y']
             plane_p = _front_point(frame, 0.0, 0.0)
