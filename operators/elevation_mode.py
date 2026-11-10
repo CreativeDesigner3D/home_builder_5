@@ -60,6 +60,7 @@ import math
 import bpy
 import blf
 import gpu
+from gpu_extras.batch import batch_for_shader
 from mathutils import Vector, Euler
 from mathutils.geometry import intersect_line_plane
 from bpy_extras import view3d_utils
@@ -917,6 +918,9 @@ SHOW_OPTIONS = (
 #    direction), 'text': str (may hold newlines),
 #    'align': 'LEFT' | 'CENTER' | 'RIGHT'}
 #   {'kind': 'LINES', 'points': [Vector, ...]} (pairs, like GPU LINES)
+#   {'kind': 'BUBBLE', 'origin': Vector, 'text': str} (a circled mark,
+#    the ring sized to the text on screen)
+# Any primitive may carry 'color' (RGBA) to stand out from the ink.
 # The view draws them in its own style, at a fixed screen size.
 
 _annotation_sources = []
@@ -958,6 +962,54 @@ def _annotations(scene, wall):
 
 ANNOTATION_FONT_SIZE = 11
 ANNOTATION_LINE = (0.10, 0.10, 0.12, 0.9)
+BUBBLE_FONT_SIZE = 12
+BUBBLE_SEGMENTS = 32
+
+
+def _bubble_rings(prims, P, s):
+    """[(centre, radius, text, color)] on screen for the BUBBLE marks."""
+    blf.size(0, BUBBLE_FONT_SIZE * s)
+    out = []
+    for pr in prims:
+        if pr.get('kind') != 'BUBBLE' or not pr.get('text'):
+            continue
+        o = P(pr['origin'])
+        if o is None:
+            continue
+        tw, th = blf.dimensions(0, pr['text'])
+        r = max(tw, th) / 2.0 + 5 * s
+        out.append((o, r, pr['text'], pr.get('color', TEXT)))
+    return out
+
+
+def _draw_bubbles(region, prims, P, s):
+    rings = _bubble_rings(prims, P, s)
+    if not rings:
+        return
+    shader = gpu.shader.from_builtin('UNIFORM_COLOR')
+    by_color = {}
+    for o, r, _text, color in rings:
+        # A paper disc under the ring keeps the mark readable over the
+        # line work it sits on.
+        ring = [(o.x + r * math.cos(2 * math.pi * i / BUBBLE_SEGMENTS),
+                 o.y + r * math.sin(2 * math.pi * i / BUBBLE_SEGMENTS))
+                for i in range(BUBBLE_SEGMENTS)]
+        batch = batch_for_shader(shader, 'TRI_FAN',
+                                 {"pos": [(o.x, o.y)] + ring + [ring[0]]})
+        shader.bind()
+        shader.uniform_float("color", (*PAPER, 1.0))
+        batch.draw(shader)
+        seg = by_color.setdefault(tuple(color), [])
+        for a, b in zip(ring, ring[1:] + ring[:1]):
+            seg += [a, b]
+    for color, seg in by_color.items():
+        _stroke(region, seg, 1.5 * s, color)
+    blf.size(0, BUBBLE_FONT_SIZE * s)
+    for o, _r, text, color in rings:
+        tw, th = blf.dimensions(0, text)
+        blf.color(0, *color)
+        blf.position(0, o.x - tw / 2.0, o.y - th / 2.0, 0)
+        draw_glyphs(0, text)
 
 
 def _draw_annotations(context, region, rv3d):
@@ -972,16 +1024,19 @@ def _draw_annotations(context, region, rv3d):
     def P(v):
         return view3d_utils.location_3d_to_region_2d(region, rv3d, v)
 
-    lines = []
+    lines = {}
     for pr in prims:
         if pr.get('kind') != 'LINES':
             continue
         pts = [P(v) for v in pr.get('points', ())]
+        out = lines.setdefault(tuple(pr.get('color', ANNOTATION_LINE)), [])
         for a, b in zip(pts[0::2], pts[1::2]):
             if a is not None and b is not None:
-                lines += [(a.x, a.y), (b.x, b.y)]
-    if lines:
-        _stroke(region, lines, 1.0 * s, ANNOTATION_LINE)
+                out += [(a.x, a.y), (b.x, b.y)]
+    for color, pts in lines.items():
+        if pts:
+            _stroke(region, pts, 1.0 * s, color)
+    _draw_bubbles(region, prims, P, s)
     blf.size(0, ANNOTATION_FONT_SIZE * s)
     lh = blf.dimensions(0, "Ag")[1] * 1.35
     for pr in prims:
@@ -1003,7 +1058,7 @@ def _draw_annotations(context, region, rv3d):
         rows = pr['text'].splitlines()
         ca, sa = math.cos(ang), math.sin(ang)
         total = lh * len(rows)
-        blf.color(0, *TEXT)
+        blf.color(0, *pr.get('color', TEXT))
         blf.enable(0, blf.SHADOW)
         blf.shadow(0, TEXT_HALO_BLUR, *TEXT_HALO)
         blf.shadow_offset(0, 0, 0)
