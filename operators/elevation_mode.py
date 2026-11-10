@@ -1488,7 +1488,7 @@ def _face_frame_layout(items, Fi):
     see _front_drops; a drop's filler stiles stand in the dropped band
     only, so they are not stiles of the frame."""
     out = {'lower': [], 'upper': [], 'columns': [], 'sections': [],
-           'drops': []}
+           'drops': [], 'stiles': {}}
     for it in items:
         if it.preview or it.shelf \
                 or not it.obj.get('IS_FACE_FRAME_CABINET_CAGE'):
@@ -1510,6 +1510,12 @@ def _face_frame_layout(items, Fi):
         xs = _chain([v for a, b in stiles for v in (a, b)], fx0, fx1)
         row = 'upper' if (it.kind == 'UPPER' or it.tall) else 'lower'
         segs = [(a, b, it) for a, b in zip(xs, xs[1:])]
+        # Which stile each stile segment is, for where its value sits:
+        # the frame's left end, its right end, or one between.
+        for a, b in stiles:
+            out['stiles'][(it.name, round(a, 4))] = (
+                'L' if abs(a - fx0) <= MERGE
+                else 'R' if abs(b - fx1) <= MERGE else 'M')
         ffc = getattr(it.obj, 'face_frame_cabinet', None)
         if ffc is not None and (getattr(ffc, 'blind_left', False)
                                 or getattr(ffc, 'blind_right', False)):
@@ -1766,6 +1772,8 @@ def _layout_wall(scene, wall, region, rv3d, selected=(), extra=None,
             dims.append({'axis': 'H', 'a': sx(a), 'b': sx(b), 'pos': pos,
                          'side': side, 'value': b - a, 'target': None,
                          'item': it, 'w0': a,
+                         'stile': ff_all['stiles'].get(
+                             (it.name, round(a, 4))),
                          'key': ('FF_W', it.name, round(a, 4))})
 
     # Below the floor: the face frames' stiles and openings, the
@@ -2109,6 +2117,28 @@ def _place_text(scene, dims, region, ext=()):
             if tw + clear <= span:
                 cands.append((mid - tw / 2.0, base))
             under = d['pos'] - pad - th
+            # A stile too narrow for its value: an end stile's value
+            # steps in over its own cabinet (the left stile's to the
+            # right, the right stile's to the left), and a stile
+            # between two openings carries its value straight above it.
+            # These sit a little higher than other values set over a
+            # line, clear of an opening's value set in the line beside
+            # them, so the two never crowd each other out. Below the
+            # floor a middle stile's value goes under the line instead:
+            # over it, its own two extension lines would run through it.
+            stile = d.get('stile')
+            if stile:
+                over_s = d['pos'] + th / 2.0 + 3.0
+                under_s = d['pos'] - th / 2.0 - 3.0 - th
+                centred = [(mid - tw / 2.0, over_s), (mid - tw / 2.0, under_s)]
+                if d['side'] < 0:
+                    centred.reverse()
+                if stile == 'L':
+                    cands += [(hi + 4 * s, over_s)] + centred
+                elif stile == 'R':
+                    cands += [(lo - 4 * s - tw, over_s)] + centred
+                else:
+                    cands += centred
             cands += [(hi + 4 * s, base), (lo - 4 * s - tw, base),
                       (mid - tw / 2.0,
                        under if d['side'] < 0 else base + th + pad),
