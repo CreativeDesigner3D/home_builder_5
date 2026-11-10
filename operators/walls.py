@@ -362,6 +362,131 @@ def update_connected_wall_miters(wall_obj):
     """Update the junctions of a wall and everything it meets."""
     calculate_wall_miter_angles(wall_obj)
 
+
+# A wall start this close to another wall's end, with nothing holding the
+# two together, is a corner that has come apart rather than a gap that
+# was drawn
+REJOIN_TOLERANCE = units.inch(6)
+# Ends closer than this already meet
+_MEET_TOLERANCE = 0.005
+
+
+def _wall_chain_target(obj):
+    """The wall this wall's start is held on, or None."""
+    for con in obj.constraints:
+        target = con.target if con.type == 'COPY_LOCATION' else None
+        if target is not None and target.parent is not None:
+            return target.parent
+    return None
+
+
+def _wall_own_ends(wall):
+    """((x, y) start, (x, y) end) from the wall's own transform, so a
+    wall moved a moment ago reads right without a depsgraph update."""
+    obj = wall.obj
+    length = wall.get_input('Length') or 0.0
+    rot = obj.rotation_euler.z
+    x, y = obj.location.x, obj.location.y
+    return (x, y), (x + math.cos(rot) * length, y + math.sin(rot) * length)
+
+
+def rejoin_loose_wall_ends(scene, tolerance=REJOIN_TOLERANCE):
+    """Close the corners of ``scene`` that have come a little apart.
+
+    A wall that is not held on another wall, and starts within
+    ``tolerance`` of a free wall end, is moved onto that end and held
+    there like a wall drawn after it, so later resizes carry it along.
+    Whatever is on a moved wall goes with it; lengths and angles are
+    kept. Each run of walls is walked from its first wall, which stays
+    where it is. Returns how many walls were joined.
+    """
+    walls = {}
+    for obj in scene.objects:
+        if 'IS_WALL_BP' not in obj or obj.parent is not None:
+            continue
+        wall = hb_types.GeoNodeWall(obj)
+        if wall.obj_x is None or not wall.has_modifier():
+            continue
+        walls[obj.name] = wall
+    if len(walls) < 2:
+        return 0
+
+    names = sorted(walls)
+    ends = {name: _wall_own_ends(walls[name]) for name in names}
+    held = {}
+    for name in names:
+        target = _wall_chain_target(walls[name].obj)
+        if target is not None and target.name in walls:
+            held[name] = target.name
+
+    # Closest pairs first, one wall per end: a second wall ending on the
+    # same point is a tee, which the junction solver looks after.
+    pairs = []
+    for name in names:
+        obj = walls[name].obj
+        if _wall_chain_target(obj) is not None:
+            continue
+        start = ends[name][0]
+        for other in names:
+            if other == name:
+                continue
+            o_wall = walls[other]
+            if o_wall.obj_x.home_builder.connected_object is not None:
+                continue
+            if abs(o_wall.obj.location.z - obj.location.z) > _MEET_TOLERANCE:
+                continue
+            o_end = ends[other][1]
+            gap = math.hypot(o_end[0] - start[0], o_end[1] - start[1])
+            if gap < tolerance:
+                pairs.append((gap, name, other))
+    before = {}
+    taken = set()
+    for _gap, name, other in sorted(pairs):
+        if name in before or other in taken:
+            continue
+        before[name] = other
+        taken.add(other)
+
+    # A closed room would chain all the way round onto itself: its first
+    # wall stays free, and the last wall's far end is marked as meeting
+    # it once the walls are in place.
+    closing = {}
+    for name in names:
+        seen = [name]
+        cur = before.get(name, held.get(name))
+        while cur is not None and cur not in seen:
+            seen.append(cur)
+            cur = before.get(cur, held.get(cur))
+        if cur is not None and cur == name:
+            free = sorted(n for n in seen if n in before)
+            if free:
+                closing[before.pop(free[0])] = free[0]
+
+    joined = 0
+    pending = dict(before)
+    with rooms_held():
+        while pending:
+            ready = [n for n in sorted(pending)
+                     if pending[n] not in pending]
+            if not ready:
+                break
+            for name in ready:
+                prev = pending.pop(name)
+                wall = walls[name]
+                end = _wall_own_ends(walls[prev])[1]
+                wall.obj.location.x = end[0]
+                wall.obj.location.y = end[1]
+                wall.connect_to_wall(walls[prev])
+                joined += 1
+        for last, first in closing.items():
+            end = _wall_own_ends(walls[last])[1]
+            start = _wall_own_ends(walls[first])[0]
+            if math.hypot(end[0] - start[0],
+                          end[1] - start[1]) < _MEET_TOLERANCE:
+                walls[last].obj_x.home_builder.connected_object = (
+                    walls[first].obj)
+    return joined
+
 # Room Lighting Helpers
 def point_in_polygon(point, polygon):
     """Ray casting algorithm to check if point is inside polygon."""
@@ -5752,15 +5877,28 @@ class home_builder_walls_OT_update_wall_miters(bpy.types.Operator):
     """Recalculate every wall corner from the walls that are actually there"""
     bl_idname = "home_builder_walls.update_wall_miters"
     bl_label = "Recalculate Wall Corners"
-    bl_description = ("Recalculate the mitered ends on every wall. Ends that "
-                      "no longer meet another wall go back to square")
+    bl_description = ("Pull together the corners of this room that have come "
+                      "a little apart, then recalculate the mitered ends on "
+                      "every wall. Ends that no longer meet another wall go "
+                      "back to square")
     bl_options = {'UNDO'}
 
     def execute(self, context):
+        joined = 0
+        try:
+            joined = rejoin_loose_wall_ends(context.scene)
+        except Exception as exc:
+            print(f"Home Builder: wall ends not rejoined ({exc})")
+        if joined:
+            context.view_layer.update()
         update_all_wall_miters()
         if context.area is not None:
             context.area.tag_redraw()
-        self.report({'INFO'}, "Recalculated wall corners")
+        if joined:
+            self.report({'INFO'}, "Rejoined %d wall corner%s and recalculated "
+                        "wall corners" % (joined, "" if joined == 1 else "s"))
+        else:
+            self.report({'INFO'}, "Recalculated wall corners")
         return {'FINISHED'}
 
 
