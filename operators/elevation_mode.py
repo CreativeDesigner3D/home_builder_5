@@ -56,6 +56,7 @@ the view the room had before.
 """
 
 import math
+import re
 
 import bpy
 import blf
@@ -934,6 +935,50 @@ def format_length(scene, value):
             txt = f'{whole}"'
         return ('-' + txt) if neg else txt
     return units.unit_to_string(us, value)
+
+
+# A value's fraction is set small and on the diagonal, the way it is
+# lettered by hand: 37 1/2" takes little more room than 37".
+FRACTION_SCALE = 0.62       # numerator and denominator, of the value's size
+FRACTION_SLASH = 0.80       # the slash between them
+FRACTION_RISE = 0.30        # the numerator's lift, of the value's size
+FRACTION_GAP = 0.10         # whole number to fraction
+FRACTION_TUCK = 0.04        # the slash tucks in under / over its figures
+_FRACTION = re.compile(r'^(-?\d+)?\s*(\d+)/(\d+)(.*)$', re.S)
+
+
+def value_runs(text, size, measure):
+    """A value as the pieces to set it in: ([(string, x, y, size)],
+    width), x and y from the start of the baseline. `measure(string,
+    size)` is the width of a string in the face it will be set in, so
+    any drawer can lay a value out in its own font. A value with no
+    fraction is one piece."""
+    m = _FRACTION.match(text)
+    if m is None:
+        return [(text, 0.0, 0.0, size)], measure(text, size)
+    whole, num, den, tail = m.groups()
+    small = size * FRACTION_SCALE
+    slash = size * FRACTION_SLASH
+    tuck = size * FRACTION_TUCK
+    runs, x = [], 0.0
+    if whole:
+        runs.append((whole, 0.0, 0.0, size))
+        x = measure(whole, size) + size * FRACTION_GAP
+    runs.append((num, x, size * FRACTION_RISE, small))
+    x += measure(num, small) - tuck
+    runs.append(('/', x, 0.0, slash))
+    x += measure('/', slash) - tuck
+    runs.append((den, x, 0.0, small))
+    x += measure(den, small)
+    if tail:
+        runs.append((tail, x, 0.0, size))
+        x += measure(tail, size)
+    return runs, x
+
+
+def _blf_measure(text, size):
+    blf.size(0, size)
+    return blf.dimensions(0, text)[0]
 
 
 # ---- Dimension layout ------------------------------------------------------------
@@ -1839,7 +1884,8 @@ def _layout_wall(scene, wall, region, rv3d, selected=(), extra=None,
         when they don't, so it stands clear of the chain inside it."""
         w, beside = 0.0, False
         for a, b in segs:
-            w = max(w, blf.dimensions(0, format_length(scene, b - a))[0])
+            w = max(w, value_runs(format_length(scene, b - a),
+                                  FONT_SIZE * s, _blf_measure)[1])
             if abs(sy(b) - sy(a)) < th + v_clear:
                 beside = True
         pos = reach[side] + side * max(w / 2.0 + pad, 0.0)
@@ -2050,7 +2096,7 @@ def _place_text(scene, dims, region, ext=()):
         if d['axis'] == 'V':
             d['horiz'] = True   # every value reads left to right
         d['text'] = format_length(scene, d['value']) + d.get('suffix', '')
-        tw = blf.dimensions(0, d['text'])[0]
+        tw = value_runs(d['text'], FONT_SIZE * s, _blf_measure)[1]
         span = abs(d['b'] - d['a'])
         lo, hi = min(d['a'], d['b']), max(d['a'], d['b'])
         mid = (lo + hi) / 2.0
@@ -2171,7 +2217,9 @@ def _dim_lines(d, s):
     return line, ticks
 
 
-def _text(d, color, s, halo=TEXT_HALO):
+def _text(d, color, s, halo=TEXT_HALO, plain=False):
+    """A dimension's value at its rect. `plain` sets the text as typed
+    (the edit field), with no small fraction."""
     x, y, w, h = d['rect']
     blf.size(0, FONT_SIZE * s)
     blf.color(0, *color)
@@ -2182,9 +2230,16 @@ def _text(d, color, s, halo=TEXT_HALO):
         blf.enable(0, blf.ROTATION)
         blf.rotation(0, math.pi / 2.0)
         blf.position(0, x + w, y, 0)
-    else:
+        draw_glyphs(0, d['text'])
+    elif plain:
         blf.position(0, x, y, 0)
-    draw_glyphs(0, d['text'])
+        draw_glyphs(0, d['text'])
+    else:
+        runs, _width = value_runs(d['text'], FONT_SIZE * s, _blf_measure)
+        for text, dx, dy, size in runs:
+            blf.size(0, size)
+            blf.position(0, x + dx, y + dy, 0)
+            draw_glyphs(0, text)
     blf.disable(0, blf.ROTATION)
     blf.disable(0, blf.SHADOW)
 
@@ -2387,7 +2442,7 @@ def _draw():
                 draw_round_rect(shader, rect[0] - p, rect[1] - p,
                                 rect[2] + 2 * p, rect[3] + 2 * p, 3 * s,
                                 EDIT_BG)
-                _text(shown, EDIT_TEXT, s, EDIT_HALO)
+                _text(shown, EDIT_TEXT, s, EDIT_HALO, plain=True)
                 continue
             hot = _hover == ('DIM', d['key']) and d['target'] is not None
             color = HOVER_TEXT if hot else (TEXT if d['target'] is not None
@@ -2763,8 +2818,11 @@ def dim_primitives(dims, extra, scale=1.0):
      'font': 'Helvetica', 'color', 'halo': (colour, width),
      'rect': the value's (x, y, w, h), 'key': its dimension's}
 
-    `scale` is the one the layout was made with. A TEXT's x centres it
-    in its rect in Helvetica; set in another face, centre it in `rect`."""
+    `scale` is the one the layout was made with. A TEXT's 'runs' are its
+    pieces, [(string, dx, dy, size)] from (x, y): a fraction is set
+    small, so a value is drawn piece by piece and not as `text`. x and
+    the runs are Helvetica's; set in another face, lay the value out
+    again with value_runs and centre it in `rect`."""
     if extra is None:
         return []
     ps = scale
@@ -2796,14 +2854,17 @@ def dim_primitives(dims, extra, scale=1.0):
     halo = _print_text_halo(ps)
     for d in dims:
         x, y, w, h = d['rect']
-        tw = hb_pdf.text_width(d['text'], fs)
         if d['axis'] == 'V' and not d.get('horiz'):
+            tw = hb_pdf.text_width(d['text'], fs)
             tx, ty, angle = x + w, y + (h - tw) / 2.0, math.pi / 2.0
+            runs = [(d['text'], 0.0, 0.0, fs)]
         else:
+            runs, tw = value_runs(d['text'], fs, hb_pdf.text_width)
             tx, ty, angle = x + (w - tw) / 2.0, y, 0.0
         prims.append({
             'kind': 'TEXT', 'text': d['text'], 'x': tx, 'y': ty,
             'size': fs, 'angle': angle, 'font': 'Helvetica',
+            'runs': runs,
             'color': TEXT if d['target'] is not None else TEXT_READONLY,
             'halo': halo, 'rect': (x, y, w, h), 'key': d.get('key')})
     return prims
@@ -2823,10 +2884,18 @@ def _print_dims(page, scene, dims, extra, ps):
         elif pr['kind'] == 'MASK':
             page.fill_color(pr['color'])
             page.rect(*pr['rect'], fill=True, stroke=False)
-        else:
+        elif pr['angle']:
             page.fill_color(pr['color'])
             page.text(pr['x'], pr['y'], pr['text'], pr['size'],
                       angle=pr['angle'], halo=pr['halo'])
+        else:
+            # Every piece's halo first, so one piece's halo cannot eat
+            # into the piece beside it.
+            page.fill_color(pr['color'])
+            for halo in (pr['halo'], None):
+                for text, dx, dy, size in pr['runs']:
+                    page.text(pr['x'] + dx, pr['y'] + dy, text, size,
+                              halo=halo)
 
 
 def _print_annotations(page, scene, wall, region, view, ps):
