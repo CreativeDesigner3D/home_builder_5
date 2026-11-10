@@ -324,8 +324,10 @@ def _collect_boundaries(scene, mode=None):
         # at its TOP edge; a hanging bay grabs at its BOTTOM edge (the
         # top stays at the mount height). Both write the bay's height
         # override.
+        # The top edge of a floor bay is its top shelf, so Openings mode,
+        # where the other shelves are dragged, offers it too.
         z_axis = (mw.to_3x3() @ Vector((0.0, 0.0, 1.0))).normalized()
-        if mode == 'Bays':
+        if mode in ('Bays', 'Openings'):
             for bay in bays:
                 b_mw = split_preview._world_matrix(bay)
                 b_w, b_h = split_preview._cage_dims(bay)
@@ -345,6 +347,8 @@ def _collect_boundaries(scene, mode=None):
                     p1 = b_mw @ Vector((b_w, -b_d, b_h))
                     out.append(dict(kind='BAY_TOP', root=root.name,
                                     bay=bay.name, p0=p0, p1=p1, axis=z_axis))
+                if mode != 'Bays':
+                    continue
                 p0 = b_mw @ Vector((0.0, -b_d, 0.0))
                 p1 = b_mw @ Vector((b_w, -b_d, 0.0))
                 out.append(dict(kind='BAY_BOT', root=root.name,
