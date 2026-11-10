@@ -1645,6 +1645,12 @@ def _solve_splitter(splitter_obj, vertical):
                 set_part(board, (x + size, 0.0, 0.0), length=dim_z,
                          width=dim_y, thickness=mt)
             x += size + mt
+    # A board added after the cabinet was styled is painted as it is
+    # made; the ones already painted are left alone.
+    root = cabinet_root(splitter_obj)
+    for (role, _i), board in parts.items():
+        if role == 'SPLITTER' and board is not None:
+            paint_new_parts(root, board)
 
 
 def link_dims(parent_obj, child_obj, dims):
@@ -2064,16 +2070,40 @@ def _paint_interior(root, part_obj):
         return
     index = root.get('CABINET_STYLE_INDEX', 0)
     style = styles[index] if 0 <= index < len(styles) else styles[0]
-    face, _ = style.get_interior_material()
+    if root.get('Finished Interior', False):
+        face, _ = style.get_finish_material()
+    else:
+        face, _ = style.get_interior_material()
     edge, _front_edge = style.get_edge_materials()
     part = GeoNodeCutpart(part_obj)
-    for name, mat in (('Top Surface', face), ('Bottom Surface', face),
-                      ('Edge W1', edge), ('Edge W2', edge),
-                      ('Edge L1', edge), ('Edge L2', edge)):
+    for name, mat in (('Top Surface', face), ('Bottom Surface', face)):
         try:
             part.set_input(name, mat)
         except Exception:
             pass
+    from . import edgebanding_frameless
+    edgebanding_frameless.apply_edges(part_obj, edge)
+
+
+def paint_new_parts(root, top):
+    """Paint the cutparts under ``top`` that were made after the cabinet
+    was styled (a fixed shelf or division added later, and the shelves
+    of its new sections) the way the style painted the rest: interior
+    faces and the cabinet banding on the edges their rule bands. A part
+    with no material is left out of the cut list, so a part is never
+    left bare (the closet library paints its new shelves the same way).
+    Parts that already carry a material are left as they are."""
+    if root is None or top is None:
+        return
+    for obj in [top] + list(top.children_recursive):
+        if 'CABINET_PART' not in obj or obj.get('IS_CABINET_FRONT'):
+            continue
+        try:
+            if GeoNodeCutpart(obj).get_input('Top Surface') is not None:
+                continue
+        except Exception:
+            continue
+        _paint_interior(root, obj)
 
 
 # How far an insert's fronts are open, 0 closed to 1 fully open. Written
