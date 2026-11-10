@@ -852,8 +852,16 @@ def _closet_panel_heights(it, Fi):
     return out
 
 
-def _items(scene, wall):
-    key = (_gen, wall.name, frozenset(_state.get('preview', ())))
+def _items(scene, wall, extra=None, preview=None):
+    """The products and openings that show on `wall`. `extra` (names of
+    roots standing in front of it) and `preview` default to the
+    elevation on screen."""
+    st = _state or {}
+    if extra is None:
+        extra = st.get('extra', ())
+    if preview is None:
+        preview = st.get('preview', ())
+    key = (_gen, wall.name, frozenset(preview), frozenset(extra))
     hit = _item_cache.get('key')
     if hit == key:
         return _item_cache['items']
@@ -862,7 +870,7 @@ def _items(scene, wall):
     if fr is not None:
         _F, Fi, length, _height = fr
         roots = list(wall.children)
-        for name in _state.get('extra', ()):
+        for name in extra:
             obj = bpy.data.objects.get(name)
             if obj is not None:
                 roots.append(obj)
@@ -872,7 +880,7 @@ def _items(scene, wall):
                 cands.extend(c for c in obj.children if _is_product(c))
             elif _is_product(obj) or _is_opening(obj):
                 cands.append(obj)
-        preview = set(_state.get('preview', ()))
+        preview = set(preview)
         for obj in cands:
             if obj.name in preview:
                 continue
@@ -1593,16 +1601,27 @@ def _layout(context, region, rv3d):
     """Every dimension on screen, its text placed. Shared by draw and
     click so hits cannot drift from pixels."""
     wall = active_wall(context)
-    if wall is None or rv3d is None:
+    if wall is None:
+        return [], None
+    return _layout_wall(context.scene, wall, region, rv3d,
+                        selected={o.name for o in context.selected_objects})
+
+
+def _layout_wall(scene, wall, region, rv3d, selected=(), extra=None,
+                 preview=None, face_frame=None):
+    """_layout for any wall of `scene`, through any view. `extra` and
+    `preview` as _items; `face_frame` overrides the scene's Face Frame
+    toggle."""
+    if rv3d is None:
         return [], None
     fr = _frame(wall)
     if fr is None:
         return [], None
     F, _Fi, length, height = fr
-    scene = context.scene
     s = _s()
-    items = _items(scene, wall)
-    selected = {o.name for o in context.selected_objects}
+    items = _items(scene, wall, extra, preview)
+    if face_frame is None:
+        face_frame = show_option(scene, 'FACE_FRAME')
 
     def P(x, z):
         p = view3d_utils.location_3d_to_region_2d(
@@ -1684,7 +1703,7 @@ def _layout(context, region, rv3d):
     # Measured always (a stepped upper's sections show either way); the
     # frame's own chains only with Face Frame on.
     ff_all = _face_frame_layout(items, fr[1])
-    ff = ff_all if show_option(scene, 'FACE_FRAME') else None
+    ff = ff_all if face_frame else None
 
     def add_ff_widths(segs, pos, from_y, side):
         """A face frame chain: stile, opening, stile ... of each face
@@ -2414,8 +2433,48 @@ def _print_view(Fi, k, ox, oy, W, H):
     return view
 
 
-def _print_layout(context, region, view):
-    dims, extra = _layout(context, region, view)
+def _front_names(scene, wall):
+    """Names of the roots standing in front of `wall` (_items' extra)."""
+    fr = _frame(wall)
+    if fr is None:
+        return []
+    _F, Fi, length, height = fr
+    return [o.name for o in _in_front_roots(scene, wall, Fi, length, height)]
+
+
+def wall_view(wall, k, ox, oy, width, height):
+    """An orthographic view square onto `wall` for layout_wall: k units
+    to the metre, the wall's start at (ox, oy) on a width x height sheet
+    with its origin bottom left. None for a wall without a frame."""
+    fr = _frame(wall)
+    if fr is None:
+        return None
+    return _print_view(fr[1], k, ox, oy, width, height)
+
+
+def layout_wall(scene, wall, view, width, height, scale=1.0,
+                face_frame=None):
+    """The dimensions of `wall` laid out on a width x height sheet,
+    whether or not an elevation is on screen: (dims, extra) as the view
+    draws them, in sheet units with the origin bottom left.
+
+    `view` is wall_view's, or anything with a `perspective_matrix` that
+    takes world space to the sheet's -1..1 square. `scale` sizes the
+    tiers, ticks and text (1.0 = the view's sizes in sheet units).
+    `face_frame` overrides the scene's Face Frame toggle."""
+    global _print_scale
+    saved = _print_scale
+    _print_scale = scale
+    try:
+        return _layout_wall(scene, wall, _PrintRegion(width, height), view,
+                            extra=_front_names(scene, wall), preview=(),
+                            face_frame=face_frame)
+    finally:
+        _print_scale = saved
+
+
+def _print_layout(scene, wall, region, view, extra=None):
+    dims, extra = _layout_wall(scene, wall, region, view, extra=extra)
     return [d for d in dims if d['key'][0] != 'SEL'], extra
 
 
@@ -2439,7 +2498,7 @@ def _print_bounds(dims, extra, k, L, H):
     return min(xs), max(xs), min(ys), max(ys)
 
 
-def _print_fit(context, wall, W, H):
+def _print_fit(scene, wall, W, H, extra=None):
     """(view, scale label) that fits the wall and every dimension on the
     page at the largest drafting scale that will go."""
     _F, Fi, L, Hw = _frame(wall)
@@ -2449,7 +2508,8 @@ def _print_fit(context, wall, W, H):
     k0 = 0.5 * min(area_w / L, area_h / Hw)
     view = _print_view(Fi, k0, PRINT_MARGIN, PRINT_MARGIN + PRINT_TITLE,
                        W, H)
-    dims, extra = _print_layout(context, region, view)
+    front = extra
+    dims, extra = _print_layout(scene, wall, region, view, front)
     x0, x1, y0, y1 = _print_bounds(dims, extra, k0, L, Hw)
     # The dimension tiers keep their size in pt whatever the scale.
     pad_l = extra['sx'](0.0) - x0
@@ -2765,15 +2825,22 @@ def _print_title(page, scene, wall, label, W):
 
 
 def print_wall(context, filepath, paper='TABLOID',
-               text_scale=PRINT_TEXT_SCALE):
-    """Write the wall on screen to `filepath` as a one-page PDF: the
-    products' line work at a drafting scale with the view's dimensions
-    and notes over it, all as vectors. Returns the path written."""
+               text_scale=PRINT_TEXT_SCALE, wall=None):
+    """Write a wall to `filepath` as a one-page PDF: the products' line
+    work at a drafting scale with the view's dimensions and notes over
+    it, all as vectors. The wall on screen, or `wall` of the context's
+    scene with no elevation showing. Returns the path written."""
     global _print_scale
-    wall = active_wall(context)
-    if wall is None:
-        raise RuntimeError("No wall is shown in elevation")
     scene = context.scene
+    front = None            # the elevation on screen knows its own
+    if wall is None:
+        wall = active_wall(context)
+        if wall is None:
+            raise RuntimeError("No wall is shown in elevation")
+    elif wall != active_wall(context):
+        front = _front_names(scene, wall)
+    if _frame(wall) is None:
+        raise RuntimeError("The wall has no elevation to print")
     W, H = PRINT_PAPER.get(paper, PRINT_PAPER['TABLOID'])
     _F, Fi, L, Hw = _frame(wall)
     region = _PrintRegion(W, H)
@@ -2781,8 +2848,8 @@ def print_wall(context, filepath, paper='TABLOID',
     page = doc.add_page(W, H)
     _print_scale = text_scale
     try:
-        view, label = _print_fit(context, wall, W, H)
-        dims, extra = _print_layout(context, region, view)
+        view, label = _print_fit(scene, wall, W, H, front)
+        dims, extra = _print_layout(scene, wall, region, view, front)
         if not _print_linework(page, context, extra, Fi, view, L, Hw):
             _print_outlines(page, extra, Fi, L, Hw)
         _print_dims(page, scene, dims, extra, text_scale)
