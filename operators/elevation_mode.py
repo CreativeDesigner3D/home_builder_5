@@ -708,10 +708,50 @@ def _height_editor(obj):
     return _width_editor(obj) or _is_opening(obj)
 
 
+def _corner_footprint(obj):
+    """The full box of a pie cut / diagonal corner cabinet in its own
+    frame, from its cage size: the cage mesh itself is only the notch in
+    the corner, so its bounds miss most of the cabinet."""
+    ffc = getattr(obj, 'face_frame_cabinet', None)
+    if ffc is None or getattr(ffc, 'corner_type', 'NONE') not in (
+            'PIE_CUT', 'DIAGONAL'):
+        return None
+    try:
+        cage = hb_types.GeoNodeCage(obj)
+        dx, dy, dz = (cage.get_input(k) or 0.0
+                      for k in ('Dim X', 'Dim Y', 'Dim Z'))
+        mirror_y = bool(cage.get_input('Mirror Y'))
+    except Exception:
+        return None
+    if dx <= 0.0 or dy <= 0.0 or dz <= 0.0:
+        return None
+    y0, y1 = (-dy, 0.0) if mirror_y else (0.0, dy)
+    return [Vector((x, y, z)) for x in (0.0, dx) for y in (y0, y1)
+            for z in (0.0, dz)]
+
+
+def _end_on_from_other_wall(obj, wall):
+    """A product on the next wall seen end-on at the corner: its span
+    here is its depth, which says nothing about this wall's run. A corner
+    cabinet is the exception -- its depth here is what gets measured."""
+    host = obj.parent
+    while host is not None and not host.get('IS_WALL_BP'):
+        host = host.parent
+    if host is None or host == wall or not _is_product(obj) \
+            or _corner_footprint(obj) is not None:
+        return False
+    try:
+        rel = (wall.matrix_world.inverted_safe() @ obj.matrix_world).to_euler()
+    except Exception:
+        return False
+    return abs(math.cos(rel.z)) < 0.1
+
+
 def _make_item(obj, Fi, wall, preview=False):
     try:
         mw = obj.matrix_world
-        pts = [Fi @ (mw @ Vector(c)) for c in obj.bound_box]
+        box = _corner_footprint(obj) or [Vector(c) for c in obj.bound_box]
+        pts = [Fi @ (mw @ c) for c in box]
     except Exception:
         return None
     xs = [p.x for p in pts]
@@ -772,6 +812,8 @@ def _items(scene, wall):
                         and obj.hide_get():
                     continue
             except Exception:
+                continue
+            if _end_on_from_other_wall(obj, wall):
                 continue
             it = _make_item(obj, Fi, wall)
             if it is not None and it.x1 > 0.0 and it.x0 < length:
