@@ -16,8 +16,9 @@ locked, and the wall is dimensioned the way an elevation sheet is:
   the wall, so a tall at one end and uppers at the other both read;
 - with Face Frame on, the face frames' stiles and openings as the
   chain nearest the work (below the floor for floor-standing cabinets,
-  above the wall for uppers and talls), and the rails and openings up
-  each opening column, once per distinct column;
+  above the wall for uppers and talls), and the rails and openings of
+  each distinct opening column as height chains out past the wall's
+  ends, nearest the work (on the frame when the sides are full);
 - with Annotations on, the notes an add-on supplies for the wall
   (register_annotation_source), drawn in the view's own style.
 
@@ -76,8 +77,10 @@ FONT_SIZE = 12
 LINE = (0.07, 0.07, 0.08, 1.0)
 TEXT = (0.0, 0.0, 0.0, 1.0)
 TEXT_READONLY = (0.20, 0.20, 0.22, 1.0)
-HALO = (1.0, 1.0, 1.0, 0.85)
-TEXT_HALO = (1.0, 1.0, 1.0, 1.0)
+# Kept faint and tight: a strong halo glows on the grey viewport.
+HALO = (1.0, 1.0, 1.0, 0.45)
+TEXT_HALO = (1.0, 1.0, 1.0, 0.7)
+TEXT_HALO_BLUR = 3
 HOVER = (0.05, 0.38, 0.85, 1.0)
 HOVER_TEXT = (0.05, 0.38, 0.85, 1.0)
 EDIT_BG = Theme.ACCENT_BG
@@ -924,7 +927,7 @@ def _draw_annotations(context, region, rv3d):
         total = lh * len(rows)
         blf.color(0, *TEXT)
         blf.enable(0, blf.SHADOW)
-        blf.shadow(0, 5, *TEXT_HALO)
+        blf.shadow(0, TEXT_HALO_BLUR, *TEXT_HALO)
         blf.shadow_offset(0, 0, 0)
         blf.enable(0, blf.ROTATION)
         blf.rotation(0, ang)
@@ -1059,7 +1062,45 @@ def _face_frame_layout(items, Fi):
     return out
 
 
-def _face_frame_height_dims(ff, dims, sx, sy, s):
+# Face frame height chains each side of the wall may take, as lines.
+FF_SIDE_TIERS = 2
+
+
+def _pack_face_frame_sides(columns, length):
+    """({1: tiers, -1: tiers}, columns left on the frame). Columns with
+    the same rail breaks (same heights off the floor) make one chain;
+    the most shared go out first, to the side of the wall their
+    cabinets stand on, else the other side. A tier is a list of
+    (zs, item) whose height ranges don't overlap, so an upper's chain
+    and a base's share a line."""
+    groups = {}
+    for col in columns:
+        groups.setdefault(tuple(round(z, 4) for z in col[3]), []).append(col)
+    tiers = {1: [], -1: []}
+    left = []
+    for _sig, cols in sorted(groups.items(), key=lambda kv: -len(kv[1])):
+        zs = cols[0][3]
+        cx = sum((c[1] + c[2]) / 2.0 for c in cols) / len(cols)
+        pref = -1 if cx < length / 2.0 else 1
+        placed = False
+        for side in (pref, -pref):
+            for tr in tiers[side]:
+                if all(zs[-1] <= o[0] + MERGE or zs[0] >= o[-1] - MERGE
+                       for o, _it in tr):
+                    tr.append((zs, cols[0][0]))
+                    placed = True
+                    break
+            if not placed and len(tiers[side]) < FF_SIDE_TIERS:
+                tiers[side].append([(zs, cols[0][0])])
+                placed = True
+            if placed:
+                break
+        if not placed:
+            left.extend(cols)
+    return tiers, left
+
+
+def _face_frame_height_dims(columns, dims, sx, sy, s):
     """Rails and openings up each opening column, on the frame. A column
     whose breaks repeat one already dimensioned (the next door of a
     run, the other bay of a cabinet) is not dimensioned again. Values
@@ -1067,7 +1108,7 @@ def _face_frame_height_dims(ff, dims, sx, sy, s):
     them."""
     inset = FF_INSET_PX * s
     done = set()
-    for it, c0, c1, zs in sorted(ff['columns'], key=lambda c: c[1]):
+    for it, c0, c1, zs in sorted(columns, key=lambda c: c[1]):
         sig = tuple(round(z, 4) for z in zs)
         if sig in done:
             continue
@@ -1248,29 +1289,69 @@ def _layout(context, region, rv3d):
         left_group, right_group = [], products
     right_x = sx(max([wx1] + [it.x1 for it in items]))
     left_x = sx(min([wx0] + [it.x0 for it in items]))
+
+    # Face frame rails and openings stand out past the wall's ends,
+    # nearest the work: one chain per distinct column set-up, on the
+    # side of the wall its cabinets are on, chains at different heights
+    # sharing a line. What doesn't fit stays on the frame.
+    side_tiers, on_frame = (_pack_face_frame_sides(ff['columns'], length)
+                            if ff else ({1: [], -1: []}, []))
+    pad = TEXT_GAP_PX * s
+    blf.size(0, FONT_SIZE * s)
+    th = blf.dimensions(0, "0123456789\"")[1]
+
+    def ff_side(side, edge):
+        cursor = edge + side * first
+        ex = sx(wx1) if side > 0 else sx(wx0)
+        for tr in side_tiers[side]:
+            widest = 0.0
+            for zs, it in tr:
+                for z in zs:
+                    dims_ext.append(((ex + side * gap, sy(z)),
+                                     (cursor + side * over, sy(z))))
+                for a, b in zip(zs, zs[1:]):
+                    widest = max(widest, blf.dimensions(
+                        0, format_length(scene, b - a))[0])
+                    dims.append({'axis': 'V', 'a': sy(a), 'b': sy(b),
+                                 'pos': cursor, 'side': side,
+                                 'value': b - a, 'target': None,
+                                 'item': it, 'w0': a, 'horiz': True,
+                                 'outward': True,
+                                 'key': ('FF_S', side, round(cursor),
+                                         round(a, 4))})
+            # The values sit outside their line; the next line clears them.
+            cursor += side * (widest + 3 * pad)
+        if side > 0 and side_tiers[side]:
+            # The height chain's values sit inside its line.
+            cursor += th + pad
+        return cursor
+
+    right_pos = ff_side(1, right_x)
+    left_pos = ff_side(-1, left_x)
+
     t = 0
     levels = _height_levels(right_group, height)
     if len(levels) > 2:
-        add_v(levels, right_x + first, 1, right_group)
+        add_v(levels, right_pos, 1, right_group)
         t += 1
-    add_v([0.0, height], right_x + first + t * tier, 1, [], overall=True)
+    add_v([0.0, height], right_pos + t * tier, 1, [], overall=True)
 
     # Left: the left half's height chain, then window and door sills
     # and heads.
     t = 0
     levels = _height_levels(left_group, height)
     if len(levels) > 2:
-        add_v(levels, left_x - first, -1, left_group)
+        add_v(levels, left_pos, -1, left_group)
         t += 1
     if openings:
         lv = {0.0, height}
         for it in openings:
             lv.update((max(it.z0, 0.0), it.z1))
-        add_v(_chain(lv, 0.0, max(lv)), left_x - first - t * tier, -1,
+        add_v(_chain(lv, 0.0, max(lv)), left_pos - t * tier, -1,
               openings)
 
     if ff:
-        _face_frame_height_dims(ff, dims, sx, sy, s)
+        _face_frame_height_dims(on_frame, dims, sx, sy, s)
 
     # A selected product carries its own height, just inside its right
     # edge, so a tall or an odd-height cabinet can be sized here too.
@@ -1331,8 +1412,14 @@ def _place_text(scene, dims, region):
             # right at mid height, else left, else past its ends.
             x_r = d['pos'] + pad
             x_l = d['pos'] - pad - tw
-            cands = [(x_r, mid - th / 2.0), (x_l, mid - th / 2.0),
-                     (x_r, hi + 2 * s), (x_r, lo - 2 * s - th)]
+            if d.get('outward'):
+                # Out past the wall: the value stays on the open side.
+                xo = x_r if d['side'] > 0 else x_l
+                cands = [(xo, mid - th / 2.0), (xo, hi + 2 * s),
+                         (xo, lo - 2 * s - th)]
+            else:
+                cands = [(x_r, mid - th / 2.0), (x_l, mid - th / 2.0),
+                         (x_r, hi + 2 * s), (x_r, lo - 2 * s - th)]
             rects = [(x, y, tw, th) for x, y in cands]
         else:
             # Rotated a quarter turn: the value reads up the line from
@@ -1381,7 +1468,7 @@ def _text(d, color, s, halo=TEXT_HALO):
     blf.size(0, FONT_SIZE * s)
     blf.color(0, *color)
     blf.enable(0, blf.SHADOW)
-    blf.shadow(0, 5, *halo)
+    blf.shadow(0, TEXT_HALO_BLUR if halo is TEXT_HALO else 5, *halo)
     blf.shadow_offset(0, 0, 0)
     if d['axis'] == 'V' and not d.get('horiz'):
         blf.enable(0, blf.ROTATION)
