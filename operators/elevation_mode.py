@@ -2021,7 +2021,7 @@ def _layout_wall(scene, wall, region, rv3d, selected=(), extra=None,
                      'target': {'mode': 'HEIGHT', 'objs': [it.name]},
                      'item': it, 'w0': it.z0, 'key': ('SEL', it.name)})
 
-    _place_text(scene, dims, region)
+    _place_text(scene, dims, region, dims_ext)
     for d in dims:
         if 'key' not in d:
             d['key'] = (d['axis'], round(d['pos'] / max(tier, 1)),
@@ -2036,7 +2036,7 @@ def _rects_overlap(a, b, m=2.0):
                 or a[1] + a[3] + m <= b[1] or b[1] + b[3] + m <= a[1])
 
 
-def _place_text(scene, dims, region):
+def _place_text(scene, dims, region, ext=()):
     s = _s()
     blf.size(0, FONT_SIZE * s)
     th = blf.dimensions(0, "0123456789\"")[1]
@@ -2062,10 +2062,16 @@ def _place_text(scene, dims, region):
                 cands.append((mid - tw / 2.0, d['pos'] - th / 2.0))
             if tw + clear <= span:
                 cands.append((mid - tw / 2.0, base))
+            under = d['pos'] - pad - th
             cands += [(hi + 4 * s, base), (lo - 4 * s - tw, base),
                       (mid - tw / 2.0,
-                       d['pos'] - pad - th if d['side'] < 0
-                       else base + th + pad)]
+                       under if d['side'] < 0 else base + th + pad),
+                      # Last resorts: past either end on the line's
+                      # other side, then a second row.
+                      (hi + 4 * s, under), (lo - 4 * s - tw, under),
+                      (mid - tw / 2.0,
+                       base + th + pad if d['side'] < 0
+                       else under)]
             rects = [(x, y, tw, th) for x, y in cands]
         elif d.get('horiz'):
             # Read horizontally beside the line, as the sheets do: to its
@@ -2079,11 +2085,14 @@ def _place_text(scene, dims, region):
                 # Out past the wall: the value stays on the open side.
                 xo = x_r if d['side'] > 0 else x_l
                 cands = inline + [(xo, mid - th / 2.0), (xo, hi + 2 * s),
-                                  (xo, lo - 2 * s - th)]
+                                  (xo, lo - 2 * s - th),
+                                  (xo, hi + 4 * s + th),
+                                  (xo, lo - 4 * s - 2 * th)]
             else:
                 cands = inline + [(x_r, mid - th / 2.0),
                                   (x_l, mid - th / 2.0),
-                                  (x_r, hi + 2 * s), (x_r, lo - 2 * s - th)]
+                                  (x_r, hi + 2 * s), (x_r, lo - 2 * s - th),
+                                  (x_l, hi + 2 * s), (x_l, lo - 2 * s - th)]
             rects = [(x, y, tw, th) for x, y in cands]
         else:
             # Rotated a quarter turn: the value reads up the line from
@@ -2102,13 +2111,23 @@ def _place_text(scene, dims, region):
         pending.append((0 if fits else 1, len(pending), d, rects, inline))
     # A value that fits between its ticks has one good spot; it claims
     # it before a neighbour too narrow for its own value spills over.
+    # Extension lines run out past every chain inside the one they
+    # belong to; a value is kept off them where it has the choice.
+    lines = [(min(a[0], b[0]), min(a[1], b[1]),
+              max(a[0], b[0]), max(a[1], b[1])) for a, b in ext]
+    t = 1.5 * s
+
+    def struck(r):
+        x0, y0, x1, y1 = r[0] + t, r[1] + t, r[0] + r[2] - t, r[1] + r[3] - t
+        return any(lx0 < x1 and lx1 > x0 and ly0 < y1 and ly1 > y0
+                   for lx0, ly0, lx1, ly1 in lines)
+
     for _order, _i, d, rects, inline in sorted(pending,
                                                 key=lambda p: p[:2]):
-        chosen = rects[0]
-        for r in rects:
-            if not any(_rects_overlap(r, p) for p in placed):
-                chosen = r
-                break
+        free = [r for r in rects
+                if not any(_rects_overlap(r, p) for p in placed)]
+        chosen = next((r for r in free if not struck(r)),
+                      free[0] if free else rects[0])
         d['rect'] = chosen
         d['inline'] = inline and chosen is rects[0]
         placed.append(chosen)
@@ -2496,6 +2515,20 @@ def _print_bounds(dims, extra, k, L, H):
         xs += [a[0], b[0]]
         ys += [a[1], b[1]]
     return min(xs), max(xs), min(ys), max(ys)
+
+
+def layout_pads(wall, dims, extra):
+    """How far layout_wall's dimensions reach past the wall's own
+    rectangle, in sheet units: (left, right, bottom, top). They are set
+    by the tiers and the values, not by where the wall sits on the
+    sheet, so a sheet can be sized and the wall placed from them."""
+    fr = _frame(wall)
+    if fr is None or extra is None:
+        return 0.0, 0.0, 0.0, 0.0
+    _F, _Fi, length, height = fr
+    x0, x1, y0, y1 = _print_bounds(dims, extra, None, length, height)
+    sx, sy = extra['sx'], extra['sy']
+    return (sx(0.0) - x0, x1 - sx(length), sy(0.0) - y0, y1 - sy(height))
 
 
 def _print_fit(scene, wall, W, H, extra=None):
