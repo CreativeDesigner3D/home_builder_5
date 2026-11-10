@@ -529,6 +529,15 @@ def _isolate(context, wall):
             continue
         obj.hide_set(True)
         obj[HIDE_TAG] = True
+    # Text objects on the wall are not shown as 3D text: the view letters
+    # them itself, with its other notes (see _text_object_notes).
+    for obj in keep:
+        if obj.type != 'FONT' or view_layer.objects.get(obj.name) is None:
+            continue
+        if obj.hide_get() or obj.hide_viewport:
+            continue
+        obj.hide_set(True)
+        obj[HIDE_TAG] = True
     return [o.name for o in extra]
 
 
@@ -1086,7 +1095,7 @@ SHOW_PROP = 'HB_ELEVATION_SHOW'
 SHOW_OPTIONS = (
     # (key, bar label, default) -- the label is the chip's hover hint
     ('FACE_FRAME', "Face Frame", False),
-    # Only offered while some add-on supplies annotations.
+    # The wall's text objects and whatever notes an add-on supplies.
     ('ANNOTATIONS', "Annotations", True),
     # What stands inside the cabinets (shelves, dividers, roll-outs),
     # drawn through the fronts as dashed lines.
@@ -1124,9 +1133,72 @@ def unregister_annotation_source(fn):
 
 
 def _option_available(key):
-    if key == 'ANNOTATIONS':
-        return bool(_annotation_sources)
     return True
+
+
+def _note_world(obj, depth=0):
+    """World matrix of a text object the view has hidden: a hidden
+    object's own is not kept up to date, its shown parent's is."""
+    parent = obj.parent
+    if parent is None or depth > 32:
+        return obj.matrix_basis.copy()
+    if parent.type == 'FONT' and parent.get(HIDE_TAG):
+        pw = _note_world(parent, depth + 1)
+    else:
+        pw = parent.matrix_world
+    return pw @ obj.matrix_parent_inverse @ obj.matrix_basis
+
+
+def _text_object_notes(scene, wall):
+    """The text objects standing on the wall (an appliance's name, a
+    label on a part) as notes: the view hides the objects and letters
+    them in its own style. Text lying flat or facing another way is
+    left out."""
+    roots = [wall]
+    if _state is not None and _state.get('wall') == wall.name:
+        roots += [scene.objects.get(n) for n in _state.get('extra', ())]
+    front = -(wall.matrix_world.col[1].xyz.normalized())
+    prims = []
+    seen = set()
+    for root in roots:
+        if root is None:
+            continue
+        for obj in root.children_recursive:
+            if obj.type != 'FONT' or obj.name in seen:
+                continue
+            seen.add(obj.name)
+            if scene.objects.get(obj.name) is None:
+                continue
+            if not obj.get(HIDE_TAG):
+                try:
+                    if obj.hide_viewport or obj.hide_get():
+                        continue
+                except Exception:
+                    continue
+            body = obj.data.body.strip()
+            if not body:
+                continue
+            mw = _note_world(obj) if obj.get(HIDE_TAG) else obj.matrix_world
+            normal = mw.col[2].xyz
+            if normal.length < 1e-9 or normal.normalized().dot(front) < 0.7:
+                continue
+            xs = [c[0] for c in obj.bound_box]
+            ys = [c[1] for c in obj.bound_box]
+            align = obj.data.align_x if obj.data.align_x in (
+                'LEFT', 'CENTER', 'RIGHT') else 'CENTER'
+            x = {'LEFT': min(xs), 'RIGHT': max(xs)}.get(
+                align, (min(xs) + max(xs)) / 2.0)
+            prims.append({
+                'kind': 'TEXT',
+                'origin': mw @ Vector((x, (min(ys) + max(ys)) / 2.0, 0.0)),
+                'x_axis': mw.col[0].xyz.normalized(),
+                'text': body, 'align': align})
+    return prims
+
+
+# A text object and a source's note for it within this of each other say
+# the same thing once.
+NOTE_SAME = 0.15
 
 
 def _annotations(scene, wall):
@@ -1139,6 +1211,16 @@ def _annotations(scene, wall):
             prims.extend(fn(scene, wall) or ())
         except Exception as exc:
             print(f"Elevation annotations: {exc}")
+    try:
+        said = [(pr['text'].strip().upper(), pr['origin']) for pr in prims
+                if pr.get('kind') == 'TEXT' and pr.get('text')]
+        for pr in _text_object_notes(scene, wall):
+            text = pr['text'].upper()
+            if not any(t == text and (o - pr['origin']).length < NOTE_SAME
+                       for t, o in said):
+                prims.append(pr)
+    except Exception as exc:
+        print(f"Elevation annotations: {exc}")
     _annotation_cache['key'] = key
     _annotation_cache['prims'] = prims
     return prims
@@ -1198,7 +1280,7 @@ def _draw_bubbles(region, prims, P, s):
 
 def _draw_annotations(context, region, rv3d):
     wall = active_wall(context)
-    if wall is None or not show_option(context.scene, 'ANNOTATIONS')             or not _annotation_sources:
+    if wall is None or not show_option(context.scene, 'ANNOTATIONS'):
         return
     prims = _annotations(context.scene, wall)
     if not prims:
@@ -2712,9 +2794,10 @@ def _print_owners(items):
 
 
 def _print_skip(obj):
-    """Helpers that are not the product: cages, cutters, wire boxes, and
-    anything left out of renders."""
+    """Helpers that are not the product: cages, cutters, wire boxes,
+    anything left out of renders, and text (lettered as a note)."""
     return (obj.get('IS_GEONODE_CAGE') or obj.hide_render
+            or obj.type == 'FONT'
             or obj.display_type in ('WIRE', 'BOUNDS'))
 
 
@@ -3127,7 +3210,7 @@ def _print_dims(page, scene, dims, extra, ps):
 
 
 def _print_annotations(page, scene, wall, region, view, ps):
-    if not show_option(scene, 'ANNOTATIONS') or not _annotation_sources:
+    if not show_option(scene, 'ANNOTATIONS'):
         return
     prims = _annotations(scene, wall)
 
