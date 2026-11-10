@@ -68,6 +68,7 @@ from bpy_extras import view3d_utils
 from .. import hb_types
 from .. import units
 from .. import hb_dim_style
+from .. import hb_pdf
 from ..hb_icons import icon_glyph
 from ..hb_gpu_draw import (get_visible_window_bounds, draw_round_rect,
                            draw_soft_shadow, draw_glyphs, draw_lines,
@@ -130,12 +131,15 @@ _edit = None            # {'index': dim key, 'typed': str, 'owner': id}
 _mouse = (-1, -1)
 _hover = None           # dim key or bar part under the cursor
 _gen = 0
+_print_scale = None    # set while printing: px -> pt
 _item_cache = {}
 _draw_handle = None
 _addon_keymaps = []
 
 
 def _s():
+    if _print_scale is not None:
+        return _print_scale
     try:
         return _ui_scale()
     except Exception:
@@ -2118,12 +2122,14 @@ def _bar_layout(context, area):
     title_w = blf.dimensions(0, title)[0] + 28 * s
     exit_label = "Exit  Esc"
     exit_w = blf.dimensions(0, exit_label)[0] + 24 * s
+    print_label = "Print PDF"
+    print_w = blf.dimensions(0, print_label)[0] + 24 * s
     gap = 3 * s
     many = len(walls) > 1
     chips = [('SHOW:' + key, label, h)
              for key, label, _default in SHOW_OPTIONS
              if _option_available(key)]
-    total = title_w + exit_w + gap + (2 * (arrow_w + gap) if many else 0)         + sum(w + gap for _p, _l, w in chips)
+    total = title_w + exit_w + gap + (2 * (arrow_w + gap) if many else 0)         + sum(w + gap for _p, _l, w in chips) + print_w + gap
     xmin, xmax, ymin, _ymax = get_visible_window_bounds(area)
     x = (xmin + xmax) / 2.0 - total / 2.0
     y = ymin + 18 * s
@@ -2139,6 +2145,8 @@ def _bar_layout(context, area):
     for part, label, w in chips:
         parts.append((part, (x, y, w, h), label))
         x += w + gap
+    parts.append(('PRINT', (x, y, print_w, h), print_label))
+    x += print_w + gap
     parts.append(('EXIT', (x, y, exit_w, h), exit_label))
     return parts
 
@@ -2209,7 +2217,7 @@ def _draw_chip_hint(shader, rect, label):
 
 
 def _draw():
-    if _state is None:
+    if _state is None or _print_scale is not None:
         return
     context = bpy.context
     area, region = context.area, context.region
@@ -2314,6 +2322,382 @@ def _draw():
         viewport_hud.paint_clear_of_panel(context, area, paint)
     except Exception:
         paint()
+
+
+# ---- Print -----------------------------------------------------------------------
+
+PRINT_PAPER = {'TABLOID': (17 * 72.0, 11 * 72.0),
+               'LETTER': (11 * 72.0, 8.5 * 72.0)}
+PRINT_MARGIN = 36.0         # pt round the drawing
+PRINT_TITLE = 30.0          # pt strip along the bottom for the title
+PRINT_TEXT_SCALE = 0.75     # screen px -> pt for text, tiers and strokes
+# Drafting scales, 1:n, and how each is written (inches to the foot).
+PRINT_SCALES = ((8, '1 1/2"'), (12, '1"'), (16, '3/4"'), (24, '1/2"'),
+                (32, '3/8"'), (48, '1/4"'), (64, '3/16"'), (96, '1/8"'),
+                (128, '3/32"'))
+PRINT_OUTLINE = (0.55, 0.55, 0.58)
+_PRINT_DEPTH = 20.0         # m the print camera stands in front of the wall
+
+
+class _PrintRegion:
+    def __init__(self, width, height):
+        self.width = width
+        self.height = height
+
+
+class _PrintView:
+    """What _layout and the projection helpers read off a region's view."""
+    is_perspective = False
+    view_perspective = 'ORTHO'
+
+    def __init__(self, view, proj):
+        self.view_matrix = view
+        self.window_matrix = proj
+        self.perspective_matrix = proj @ view
+
+
+def _print_view(Fi, k, ox, oy, W, H):
+    """An orthographic view square onto the wall: k pt to the metre, the
+    wall's start at (ox, oy) on a W x H pt page."""
+    from mathutils import Matrix
+    d = _PRINT_DEPTH
+    # Wall frame (x along, y into the wall, z up) to camera space.
+    look = Matrix(((1, 0, 0, 0), (0, 0, 1, 0), (0, -1, 0, -d),
+                   (0, 0, 0, 1)))
+    far = 2.0 * d
+    proj = Matrix(((2 * k / W, 0, 0, 2 * ox / W - 1),
+                   (0, 2 * k / H, 0, 2 * oy / H - 1),
+                   (0, 0, -2 / far, -1),
+                   (0, 0, 0, 1)))
+    return _PrintView(look @ Fi, proj)
+
+
+def _print_layout(context, region, view):
+    dims, extra = _layout(context, region, view)
+    return [d for d in dims if d['key'][0] != 'SEL'], extra
+
+
+def _print_bounds(dims, extra, k, L, H):
+    sx, sy = extra['sx'], extra['sy']
+    xs = [sx(0.0), sx(L)]
+    ys = [sy(0.0), sy(H)]
+    for d in dims:
+        x, y, w, h = d['rect']
+        xs += [x, x + w]
+        ys += [y, y + h]
+        if d['axis'] == 'H':
+            xs += [d['a'], d['b']]
+            ys.append(d['pos'])
+        else:
+            ys += [d['a'], d['b']]
+            xs.append(d['pos'])
+    for a, b in extra['ext']:
+        xs += [a[0], b[0]]
+        ys += [a[1], b[1]]
+    return min(xs), max(xs), min(ys), max(ys)
+
+
+def _print_fit(context, wall, W, H):
+    """(view, scale label) that fits the wall and every dimension on the
+    page at the largest drafting scale that will go."""
+    _F, Fi, L, Hw = _frame(wall)
+    region = _PrintRegion(W, H)
+    area_w = W - 2 * PRINT_MARGIN
+    area_h = H - 2 * PRINT_MARGIN - PRINT_TITLE
+    k0 = 0.5 * min(area_w / L, area_h / Hw)
+    view = _print_view(Fi, k0, PRINT_MARGIN, PRINT_MARGIN + PRINT_TITLE,
+                       W, H)
+    dims, extra = _print_layout(context, region, view)
+    x0, x1, y0, y1 = _print_bounds(dims, extra, k0, L, Hw)
+    # The dimension tiers keep their size in pt whatever the scale.
+    pad_l = extra['sx'](0.0) - x0
+    pad_b = extra['sy'](0.0) - y0
+    extra_w = (x1 - x0) - k0 * L
+    extra_h = (y1 - y0) - k0 * Hw
+    k = min((area_w - extra_w) / L, (area_h - extra_h) / Hw)
+    label = None
+    for n, text in PRINT_SCALES:
+        pt_per_m = 72.0 / 0.0254 / n
+        if pt_per_m <= k:
+            k, label = pt_per_m, f"{text} = 1'-0\""
+            break
+    ox = PRINT_MARGIN + (area_w - (k * L + extra_w)) / 2.0 + pad_l
+    oy = (PRINT_MARGIN + PRINT_TITLE
+          + (area_h - (k * Hw + extra_h)) / 2.0 + pad_b)
+    return _print_view(Fi, k, ox, oy, W, H), label
+
+
+def _print_capture(context, view, W, H, dpi):
+    """The 3D view as the elevation shows it, rendered square onto the
+    wall at the page's size: (rgb bytes, px w, px h), or None."""
+    if bpy.app.background:
+        return None
+    space = context.space_data
+    region = context.region
+    if space is None or space.type != 'VIEW_3D' or region is None:
+        return None
+    f = dpi / 72.0
+    pw, ph = max(1, int(W * f)), max(1, int(H * f))
+    try:
+        import numpy as np
+        off = gpu.types.GPUOffScreen(pw, ph)
+        try:
+            off.draw_view3d(context.scene, context.view_layer, space,
+                            region, view.view_matrix, view.window_matrix,
+                            do_color_management=True)
+            buf = off.texture_color.read()
+        finally:
+            off.free()
+        px = np.asarray(buf)
+        if px.dtype != np.uint8:
+            px = (np.clip(px, 0.0, 1.0) * 255.0 + 0.5).astype(np.uint8)
+        px = px.reshape(ph, pw, -1)[::-1, :, :3]
+        return np.ascontiguousarray(px).tobytes(), pw, ph
+    except Exception as exc:
+        print(f"Elevation print: view capture failed: {exc}")
+        return None
+
+
+def _print_outlines(page, extra, Fi, L, H):
+    """Line work when there is no view to capture (a background run)."""
+    sx, sy = extra['sx'], extra['sy']
+    page.stroke_color(PRINT_OUTLINE)
+    page.line_width(0.5)
+    page.rect(sx(0.0), sy(0.0), sx(L) - sx(0.0), sy(H) - sy(0.0))
+    for it in extra['items']:
+        page.rect(sx(it.x0), sy(it.z0), sx(it.x1) - sx(it.x0),
+                  sy(it.z1) - sy(it.z0))
+        for x0, x1, z0, z1, *_rest in _face_frame_boxes(it.obj, Fi):
+            page.rect(sx(x0), sy(z0), sx(x1) - sx(x0), sy(z1) - sy(z0))
+
+
+def _print_text_halo(ps):
+    return (PAPER, 2.5 * ps)
+
+
+def _print_dims(page, scene, dims, extra, ps):
+    fx0, fx1, fy = extra['floor']
+    page.stroke_color(FLOOR_LINE)
+    page.line_width(2.0 * ps)
+    page.lines([((fx0 - 24 * ps, fy), (fx1 + 24 * ps, fy))])
+    page.stroke_color(LINE)
+    page.line_width(1.0 * ps)
+    page.lines(extra['ext'])
+    lines, ticks = [], []
+    for d in dims:
+        line, tk = _dim_lines(d, ps)
+        lines.append(tuple(line))
+        ticks += list(zip(tk[0::2], tk[1::2]))
+    page.lines(lines)
+    page.line_width(2.0 * ps)
+    page.lines(ticks)
+    fs = FONT_SIZE * ps
+    halo = _print_text_halo(ps)
+    for d in dims:
+        x, y, w, h = d['rect']
+        tw = hb_pdf.text_width(d['text'], fs)
+        page.fill_color(TEXT if d['target'] is not None else TEXT_READONLY)
+        if d['axis'] == 'V' and not d.get('horiz'):
+            page.text(x + w, y + (h - tw) / 2.0, d['text'], fs,
+                      angle=math.pi / 2.0, halo=halo)
+        else:
+            page.text(x + (w - tw) / 2.0, y, d['text'], fs, halo=halo)
+
+
+def _print_annotations(page, scene, wall, region, view, ps):
+    if not show_option(scene, 'ANNOTATIONS') or not _annotation_sources:
+        return
+    prims = _annotations(scene, wall)
+
+    def P(v):
+        return view3d_utils.location_3d_to_region_2d(region, view, v)
+
+    page.line_width(1.0 * ps)
+    for pr in prims:
+        if pr.get('kind') != 'LINES':
+            continue
+        pts = [P(v) for v in pr.get('points', ())]
+        segs = [((a.x, a.y), (b.x, b.y)) for a, b in zip(pts[0::2], pts[1::2])
+                if a is not None and b is not None]
+        page.stroke_color(pr.get('color', ANNOTATION_LINE))
+        page.lines(segs)
+    halo = _print_text_halo(ps)
+    bfs = BUBBLE_FONT_SIZE * ps
+    blf.size(0, bfs)
+    for pr in prims:
+        if pr.get('kind') != 'BUBBLE' or not pr.get('text'):
+            continue
+        o = P(pr['origin'])
+        if o is None:
+            continue
+        color = pr.get('color', TEXT)
+        tw = hb_pdf.text_width(pr['text'], bfs)
+        th = blf.dimensions(0, pr['text'])[1]
+        r = max(tw, th) / 2.0 + 5 * ps
+        page.fill_color(PAPER)
+        page.stroke_color(color)
+        page.line_width(1.5 * ps)
+        page.circle(o.x, o.y, r, fill=True, stroke=True)
+        page.fill_color(color)
+        page.text(o.x - tw / 2.0, o.y - th / 2.0, pr['text'], bfs)
+    afs = ANNOTATION_FONT_SIZE * ps
+    blf.size(0, afs)
+    lh = blf.dimensions(0, "Ag")[1] * 1.35
+    for pr in prims:
+        if pr.get('kind') != 'TEXT' or not pr.get('text'):
+            continue
+        o = P(pr['origin'])
+        if o is None:
+            continue
+        tip = P(pr['origin'] + pr.get('x_axis', Vector((1, 0, 0))) * 0.1)
+        if tip is None or (tip - o).length < 0.5:
+            continue
+        ang = math.atan2(tip.y - o.y, tip.x - o.x)
+        if ang > math.pi / 2 + 1e-3 or ang < -math.pi / 2 - 1e-3:
+            ang += math.pi
+            ang = math.atan2(math.sin(ang), math.cos(ang))
+        rows = pr['text'].splitlines()
+        ca, sa = math.cos(ang), math.sin(ang)
+        total = lh * len(rows)
+        page.fill_color(pr.get('color', TEXT))
+        for i, row in enumerate(rows):
+            tw = hb_pdf.text_width(row, afs)
+            th = blf.dimensions(0, row)[1]
+            align = pr.get('align', 'CENTER')
+            dx = {'LEFT': 0.0, 'RIGHT': -tw}.get(align, -tw / 2.0)
+            dy = total / 2.0 - lh * (i + 1) + (lh - th) / 2.0
+            page.text(o.x + dx * ca - dy * sa, o.y + dx * sa + dy * ca, row,
+                      afs, angle=ang, halo=halo)
+
+
+def _print_title(page, scene, wall, label, W):
+    walls = room_walls(scene)
+    idx = walls.index(wall) + 1 if wall in walls else 0
+    name = f"Wall {idx} of {len(walls)}" if idx else wall.name
+    y = PRINT_MARGIN
+    page.stroke_color(PRINT_OUTLINE)
+    page.line_width(0.5)
+    page.lines([((PRINT_MARGIN, y + 18), (W - PRINT_MARGIN, y + 18))])
+    page.fill_color(TEXT)
+    page.text(PRINT_MARGIN, y + 4, f"{scene.name}  -  {name}", 11,
+              font=hb_pdf.BOLD)
+    import datetime
+    right = (f"Scale {label}" if label else "Not to scale") \
+        + "    " + datetime.date.today().strftime("%b %d, %Y")
+    page.text(W - PRINT_MARGIN - hb_pdf.text_width(right, 9), y + 4,
+              right, 9)
+
+
+def print_wall(context, filepath, paper='TABLOID',
+               text_scale=PRINT_TEXT_SCALE, dpi=200):
+    """Write the wall on screen to `filepath` as a one-page PDF: the
+    view's line work at a drafting scale with its dimensions and notes
+    drawn over it as vectors. Returns the path written."""
+    global _print_scale
+    wall = active_wall(context)
+    if wall is None:
+        raise RuntimeError("No wall is shown in elevation")
+    scene = context.scene
+    W, H = PRINT_PAPER.get(paper, PRINT_PAPER['TABLOID'])
+    _F, Fi, L, Hw = _frame(wall)
+    region = _PrintRegion(W, H)
+    doc = hb_pdf.Document()
+    page = doc.add_page(W, H)
+    _print_scale = text_scale
+    try:
+        view, label = _print_fit(context, wall, W, H)
+        dims, extra = _print_layout(context, region, view)
+        shot = _print_capture(context, view, W, H, dpi)
+        if shot is not None:
+            page.image(shot[0], shot[1], shot[2], 0, 0, W, H)
+        else:
+            _print_outlines(page, extra, Fi, L, Hw)
+        _print_dims(page, scene, dims, extra, text_scale)
+        try:
+            _print_annotations(page, scene, wall, region, view, text_scale)
+        except Exception as exc:
+            print(f"Elevation print: notes: {exc}")
+    finally:
+        _print_scale = None
+    _print_title(page, scene, wall, label, W)
+    return _print_save(doc, filepath)
+
+
+def _print_save(doc, filepath):
+    """Save, and if the file is open in a viewer that locks it, beside it
+    under the next free name."""
+    import os
+    root, ext = os.path.splitext(filepath)
+    for n in range(0, 20):
+        path = filepath if n == 0 else f"{root} ({n + 1}){ext}"
+        try:
+            doc.save(path)
+            return path
+        except PermissionError:
+            continue
+    raise PermissionError(f"Could not write {filepath}")
+
+
+def _print_default_path(context):
+    import os
+    import re
+    import tempfile
+    scene = context.scene
+    wall = active_wall(context)
+    walls = room_walls(scene)
+    tag = (f"Wall {walls.index(wall) + 1}" if wall in walls
+           else (wall.name if wall else "Wall"))
+    stem = re.sub(r'[\\/:*?"<>|]+', '_', f"{scene.name} - {tag} elevation")
+    if bpy.data.filepath:
+        folder = os.path.dirname(bpy.data.filepath)
+    else:
+        folder = tempfile.gettempdir()
+    return os.path.join(folder, stem + ".pdf")
+
+
+class home_builder_OT_elevation_print(bpy.types.Operator):
+    """Print the wall on screen to a PDF at a drafting scale, with the
+    dimensions and notes the view shows"""
+    bl_idname = "home_builder.elevation_print"
+    bl_label = "Print Elevation PDF"
+
+    filepath: bpy.props.StringProperty(
+        name="File", subtype='FILE_PATH', default="",
+        description="Where to write the PDF (blank: beside the .blend)")
+    paper: bpy.props.EnumProperty(
+        name="Paper", default='TABLOID',
+        items=(('TABLOID', "Tabloid 17 x 11", ""),
+               ('LETTER', "Letter 11 x 8.5", "")))
+    text_scale: bpy.props.FloatProperty(
+        name="Text Size", default=PRINT_TEXT_SCALE, min=0.3, max=2.0,
+        description="Text, spacing and line weight on paper, against "
+                    "the screen")
+    dpi: bpy.props.IntProperty(
+        name="Resolution", default=200, min=72, max=600,
+        description="Dots per inch of the line work behind the dimensions")
+    open_file: bpy.props.BoolProperty(
+        name="Open", default=True, description="Open the PDF when written")
+
+    @classmethod
+    def poll(cls, context):
+        return is_active(context)
+
+    def execute(self, context):
+        path = bpy.path.abspath(self.filepath) if self.filepath \
+            else _print_default_path(context)
+        try:
+            path = print_wall(context, path, self.paper, self.text_scale,
+                              self.dpi)
+        except Exception as exc:
+            self.report({'ERROR'}, f"Could not print: {exc}")
+            return {'CANCELLED'}
+        self.report({'INFO'}, f"Printed {path}")
+        if self.open_file and not bpy.app.background:
+            try:
+                bpy.ops.wm.path_open(filepath=path)
+            except Exception:
+                pass
+        return {'FINISHED'}
 
 
 # ---- Hit testing -----------------------------------------------------------------
@@ -2589,6 +2973,8 @@ class home_builder_OT_elevation_click(bpy.types.Operator):
                 leave(context)
             elif got[1].startswith('SHOW:'):
                 toggle_show_option(context.scene, got[1][5:])
+            elif got[1] == 'PRINT':
+                bpy.ops.home_builder.elevation_print()
             else:
                 step(context, -1 if got[1] == 'PREV' else 1)
             context.area.tag_redraw()
@@ -2816,6 +3202,7 @@ classes = (
     home_builder_OT_elevation_hover,
     home_builder_OT_elevation_click,
     home_builder_OT_elevation_edit_dim,
+    home_builder_OT_elevation_print,
 )
 
 
