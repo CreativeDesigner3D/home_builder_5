@@ -97,6 +97,15 @@ class Page:
         self._op(_num(x), _num(y), _num(w), _num(h), 're')
         self._op('B' if fill and stroke else 'f' if fill else 'S')
 
+    def polygon(self, points, fill=True, stroke=False):
+        if len(points) < 3:
+            return
+        (x, y), rest = points[0], points[1:]
+        self._op(_num(x), _num(y), 'm')
+        for x, y in rest:
+            self._op(_num(x), _num(y), 'l')
+        self._op('h', 'B' if fill and stroke else 'f' if fill else 'S')
+
     def circle(self, cx, cy, r, fill=False, stroke=True):
         k = r * _KAPPA
         self._op(_num(cx + r), _num(cy), 'm')

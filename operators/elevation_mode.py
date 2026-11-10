@@ -1811,12 +1811,35 @@ def _layout(context, region, rv3d):
     blf.size(0, FONT_SIZE * s)
     th = blf.dimensions(0, "0123456789\"")[1]
 
+    v_clear = (TICK_PX + 3) * 2 * s + 2 * BREAK_GAP_PX * s
+    reach = {}
+
+    def v_line(side, segs):
+        """Screen x of the next vertical chain out on `side`: its values
+        sit centred on the line when they fit and beside it, outward,
+        when they don't, so it stands clear of the chain inside it."""
+        w, beside = 0.0, False
+        for a, b in segs:
+            w = max(w, blf.dimensions(0, format_length(scene, b - a))[0])
+            if abs(sy(b) - sy(a)) < th + v_clear:
+                beside = True
+        pos = reach[side] + side * max(w / 2.0 + pad, 0.0)
+        reach[side] = pos + side * ((w + 2 * pad) if beside
+                                    else (w / 2.0 + pad))
+        return pos
+
     def ff_side(side, edge):
-        cursor = edge + side * first
+        reach[side] = edge + side * (first - pad)
         ex = sx(wx1) if side > 0 else sx(wx0)
         kicks = set()
         for tr in side_tiers[side]:
-            widest = 0.0
+            segs = []
+            for zs, _it in tr:
+                for a, b in zip(zs, zs[1:]):
+                    if a <= MERGE and b < KICK_MAX and round(b, 4) in kicks:
+                        continue
+                    segs.append((a, b))
+            cursor = v_line(side, segs)
             for zs, it in tr:
                 for z in zs:
                     dims_ext.append(((ex + side * gap, sy(z)),
@@ -1828,8 +1851,6 @@ def _layout(context, region, rv3d):
                         if round(b, 4) in kicks:
                             continue
                         kicks.add(round(b, 4))
-                    widest = max(widest, blf.dimensions(
-                        0, format_length(scene, b - a))[0])
                     dims.append({'axis': 'V', 'a': sy(a), 'b': sy(b),
                                  'pos': cursor, 'side': side,
                                  'value': b - a, 'target': None,
@@ -1837,36 +1858,29 @@ def _layout(context, region, rv3d):
                                  'outward': True,
                                  'key': ('FF_S', side, round(cursor),
                                          round(a, 4))})
-            # The values sit outside their line; the next line clears them.
-            cursor += side * (widest + 3 * pad)
-        if side > 0 and side_tiers[side]:
-            # The height chain's values sit inside its line.
-            cursor += th + pad
-        return cursor
 
-    right_pos = ff_side(1, right_x)
-    left_pos = ff_side(-1, left_x)
+    ff_side(1, right_x)
+    ff_side(-1, left_x)
 
-    t = 0
+    def pairs(levels):
+        return list(zip(levels, levels[1:]))
+
     levels = _height_levels(right_group, height)
     if len(levels) > 2:
-        add_v(levels, right_pos, 1, right_group)
-        t += 1
-    add_v([0.0, height], right_pos + t * tier, 1, [], overall=True)
+        add_v(levels, v_line(1, pairs(levels)), 1, right_group)
+    add_v([0.0, height], v_line(1, [(0.0, height)]), 1, [], overall=True)
 
     # Left: the left half's height chain, then window and door sills
     # and heads.
-    t = 0
     levels = _height_levels(left_group, height)
     if len(levels) > 2:
-        add_v(levels, left_pos, -1, left_group)
-        t += 1
+        add_v(levels, v_line(-1, pairs(levels)), -1, left_group)
     if openings:
         lv = {0.0, height}
         for it in openings:
             lv.update((max(it.z0, 0.0), it.z1))
-        add_v(_chain(lv, 0.0, max(lv)), left_pos - t * tier, -1,
-              openings)
+        lv = _chain(lv, 0.0, max(lv))
+        add_v(lv, v_line(-1, pairs(lv)), -1, openings)
 
     if ff:
         _face_frame_height_dims(on_frame, dims, sx, sy, s)
@@ -2014,6 +2028,8 @@ def _place_text(scene, dims, region):
     placed = []
     pending = []
     for d in dims:
+        if d['axis'] == 'V':
+            d['horiz'] = True   # every value reads left to right
         d['text'] = format_length(scene, d['value']) + d.get('suffix', '')
         tw = blf.dimensions(0, d['text'])[0]
         span = abs(d['b'] - d['a'])
@@ -2037,14 +2053,18 @@ def _place_text(scene, dims, region):
             # right at mid height, else left, else past its ends.
             x_r = d['pos'] + pad
             x_l = d['pos'] - pad - tw
+            # Tall enough: centred in a break in the line.
+            inline = ([(d['pos'] - tw / 2.0, mid - th / 2.0)]
+                      if th + clear + 2 * gap <= span else [])
             if d.get('outward'):
                 # Out past the wall: the value stays on the open side.
                 xo = x_r if d['side'] > 0 else x_l
-                cands = [(xo, mid - th / 2.0), (xo, hi + 2 * s),
-                         (xo, lo - 2 * s - th)]
+                cands = inline + [(xo, mid - th / 2.0), (xo, hi + 2 * s),
+                                  (xo, lo - 2 * s - th)]
             else:
-                cands = [(x_r, mid - th / 2.0), (x_l, mid - th / 2.0),
-                         (x_r, hi + 2 * s), (x_r, lo - 2 * s - th)]
+                cands = inline + [(x_r, mid - th / 2.0),
+                                  (x_l, mid - th / 2.0),
+                                  (x_r, hi + 2 * s), (x_r, lo - 2 * s - th)]
             rects = [(x, y, tw, th) for x, y in cands]
         else:
             # Rotated a quarter turn: the value reads up the line from
@@ -2058,7 +2078,8 @@ def _place_text(scene, dims, region):
             cands += [(x_text - th, hi + 4 * s), (x_text - th, lo - 4 * s - tw)]
             rects = [(x, y, th, tw) for x, y in cands]
         fits = d.get('horiz') or tw + clear <= span
-        inline = not d.get('horiz') and tw + clear + 2 * gap <= span
+        need = tw if d['axis'] == 'H' else th
+        inline = need + clear + 2 * gap <= span
         pending.append((0 if fits else 1, len(pending), d, rects, inline))
     # A value that fits between its ticks has one good spot; it claims
     # it before a neighbour too narrow for its own value spills over.
@@ -2388,7 +2409,9 @@ def _print_view(Fi, k, ox, oy, W, H):
                    (0, 2 * k / H, 0, 2 * oy / H - 1),
                    (0, 0, -2 / far, -1),
                    (0, 0, 0, 1)))
-    return _PrintView(look @ Fi, proj)
+    view = _PrintView(look @ Fi, proj)
+    view.k, view.ox, view.oy = k, ox, oy
+    return view
 
 
 def _print_layout(context, region, view):
@@ -2446,85 +2469,173 @@ def _print_fit(context, wall, W, H):
     return _print_view(Fi, k, ox, oy, W, H), label
 
 
-# The view as a line drawing: every part a white face with a black
-# outline, no lighting, no grid or other overlays.
-_PRINT_SHADING = (
-    ('shading', 'type', 'SOLID'),
-    ('shading', 'light', 'FLAT'),
-    ('shading', 'color_type', 'SINGLE'),
-    ('shading', 'single_color', (1.0, 1.0, 1.0)),
-    ('shading', 'background_type', 'VIEWPORT'),
-    ('shading', 'background_color', (1.0, 1.0, 1.0)),
-    ('shading', 'show_object_outline', True),
-    ('shading', 'object_outline_color', (0.0, 0.0, 0.0)),
-    ('shading', 'show_cavity', False),
-    ('shading', 'show_shadows', False),
-    ('shading', 'show_specular_highlight', False),
-    ('shading', 'show_xray', False),
-    ('shading', 'use_dof', False),
-    ('overlay', 'show_overlays', False),
-)
+# Line work: every face turned to the viewer, painted back to front in
+# paper white, with the edges where the surface turns (a silhouette, a
+# panel's edge, a profile's break) inked over it.
+PRINT_FEATURE_ANGLE = math.radians(20.0)
+PRINT_EDGE = (0.0, 0.0, 0.0)
+PRINT_EDGE_WIDTH = 0.45
 
 
-def _print_shading(space, on, saved=None):
-    """Switch the view to line drawing (returns what it replaced), or
-    put back `saved`."""
-    if not on:
-        for (group, attr, _v), old in zip(_PRINT_SHADING, saved or ()):
-            try:
-                setattr(getattr(space, group), attr, old)
-            except Exception:
-                pass
-        return None
-    saved = []
-    for group, attr, value in _PRINT_SHADING:
-        owner = getattr(space, group)
+def _print_owners(items):
+    """Names of the objects whose geometry the drawing shows: the
+    products and openings on the wall, and everything under them."""
+    names = set()
+    for it in items:
+        if it.preview:
+            continue
+        for obj in [it.obj] + list(it.obj.children_recursive):
+            names.add(obj.name)
+    return names
+
+
+def _print_skip(obj):
+    """Helpers that are not the product: cages, cutters, wire boxes, and
+    anything left out of renders."""
+    return (obj.get('IS_GEONODE_CAGE') or obj.hide_render
+            or obj.display_type in ('WIRE', 'BOUNDS'))
+
+
+def _print_faces(context, items, Fi, view):
+    """[(depth, polygon, edges)] in page points for every face of the
+    wall's products that faces the viewer; depth grows into the wall.
+    Parts hidden in the viewport (a cutaway, a part toggled off on
+    screen) still print, as they do on the sheets: they are shown just
+    long enough to be read."""
+    owners = _print_owners(items)
+    if not owners:
+        return []
+    shown = []
+    layer = context.view_layer
+    for name in owners:
+        obj = bpy.data.objects.get(name)
+        if obj is None or obj.type != 'MESH' or _print_skip(obj):
+            continue
         try:
-            old = getattr(owner, attr)
-            saved.append(tuple(old) if hasattr(old, '__len__')
-                         and not isinstance(old, str) else old)
-            setattr(owner, attr, value)
+            hidden = obj.hide_get(view_layer=layer)
         except Exception:
-            saved.append(None)
-    return saved
-
-
-def _print_capture(context, view, W, H, dpi):
-    """The 3D view as a line drawing, rendered square onto the wall at
-    the page's size: (rgb bytes, px w, px h), or None."""
-    if bpy.app.background:
-        return None
-    space = context.space_data
-    region = context.region
-    if space is None or space.type != 'VIEW_3D' or region is None:
-        return None
-    f = dpi / 72.0
-    pw, ph = max(1, int(W * f)), max(1, int(H * f))
+            continue                    # not in this view layer
+        if hidden or obj.hide_viewport:
+            shown.append((obj, hidden, obj.hide_viewport))
+            obj.hide_viewport = False
+            obj.hide_set(False, view_layer=layer)
     try:
-        import numpy as np
-        off = gpu.types.GPUOffScreen(pw, ph)
-        saved = _print_shading(space, True)
+        if shown:
+            layer.update()
+        return _print_faces_now(context, owners, Fi, view)
+    finally:
+        for obj, hidden, off in shown:
+            obj.hide_set(hidden, view_layer=layer)
+            obj.hide_viewport = off
+        if shown:
+            layer.update()
+
+
+def _print_faces_now(context, owners, Fi, view):
+    import numpy as np
+    k, ox, oy = view.k, view.ox, view.oy
+    cos_feature = math.cos(PRINT_FEATURE_ANGLE)
+    dg = context.evaluated_depsgraph_get()
+    faces = []
+    for inst in dg.object_instances:
+        owner = inst.parent if inst.is_instance else inst.object
+        if owner is None or owner.original.name not in owners:
+            continue
+        ob = inst.object
+        if ob.type != 'MESH' or _print_skip(owner.original) \
+                or (not inst.is_instance and _print_skip(ob.original)):
+            continue
         try:
-            # Black and white only: no view transform to grey the paper.
-            off.draw_view3d(context.scene, context.view_layer, space,
-                            region, view.view_matrix, view.window_matrix,
-                            do_color_management=False)
-            buf = off.texture_color.read()
+            mesh = ob.to_mesh()
+        except Exception:
+            continue
+        try:
+            nv, np_, nl = len(mesh.vertices), len(mesh.polygons), \
+                len(mesh.loops)
+            if not np_:
+                continue
+            M = np.array(Fi @ inst.matrix_world)
+            co = np.empty(nv * 3)
+            mesh.vertices.foreach_get('co', co)
+            co = co.reshape(-1, 3) @ M[:3, :3].T + M[:3, 3]
+            nrm = np.empty(np_ * 3)
+            mesh.polygons.foreach_get('normal', nrm)
+            nmat = np.linalg.inv(M[:3, :3]).T
+            nrm = nrm.reshape(-1, 3) @ nmat.T
+            nrm /= np.maximum(np.linalg.norm(nrm, axis=1), 1e-12)[:, None]
+            start = np.empty(np_, dtype=np.int64)
+            total = np.empty(np_, dtype=np.int64)
+            mesh.polygons.foreach_get('loop_start', start)
+            mesh.polygons.foreach_get('loop_total', total)
+            lv = np.empty(nl, dtype=np.int64)
+            le = np.empty(nl, dtype=np.int64)
+            mesh.loops.foreach_get('vertex_index', lv)
+            mesh.loops.foreach_get('edge_index', le)
+            ne = len(mesh.edges)
+            ev = np.empty(ne * 2, dtype=np.int64)
+            mesh.edges.foreach_get('vertices', ev)
+            ev = ev.reshape(-1, 2)
         finally:
-            _print_shading(space, False, saved)
-            off.free()
-        px = np.asarray(buf)
-        if px.dtype != np.uint8:
-            px = (np.clip(px, 0.0, 1.0) * 255.0 + 0.5).astype(np.uint8)
-        px = px.reshape(ph, pw, -1)[::-1, :, :3]
-        return np.ascontiguousarray(px).tobytes(), pw, ph
-    except Exception as exc:
-        print(f"Elevation print: view capture failed: {exc}")
-        return None
+            ob.to_mesh_clear()
+        facing = nrm[:, 1] < -1e-4
+        if not facing.any():
+            continue
+        # The faces either side of each edge: an edge is drawn where the
+        # surface folds past the feature angle, at a silhouette (one side
+        # faces away), or along an open border.
+        loop_poly = np.repeat(np.arange(np_), total)
+        count = np.bincount(le, minlength=ne)
+        order = np.argsort(le, kind='stable')
+        first_at = np.concatenate(([0], np.cumsum(count)[:-1]))
+        f0 = np.full(ne, -1)
+        f1 = np.full(ne, -1)
+        has = count > 0
+        f0[has] = loop_poly[order[first_at[has]]]
+        two = count == 2
+        f1[two] = loop_poly[order[first_at[two] + 1]]
+        feature = count != 2
+        a, b = f0[two], f1[two]
+        fold = (nrm[a] * nrm[b]).sum(axis=1) < cos_feature
+        sil = facing[a] != facing[b]
+        feature[two] = fold | sil
+        px = co[:, 0] * k + ox
+        py = co[:, 2] * k + oy
+        for f in np.nonzero(facing)[0]:
+            s0, n = start[f], total[f]
+            vs = lv[s0:s0 + n]
+            poly = list(zip(px[vs].tolist(), py[vs].tolist()))
+            edges = []
+            for e in le[s0:s0 + n]:
+                if feature[e]:
+                    i, j = ev[e]
+                    edges.append(((px[i], py[i]), (px[j], py[j])))
+            faces.append((float(co[vs, 1].mean()), poly, edges))
+    return faces
+
+
+def _print_linework(page, context, extra, Fi, view, L, H):
+    """The wall's products as line work. False when there was nothing to
+    draw (the caller falls back to outlines)."""
+    faces = _print_faces(context, extra['items'], Fi, view)
+    sx, sy = extra['sx'], extra['sy']
+    page.stroke_color(PRINT_OUTLINE)
+    page.line_width(0.5)
+    page.rect(sx(0.0), sy(0.0), sx(L) - sx(0.0), sy(H) - sy(0.0))
+    if not faces:
+        return False
+    faces.sort(key=lambda f: -f[0])        # far first
+    page.fill_color(PAPER)
+    page.stroke_color(PRINT_EDGE)
+    page.line_width(PRINT_EDGE_WIDTH)
+    for _depth, poly, edges in faces:
+        page.polygon(poly, fill=True, stroke=False)
+        if edges:
+            page.lines(edges)
+    return True
 
 
 def _print_outlines(page, extra, Fi, L, H):
-    """Line work when there is no view to capture (a background run)."""
+    """Boxes for the products when there is no geometry to draw."""
     sx, sy = extra['sx'], extra['sy']
     page.stroke_color(PRINT_OUTLINE)
     page.line_width(0.5)
@@ -2654,10 +2765,10 @@ def _print_title(page, scene, wall, label, W):
 
 
 def print_wall(context, filepath, paper='TABLOID',
-               text_scale=PRINT_TEXT_SCALE, dpi=200):
+               text_scale=PRINT_TEXT_SCALE):
     """Write the wall on screen to `filepath` as a one-page PDF: the
-    view's line work at a drafting scale with its dimensions and notes
-    drawn over it as vectors. Returns the path written."""
+    products' line work at a drafting scale with the view's dimensions
+    and notes over it, all as vectors. Returns the path written."""
     global _print_scale
     wall = active_wall(context)
     if wall is None:
@@ -2672,10 +2783,7 @@ def print_wall(context, filepath, paper='TABLOID',
     try:
         view, label = _print_fit(context, wall, W, H)
         dims, extra = _print_layout(context, region, view)
-        shot = _print_capture(context, view, W, H, dpi)
-        if shot is not None:
-            page.image(shot[0], shot[1], shot[2], 0, 0, W, H)
-        else:
+        if not _print_linework(page, context, extra, Fi, view, L, Hw):
             _print_outlines(page, extra, Fi, L, Hw)
         _print_dims(page, scene, dims, extra, text_scale)
         try:
@@ -2737,9 +2845,6 @@ class home_builder_OT_elevation_print(bpy.types.Operator):
         name="Text Size", default=PRINT_TEXT_SCALE, min=0.3, max=2.0,
         description="Text, spacing and line weight on paper, against "
                     "the screen")
-    dpi: bpy.props.IntProperty(
-        name="Resolution", default=200, min=72, max=600,
-        description="Dots per inch of the line work behind the dimensions")
     open_file: bpy.props.BoolProperty(
         name="Open", default=True, description="Open the PDF when written")
 
@@ -2751,8 +2856,7 @@ class home_builder_OT_elevation_print(bpy.types.Operator):
         path = bpy.path.abspath(self.filepath) if self.filepath \
             else _print_default_path(context)
         try:
-            path = print_wall(context, path, self.paper, self.text_scale,
-                              self.dpi)
+            path = print_wall(context, path, self.paper, self.text_scale)
         except Exception as exc:
             self.report({'ERROR'}, f"Could not print: {exc}")
             return {'CANCELLED'}
