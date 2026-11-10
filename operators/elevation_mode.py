@@ -15,7 +15,9 @@ locked, and the wall is dimensioned the way an elevation sheet is:
   toggle), each side's height chain dims the products on its half of
   the wall, so a tall at one end and uppers at the other both read;
 - with Face Frame on, each face frame cabinet's stiles and openings
-  across its top and its rails and openings up each opening column.
+  across its top and its rails and openings up each opening column;
+- with Annotations on, the notes an add-on supplies for the wall
+  (register_annotation_source), drawn in the view's own style.
 
 Dimensions are drawn the way a drafter draws them: extension lines that
 stand off the work, a dimension line, a 45 degree architectural tick at
@@ -813,7 +815,123 @@ SHOW_OPTIONS = (
     # (key, bar label, default)
     ('BOTH_HEIGHTS', "Heights Both Sides", True),
     ('FACE_FRAME', "Face Frame", False),
+    # Only offered while some add-on supplies annotations.
+    ('ANNOTATIONS', "Annotations", True),
 )
+
+
+# ---- Annotation sources ------------------------------------------------------------
+# Another add-on can hand the elevation notes to draw over the wall
+# (labels, callouts, leaders). A source is fn(scene, wall) returning a
+# list of primitives in world space:
+#   {'kind': 'TEXT', 'origin': Vector, 'x_axis': Vector (reading
+#    direction), 'text': str (may hold newlines),
+#    'align': 'LEFT' | 'CENTER' | 'RIGHT'}
+#   {'kind': 'LINES', 'points': [Vector, ...]} (pairs, like GPU LINES)
+# The view draws them in its own style, at a fixed screen size.
+
+_annotation_sources = []
+_annotation_cache = {}
+
+
+def register_annotation_source(fn):
+    if fn not in _annotation_sources:
+        _annotation_sources.append(fn)
+    _bump_gen()
+
+
+def unregister_annotation_source(fn):
+    if fn in _annotation_sources:
+        _annotation_sources.remove(fn)
+    _bump_gen()
+
+
+def _option_available(key):
+    if key == 'ANNOTATIONS':
+        return bool(_annotation_sources)
+    return True
+
+
+def _annotations(scene, wall):
+    key = (_gen, scene.name, wall.name, len(_annotation_sources))
+    if _annotation_cache.get('key') == key:
+        return _annotation_cache['prims']
+    prims = []
+    for fn in list(_annotation_sources):
+        try:
+            prims.extend(fn(scene, wall) or ())
+        except Exception as exc:
+            print(f"Elevation annotations: {exc}")
+    _annotation_cache['key'] = key
+    _annotation_cache['prims'] = prims
+    return prims
+
+
+ANNOTATION_FONT_SIZE = 11
+ANNOTATION_LINE = (0.86, 0.86, 0.86, 0.85)
+
+
+def _draw_annotations(context, region, rv3d):
+    wall = active_wall(context)
+    if wall is None or not show_option(context.scene, 'ANNOTATIONS')             or not _annotation_sources:
+        return
+    prims = _annotations(context.scene, wall)
+    if not prims:
+        return
+    s = _s()
+
+    def P(v):
+        return view3d_utils.location_3d_to_region_2d(region, rv3d, v)
+
+    lines = []
+    for pr in prims:
+        if pr.get('kind') != 'LINES':
+            continue
+        pts = [P(v) for v in pr.get('points', ())]
+        for a, b in zip(pts[0::2], pts[1::2]):
+            if a is not None and b is not None:
+                lines += [(a.x, a.y), (b.x, b.y)]
+    if lines:
+        _stroke(region, lines, 1.0 * s, ANNOTATION_LINE)
+    blf.size(0, ANNOTATION_FONT_SIZE * s)
+    lh = blf.dimensions(0, "Ag")[1] * 1.35
+    for pr in prims:
+        if pr.get('kind') != 'TEXT' or not pr.get('text'):
+            continue
+        o = P(pr['origin'])
+        if o is None:
+            continue
+        tip = P(pr['origin'] + pr.get('x_axis', Vector((1, 0, 0))) * 0.1)
+        # Text that reads straight out of the screen belongs to a face
+        # seen edge-on here (the side of a panel): it is not drawn.
+        if tip is None or (tip - o).length < 0.5:
+            continue
+        ang = math.atan2(tip.y - o.y, tip.x - o.x)
+        # Read left to right or bottom to top, never upside down.
+        if ang > math.pi / 2 + 1e-3 or ang < -math.pi / 2 - 1e-3:
+            ang += math.pi
+            ang = math.atan2(math.sin(ang), math.cos(ang))
+        rows = pr['text'].splitlines()
+        ca, sa = math.cos(ang), math.sin(ang)
+        total = lh * len(rows)
+        blf.color(0, *TEXT_READONLY)
+        blf.enable(0, blf.SHADOW)
+        blf.shadow(0, 5, 0.0, 0.0, 0.0, 0.9)
+        blf.shadow_offset(0, 0, 0)
+        blf.enable(0, blf.ROTATION)
+        blf.rotation(0, ang)
+        for i, row in enumerate(rows):
+            tw, th = blf.dimensions(0, row)
+            align = pr.get('align', 'CENTER')
+            dx = {'LEFT': 0.0, 'RIGHT': -tw}.get(align, -tw / 2.0)
+            # Rows stack downward from a block centred on the origin.
+            dy = total / 2.0 - lh * (i + 1) + (lh - th) / 2.0
+            x = o.x + dx * ca - dy * sa
+            y = o.y + dx * sa + dy * ca
+            blf.position(0, x, y, 0)
+            draw_glyphs(0, row)
+        blf.disable(0, blf.ROTATION)
+        blf.disable(0, blf.SHADOW)
 
 
 def show_option(scene, key):
@@ -1241,7 +1359,8 @@ def _bar_layout(context, area):
     gap = 3 * s
     many = len(walls) > 1
     chips = [('SHOW:' + key, label, blf.dimensions(0, label)[0] + 24 * s)
-             for key, label, _default in SHOW_OPTIONS]
+             for key, label, _default in SHOW_OPTIONS
+             if _option_available(key)]
     total = title_w + exit_w + gap + (2 * (arrow_w + gap) if many else 0)         + sum(w + gap for _p, _l, w in chips)
     xmin, xmax, ymin, _ymax = get_visible_window_bounds(area)
     x = (xmin + xmax) / 2.0 - total / 2.0
@@ -1396,6 +1515,10 @@ def _draw():
             color = HOVER_TEXT if hot else (TEXT if d['target'] is not None
                                        else TEXT_READONLY)
             _text(d, color, s)
+        try:
+            _draw_annotations(context, region, rv3d)
+        except Exception as exc:
+            print(f"Elevation annotations: {exc}")
         _draw_bar(context, area)
         gpu.state.blend_set('NONE')
 
