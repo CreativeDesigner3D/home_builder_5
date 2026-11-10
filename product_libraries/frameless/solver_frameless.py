@@ -1433,6 +1433,95 @@ _SOLVERS = {
 }
 
 
+# ---------------------------------------------------------------------------
+# Cage over a separate base assembly
+# ---------------------------------------------------------------------------
+#
+# A base or tall cabinet on the Ladder Style toe kick stands on a separate
+# base assembly, but its cage still ran to the floor and enclosed it, so
+# in Solid shading (where the selection cages draw in front) a click on the
+# base assembly picked the cabinet. A trailing modifier lifts the bottom of
+# the cage's mesh to the toe kick height. Only the drawn and clicked box
+# changes: the cage's Dim inputs keep the cabinet's nominal size.
+
+KICK_CLEAR_MOD = 'Kick Clear'
+KICK_CLEAR_GROUP = 'HB Cage Kick Clear'
+LADDER_TOE_KICK = 1     # 'Ladder Style' in the Toe Kick Type prompt
+
+
+def _kick_clear_group():
+    group = bpy.data.node_groups.get(KICK_CLEAR_GROUP)
+    if group is not None:
+        return group
+    group = bpy.data.node_groups.new(KICK_CLEAR_GROUP, 'GeometryNodeTree')
+    group.interface.new_socket('Geometry', in_out='INPUT',
+                               socket_type='NodeSocketGeometry')
+    floor = group.interface.new_socket('Floor', in_out='INPUT',
+                                       socket_type='NodeSocketFloat')
+    floor.default_value = 0.0
+    group.interface.new_socket('Geometry', in_out='OUTPUT',
+                               socket_type='NodeSocketGeometry')
+    nodes, links = group.nodes, group.links
+    g_in = nodes.new('NodeGroupInput')
+    g_out = nodes.new('NodeGroupOutput')
+    pos = nodes.new('GeometryNodeInputPosition')
+    sep = nodes.new('ShaderNodeSeparateXYZ')
+    lift = nodes.new('ShaderNodeMath')
+    lift.operation = 'MAXIMUM'
+    comb = nodes.new('ShaderNodeCombineXYZ')
+    set_pos = nodes.new('GeometryNodeSetPosition')
+    links.new(pos.outputs[0], sep.inputs[0])
+    links.new(sep.outputs['Z'], lift.inputs[0])
+    links.new(g_in.outputs['Floor'], lift.inputs[1])
+    links.new(sep.outputs['X'], comb.inputs['X'])
+    links.new(sep.outputs['Y'], comb.inputs['Y'])
+    links.new(lift.outputs[0], comb.inputs['Z'])
+    links.new(g_in.outputs['Geometry'], set_pos.inputs['Geometry'])
+    links.new(comb.outputs[0], set_pos.inputs['Position'])
+    links.new(set_pos.outputs[0], g_out.inputs['Geometry'])
+    return group
+
+
+def _floor_socket(group):
+    for item in group.interface.items_tree:
+        if getattr(item, 'in_out', None) == 'INPUT' and item.name == 'Floor':
+            return item.identifier
+    return None
+
+
+def sync_cage_kick_clear(root, kind=None, on_base=None):
+    """Lift the bottom of the cage of a Ladder Style base or tall cabinet
+    that stands on a base assembly to its toe kick height; any other
+    cabinet keeps the full box.
+
+    ``on_base`` True / False says whether a base assembly now stands
+    under the cabinet (Add / Remove Base Assemblies); None (a recalc)
+    keeps what was last set and only follows the toe kick."""
+    kind = kind or root.get(CARCASS_KEY) or root.get('CABINET_TYPE')
+    mod = root.modifiers.get(KICK_CLEAR_MOD)
+    if on_base is None:
+        on_base = mod is not None and mod.show_viewport
+    floor = 0.0
+    if (on_base and kind in ('BASE', 'TALL') and 'CORNER_TYPE' not in root
+            and int(root.get('Toe Kick Type', -1)) == LADDER_TOE_KICK):
+        floor = max(float(prompt(root, 'Toe Kick Height', 0.0)), 0.0)
+    if mod is None:
+        if floor <= 0.0:
+            return
+        mod = root.modifiers.new(KICK_CLEAR_MOD, 'NODES')
+    if mod.node_group is None:
+        mod.node_group = _kick_clear_group()
+    key = _floor_socket(mod.node_group)
+    if key is not None:
+        current = hb_utils.try_get_gn_input(mod, key, 0.0)
+        if abs(float(current or 0.0) - floor) > 1e-7:
+            hb_utils.set_gn_input(mod, key, floor)
+            root.update_tag()
+    on = floor > 0.0
+    if mod.show_viewport != on:
+        mod.show_viewport = on
+
+
 def recalculate_cabinet(obj):
     """Size and place the carcass of the cabinet at or above ``obj``.
 
@@ -1469,6 +1558,10 @@ def recalculate_cabinet(obj):
         _solve_angled_back(root, parts, prompts, *dims)
     _solve_blind_corner(root, parts, prompts, *dims)
     _solve_applied_ends(root, parts, prompts, *dims)
+    try:
+        sync_cage_kick_clear(root, kind)
+    except Exception:
+        traceback.print_exc()
 
     bay = parts.get('BAY')
     if bay is not None:

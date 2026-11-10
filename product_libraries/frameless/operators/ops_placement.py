@@ -2521,6 +2521,10 @@ class PlaceCabinetBase(WallObjectPlacementMixin):
                     # Placed by hand, so rebuilding the room's bases
                     # leaves it and whatever stands on it alone.
                     cabinet.obj[ops_base_assembly.EDITED_KEY] = True
+                    try:
+                        ops_base_assembly.clear_cages_over(context, cabinet.obj)
+                    except Exception:
+                        pass
                 if self.keeps_source_setup:
                     # A copy already carries its style, fronts and
                     # interiors; it only needs its drivers settled.

@@ -274,6 +274,10 @@ def create_base_assembly(context, frame, members):
     base.create('Base Assembly')
     obj = base.obj
     obj[MEMBERS_KEY] = [m.obj.name for m in members]
+    # The cabinets' cages clear the base so it can be clicked.
+    from .. import solver_frameless
+    for m in members:
+        solver_frameless.sync_cage_kick_clear(m.obj, on_base=True)
 
     # On a wall or in a cabinet group the base belongs to that; a lone
     # island's base goes with its first cabinet.
@@ -313,9 +317,30 @@ def stands_on(cabinet, base):
             and abs(local.z) <= dim_z + ALIGN_TOL)
 
 
+def clear_cages_over(context, base):
+    """Lift the cages of the cabinets standing on a base placed by hand
+    clear of it, as Add Base Assemblies does for its own."""
+    from .. import solver_frameless
+    context.view_layer.update()
+    for cab in context.scene.objects:
+        if wants_base_assembly(cab) and stands_on(cab, base):
+            solver_frameless.sync_cage_kick_clear(cab, on_base=True)
+
+
 def remove_base_assemblies(objs):
+    from .. import solver_frameless
     removed = 0
+    trimmed = [o for o in bpy.data.objects
+               if solver_frameless.KICK_CLEAR_MOD in o.modifiers]
     for obj in objs:
+        # The cabinets that stood on it get their full cage back.
+        names = set(obj.get(MEMBERS_KEY, []) or [])
+        for cab in trimmed:
+            try:
+                if cab.name in names or stands_on(cab, obj):
+                    solver_frameless.sync_cage_kick_clear(cab, on_base=False)
+            except Exception:
+                pass
         for child in list(obj.children_recursive):
             bpy.data.objects.remove(child, do_unlink=True)
         bpy.data.objects.remove(obj, do_unlink=True)
