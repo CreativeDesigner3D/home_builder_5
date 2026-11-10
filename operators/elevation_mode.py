@@ -14,8 +14,10 @@ locked, and the wall is dimensioned the way an elevation sheet is:
   and door sill / head heights. With Heights Both Sides on (the bar's
   toggle), each side's height chain dims the products on its half of
   the wall, so a tall at one end and uppers at the other both read;
-- with Face Frame on, each face frame cabinet's stiles and openings
-  across its top and its rails and openings up each opening column;
+- with Face Frame on, the face frames' stiles and openings as the
+  chain nearest the work (below the floor for floor-standing cabinets,
+  above the wall for uppers and talls), and the rails and openings up
+  each opening column, once per distinct column;
 - with Annotations on, the notes an add-on supplies for the wall
   (register_annotation_source), drawn in the view's own style.
 
@@ -69,13 +71,19 @@ from ..hb_gpu_ui import Theme, scale as _ui_scale
 # ---- Style ---------------------------------------------------------------
 
 FONT_SIZE = 12
-LINE = (0.93, 0.93, 0.93, 0.92)
-TEXT = (1.0, 1.0, 1.0, 1.0)
-TEXT_READONLY = (0.86, 0.86, 0.86, 1.0)
-HOVER = (0.45, 0.72, 1.0, 1.0)
-HOVER_TEXT = (0.80, 0.91, 1.0, 1.0)   # reads on a light face too
+# Drafting ink, as on the elevation sheets: dark lines and values with a
+# white halo, so they read on a white wall and on the dark viewport.
+LINE = (0.07, 0.07, 0.08, 1.0)
+TEXT = (0.0, 0.0, 0.0, 1.0)
+TEXT_READONLY = (0.20, 0.20, 0.22, 1.0)
+HALO = (1.0, 1.0, 1.0, 0.85)
+TEXT_HALO = (1.0, 1.0, 1.0, 1.0)
+HOVER = (0.05, 0.38, 0.85, 1.0)
+HOVER_TEXT = (0.05, 0.38, 0.85, 1.0)
 EDIT_BG = Theme.ACCENT_BG
-FLOOR_LINE = (0.93, 0.93, 0.93, 0.85)
+EDIT_TEXT = (1.0, 1.0, 1.0, 1.0)
+EDIT_HALO = (0.0, 0.0, 0.0, 0.6)
+FLOOR_LINE = (0.07, 0.07, 0.08, 0.9)
 PREVIEW = (1.0, 0.62, 0.20, 1.0)
 
 FIRST_TIER_PX = 30      # geometry to the first dimension line
@@ -868,7 +876,7 @@ def _annotations(scene, wall):
 
 
 ANNOTATION_FONT_SIZE = 11
-ANNOTATION_LINE = (0.86, 0.86, 0.86, 0.85)
+ANNOTATION_LINE = (0.10, 0.10, 0.12, 0.9)
 
 
 def _draw_annotations(context, region, rv3d):
@@ -914,9 +922,9 @@ def _draw_annotations(context, region, rv3d):
         rows = pr['text'].splitlines()
         ca, sa = math.cos(ang), math.sin(ang)
         total = lh * len(rows)
-        blf.color(0, *TEXT_READONLY)
+        blf.color(0, *TEXT)
         blf.enable(0, blf.SHADOW)
-        blf.shadow(0, 5, 0.0, 0.0, 0.0, 0.9)
+        blf.shadow(0, 5, *TEXT_HALO)
         blf.shadow_offset(0, 0, 0)
         blf.enable(0, blf.ROTATION)
         blf.rotation(0, ang)
@@ -976,8 +984,6 @@ def _height_levels(group, height):
 
 # A face frame's own dims stand this far inside its edges, in pixels.
 FF_INSET_PX = 16
-# A face frame narrower than this on screen gets no dims of its own.
-FF_MIN_PX = 70
 
 
 def _merge(spans):
@@ -1013,16 +1019,14 @@ def _face_frame_boxes(cabinet, Fi):
     return boxes
 
 
-def _face_frame_dims(items, dims, sx, sy, s, Fi):
-    """Each face frame cabinet's frame, dimensioned on its face: across
-    the top, the stiles and the openings between them; up each opening
-    column, the rails and the openings between them. Read only (a frame
-    member is sized from its own labels or the cabinet's dialog)."""
-    inset = FF_INSET_PX * s
+def _face_frame_layout(items, Fi):
+    """Each face frame cabinet's frame, measured: {'lower': [(a, b, item)]
+    the stile / opening segments of the floor-standing frames, 'upper':
+    the same for uppers and talls, 'columns': [(item, x0, x1, zs)] the
+    rail / opening breaks up each opening column}."""
+    out = {'lower': [], 'upper': [], 'columns': []}
     for it in items:
         if it.preview or not it.obj.get('IS_FACE_FRAME_CABINET_CAGE'):
-            continue
-        if abs(sx(it.x1) - sx(it.x0)) < FF_MIN_PX * s:
             continue
         boxes = _face_frame_boxes(it.obj, Fi)
         if not boxes:
@@ -1034,15 +1038,9 @@ def _face_frame_dims(items, dims, sx, sy, s, Fi):
         verticals = [b for b in boxes if (b[3] - b[2]) > (b[1] - b[0])]
         rails = [b for b in boxes if (b[3] - b[2]) <= (b[1] - b[0])]
         stiles = _merge([(b[0], b[1]) for b in verticals])
-        # Across the top: stile, opening, stile ...
         xs = _chain([v for a, b in stiles for v in (a, b)], fx0, fx1)
-        y = sy(fz1) - inset
-        for a, b in zip(xs, xs[1:]):
-            dims.append({'axis': 'H', 'a': sx(a), 'b': sx(b), 'pos': y,
-                         'side': -1, 'value': b - a, 'target': None,
-                         'item': it, 'w0': a,
-                         'key': ('FF_W', it.name, round(a, 4))})
-        # Up each opening column: rail, opening, rail ...
+        row = 'upper' if (it.kind == 'UPPER' or it.tall) else 'lower'
+        out[row] += [(a, b, it) for a, b in zip(xs, xs[1:])]
         cols = []
         prev = fx0
         for a, b in stiles:
@@ -1052,21 +1050,37 @@ def _face_frame_dims(items, dims, sx, sy, s, Fi):
         if fx1 - prev > MERGE:
             cols.append((prev, fx1))
         for c0, c1 in cols:
-            if abs(sx(c1) - sx(c0)) < 2 * inset:
-                continue
             mid = (c0 + c1) / 2.0
             spans = _merge([(b[2], b[3]) for b in rails
                             if b[0] <= mid <= b[1]])
             zs = _chain([v for a, b in spans for v in (a, b)], fz0, fz1)
-            if len(zs) < 3:
-                continue
-            x = sx(c0) + inset
-            for a, b in zip(zs, zs[1:]):
-                dims.append({'axis': 'V', 'a': sy(a), 'b': sy(b), 'pos': x,
-                             'side': 1, 'value': b - a, 'target': None,
-                             'item': it, 'w0': a,
-                             'key': ('FF_H', it.name, round(c0, 4),
-                                     round(a, 4))})
+            if len(zs) >= 3:
+                out['columns'].append((it, c0, c1, zs))
+    return out
+
+
+def _face_frame_height_dims(ff, dims, sx, sy, s):
+    """Rails and openings up each opening column, on the frame. A column
+    whose breaks repeat one already dimensioned (the next door of a
+    run, the other bay of a cabinet) is not dimensioned again. Values
+    read horizontally, beside their line, the way the sheets show
+    them."""
+    inset = FF_INSET_PX * s
+    done = set()
+    for it, c0, c1, zs in sorted(ff['columns'], key=lambda c: c[1]):
+        sig = tuple(round(z, 4) for z in zs)
+        if sig in done:
+            continue
+        if abs(sx(c1) - sx(c0)) < 2 * inset:
+            continue
+        done.add(sig)
+        x = sx(c0) + inset
+        for a, b in zip(zs, zs[1:]):
+            dims.append({'axis': 'V', 'a': sy(a), 'b': sy(b), 'pos': x,
+                         'side': 1, 'value': b - a, 'target': None,
+                         'item': it, 'w0': a, 'horiz': True,
+                         'key': ('FF_H', it.name, round(c0, 4),
+                                 round(a, 4))})
 
 
 def _layout(context, region, rv3d):
@@ -1161,11 +1175,36 @@ def _layout(context, region, rv3d):
         return f
 
     floor_y = sy(0.0)
-    # Below the floor: the floor-standing run, then the overall length.
+    ff = (_face_frame_layout(items, fr[1])
+          if show_option(scene, 'FACE_FRAME') else None)
+
+    def add_ff_widths(segs, pos, from_y, side):
+        """A face frame chain: stile, opening, stile ... of each face
+        frame in the row, read only."""
+        ends = set()
+        for a, b, it in segs:
+            for x in (a, b):
+                k = round(x, 4)
+                if k in ends:
+                    continue
+                ends.add(k)
+                fy = from_y(x)
+                dims_ext.append(((sx(x), fy + side * gap),
+                                 (sx(x), pos + side * over)))
+            dims.append({'axis': 'H', 'a': sx(a), 'b': sx(b), 'pos': pos,
+                         'side': side, 'value': b - a, 'target': None,
+                         'item': it, 'w0': a,
+                         'key': ('FF_W', it.name, round(a, 4))})
+
+    # Below the floor: the face frames' stiles and openings, the
+    # floor-standing run, then the overall length.
     t = 0
+    if ff and ff['lower']:
+        add_ff_widths(ff['lower'], floor_y - first, lambda x: floor_y, -1)
+        t += 1
     if lower:
         pts = _chain([v for it in lower for v in (it.x0, it.x1)], 0.0, length)
-        add_h(pts, floor_y - first, lambda x: floor_y, -1, lower,
+        add_h(pts, floor_y - first - t * tier, lambda x: floor_y, -1, lower,
               item_of=item_between(lower))
         t += 1
     add_h([0.0, length], floor_y - first - t * tier, lambda x: floor_y, -1,
@@ -1175,6 +1214,13 @@ def _layout(context, region, rv3d):
     top_z = max([height] + [it.z1 for it in items])
     top_y = sy(top_z)
     t = 0
+    if ff and ff['upper']:
+        def from_ff_top(x):
+            zs = [it.z1 for _a, _b, it in ff['upper']
+                  if it.x0 - MERGE <= x <= it.x1 + MERGE]
+            return sy(max(zs)) if zs else sy(height)
+        add_ff_widths(ff['upper'], top_y + first, from_ff_top, 1)
+        t += 1
     for group in (upper, openings):
         if not group:
             continue
@@ -1223,8 +1269,8 @@ def _layout(context, region, rv3d):
         add_v(_chain(lv, 0.0, max(lv)), left_x - first - t * tier, -1,
               openings)
 
-    if show_option(scene, 'FACE_FRAME'):
-        _face_frame_dims(items, dims, sx, sy, s, fr[1])
+    if ff:
+        _face_frame_height_dims(ff, dims, sx, sy, s)
 
     # A selected product carries its own height, just inside its right
     # edge, so a tall or an odd-height cabinet can be sized here too.
@@ -1280,6 +1326,14 @@ def _place_text(scene, dims, region):
                        d['pos'] - pad - th if d['side'] < 0
                        else base + th + pad)]
             rects = [(x, y, tw, th) for x, y in cands]
+        elif d.get('horiz'):
+            # Read horizontally beside the line, as the sheets do: to its
+            # right at mid height, else left, else past its ends.
+            x_r = d['pos'] + pad
+            x_l = d['pos'] - pad - tw
+            cands = [(x_r, mid - th / 2.0), (x_l, mid - th / 2.0),
+                     (x_r, hi + 2 * s), (x_r, lo - 2 * s - th)]
+            rects = [(x, y, tw, th) for x, y in cands]
         else:
             # Rotated a quarter turn: the value reads up the line from
             # its outer side, so it occupies th wide x tw tall.
@@ -1302,7 +1356,7 @@ def _place_text(scene, dims, region):
 
 def _stroke(region, pts, width, color):
     """A line with a dark halo under it, so it reads on any background."""
-    hb_dim_style.stroke(region, pts, width, color, _s())
+    hb_dim_style.stroke(region, pts, width, color, _s(), halo=HALO)
 
 
 def _tick(x, y, s):
@@ -1322,14 +1376,14 @@ def _dim_lines(d, s):
     return line, ticks
 
 
-def _text(d, color, s):
+def _text(d, color, s, halo=TEXT_HALO):
     x, y, w, h = d['rect']
     blf.size(0, FONT_SIZE * s)
     blf.color(0, *color)
     blf.enable(0, blf.SHADOW)
-    blf.shadow(0, 5, 0.0, 0.0, 0.0, 0.9)
+    blf.shadow(0, 5, *halo)
     blf.shadow_offset(0, 0, 0)
-    if d['axis'] == 'V':
+    if d['axis'] == 'V' and not d.get('horiz'):
         blf.enable(0, blf.ROTATION)
         blf.rotation(0, math.pi / 2.0)
         blf.position(0, x + w, y, 0)
@@ -1509,7 +1563,7 @@ def _draw():
                 draw_round_rect(shader, rect[0] - p, rect[1] - p,
                                 rect[2] + 2 * p, rect[3] + 2 * p, 3 * s,
                                 EDIT_BG)
-                _text(shown, TEXT, s)
+                _text(shown, EDIT_TEXT, s, EDIT_HALO)
                 continue
             hot = _hover == ('DIM', d['key']) and d['target'] is not None
             color = HOVER_TEXT if hot else (TEXT if d['target'] is not None

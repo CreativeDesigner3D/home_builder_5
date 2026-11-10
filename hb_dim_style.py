@@ -42,12 +42,12 @@ def polyline(region, pts, width, color):
     batch_for_shader(shader, 'LINES', {"pos": pts}).draw(shader)
 
 
-def stroke(region, pts, width, color, s=1.0):
-    """LINES with a dark halo under them."""
+def stroke(region, pts, width, color, s=1.0, halo=HALO):
+    """LINES with a halo under them (dark by default)."""
     if not pts:
         return
-    polyline(region, pts, width + 2.0 * s, (HALO[0], HALO[1], HALO[2],
-                                            HALO[3] * color[3]))
+    polyline(region, pts, width + 2.0 * s, (halo[0], halo[1], halo[2],
+                                            halo[3] * color[3]))
     polyline(region, pts, width, color)
 
 
