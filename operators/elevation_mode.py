@@ -11,7 +11,11 @@ locked, and the wall is dimensioned the way an elevation sheet is:
   windows and doors;
 - on the right, a height chain (counter, upper bottom, upper top, wall
   height) with the overall height outside it; on the left, the window
-  and door sill / head heights.
+  and door sill / head heights. With Heights Both Sides on (the bar's
+  toggle), each side's height chain dims the products on its half of
+  the wall, so a tall at one end and uppers at the other both read;
+- with Face Frame on, each face frame cabinet's stiles and openings
+  across its top and its rails and openings up each opening column.
 
 Dimensions are drawn the way a drafter draws them: extension lines that
 stand off the work, a dimension line, a 45 degree architectural tick at
@@ -800,6 +804,153 @@ def _vertical_target(group, a, b, wall_name=None):
     return None
 
 
+# ---- What the view shows -----------------------------------------------------------
+# Toggled from the elevation bar, kept on the scene so a file reopens
+# showing what it was left showing.
+
+SHOW_PROP = 'HB_ELEVATION_SHOW'
+SHOW_OPTIONS = (
+    # (key, bar label, default)
+    ('BOTH_HEIGHTS', "Heights Both Sides", True),
+    ('FACE_FRAME', "Face Frame", False),
+)
+
+
+def show_option(scene, key):
+    default = next((d for k, _l, d in SHOW_OPTIONS if k == key), False)
+    try:
+        group = scene.get(SHOW_PROP)
+        if group is not None and key in group:
+            return bool(group[key])
+    except Exception:
+        pass
+    return default
+
+
+def toggle_show_option(scene, key):
+    value = not show_option(scene, key)
+    group = scene.get(SHOW_PROP)
+    if group is None:
+        scene[SHOW_PROP] = {}
+        group = scene[SHOW_PROP]
+    group[key] = value
+    _bump_gen()
+    return value
+
+
+def _height_levels(group, height):
+    """The height chain for some products: floor, counter line (the base
+    cabinets' top; a dishwasher or range a fraction under it is not a
+    level of its own), upper bottoms and tops, tall tops, wall height."""
+    levels = {0.0, height}
+    lows = [it for it in group if it.kind == 'LOWER' and not it.tall]
+    base_tops = [it.z1 for it in lows if not it.obj.get('IS_APPLIANCE')] \
+        or [it.z1 for it in lows]
+    if base_tops:
+        levels.add(max(base_tops))
+    for it in group:
+        if it.kind == 'UPPER':
+            levels.update((it.z0, it.z1))
+        elif it.tall:
+            levels.add(it.z1)
+    return _chain(levels, 0.0, max(levels))
+
+
+# A face frame's own dims stand this far inside its edges, in pixels.
+FF_INSET_PX = 16
+# A face frame narrower than this on screen gets no dims of its own.
+FF_MIN_PX = 70
+
+
+def _merge(spans):
+    out = []
+    for a, b in sorted(spans):
+        if out and a <= out[-1][1] + MERGE:
+            out[-1][1] = max(out[-1][1], b)
+        else:
+            out.append([a, b])
+    return out
+
+
+def _face_frame_boxes(cabinet, Fi):
+    """(x0, x1, z0, z1) in the wall frame of each built face frame member
+    of a face frame cabinet (stiles, rails, mid stiles and rails)."""
+    try:
+        from ..product_libraries.face_frame import dim_edit_overlay as ffo
+        parts = list(ffo._iter_face_frame_parts(cabinet))
+    except Exception:
+        return []
+    boxes = []
+    for part in parts:
+        try:
+            mw = part.matrix_world
+            pts = [Fi @ (mw @ Vector(c)) for c in part.bound_box]
+        except Exception:
+            continue
+        xs = [p.x for p in pts]
+        zs = [p.z for p in pts]
+        if max(xs) - min(xs) < MERGE or max(zs) - min(zs) < MERGE:
+            continue
+        boxes.append((min(xs), max(xs), min(zs), max(zs)))
+    return boxes
+
+
+def _face_frame_dims(items, dims, sx, sy, s, Fi):
+    """Each face frame cabinet's frame, dimensioned on its face: across
+    the top, the stiles and the openings between them; up each opening
+    column, the rails and the openings between them. Read only (a frame
+    member is sized from its own labels or the cabinet's dialog)."""
+    inset = FF_INSET_PX * s
+    for it in items:
+        if it.preview or not it.obj.get('IS_FACE_FRAME_CABINET_CAGE'):
+            continue
+        if abs(sx(it.x1) - sx(it.x0)) < FF_MIN_PX * s:
+            continue
+        boxes = _face_frame_boxes(it.obj, Fi)
+        if not boxes:
+            continue
+        fx0 = min(b[0] for b in boxes)
+        fx1 = max(b[1] for b in boxes)
+        fz0 = min(b[2] for b in boxes)
+        fz1 = max(b[3] for b in boxes)
+        verticals = [b for b in boxes if (b[3] - b[2]) > (b[1] - b[0])]
+        rails = [b for b in boxes if (b[3] - b[2]) <= (b[1] - b[0])]
+        stiles = _merge([(b[0], b[1]) for b in verticals])
+        # Across the top: stile, opening, stile ...
+        xs = _chain([v for a, b in stiles for v in (a, b)], fx0, fx1)
+        y = sy(fz1) - inset
+        for a, b in zip(xs, xs[1:]):
+            dims.append({'axis': 'H', 'a': sx(a), 'b': sx(b), 'pos': y,
+                         'side': -1, 'value': b - a, 'target': None,
+                         'item': it, 'w0': a,
+                         'key': ('FF_W', it.name, round(a, 4))})
+        # Up each opening column: rail, opening, rail ...
+        cols = []
+        prev = fx0
+        for a, b in stiles:
+            if a - prev > MERGE:
+                cols.append((prev, a))
+            prev = max(prev, b)
+        if fx1 - prev > MERGE:
+            cols.append((prev, fx1))
+        for c0, c1 in cols:
+            if abs(sx(c1) - sx(c0)) < 2 * inset:
+                continue
+            mid = (c0 + c1) / 2.0
+            spans = _merge([(b[2], b[3]) for b in rails
+                            if b[0] <= mid <= b[1]])
+            zs = _chain([v for a, b in spans for v in (a, b)], fz0, fz1)
+            if len(zs) < 3:
+                continue
+            x = sx(c0) + inset
+            for a, b in zip(zs, zs[1:]):
+                dims.append({'axis': 'V', 'a': sy(a), 'b': sy(b), 'pos': x,
+                             'side': 1, 'value': b - a, 'target': None,
+                             'item': it, 'w0': a,
+                             'key': ('FF_H', it.name, round(c0, 4),
+                                     round(a, 4))})
+
+
 def _layout(context, region, rv3d):
     """Every dimension on screen, its text placed. Shared by draw and
     click so hits cannot drift from pixels."""
@@ -919,39 +1070,43 @@ def _layout(context, region, rv3d):
               item_of=item_between(group))
         t += 1
 
-    # Right: the height chain, then the overall height.
-    levels = {0.0, height}
-    # The counter line is the base cabinets' top; a dishwasher or range
-    # a fraction under it is not a level of its own.
-    base_tops = [it.z1 for it in items if it.kind == 'LOWER' and not it.tall
-                 and not it.obj.get('IS_APPLIANCE')]
-    if not base_tops:
-        base_tops = [it.z1 for it in items
-                     if it.kind == 'LOWER' and not it.tall]
-    if base_tops:
-        levels.add(max(base_tops))
-    for it in items:
-        if it.kind == 'UPPER':
-            levels.update((it.z0, it.z1))
-        elif it.tall:
-            levels.add(it.z1)
-    levels = [z for z in _chain(levels, 0.0, max(levels))]
-    right_x = sx(max([wx1] + [it.x1 for it in items]))
+    # Right: the height chain, then the overall height. With heights on
+    # both sides, each side dims the products on its half of the wall,
+    # so a tall at the left end and uppers at the right each read on
+    # their own side.
     products = [it for it in items if it.kind != 'OPENING']
+    both = show_option(scene, 'BOTH_HEIGHTS')
+    if both:
+        mid = length / 2.0
+        left_group = [it for it in products if (it.x0 + it.x1) / 2.0 < mid]
+        right_group = [it for it in products if (it.x0 + it.x1) / 2.0 >= mid]
+    else:
+        left_group, right_group = [], products
+    right_x = sx(max([wx1] + [it.x1 for it in items]))
+    left_x = sx(min([wx0] + [it.x0 for it in items]))
     t = 0
+    levels = _height_levels(right_group, height)
     if len(levels) > 2:
-        add_v(levels, right_x + first, 1, products)
+        add_v(levels, right_x + first, 1, right_group)
         t += 1
     add_v([0.0, height], right_x + first + t * tier, 1, [], overall=True)
 
-    # Left: window and door sills and heads.
+    # Left: the left half's height chain, then window and door sills
+    # and heads.
+    t = 0
+    levels = _height_levels(left_group, height)
+    if len(levels) > 2:
+        add_v(levels, left_x - first, -1, left_group)
+        t += 1
     if openings:
         lv = {0.0, height}
         for it in openings:
             lv.update((max(it.z0, 0.0), it.z1))
-        add_v(_chain(lv, 0.0, max(lv)),
-              sx(min([wx0] + [it.x0 for it in items])) - first, -1,
+        add_v(_chain(lv, 0.0, max(lv)), left_x - first - t * tier, -1,
               openings)
+
+    if show_option(scene, 'FACE_FRAME'):
+        _face_frame_dims(items, dims, sx, sy, s, fr[1])
 
     # A selected product carries its own height, just inside its right
     # edge, so a tall or an odd-height cabinet can be sized here too.
@@ -1085,7 +1240,9 @@ def _bar_layout(context, area):
     exit_w = blf.dimensions(0, exit_label)[0] + 24 * s
     gap = 3 * s
     many = len(walls) > 1
-    total = title_w + exit_w + gap + (2 * (arrow_w + gap) if many else 0)
+    chips = [('SHOW:' + key, label, blf.dimensions(0, label)[0] + 24 * s)
+             for key, label, _default in SHOW_OPTIONS]
+    total = title_w + exit_w + gap + (2 * (arrow_w + gap) if many else 0)         + sum(w + gap for _p, _l, w in chips)
     xmin, xmax, ymin, _ymax = get_visible_window_bounds(area)
     x = (xmin + xmax) / 2.0 - total / 2.0
     y = ymin + 18 * s
@@ -1098,6 +1255,9 @@ def _bar_layout(context, area):
     if many:
         parts.append(('NEXT', (x, y, arrow_w, h), None))
         x += arrow_w + gap
+    for part, label, w in chips:
+        parts.append((part, (x, y, w, h), label))
+        x += w + gap
     parts.append(('EXIT', (x, y, exit_w, h), exit_label))
     return parts
 
@@ -1116,8 +1276,12 @@ def _draw_bar(context, area):
     for part, rect, label in parts:
         rx, ry, rw, rh = rect
         hovered = _hover == ('BAR', part)
+        on = part.startswith('SHOW:') and show_option(context.scene,
+                                                      part[5:])
         if part == 'TITLE':
             bg = Theme.ACCENT_BG
+        elif on:
+            bg = Theme.BTN_HOVER_BG if hovered else Theme.ACCENT_BG
         else:
             bg = Theme.BTN_HOVER_BG if hovered else Theme.BTN_BG
         draw_round_rect(shader, rx, ry, rw, rh, 5 * s, bg)
@@ -1132,7 +1296,7 @@ def _draw_bar(context, area):
             blf.size(0, 12 * s)
             tw, th = blf.dimensions(0, label)
             blf.color(0, *(Theme.TEXT_PRIMARY if part == 'TITLE' or hovered
-                           else Theme.TEXT_NORMAL))
+                           or on else Theme.TEXT_NORMAL))
             blf.position(0, rx + (rw - tw) / 2.0,
                          ry + (rh - blf.dimensions(0, "Ag")[1]) / 2.0 + 1, 0)
             draw_glyphs(0, label)
@@ -1513,6 +1677,8 @@ class home_builder_OT_elevation_click(bpy.types.Operator):
         if got[0] == 'BAR':
             if got[1] == 'EXIT':
                 leave(context)
+            elif got[1].startswith('SHOW:'):
+                toggle_show_option(context.scene, got[1][5:])
             else:
                 step(context, -1 if got[1] == 'PREV' else 1)
             context.area.tag_redraw()
