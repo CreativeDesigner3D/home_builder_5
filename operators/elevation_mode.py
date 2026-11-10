@@ -1168,9 +1168,24 @@ def _merge(spans):
     return out
 
 
+_ff_box_cache = {}
+
+
 def _face_frame_boxes(cabinet, Fi):
     """(x0, x1, z0, z1) in the wall frame of each built face frame member
-    of a face frame cabinet (stiles, rails, mid stiles and rails)."""
+    of a face frame cabinet (stiles, rails, mid stiles and rails). Kept
+    until the scene next changes: the view asks every redraw."""
+    key = (_gen, cabinet.name, tuple(round(v, 6) for row in Fi for v in row))
+    hit = _ff_box_cache.get(key)
+    if hit is None:
+        if len(_ff_box_cache) > 256 or any(k[0] != _gen
+                                           for k in _ff_box_cache):
+            _ff_box_cache.clear()
+        hit = _ff_box_cache[key] = _face_frame_boxes_now(cabinet, Fi)
+    return hit
+
+
+def _face_frame_boxes_now(cabinet, Fi):
     try:
         from ..product_libraries.face_frame import dim_edit_overlay as ffo
         parts = list(ffo._iter_face_frame_parts(cabinet))
@@ -1195,8 +1210,12 @@ def _face_frame_layout(items, Fi):
     """Each face frame cabinet's frame, measured: {'lower': [(a, b, item)]
     the stile / opening segments of the floor-standing frames, 'upper':
     the same for uppers and talls, 'columns': [(item, x0, x1, zs)] the
-    rail / opening breaks up each opening column}."""
-    out = {'lower': [], 'upper': [], 'columns': []}
+    rail / opening breaks up each opening column, 'sections': [(item,
+    x0, x1, z)] the end sections of an upper whose bays step, each
+    across its stiles' outer edges, z its bottom}. A blind cabinet's
+    hidden blind strip leads (or ends) its row's segments, so the chain
+    reads blind, stile, opening ... to the cabinet's edge."""
+    out = {'lower': [], 'upper': [], 'columns': [], 'sections': []}
     for it in items:
         if it.preview or it.shelf \
                 or not it.obj.get('IS_FACE_FRAME_CABINET_CAGE'):
@@ -1213,7 +1232,16 @@ def _face_frame_layout(items, Fi):
         stiles = _merge([(b[0], b[1]) for b in verticals])
         xs = _chain([v for a, b in stiles for v in (a, b)], fx0, fx1)
         row = 'upper' if (it.kind == 'UPPER' or it.tall) else 'lower'
-        out[row] += [(a, b, it) for a, b in zip(xs, xs[1:])]
+        segs = [(a, b, it) for a, b in zip(xs, xs[1:])]
+        ffc = getattr(it.obj, 'face_frame_cabinet', None)
+        if ffc is not None and (getattr(ffc, 'blind_left', False)
+                                or getattr(ffc, 'blind_right', False)):
+            # The frame stops short of the cage on the blind side.
+            if fx0 - it.x0 > MERGE:
+                segs.insert(0, (it.x0, fx0, it))
+            if it.x1 - fx1 > MERGE:
+                segs.append((fx1, it.x1, it))
+        out[row] += segs
         # A frame standing on a kick: its column chains start at the
         # floor, so the kick reads with the rails above it.
         kick = it.kind == 'LOWER' and MERGE < fz0 < KICK_MAX
@@ -1225,15 +1253,51 @@ def _face_frame_layout(items, Fi):
             prev = max(prev, b)
         if fx1 - prev > MERGE:
             cols.append((prev, fx1))
+        bottoms = []
         for c0, c1 in cols:
             mid = (c0 + c1) / 2.0
             spans = _merge([(b[2], b[3]) for b in rails
                             if b[0] <= mid <= b[1]])
+            bottoms.append(spans[0][0] if spans else fz0)
             zs = _chain([v for a, b in spans for v in (a, b)], fz0, fz1)
             if kick:
                 zs = [0.0] + zs
             if len(zs) >= 3:
                 out['columns'].append((it, c0, c1, zs))
+        if it.kind == 'UPPER' and len(cols) >= 2:
+            out['sections'] += _upper_sections(it, cols, bottoms, stiles)
+    return out
+
+
+def _upper_sections(it, cols, bottoms, stiles):
+    """The two end sections of an upper whose openings step up (over an
+    appliance) or down (to the counter): runs of neighbouring openings
+    sharing a bottom. Each spans the outer edges of the stiles either
+    side of it, a mid stile counting in both sections it bounds, the
+    way a field measurer reads each section. A middle section is left
+    out; the ends are what get checked against the cabinets below."""
+    runs = []
+    for i, z in enumerate(bottoms):
+        if runs and abs(z - bottoms[runs[-1][0]]) <= MERGE:
+            runs[-1][1] = i
+        else:
+            runs.append([i, i])
+    if len(runs) < 2:
+        return []
+
+    def outer(x, left):
+        for a, b in stiles:
+            if left and abs(b - x) <= MERGE:
+                return a
+            if not left and abs(a - x) <= MERGE:
+                return b
+        return x
+
+    out = []
+    for first, last in (runs[0], runs[-1]):
+        x0 = outer(cols[first][0], True)
+        x1 = outer(cols[last][1], False)
+        out.append((it, x0, x1, min(bottoms[first:last + 1])))
     return out
 
 
@@ -1391,8 +1455,10 @@ def _layout(context, region, rv3d):
         return f
 
     floor_y = sy(0.0)
-    ff = (_face_frame_layout(items, fr[1])
-          if show_option(scene, 'FACE_FRAME') else None)
+    # Measured always (a stepped upper's sections show either way); the
+    # frame's own chains only with Face Frame on.
+    ff_all = _face_frame_layout(items, fr[1])
+    ff = ff_all if show_option(scene, 'FACE_FRAME') else None
 
     def add_ff_widths(segs, pos, from_y, side):
         """A face frame chain: stile, opening, stile ... of each face
@@ -1549,6 +1615,17 @@ def _layout(context, region, rv3d):
 
     if ff:
         _face_frame_height_dims(on_frame, dims, sx, sy, s)
+
+    # A stepped upper: the overall width of each end section, just
+    # under it, so a raised section reads against what stands below.
+    for it, x0, x1, z in ff_all['sections']:
+        pos = sy(z) - first
+        for x in (x0, x1):
+            dims_ext.append(((sx(x), sy(z) - gap), (sx(x), pos - over)))
+        dims.append({'axis': 'H', 'a': sx(x0), 'b': sx(x1), 'pos': pos,
+                     'side': -1, 'value': x1 - x0, 'target': None,
+                     'item': it, 'w0': x0,
+                     'key': ('SECTION', it.name, round(x0, 4))})
 
     # Sink and range centerlines, from the wall end they measure off,
     # just above the fixture. Lines that would overlap step up.
