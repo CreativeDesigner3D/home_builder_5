@@ -8378,7 +8378,7 @@ class hb_closets_OT_update_hanging_heights(bpy.types.Operator):
             if bays and any(b.hb_closet_bay.floor_mounted for b in bays):
                 # A floor bay stays standing: the Hanging Height path
                 # moves the line and only the line.
-                key = const.nearest_panel_height_key(want)
+                key = const.nearest_hang_line_key(want)
                 if not key:
                     continue
                 sp.hanging_height_preset = key
@@ -9038,17 +9038,13 @@ def _corner_hang_prop():
 # (PANEL_HEIGHTS, no Custom). A corner already hanging somewhere off
 # that list shows the nearest height on it and keeps its own until
 # another is picked.
-_CORNER_HANG_ITEMS = const.PANEL_HEIGHT_PRESET_ITEMS
+_CORNER_HANG_ITEMS = const.HANG_LINE_PRESET_ITEMS
 
 
 def _nearest_panel_height_key(value):
-    """The PANEL_HEIGHT_ITEMS key nearest a distance, however far off
+    """The HANG_LINE_ITEMS key nearest a distance, however far off
     the 32mm steps it sits."""
-    mm = float(value) / const.millimeter(1.0)
-    n = int(round((mm - const.PANEL_HEIGHT_MIN_MM) / 32.0))
-    n = min(max(n, 0),
-            (const.PANEL_HEIGHT_MAX_MM - const.PANEL_HEIGHT_MIN_MM) // 32)
-    return str(const.PANEL_HEIGHT_MIN_MM + n * 32)
+    return const.nearest_hang_line_key(float(value), snap=True)
 
 
 def _update_corner_hang_preset(self, context):

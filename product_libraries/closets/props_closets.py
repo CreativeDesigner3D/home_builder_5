@@ -363,14 +363,14 @@ def hang_line(sp):
 def _hang_height_items(self, context):
     """The 32mm lattice; Custom only while the hang line sits off it
     (a run kept from an older file, or one moved by hand)."""
-    if not const.nearest_panel_height_key(hang_line(self)):
-        return const.PANEL_HEIGHT_PRESET_ITEMS_LEGACY
-    return const.PANEL_HEIGHT_PRESET_ITEMS
+    if not const.nearest_hang_line_key(hang_line(self)):
+        return const.HANG_LINE_PRESET_ITEMS_LEGACY
+    return const.HANG_LINE_PRESET_ITEMS
 
 
 def _get_hanging_height_preset(self):
-    return const.panel_height_preset_index(
-        const.nearest_panel_height_key(hang_line(self)))
+    return const.hang_line_preset_index(
+        const.nearest_hang_line_key(hang_line(self)))
 
 
 def _set_hanging_height_preset(self, value):
@@ -385,9 +385,9 @@ def _set_hanging_height_preset(self, value):
     takes the difference in its height; the bays stand on the 32mm
     system whatever that comes to, so it is written as it is rather
     than snapped off the line picked."""
-    if value == const.PANEL_HEIGHT_CUSTOM_INDEX:
+    if value == const.HANG_LINE_CUSTOM_INDEX:
         return
-    key = const.PANEL_HEIGHT_ITEMS[value][0]
+    key = const.HANG_LINE_ITEMS[value][0]
     delta = const.millimeter(int(key)) - hang_line(self)
     if abs(delta) < 1e-6:
         return

@@ -176,6 +176,44 @@ def nearest_panel_height_key(value):
     snapped = PANEL_HEIGHT_MIN_MM + n * 32
     return str(snapped) if abs(snapped - mm) <= 0.5 else ''
 
+
+# Hang line heights (floor to the top of a hanging unit). Same 32mm
+# lattice as the panel heights, carried on past the tallest panel: a
+# hanging unit stacked on a tall one hangs well above 3027mm, and its
+# dropdown has to reach there to line it up with its neighbours. The
+# first items match PANEL_HEIGHT_ITEMS key for key.
+HANG_LINE_MAX_MM = 3635
+HANG_LINE_ITEMS = [
+    (str(v), inch_label(v), inch_label(v))
+    for v in range(PANEL_HEIGHT_MIN_MM, HANG_LINE_MAX_MM + 1, 32)
+]
+HANG_LINE_CUSTOM_INDEX = len(HANG_LINE_ITEMS)
+HANG_LINE_PRESET_ITEMS = [
+    (key, name, desc, i)
+    for i, (key, name, desc) in enumerate(HANG_LINE_ITEMS)
+]
+HANG_LINE_PRESET_ITEMS_LEGACY = HANG_LINE_PRESET_ITEMS + [
+    ('CUSTOM', "Custom", "A height off the 32mm system. Pick a "
+     "standard height to replace it", HANG_LINE_CUSTOM_INDEX)]
+
+
+def hang_line_preset_index(key):
+    """Dropdown value for a HANG_LINE_ITEMS key, or Custom for ''."""
+    for i, item in enumerate(HANG_LINE_ITEMS):
+        if item[0] == key:
+            return i
+    return HANG_LINE_CUSTOM_INDEX
+
+
+def nearest_hang_line_key(value, snap=False):
+    """Closest HANG_LINE_ITEMS identifier for a distance. '' when it is
+    off the lattice by more than half a step, unless ``snap``."""
+    mm = value / millimeter(1.0)
+    n = int(round((mm - PANEL_HEIGHT_MIN_MM) / 32.0))
+    n = min(max(n, 0), (HANG_LINE_MAX_MM - PANEL_HEIGHT_MIN_MM) // 32)
+    snapped = PANEL_HEIGHT_MIN_MM + n * 32
+    return str(snapped) if snap or abs(snapped - mm) <= 0.5 else ''
+
 # Standard opening heights: the 32mm ladder the prior library offered
 # for the opening above a hanging rod, 12.95mm through 1932.95mm in
 # 32mm steps. The mm string is the identifier, so a height picked here
