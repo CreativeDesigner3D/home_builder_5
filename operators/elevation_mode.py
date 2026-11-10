@@ -783,6 +783,70 @@ def _make_item(obj, Fi, wall, preview=False):
     return it
 
 
+def _drop_contents(items):
+    """Obstacles standing wholly inside a cabinet or closet (a shoe box
+    on a shelf) are its contents, not a feature of the wall: they would
+    only chop the chains into slivers."""
+    hosts = [it for it in items if not it.obj.get('IS_OBSTACLE')
+             and it.kind != 'OPENING']
+
+    def inside(it, h):
+        return (h.x0 - MERGE <= it.x0 and it.x1 <= h.x1 + MERGE
+                and h.z0 - MERGE <= it.z0 and it.z1 <= h.z1 + MERGE)
+    return [it for it in items if not (it.obj.get('IS_OBSTACLE')
+                                       and any(inside(it, h) for h in hosts))]
+
+
+# ---- Closets -------------------------------------------------------------------
+
+def _closet_bays(it, Fi, wall):
+    """(x0, x1) of each bay of a closet run, along the wall. A corner L
+    unit has no bays: it is one opening, measured on its own wall only
+    (the wall it turns onto sees its side)."""
+    obj = it.obj
+    if not obj.get('IS_CLOSET_STARTER_CAGE'):
+        return []
+    if str(obj.get('CLASS_NAME', '')).startswith('LShelf'):
+        return [(it.x0, it.x1)] if obj.parent == wall else []
+    spans = []
+    for bay in obj.children:
+        if not bay.get('IS_CLOSET_BAY_CAGE'):
+            continue
+        box = _wall_box(bay, Fi)
+        if box is not None and box[1] - box[0] > MERGE:
+            spans.append((box[0], box[1]))
+    return sorted(spans)
+
+
+def _closet_panel_heights(it, Fi):
+    """(z0, z1) of each distinct panel height in a closet run (the same
+    height once), as the sheets dimension them."""
+    obj = it.obj
+    if not obj.get('IS_CLOSET_STARTER_CAGE'):
+        return []
+    # From the panel's own Length, not its mesh: a panel hidden in the
+    # viewport still prints on the sheet.
+    seen, out = set(), []
+    for part in obj.children:
+        if (part.get('hb_part_role') != 'CLOSET_PANEL' or part.hide_render
+                or part.get('hb_panel_off') or part.get('hb_preview')):
+            continue
+        try:
+            length = hb_types.GeoNodeCutpart(part).get_input('Length') or 0.0
+        except Exception:
+            length = 0.0
+        if length <= MERGE:
+            continue
+        k = round(length / 0.0015875)   # 1/16 in
+        if k in seen:
+            continue
+        seen.add(k)
+        base = Vector((part.location.x, 0.0, part.location.z))
+        z0 = (Fi @ (obj.matrix_world @ base)).z
+        out.append((z0, z0 + length))
+    return out
+
+
 def _items(scene, wall):
     key = (_gen, wall.name, frozenset(_state.get('preview', ())))
     hit = _item_cache.get('key')
@@ -830,6 +894,7 @@ def _items(scene, wall):
             it = _make_item(obj, Fi, wall, preview=True)
             if it is not None and it.x1 > 0.0 and it.x0 < length:
                 items.append(it)
+        items = _drop_contents(items)
     _item_cache['key'] = key
     _item_cache['items'] = items
     return items
@@ -1636,9 +1701,17 @@ def _layout(context, region, rv3d):
 
     # Below the floor: the face frames' stiles and openings, the
     # floor-standing run, then the overall length.
+    # Closet bays read in the same row, nearest the work: each bay on
+    # its own (the panels between them are not dimensioned), below the
+    # floor for a floor run, above the wall for a hanging one.
+    closet_low, closet_up = [], []
+    for it in items:
+        row = closet_low if it.z0 < KICK_MAX else closet_up
+        row += [(a, b, it) for a, b in _closet_bays(it, fr[1], wall)]
     t = 0
-    if ff and ff['lower']:
-        add_ff_widths(ff['lower'], floor_y - first, lambda x: floor_y, -1)
+    detail = (ff['lower'] if ff else []) + closet_low
+    if detail:
+        add_ff_widths(detail, floor_y - first, lambda x: floor_y, -1)
         t += 1
     if lower:
         pts = _chain([v for it in lower for v in (it.x0, it.x1)], 0.0, length)
@@ -1652,12 +1725,13 @@ def _layout(context, region, rv3d):
     top_z = max([height] + [it.z1 for it in items])
     top_y = sy(top_z)
     t = 0
-    if ff and ff['upper']:
-        def from_ff_top(x):
-            zs = [it.z1 for _a, _b, it in ff['upper']
+    detail = (ff['upper'] if ff else []) + closet_up
+    if detail:
+        def from_ff_top(x, detail=detail):
+            zs = [it.z1 for _a, _b, it in detail
                   if it.x0 - MERGE <= x <= it.x1 + MERGE]
             return sy(max(zs)) if zs else sy(height)
-        add_ff_widths(ff['upper'], top_y + first, from_ff_top, 1)
+        add_ff_widths(detail, top_y + first, from_ff_top, 1)
         t += 1
     for group in (upper, openings):
         if not group:
@@ -1707,6 +1781,26 @@ def _layout(context, region, rv3d):
                     break
             else:
                 side_tiers[side].insert(0, [(zs, it)])
+
+    # Closet panels: each distinct panel height once per side, out past
+    # the wall's end on the side its run stands on, sharing a line with
+    # a chain it clears, else on a line of its own.
+    for side, group in ((-1, left_group), (1, right_group)):
+        seen = set()
+        for it in sorted(group, key=lambda i: i.x0):
+            for z0, z1 in _closet_panel_heights(it, fr[1]):
+                k = round((z1 - z0) / 0.0015875)
+                if k in seen:
+                    continue
+                seen.add(k)
+                zs = [z0, z1]
+                for tr in side_tiers[side]:
+                    if all(z1 <= o[0] + MERGE or z0 >= o[-1] - MERGE
+                           for o, _it in tr):
+                        tr.append((zs, it))
+                        break
+                else:
+                    side_tiers[side].append([(zs, it)])
 
     pad = TEXT_GAP_PX * s
     blf.size(0, FONT_SIZE * s)
