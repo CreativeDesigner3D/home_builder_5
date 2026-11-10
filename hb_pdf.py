@@ -83,6 +83,15 @@ class Page:
     def line_width(self, w):
         self._op(_num(w), 'w')
 
+    def dash(self, on=None, off=None):
+        """Dashed strokes from here on, `on` drawn and `off` skipped;
+        no arguments for solid again."""
+        if on is None:
+            self._op('[] 0 d')
+        else:
+            self._op('[' + _num(on), _num(on if off is None else off) + ']',
+                     '0 d')
+
     # ---- drawing ---------------------------------------------------------
 
     def lines(self, segments):

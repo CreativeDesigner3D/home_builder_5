@@ -1088,6 +1088,9 @@ SHOW_OPTIONS = (
     ('FACE_FRAME', "Face Frame", False),
     # Only offered while some add-on supplies annotations.
     ('ANNOTATIONS', "Annotations", True),
+    # What stands inside the cabinets (shelves, dividers, roll-outs),
+    # drawn through the fronts as dashed lines.
+    ('INTERIORS', "Interior Lines", False),
 )
 
 
@@ -2467,6 +2470,10 @@ def _draw():
                 _stroke(region, hot, 2.0 * s, HOVER)
             _stroke(region, [p for seg in extra['ext'] for p in seg],
                     1.0 * s, LINE)
+            try:
+                _draw_interiors(context, region, extra, s)
+            except Exception as exc:
+                print(f"Elevation interior lines: {exc}")
         normal_lines, normal_ticks = [], []
         hot_lines, hot_ticks = [], []
         for d in dims:
@@ -2708,13 +2715,13 @@ def _print_skip(obj):
             or obj.display_type in ('WIRE', 'BOUNDS'))
 
 
-def _print_faces(context, items, Fi, view):
+def _print_faces(context, items, Fi, view, only=None):
     """[(depth, polygon, edges)] in page points for every face of the
     wall's products that faces the viewer; depth grows into the wall.
     Parts hidden in the viewport (a cutaway, a part toggled off on
     screen) still print, as they do on the sheets: they are shown just
-    long enough to be read."""
-    owners = _print_owners(items)
+    long enough to be read. `only` narrows it to those object names."""
+    owners = _print_owners(items) if only is None else set(only)
     if not owners:
         return []
     shown = []
@@ -2823,6 +2830,165 @@ def _print_faces_now(context, owners, Fi, view):
                     edges.append(((px[i], py[i]), (px[j], py[j])))
             faces.append((float(co[vs, 1].mean()), poly, edges))
     return faces
+
+
+INTERIOR_MARKERS = ('IS_FACE_FRAME_INTERIOR_PART',
+                    'IS_FRAMELESS_INTERIOR_PART')
+INTERIOR_LINE = (0.16, 0.16, 0.20, 0.95)
+INTERIOR_DASH_PX = (5.0, 3.5)       # drawn, skipped
+PRINT_INTERIOR_WIDTH = 0.35
+INTERIOR_REFRESH = 0.6              # s between reads while editing
+_interior_cache = {}
+
+
+def _interior_names(items):
+    """Names of the objects that stand inside the wall's cabinets: the
+    interior parts and everything under them."""
+    names = set()
+
+    def walk(obj, inside):
+        inside = inside or any(obj.get(m) for m in INTERIOR_MARKERS)
+        if inside:
+            names.add(obj.name)
+        for child in obj.children:
+            walk(child, inside)
+
+    for it in items:
+        if not it.preview:
+            walk(it.obj, False)
+    return names
+
+
+def _edge_set(faces):
+    """The faces' edges, each once."""
+    seen = set()
+    out = []
+    for _depth, _poly, edges in faces:
+        for p, q in edges:
+            a = (round(float(p[0]), 4), round(float(p[1]), 4))
+            b = (round(float(q[0]), 4), round(float(q[1]), 4))
+            if a == b:
+                continue
+            key = (a, b) if a <= b else (b, a)
+            if key not in seen:
+                seen.add(key)
+                out.append(key)
+    return out
+
+
+class _WallUnits:
+    """A view that leaves points in the wall's own metres."""
+    k, ox, oy = 1.0, 0.0, 0.0
+
+
+def _interior_edges(context, wall, items):
+    """[((x, z), (x, z))] along the wall, in metres, for the edges of
+    what stands inside its cabinets. Read from the parts as they are
+    shown: nothing is unhidden here, this runs while drawing."""
+    import time
+    key = (_gen, context.scene.name, wall.name)
+    if _interior_cache.get('key') == key:
+        return _interior_cache['edges']
+    now = time.monotonic()
+    if (_interior_cache.get('key', (None,))[1:] == key[1:]
+            and now - _interior_cache.get('at', 0.0) < INTERIOR_REFRESH):
+        # Mid-edit the model changes every frame: the last read stands
+        # until things settle, then one redraw brings it up to date.
+        if not _interior_cache.get('queued'):
+            _interior_cache['queued'] = True
+            area = context.area
+
+            def refresh():
+                _interior_cache['queued'] = False
+                try:
+                    area.tag_redraw()
+                except Exception:
+                    pass
+            bpy.app.timers.register(refresh, first_interval=INTERIOR_REFRESH)
+        return _interior_cache['edges']
+    edges = []
+    names = _interior_names(items)
+    fr = _frame(wall)
+    if names and fr is not None:
+        try:
+            edges = _edge_set(_print_faces_now(context, names, fr[1],
+                                               _WallUnits))
+        except Exception as exc:
+            print(f"Elevation interior lines: {exc}")
+    _interior_cache.clear()
+    _interior_cache.update(key=key, edges=edges, at=time.monotonic())
+    return edges
+
+
+def _dashes(a, b, on, off):
+    """The drawn pieces of a..b as a flat [p, q, p, q, ...]."""
+    dx, dy = b[0] - a[0], b[1] - a[1]
+    length = math.hypot(dx, dy)
+    if length < 1e-6:
+        return []
+    ux, uy = dx / length, dy / length
+    out = []
+    t = 0.0
+    while t < length:
+        e = min(t + on, length)
+        out += [(a[0] + ux * t, a[1] + uy * t),
+                (a[0] + ux * e, a[1] + uy * e)]
+        t += on + off
+    return out
+
+
+def _draw_interiors(context, region, extra, s):
+    wall = active_wall(context)
+    if wall is None or not show_option(context.scene, 'INTERIORS'):
+        return
+    edges = _interior_edges(context, wall, extra['items'])
+    if not edges:
+        return
+    sx, sy = extra['sx'], extra['sy']
+    view_key = (_interior_cache['key'], round(sx(0.0), 2), round(sx(1.0), 2),
+                round(sy(0.0), 2), round(sy(1.0), 2), s)
+    if _interior_cache.get('view') != view_key:
+        on, off = INTERIOR_DASH_PX[0] * s, INTERIOR_DASH_PX[1] * s
+        w, h = region.width, region.height
+        pts = []
+        for (x0, z0), (x1, z1) in edges:
+            a = (sx(x0), sy(z0))
+            b = (sx(x1), sy(z1))
+            if (max(a[0], b[0]) < 0 or min(a[0], b[0]) > w
+                    or max(a[1], b[1]) < 0 or min(a[1], b[1]) > h):
+                continue
+            pts += _dashes(a, b, on, off)
+        _interior_cache['view'] = view_key
+        _interior_cache['pts'] = pts
+    pts = _interior_cache['pts']
+    if not pts:
+        return
+    shader = gpu.shader.from_builtin('POLYLINE_UNIFORM_COLOR')
+    shader.bind()
+    shader.uniform_float("viewportSize", (region.width, region.height))
+    shader.uniform_float("lineWidth", max(1.0, 1.0 * s))
+    shader.uniform_float("color", INTERIOR_LINE)
+    batch_for_shader(shader, 'LINES', {"pos": pts}).draw(shader)
+
+
+def _print_interiors(page, context, scene, extra, Fi, view, ps):
+    """The Interior Lines toggle on paper: what stands inside the
+    cabinets, dashed over the fronts."""
+    if not show_option(scene, 'INTERIORS'):
+        return
+    names = _interior_names(extra['items'])
+    if not names:
+        return
+    edges = _edge_set(_print_faces(context, extra['items'], Fi, view,
+                                   only=names))
+    if not edges:
+        return
+    page.push()
+    page.stroke_color(PRINT_EDGE)
+    page.line_width(PRINT_INTERIOR_WIDTH)
+    page.dash(INTERIOR_DASH_PX[0] * ps, INTERIOR_DASH_PX[1] * ps)
+    page.lines(edges)
+    page.pop()
 
 
 def _print_linework(page, context, extra, Fi, view, L, H):
@@ -3069,6 +3235,11 @@ def print_wall(context, filepath, paper='TABLOID',
         dims, extra = _print_layout(scene, wall, region, view, front)
         if not _print_linework(page, context, extra, Fi, view, L, Hw):
             _print_outlines(page, extra, Fi, L, Hw)
+        try:
+            _print_interiors(page, context, scene, extra, Fi, view,
+                             text_scale)
+        except Exception as exc:
+            print(f"Elevation print: interior lines: {exc}")
         _print_dims(page, scene, dims, extra, text_scale)
         try:
             _print_annotations(page, scene, wall, region, view, text_scale)
@@ -3590,9 +3761,26 @@ def _glyph_annotation(shader, rect, color):
     draw_lines(shader, pts, color)
 
 
+def _glyph_interiors(shader, rect, color):
+    """A cabinet box with two dashed shelves across it."""
+    rx, ry, rw, rh = rect
+    w, h = rw * 0.46, rh * 0.52
+    x0 = rx + (rw - w) / 2.0
+    y0 = ry + (rh - h) / 2.0
+    x1, y1 = x0 + w, y0 + h
+    pts = [(x0, y0), (x1, y0), (x1, y0), (x1, y1),
+           (x1, y1), (x0, y1), (x0, y1), (x0, y0)]
+    dash = w / 5.0
+    for y in (y0 + h / 3.0, y0 + 2.0 * h / 3.0):
+        for i in (0, 2, 4):
+            pts += [(x0 + i * dash, y), (x0 + (i + 1) * dash, y)]
+    draw_lines(shader, pts, color)
+
+
 _SHOW_GLYPHS = {
     'FACE_FRAME': icon_glyph('cab_face_frame', _glyph_face_frame),
     'ANNOTATIONS': icon_glyph('pencil', _glyph_annotation),
+    'INTERIORS': _glyph_interiors,
 }
 
 
