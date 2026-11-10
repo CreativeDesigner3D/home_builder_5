@@ -2121,22 +2121,24 @@ def _place_text(scene, dims, region, ext=()):
             # steps in over its own cabinet (the left stile's to the
             # right, the right stile's to the left), and a stile
             # between two openings carries its value straight above it.
-            # These sit a little higher than other values set over a
-            # line, clear of an opening's value set in the line beside
-            # them, so the two never crowd each other out. Below the
-            # floor a middle stile's value goes under the line instead:
-            # over it, its own two extension lines would run through it.
+            # They sit on the line's open side, away from the work: over
+            # the line in the row above the wall, under it in the row
+            # below the floor (where the extension lines come down to
+            # the line and would run through a value set over it). They
+            # stand a little further off the line than other values,
+            # clear of an opening's value set in the line beside them,
+            # so the two never crowd each other out.
             stile = d.get('stile')
             if stile:
                 over_s = d['pos'] + th / 2.0 + 3.0
                 under_s = d['pos'] - th / 2.0 - 3.0 - th
-                centred = [(mid - tw / 2.0, over_s), (mid - tw / 2.0, under_s)]
-                if d['side'] < 0:
-                    centred.reverse()
+                near, far = ((over_s, under_s) if d['side'] > 0
+                             else (under_s, over_s))
+                centred = [(mid - tw / 2.0, near), (mid - tw / 2.0, far)]
                 if stile == 'L':
-                    cands += [(hi + 4 * s, over_s)] + centred
+                    cands += [(hi + 4 * s, near)] + centred
                 elif stile == 'R':
-                    cands += [(lo - 4 * s - tw, over_s)] + centred
+                    cands += [(lo - 4 * s - tw, near)] + centred
                 else:
                     cands += centred
             cands += [(hi + 4 * s, base), (lo - 4 * s - tw, base),
