@@ -11,9 +11,9 @@ locked, and the wall is dimensioned the way an elevation sheet is:
   windows and doors;
 - on the right, a height chain (counter, upper bottom, upper top, wall
   height) with the overall height outside it; on the left, the window
-  and door sill / head heights. With Heights Both Sides on (the bar's
-  toggle), each side's height chain dims the products on its half of
-  the wall, so a tall at one end and uppers at the other both read;
+  and door sill / head heights. Each side's height chain dims the
+  products on its half of the wall, so a tall at one end and uppers at
+  the other both read;
 - with Face Frame on, the face frames' stiles and openings as the
   chain nearest the work (below the floor for floor-standing cabinets,
   above the wall for uppers and talls), and the rails and openings of
@@ -894,8 +894,7 @@ def _vertical_target(group, a, b, wall_name=None):
 
 SHOW_PROP = 'HB_ELEVATION_SHOW'
 SHOW_OPTIONS = (
-    # (key, bar label, default)
-    ('BOTH_HEIGHTS', "Heights Both Sides", True),
+    # (key, bar label, default) -- the label is the chip's hover hint
     ('FACE_FRAME', "Face Frame", False),
     # Only offered while some add-on supplies annotations.
     ('ANNOTATIONS', "Annotations", True),
@@ -1351,13 +1350,9 @@ def _layout(context, region, rv3d):
     # so a tall at the left end and uppers at the right each read on
     # their own side.
     products = [it for it in items if it.kind != 'OPENING']
-    both = show_option(scene, 'BOTH_HEIGHTS')
-    if both:
-        mid = length / 2.0
-        left_group = [it for it in products if (it.x0 + it.x1) / 2.0 < mid]
-        right_group = [it for it in products if (it.x0 + it.x1) / 2.0 >= mid]
-    else:
-        left_group, right_group = [], products
+    mid = length / 2.0
+    left_group = [it for it in products if (it.x0 + it.x1) / 2.0 < mid]
+    right_group = [it for it in products if (it.x0 + it.x1) / 2.0 >= mid]
     right_x = sx(max([wx1] + [it.x1 for it in items]))
     left_x = sx(min([wx0] + [it.x0 for it in items]))
 
@@ -1570,7 +1565,7 @@ def _bar_layout(context, area):
     exit_w = blf.dimensions(0, exit_label)[0] + 24 * s
     gap = 3 * s
     many = len(walls) > 1
-    chips = [('SHOW:' + key, label, blf.dimensions(0, label)[0] + 24 * s)
+    chips = [('SHOW:' + key, label, h)
              for key, label, _default in SHOW_OPTIONS
              if _option_available(key)]
     total = title_w + exit_w + gap + (2 * (arrow_w + gap) if many else 0)         + sum(w + gap for _p, _l, w in chips)
@@ -1616,7 +1611,15 @@ def _draw_bar(context, area):
         else:
             bg = Theme.BTN_HOVER_BG if hovered else Theme.BTN_BG
         draw_round_rect(shader, rx, ry, rw, rh, 5 * s, bg)
-        if part in ('PREV', 'NEXT'):
+        glyph = (_SHOW_GLYPHS.get(part[5:]) if part.startswith('SHOW:')
+                 else None)
+        if glyph is not None:
+            glyph(shader, rect, Theme.TEXT_PRIMARY if hovered or on
+                  else Theme.TEXT_NORMAL)
+            shader.bind()
+            if hovered:
+                _draw_chip_hint(shader, rect, label)
+        elif part in ('PREV', 'NEXT'):
             cx, cy = rx + rw / 2.0, ry + rh / 2.0
             a = 4 * s
             d = -1 if part == 'PREV' else 1
@@ -1631,6 +1634,23 @@ def _draw_bar(context, area):
             blf.position(0, rx + (rw - tw) / 2.0,
                          ry + (rh - blf.dimensions(0, "Ag")[1]) / 2.0 + 1, 0)
             draw_glyphs(0, label)
+
+
+def _draw_chip_hint(shader, rect, label):
+    """The icon chip's name, in a small tag above it."""
+    s = _s()
+    rx, ry, rw, rh = rect
+    blf.size(0, 11 * s)
+    tw = blf.dimensions(0, label)[0]
+    th = blf.dimensions(0, "Ag")[1]
+    w, h = tw + 14 * s, th + 10 * s
+    x = rx + (rw - w) / 2.0
+    y = ry + rh + 6 * s
+    draw_soft_shadow(shader, x, y, w, h, 4 * s)
+    draw_round_rect(shader, x, y, w, h, 4 * s, Theme.BTN_BG)
+    blf.color(0, *Theme.TEXT_PRIMARY)
+    blf.position(0, x + 7 * s, y + (h - th) / 2.0 + 1, 0)
+    draw_glyphs(0, label)
 
 
 def _draw():
@@ -2143,6 +2163,43 @@ def _glyph_elevation(shader, rect, color):
     pts += [(x0, dy), (x1, dy), (x0 - t, dy - t), (x0 + t, dy + t),
             (x1 - t, dy - t), (x1 + t, dy + t)]
     draw_lines(shader, pts, color)
+
+
+def _glyph_face_frame(shader, rect, color):
+    """A face frame: outer stiles and rails around two openings."""
+    rx, ry, rw, rh = rect
+    w, h = rw * 0.5, rh * 0.5
+    x0 = rx + (rw - w) / 2.0
+    y0 = ry + (rh - h) / 2.0
+    x1, y1 = x0 + w, y0 + h
+    t = w * 0.16
+    m = (x0 + x1) / 2.0
+    box = lambda a, b, c, d: [(a, b), (c, b), (c, b), (c, d),
+                              (c, d), (a, d), (a, d), (a, b)]
+    draw_lines(shader, box(x0, y0, x1, y1)
+               + box(x0 + t, y0 + t, m - t / 2.0, y1 - t)
+               + box(m + t / 2.0, y0 + t, x1 - t, y1 - t), color)
+
+
+def _glyph_annotation(shader, rect, color):
+    """A note: a leader to a dot, with text lines beside it."""
+    rx, ry, rw, rh = rect
+    cx, cy = rx + rw / 2.0, ry + rh / 2.0
+    a = min(rw, rh) * 0.26
+    d = a * 0.12
+    pts = [(cx - a, cy - a), (cx - a * 0.2, cy + a * 0.2),
+           (cx - a * 0.2, cy + a * 0.2), (cx + a, cy + a * 0.2),
+           (cx - a * 0.05, cy + a * 0.6), (cx + a, cy + a * 0.6),
+           (cx - a * 0.05, cy - a * 0.2), (cx + a * 0.6, cy - a * 0.2)]
+    pts += [(cx - a - d, cy - a - d), (cx - a + d, cy - a + d),
+            (cx - a - d, cy - a + d), (cx - a + d, cy - a - d)]
+    draw_lines(shader, pts, color)
+
+
+_SHOW_GLYPHS = {
+    'FACE_FRAME': icon_glyph('cab_face_frame', _glyph_face_frame),
+    'ANNOTATIONS': icon_glyph('pencil', _glyph_annotation),
+}
 
 
 def _hud_visible(context):
