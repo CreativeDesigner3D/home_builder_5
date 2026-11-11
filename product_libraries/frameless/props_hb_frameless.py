@@ -2157,7 +2157,7 @@ class Frameless_Scene_Props(PropertyGroup):
                        description="Cut a rectangular hand hole through the full top of base cabinets. "
                                    "Skipped on finished interiors, cabinets under 16in wide or deep, "
                                    "and cabinets over 60in tall",
-                       default=False,
+                       default=True,
                        update=update_back_tongue_length)# type: ignore
 
     base_top_hand_hole_margin: FloatProperty(name="Hand Hole Margin",
