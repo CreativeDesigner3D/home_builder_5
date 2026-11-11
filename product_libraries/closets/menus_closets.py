@@ -22,8 +22,7 @@ class HOME_BUILDER_MT_closet_starter_commands(bpy.types.Menu):
 
     def draw(self, context):
         layout = self.layout
-        layout.operator("hb_closets.starter_prompts",
-                        text="Starter Properties...", icon='WINDOW')
+        # The starter's own settings are fields on the SELECTED tab.
         # The reference's Change Number of Openings: 1 to 8 bays across the same
         # overall width. Not offered on a corner unit (one bay).
         if bpy.ops.hb_closets.change_number_of_openings.poll():
@@ -628,10 +627,6 @@ class HOME_BUILDER_MT_closet_part_commands(bpy.types.Menu):
                 and types_closets.find_bay_cage(obj) is not None):
             layout.operator("hb_closets.bay_prompts",
                             text="Bay Properties...", icon='WINDOW')
-            offered = True
-        if role in bay_roles or role in starter_roles:
-            layout.operator("hb_closets.starter_prompts",
-                            text="Closet Properties...", icon='WINDOW')
             offered = True
         if offered:
             layout.separator()

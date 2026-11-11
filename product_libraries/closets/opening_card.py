@@ -305,11 +305,11 @@ def _set_rod_top(obj, value):
 
 # ---- The schema -------------------------------------------------------------
 
-def _own(P, name, **over):
-    """One of the opening's own properties, read and written as it
-    stands and described as its RNA describes it."""
-    from . import props_closets
-    rna = props_closets.Closet_Opening_Props.bl_rna.properties[name]
+def rna_prop(P, group_cls, group_of, name, **over):
+    """A property of a property group, read and written as it stands
+    and described as its RNA describes it. `group_of(obj)` is the group
+    on the object the schema is over."""
+    rna = group_cls.bl_rna.properties[name]
     kw = {'type': rna.type}
     if rna.type == 'ENUM':
         kw['items'] = [(i.identifier, i.name) for i in rna.enum_items]
@@ -321,9 +321,16 @@ def _own(P, name, **over):
             kw['precision'] = rna.precision
     kw.update(over)
     cast = {'FLOAT': float, 'INT': int, 'BOOLEAN': bool}.get(rna.type, str)
-    return P.computed(lambda obj: getattr(_pg(obj), name),
-                      lambda obj, value: setattr(_pg(obj), name, cast(value)),
-                      **kw)
+    return P.computed(
+        lambda obj: getattr(group_of(obj), name),
+        lambda obj, value: setattr(group_of(obj), name, cast(value)),
+        **kw)
+
+
+def _own(P, name, **over):
+    """One of the opening's own properties."""
+    from . import props_closets
+    return rna_prop(P, props_closets.Closet_Opening_Props, _pg, name, **over)
 
 
 def _after(obj, context):

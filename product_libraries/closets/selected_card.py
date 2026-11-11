@@ -6,9 +6,10 @@ face frame cabinets read. The part picked is the section that starts
 open; the title is a breadcrumb, and a click on a step above selects it.
 
 The sizes and switches that rebuild the closet as they change are
-fields here. An opening's section holds everything about it -- its
-interior, rod, front, overlays, pulls and back, each a group that folds
-(opening_card) -- so there is no dialog to open for them.
+fields here. The closet's section holds what its dialog did
+(starter_card), and an opening's holds everything about it -- its
+interior, rod, front, overlays, pulls and back (opening_card) -- each a
+group that folds, so there is no dialog to open for either.
 """
 
 import bpy
@@ -61,55 +62,11 @@ def _dist(value):
     return units.unit_to_string(bpy.context.scene.unit_settings, value)
 
 
-def _starter_summary(sp):
-    return f"{_dist(sp.width)} x {_dist(sp.height)} x {_dist(sp.depth)}"
-
-
 def _bay_summary(bp):
     return f"{_dist(bp.width)} x {_dist(bp.height)}"
 
 
-def _kicked(sp):
-    return sp.closet_type in ('BASE', 'TALL', 'ISLAND')
-
-
-def _countertop(sp):
-    return sp.include_countertop
-
-
-def _backsplash(sp):
-    return sp.include_countertop and sp.include_backsplash
-
-
-def _accent(sp):
-    return sp.add_top_accent_shelf
-
-
 # ---- Fields -----------------------------------------------------------------
-
-STARTER_FIELDS = (
-    ('distance', 'width', "Width"),
-    ('distance', 'height', "Height"),
-    ('distance', 'depth', "Depth"),
-    ('group', 'cl_starter_construction', "Construction", {'icon': 'cab_construction', 'fields': (
-        ('distance', 'toe_kick_height', "Kick Height", {'when': _kicked}),
-        ('distance', 'toe_kick_setback', "Kick Setback", {'when': _kicked}),
-        ('bool', 'left_finished_end', "Finished Left End"),
-        ('bool', 'right_finished_end', "Finished Right End"),
-        ('bool', 'remove_hang_rail', "Remove Hang Rail"),
-        ('bool', 'add_top_accent_shelf', "Top Accent Shelf"),
-        ('distance', 'top_accent_overhang', "Accent Overhang", {'when': _accent}),
-    )}),
-    ('group', 'cl_starter_top', "Countertop", {
-        'summary': lambda sp: "On" if sp.include_countertop else "Off", 'fields': (
-            ('bool', 'include_countertop', "Countertop"),
-            ('distance', 'countertop_overhang_front', "Front Overhang", {'when': _countertop}),
-            ('distance', 'countertop_overhang_left', "Left Overhang", {'when': _countertop}),
-            ('distance', 'countertop_overhang_right', "Right Overhang", {'when': _countertop}),
-            ('bool', 'include_backsplash', "Backsplash", {'when': _countertop}),
-            ('distance', 'backsplash_height', "Backsplash Height", {'when': _backsplash}),
-        )}),
-)
 
 BAY_FIELDS = (
     ('locked', 'width', "Width", {'unlock': 'unlock_width'}),
@@ -169,11 +126,13 @@ def blocks(context, item):
     out = [('head', (" › ".join(trail), False, None))]
     _fold_for(context, kind)
 
+    from . import starter_card
     out.extend(options_panel.field_blocks(context, (
         ('group', STARTER_GROUP, f"Closet  ({sp.closet_type.title()})",
-         {'icon': 'closet_starter', 'summary': _starter_summary,
-          'fields': STARTER_FIELDS}),
-    ), sp))
+         {'icon': 'closet_starter',
+          'summary': lambda _ow: starter_card.summary(root),
+          'fields': starter_card.fields(root)}),
+    ), starter_card.owner(root)))
     if bay_obj is not None:
         out.extend(options_panel.field_blocks(context, (
             ('group', BAY_GROUP, trail[1],
