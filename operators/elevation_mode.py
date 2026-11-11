@@ -534,8 +534,8 @@ def _fit_step(area, region, r3d):
     avail_w = max(100.0, (xmax - xmin) - 2 * side)
     avail_h = max(100.0, (ymax - ymin) - top - bottom)
     px_per_m = cur_w / length
-    # Side views switched on take their room: the plan under the
-    # elevation, the iso to its right.
+    # Side views switched on take their room: the plan above the
+    # elevation, the iso to its left.
     more_w = more_h = 0.0
     try:
         scene = bpy.data.scenes.get(_state['scene'])
@@ -554,8 +554,9 @@ def _fit_step(area, region, r3d):
     # Centre the wall in the space left for it.
     want_x = (xmin + xmax) / 2.0
     want_y = ymin + bottom + avail_h / 2.0
-    have_x = (p0.x + p1.x) / 2.0 + more_w / 2.0
-    have_y = (p0.y + p1.y) / 2.0 - more_h / 2.0
+    # The iso stands to the left of the elevation, the plan above it.
+    have_x = (p0.x + p1.x) / 2.0 - more_w / 2.0
+    have_y = (p0.y + p1.y) / 2.0 + more_h / 2.0
     dx = (have_x - want_x) / px_per_m
     dz = (have_y - want_y) / px_per_m
     axis_x = F.to_3x3().normalized() @ Vector((1.0, 0.0, 0.0))
@@ -1345,7 +1346,7 @@ SHOW_OPTIONS = (
     ('INTERIORS', "Interior Lines", False),
     # Values as decimal inches (25.875") instead of fractions (25 7/8").
     ('DECIMAL', "Decimal Inches", False),
-    # The wall from above, under the elevation, and from the front
+    # The wall from above, over the elevation, and from the front
     # right, beside it: the three views a sheet shows together.
     ('PLAN', "Plan View", False),
     ('ISO', "Iso View", False),
@@ -3113,8 +3114,8 @@ def _draw_remove_chip(dims, s):
 #
 # The elevation is the viewport's own picture of the wall. Its plan and
 # iso are the same scene drawn from two more directions into textures
-# and set beside it, at the elevation's scale: the plan under it (lined
-# up with it, the wall at the top), the iso to its right. They are
+# and set beside it, at the elevation's scale: the plan above it (lined
+# up with it, the wall at the top), the iso to its left. They are
 # pictures, redrawn when the model or the zoom changes.
 
 SIDE_DIST = 60.0            # m the side views' cameras stand off
@@ -3210,7 +3211,7 @@ def _side_rects(scene, wall, dims, extra, s):
     sx, sy = extra['sx'], extra['sy']
     per_m = abs(sx(1.0) - sx(0.0))
     box = _side_box(wall, extra['items'])
-    bx0, bx1, by0, _by1 = _print_bounds(dims, extra, 1.0, length, height)
+    bx0, _bx1, _by0, by1 = _print_bounds(dims, extra, 1.0, length, height)
     gap = SIDE_GAP_PX * s
     out = {}
     for kind in kinds:
@@ -3219,9 +3220,9 @@ def _side_rects(scene, wall, dims, extra, s):
         if kind == 'PLAN':
             # Lined up with the elevation: the camera's x is the wall's.
             x = sx((box[0] + box[1]) / 2.0 + l)
-            y = by0 - gap - h
+            y = by1 + gap
         else:
-            x = bx1 + gap
+            x = bx0 - gap - w
             y = sy(height / 2.0) - h / 2.0
         out[kind] = (x, y, w, h, C, (l, r, b, t))
     return out
@@ -3746,9 +3747,10 @@ def _print_fit(scene, wall, W, H, extra=None):
         if pt_per_m <= k:
             k, label = pt_per_m, f"{text} = 1'-0\""
             break
-    ox = (PRINT_MARGIN + pad_l
+    # The iso to the left of the elevation, the plan above it.
+    ox = (PRINT_MARGIN + pad_l + gap_w + k * more_w
           + (area_w - (k * (L + more_w) + extra_w + gap_w)) / 2.0)
-    oy = (PRINT_MARGIN + PRINT_TITLE + pad_b + gap_h + k * more_h
+    oy = (PRINT_MARGIN + PRINT_TITLE + pad_b
           + (area_h - (k * (Hw + more_h) + extra_h + gap_h)) / 2.0)
     return _print_view(Fi, k, ox, oy, W, H), label
 
