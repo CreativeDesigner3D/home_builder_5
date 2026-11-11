@@ -1731,11 +1731,12 @@ def _holds_drawer(opening):
         for o in opening.children_recursive)
 
 
-def _drawer_stack_board(splitter_obj, opening_above, opening_below):
-    """A front split board with a drawer on both sides of it."""
+def _drawer_stretcher_board(splitter_obj, opening_above):
+    """A front split board with a drawer over it, whatever is below
+    (another drawer, or doors)."""
     if splitter_obj.get(INTERIOR_SPLITTER_VERTICAL_TAG):
         return False
-    return _holds_drawer(opening_above) and _holds_drawer(opening_below)
+    return _holds_drawer(opening_above)
 
 
 def _stretcher_width(obj):
@@ -1776,11 +1777,11 @@ def _solve_splitter(splitter_obj, vertical):
                 # Under a sink's false front the bowl takes the space:
                 # the split stays (the fronts keep their reveal) but no
                 # fixed shelf is built there.
-                # Between two drawers the board is a front stretcher, not
-                # a full shelf: the drawer boxes need nothing to sit on.
+                # Under a drawer the board is a front stretcher, not a
+                # full shelf: the drawer box needs nothing to sit on,
+                # over another drawer or over doors.
                 width = dim_y
-                if _drawer_stack_board(splitter_obj, opening,
-                                       parts.get(('OPENING', i + 1))):
+                if _drawer_stretcher_board(splitter_obj, opening):
                     width = min(_stretcher_width(splitter_obj), dim_y)
                 set_part(board, (0.0, 0.0, top - size - mt), length=dim_x,
                          width=width, thickness=mt,
