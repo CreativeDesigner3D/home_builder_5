@@ -5205,6 +5205,32 @@ class home_builder_OT_elevation_frame(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class home_builder_OT_elevation_pan(bpy.types.Operator):
+    """Drag with the middle mouse button to slide the elevation. The
+    view stays square to the wall, so there is nothing to orbit"""
+    bl_idname = "home_builder.elevation_pan"
+    bl_label = "Pan Elevation"
+    bl_options = {'INTERNAL'}
+
+    @classmethod
+    def poll(cls, context):
+        # Only in the elevation's own view: elsewhere the middle button
+        # keeps its usual job.
+        return (_state is not None and is_active(context)
+                and context.region is not None
+                and context.region.type == 'WINDOW'
+                and context.region_data is not None
+                and context.region_data.as_pointer() == _state['r3d'])
+
+    def invoke(self, context, event):
+        try:
+            # Blender's own pan takes the drag from here.
+            bpy.ops.view3d.move('INVOKE_DEFAULT')
+        except Exception:
+            return {'PASS_THROUGH'}
+        return {'FINISHED'}
+
+
 class home_builder_OT_elevation_hover(bpy.types.Operator):
     bl_idname = "home_builder.elevation_hover"
     bl_label = "Elevation Hover"
@@ -5809,6 +5835,7 @@ classes = (
     home_builder_OT_exit_elevation,
     home_builder_OT_elevation_step,
     home_builder_OT_elevation_frame,
+    home_builder_OT_elevation_pan,
     home_builder_OT_elevation_hover,
     home_builder_OT_elevation_click,
     home_builder_OT_elevation_edit_dim,
@@ -5830,6 +5857,8 @@ def _register_keymaps():
             (home_builder_OT_elevation_hover.bl_idname, 'MOUSEMOVE', 'ANY',
              {'any': True, 'head': True}),
             (home_builder_OT_exit_elevation.bl_idname, 'ESC', 'PRESS', {}),
+            (home_builder_OT_elevation_pan.bl_idname, 'MIDDLEMOUSE', 'PRESS',
+             {'head': True}),
             (home_builder_OT_elevation_reset_height.bl_idname, 'X', 'PRESS',
              {'head': True}),
             (home_builder_OT_elevation_reset_height.bl_idname, 'DEL', 'PRESS',
