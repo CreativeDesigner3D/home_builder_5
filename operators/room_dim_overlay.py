@@ -10,6 +10,8 @@ value labels on it:
 - Wall: length and height.
 - Wall obstacle: its distance to each end of the wall, down to the
   floor and up to the top of the wall.
+- Floor / ceiling obstacle: its distance along the nearest wall from
+  each end, and its distance off that wall's face.
 
 Each value label sits on a ticked dimension line (orange for a
 window's centerline).
@@ -142,10 +144,12 @@ def _resolve_target(obj):
         if node.get('IS_ENTRY_DOOR_BP') or node.get('IS_WINDOW_BP'):
             return ('CAGE', node)
         if node.get('IS_OBSTACLE'):
-            # Only a wall obstacle has wall ends to measure to; a floor
-            # or ceiling obstacle labels nothing (and not the wall).
             if node.parent is not None and node.parent.get('IS_WALL_BP'):
                 return ('OBSTACLE', node)
+            # One on the floor or ceiling is measured off the wall it
+            # lies nearest to (and never labels that wall).
+            if node.parent is None:
+                return ('FLOOR_OBSTACLE', node)
             return None
         if any(node.get(tag) for tag in _PRODUCT_ROOT_TAGS):
             return None
@@ -280,6 +284,57 @@ def _obstacle_label_targets(obs_obj):
     ]
 
 
+def _floor_obstacle_frame(obs_obj):
+    """(wall_obj, wall_len, p, along, across, face_y, near_y) for a floor
+    or ceiling obstacle, in the local space of the wall it is measured
+    from: its center p, the room it takes along and across that wall,
+    the wall face it lies off and its own edge nearest that face. None
+    with no wall to measure from."""
+    from . import ops_obstacles
+    wall_obj = ops_obstacles.reference_wall(obs_obj)
+    if wall_obj is None:
+        return None
+    wall_len = ops_obstacles._wall_length(wall_obj)
+    thickness = ops_obstacles._wall_thickness(wall_obj)
+    along, across = ops_obstacles._footprint_on_wall(obs_obj, wall_obj)
+    p = wall_obj.matrix_world.inverted() @ obs_obj.location
+    if p.y > thickness / 2.0:
+        face_y, near_y = thickness, p.y - across / 2.0
+    else:
+        face_y, near_y = 0.0, p.y + across / 2.0
+    return wall_obj, wall_len, p, along, across, face_y, near_y
+
+
+def _floor_obstacle_gaps(fr):
+    """(left, right, off_wall) clear distances from a floor obstacle's
+    edges to each end of its wall and to the wall's face."""
+    _wall, wall_len, p, along, _across, face_y, near_y = fr
+    return (p.x - along / 2.0, wall_len - p.x - along / 2.0,
+            abs(near_y - face_y))
+
+
+def _floor_obstacle_lines(fr):
+    """[(kind, value, prefix, start, end)] in the wall's local space:
+    one dim line per distance, drawn at the obstacle's own height. A
+    distance the obstacle has run past (it lies beyond that end of the
+    wall, or into the wall) has no line."""
+    _wall, wall_len, p, along, _across, face_y, near_y = fr
+    left, right, off = _floor_obstacle_gaps(fr)
+    rows = []
+    if left >= 0.0:
+        rows.append(('FOBS_L', left, "← ", Vector((0.0, p.y, p.z)),
+                     Vector((left, p.y, p.z))))
+    if right >= 0.0:
+        rows.append(('FOBS_R', right, "→ ",
+                     Vector((wall_len - right, p.y, p.z)),
+                     Vector((wall_len, p.y, p.z))))
+    if (near_y - face_y) * (p.y - face_y) >= 0.0:
+        rows.append(('FOBS_W', off, "Off Wall ",
+                     Vector((p.x, face_y, p.z)),
+                     Vector((p.x, near_y, p.z))))
+    return rows
+
+
 def _dim_segments(context, region, rv3d, s=1.0):
     """Region-space line endpoints ``(dims, centerline)`` for each
     selected wall / door / window, drawn under its labels so every value
@@ -312,6 +367,25 @@ def _dim_segments(context, region, rv3d, s=1.0):
             for p in (a, b, a - tick, a + tick, b - tick, b + tick):
                 out.append(tuple(p))
 
+        if tag == 'FLOOR_OBSTACLE':
+            fr = _floor_obstacle_frame(obj)
+            if fr is None:
+                continue
+            wmw = fr[0].matrix_world
+            for _kind, _value, _prefix, p0, p1 in _floor_obstacle_lines(fr):
+                a = view3d_utils.location_3d_to_region_2d(
+                    region, rv3d, wmw @ p0)
+                b = view3d_utils.location_3d_to_region_2d(
+                    region, rv3d, wmw @ p1)
+                if a is None or b is None:
+                    continue
+                d = b - a
+                if d.length < 1e-6:
+                    continue
+                tick = Vector((-d.y, d.x)).normalized() * CL_TICK_PX * s
+                for pt in (a, b, a - tick, a + tick, b - tick, b + tick):
+                    dims.append(tuple(pt))
+            continue
         if tag == 'OBSTACLE':
             fr = _obstacle_frame(obj)
             if fr is None:
@@ -483,6 +557,16 @@ def compute_labels(context, region, rv3d):
             # round on the back face of a wall.
             rows = _obstacle_label_targets(obj)
             mw = obj.parent.matrix_world
+        elif tag == 'FLOOR_OBSTACLE':
+            # Each distance at the middle of its dim line, in the frame
+            # of the wall it is measured from.
+            fr = _floor_obstacle_frame(obj)
+            if fr is None:
+                continue
+            rows = [(kind, value, prefix, (a + b) / 2.0)
+                    for kind, value, prefix, a, b
+                    in _floor_obstacle_lines(fr)]
+            mw = fr[0].matrix_world
         else:
             rows = _wall_label_targets(obj)
             mw = obj.matrix_world
@@ -694,6 +778,27 @@ def _commit_obstacle(obj, kind, value):
     obj.location = wall_obj.matrix_world @ c
     return True
 
+_FLOOR_OBSTACLE_KINDS = {'FOBS_L', 'FOBS_R', 'FOBS_W'}
+
+
+def _commit_floor_obstacle(obj, kind, value):
+    """Slide a floor or ceiling obstacle so the typed distance holds:
+    along its wall from one end, or off the wall's face. The other
+    distance and its height stay."""
+    from . import ops_obstacles
+    fr = _floor_obstacle_frame(obj)
+    if fr is None:
+        return False
+    left, _right, off = _floor_obstacle_gaps(fr)
+    if kind == 'FOBS_L':
+        ops_obstacles._place_off_wall(obj, fr[0], 'LEFT', value, off)
+    elif kind == 'FOBS_R':
+        ops_obstacles._place_off_wall(obj, fr[0], 'RIGHT', value, off)
+    else:
+        ops_obstacles._place_off_wall(obj, fr[0], 'LEFT', left, value)
+    return True
+
+
 def _commit(obj, kind, value):
     """Write the typed value through the same paths the prompts dialogs
     use; cage size / position edits rebuild the 3D geometry."""
@@ -711,6 +816,8 @@ def _commit(obj, kind, value):
         return walls.set_wall_arc(obj, arc)
     if kind in _OBSTACLE_KINDS:
         return _commit_obstacle(obj, kind, value)
+    if kind in _FLOOR_OBSTACLE_KINDS:
+        return _commit_floor_obstacle(obj, kind, value)
 
     cage = hb_types.GeoNodeCage(obj)
     if not cage.has_modifier():
@@ -809,6 +916,9 @@ class home_builder_OT_edit_room_dim_label(bpy.types.Operator):
                ('OBS_R', "Obstacle From Right", ""),
                ('OBS_B', "Obstacle From Floor", ""),
                ('OBS_T', "Obstacle From Top", ""),
+               ('FOBS_L', "Floor Obstacle From Left", ""),
+               ('FOBS_R', "Floor Obstacle From Right", ""),
+               ('FOBS_W', "Floor Obstacle Off Wall", ""),
                ('WALL_LEN', "Wall Length", ""),
                ('WALL_H', "Wall Height", ""),
                ('WALL_ARC', "Wall Radius", "")],

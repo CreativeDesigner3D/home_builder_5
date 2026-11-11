@@ -2,6 +2,7 @@ import bpy
 import math
 import bmesh
 from mathutils import Vector, Matrix
+from bpy_extras import view3d_utils
 from .. import hb_utils, hb_snap, hb_placement, hb_types, units, hb_house
 from . import tool_session
 
@@ -360,6 +361,26 @@ class home_builder_obstacles_OT_place_obstacle(bpy.types.Operator, hb_placement.
         
         return self.obstacle_obj
     
+    def plane_point(self, z):
+        """The point under the cursor on the level plane at height z, or
+        None when the view runs along that plane (an elevation). A floor
+        or ceiling obstacle follows this, not whatever the cursor is
+        over: a wall under the cursor would pull it onto the wall."""
+        region = getattr(self, 'region', None)
+        rv3d = getattr(region, 'data', None)
+        if rv3d is None or self.mouse_pos is None:
+            return None
+        origin = view3d_utils.region_2d_to_origin_3d(
+            region, rv3d, self.mouse_pos)
+        direction = view3d_utils.region_2d_to_vector_3d(
+            region, rv3d, self.mouse_pos)
+        if abs(direction.z) < 0.05:
+            return None
+        t = (z - origin.z) / direction.z
+        if rv3d.is_perspective and t <= 0.0:
+            return None
+        return origin + direction * t
+
     def update_obstacle_position(self, context):
         """Update obstacle position based on current target."""
         if not self.obstacle_obj:
@@ -406,9 +427,10 @@ class home_builder_obstacles_OT_place_obstacle(bpy.types.Operator, hb_placement.
                         level, self.hit_location.x, self.hit_location.y)
                 else:
                     ceiling_height = context.scene.home_builder.ceiling_height
+                at = self.plane_point(ceiling_height) or self.hit_location
                 self.obstacle_obj.location = Vector((
-                    self.hit_location.x,
-                    self.hit_location.y,
+                    at.x,
+                    at.y,
                     ceiling_height - self.obs_depth / 2
                 ))
             self.obstacle_obj.rotation_euler.z = 0
@@ -421,9 +443,10 @@ class home_builder_obstacles_OT_place_obstacle(bpy.types.Operator, hb_placement.
                     self.obs_surface_type)
                 level = hb_house.active_level(context)
                 floor = level.elevation if level is not None else 0.0
+                at = self.plane_point(floor) or self.hit_location
                 self.obstacle_obj.location = Vector((
-                    self.hit_location.x,
-                    self.hit_location.y,
+                    at.x,
+                    at.y,
                     floor + z_size / 2
                 ))
             self.obstacle_obj.rotation_euler.z = 0
