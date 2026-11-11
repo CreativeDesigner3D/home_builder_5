@@ -105,6 +105,17 @@ def _on_wall(obstacle):
     return parent is not None and bool(parent.get('IS_WALL_BP'))
 
 
+def _off_wall(obstacle):
+    """A floor or ceiling obstacle with a wall to be measured from."""
+    from . import ops_obstacles
+    return (not _on_wall(obstacle)
+            and ops_obstacles.reference_wall(obstacle.id_data) is not None)
+
+
+def _has_wall(obstacle):
+    return _on_wall(obstacle) or _off_wall(obstacle)
+
+
 def _obstacle_summary(o):
     from .. import units
     us = bpy.context.scene.unit_settings
@@ -116,8 +127,9 @@ OBSTACLE_FIELDS = (
         ('distance', 'width', "Width"),
         ('distance', 'height', "Height"),
         ('distance', 'depth', "Depth"),
-        ('choices', 'anchor_x', "Measure From", {'cols': 2, 'when': _on_wall}),
-        ('distance', 'from_side', "From Side", {'when': _on_wall}),
+        ('choices', 'anchor_x', "Measure From", {'cols': 2, 'when': _has_wall}),
+        ('distance', 'from_side', "From Side", {'when': _has_wall}),
+        ('distance', 'from_wall', "Off Wall", {'when': _off_wall}),
         ('choices', 'anchor_z', "Height To", {'cols': 2, 'when': _on_wall}),
         ('distance', 'from_floor', "From Floor", {'when': _on_wall}),
         ('bool', 'blocks_placement', "Block Placement", {'when': _on_wall}),

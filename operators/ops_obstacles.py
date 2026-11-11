@@ -747,13 +747,107 @@ def _edit_z_extent(op):
     return obstacle_z_size(op.height, op.depth, op.obstacle_type, 'WALL')
 
 
+# ---- Floor and ceiling obstacles: located off the nearest wall ----------
+# One that is not on a wall has no frame of its own to be measured in,
+# so it borrows the wall it lies nearest to: a distance along that wall
+# from one of its ends, and a distance off its face.
+
+def _wall_thickness(wall):
+    try:
+        return float(hb_types.GeoNodeWall(wall).get_input('Thickness'))
+    except Exception:
+        return 0.0
+
+
+def reference_wall(obj, name=''):
+    """The wall a floor or ceiling obstacle is measured from: the one
+    named, else the nearest wall in its scene - one it lies in front of
+    before one it lies past the end of. None for an obstacle on a wall,
+    one parented to something else, or a scene with no walls."""
+    if obj.parent is not None:
+        return None
+    if name:
+        wall = bpy.data.objects.get(name)
+        if wall is not None and wall.get('IS_WALL_BP'):
+            return wall
+    scenes = obj.users_scene
+    pool = scenes[0].objects if scenes else bpy.data.objects
+    best = None
+    for wall in pool:
+        if not wall.get('IS_WALL_BP') or wall.hide_viewport:
+            continue
+        length = _wall_length(wall)
+        if length <= 0.0:
+            continue
+        p = wall.matrix_world.inverted() @ obj.location
+        dx = max(-p.x, 0.0, p.x - length)
+        dy = max(-p.y, 0.0, p.y - _wall_thickness(wall))
+        key = (dx > 0.0, math.hypot(dx, dy))
+        if best is None or key < best[0]:
+            best = (key, wall)
+    return best[1] if best else None
+
+
+def _footprint_on_wall(obj, wall):
+    """(along, across): how much of the wall's length and how much room
+    off its face the obstacle's plan outline takes, turned as it lies."""
+    verts = [v.co for v in obj.data.vertices] if obj.type == 'MESH' else []
+    if not verts:
+        return 0.0, 0.0
+    fx = max(v.x for v in verts) - min(v.x for v in verts)
+    fy = max(v.y for v in verts) - min(v.y for v in verts)
+    a = obj.rotation_euler.z - wall.matrix_world.to_euler().z
+    c, n = abs(math.cos(a)), abs(math.sin(a))
+    return fx * c + fy * n, fx * n + fy * c
+
+
+def _floor_location(obj, wall, anchor_x):
+    """(from_side, from_wall) of a floor or ceiling obstacle off wall."""
+    along, across = _footprint_on_wall(obj, wall)
+    p = wall.matrix_world.inverted() @ obj.location
+    left = p.x - along / 2
+    length = _wall_length(wall)
+    from_side = length - left - along if anchor_x == 'RIGHT' else left
+    thickness = _wall_thickness(wall)
+    if p.y > thickness / 2:
+        from_wall = p.y - thickness - across / 2
+    else:
+        from_wall = -p.y - across / 2
+    return from_side, from_wall
+
+
+def _place_off_wall(obj, wall, anchor_x, from_side, from_wall):
+    """Move a floor or ceiling obstacle to those distances off wall,
+    on the side of the wall it is already on. Its height stays."""
+    along, across = _footprint_on_wall(obj, wall)
+    p = wall.matrix_world.inverted() @ obj.location
+    length = _wall_length(wall)
+    left = length - from_side - along if anchor_x == 'RIGHT' else from_side
+    thickness = _wall_thickness(wall)
+    p.x = left + along / 2
+    if p.y > thickness / 2:
+        p.y = thickness + from_wall + across / 2
+    else:
+        p.y = -(from_wall + across / 2)
+    world = wall.matrix_world @ p
+    obj.location.x = world.x
+    obj.location.y = world.y
+
+
 def _update_edit_anchor_x(self, context):
     # Keep the obstacle where it is: re-express the side distance from
     # the newly picked side.
     if self.anchor_x == self.prev_anchor_x:
         return
     self.prev_anchor_x = self.anchor_x
-    self.from_side = max(self.wall_length - self.from_side - self.width, 0.0)
+    span = self.width
+    if getattr(self, 'ref_wall_name', ''):
+        # Off a wall the obstacle may lie turned to it.
+        obj = bpy.data.objects.get(self.target_name)
+        wall = bpy.data.objects.get(self.ref_wall_name)
+        if obj is not None and wall is not None:
+            span = _footprint_on_wall(obj, wall)[0]
+    self.from_side = max(self.wall_length - self.from_side - span, 0.0)
 
 
 def _update_edit_anchor_z(self, context):
@@ -778,7 +872,8 @@ def obstacle_state(obj):
         blocks_placement=bool(obj.get(OBSTACLE_BLOCKS_TAG)),
         anchor_x=obj.get('OBSTACLE_ANCHOR_X', 'LEFT'),
         anchor_z=obj.get('OBSTACLE_ANCHOR_Z', 'BOTTOM'),
-        wall_length=0.0, from_side=0.0, from_floor=0.0)
+        wall_length=0.0, from_side=0.0, from_floor=0.0,
+        ref_wall_name='', from_wall=0.0)
     wall = _obstacle_wall(obj)
     if wall is not None:
         # From the parent chain, not matrix_world: that lags a change just
@@ -790,6 +885,13 @@ def obstacle_state(obj):
         ext = obstacle_z_size(h, d, st.obstacle_type, 'WALL')
         bottom = local.z - ext / 2
         st.from_floor = bottom + ext if st.anchor_z == 'TOP' else bottom
+    else:
+        ref = reference_wall(obj)
+        if ref is not None:
+            st.ref_wall_name = ref.name
+            st.wall_length = _wall_length(ref)
+            st.from_side, st.from_wall = _floor_location(
+                obj, ref, st.anchor_x)
     return st
 
 
@@ -851,6 +953,12 @@ def apply_obstacle(obj, s):
         new_z = obstacle_z_size(s.height, s.depth, obs_type,
                                 build_surface)
         obj.location.z += (new_z - old_z) / 2
+    if not on_wall:
+        ref = (reference_wall(obj, s.ref_wall_name)
+               if getattr(s, 'ref_wall_name', '') else None)
+        if ref is not None:
+            _place_off_wall(obj, ref, s.anchor_x, s.from_side, s.from_wall)
+            obj['OBSTACLE_ANCHOR_X'] = s.anchor_x
 
 
 class home_builder_obstacles_OT_edit_obstacle(bpy.types.Operator):
@@ -914,6 +1022,14 @@ class home_builder_obstacles_OT_edit_obstacle(bpy.types.Operator):
         description="Height of the obstacle's anchor edge (bottom or "
                     "top) off the floor",
         unit='LENGTH')  # type: ignore
+    # A floor or ceiling obstacle is measured off the wall nearest it.
+    ref_wall_name: bpy.props.StringProperty(
+        options={'HIDDEN', 'SKIP_SAVE'})  # type: ignore
+    from_wall: bpy.props.FloatProperty(
+        name="Off Wall",
+        description="Distance from the face of the nearest wall to the "
+                    "obstacle's edge on that side",
+        unit='LENGTH')  # type: ignore
 
     @classmethod
     def poll(cls, context):
@@ -947,6 +1063,13 @@ class home_builder_obstacles_OT_edit_obstacle(bpy.types.Operator):
             ext = _edit_z_extent(self)
             bottom = local.z - ext / 2
             self.from_floor = bottom + ext if az == 'TOP' else bottom
+        else:
+            ref = reference_wall(obj)
+            self.ref_wall_name = ref.name if ref is not None else ''
+            if ref is not None:
+                self.wall_length = _wall_length(ref)
+                self.from_side, self.from_wall = _floor_location(
+                    obj, ref, ax)
         self.orig_size = (self.width, self.height, self.depth)
         self.orig_location = obj.location
         self.orig_anchor = ax + '|' + az
@@ -1015,6 +1138,14 @@ class home_builder_obstacles_OT_edit_obstacle(bpy.types.Operator):
             col.label(text="Location")
             col.prop(self, "from_side", text=self.anchor_x.title())
             col.prop(self, "from_floor", text=self.anchor_z.title())
+        elif self.ref_wall_name:
+            col = layout.column(align=True)
+            col.label(text="Location, from %s" % self.ref_wall_name)
+            row = col.row(align=True)
+            row.prop(self, "anchor_x", expand=True)
+            col.prop(self, "from_side",
+                     text="From %s End" % self.anchor_x.title())
+            col.prop(self, "from_wall")
 
 
 class home_builder_obstacles_OT_pick_obstacle(bpy.types.Operator):

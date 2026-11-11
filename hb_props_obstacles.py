@@ -392,6 +392,10 @@ class HB_Obstacle(PropertyGroup):
         name="From Floor", unit='LENGTH', precision=4, min=0.0,
         description="Height of the obstacle's anchor edge (bottom or top) off the floor",
         get=_state_get('from_floor'), set=_state_set('from_floor'))  # type: ignore
+    from_wall: FloatProperty(
+        name="Off Wall", unit='LENGTH', precision=4,
+        description="On a floor or ceiling: from the face of the nearest wall to the obstacle's edge on that side",
+        get=_state_get('from_wall'), set=_state_set('from_wall'))  # type: ignore
     anchor_x: EnumProperty(
         name="Measure From",
         items=[('LEFT', "Left", "Measure from the wall's left end to the obstacle's left edge"),
