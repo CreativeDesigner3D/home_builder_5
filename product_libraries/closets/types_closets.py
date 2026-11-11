@@ -4427,7 +4427,9 @@ class ClosetStarter(GeoNodeCage):
                 door_v = _convert_legacy_pull_v(
                     opening, op, door_v, rule, bottom_w, height, half,
                     v_tall_old, v_base)
-            if door_v is not None:
+            if rule == 'MIDDLE':
+                y = height / 2.0
+            elif door_v is not None:
                 # A figure the opening typed in is read the same way the
                 # room's is for whichever convention the door landed on:
                 # down from the top on BASE, up from the bottom on TALL
@@ -4441,6 +4443,12 @@ class ClosetStarter(GeoNodeCage):
                 y = height - v_base - half
             elif rule == 'TALL':
                 y = v_tall + half
+                if ((op is None or op.door_pull_location == 'AUTO')
+                        and bottom_w > const.DOOR_PULL_TALL_RAISED):
+                    # Standing on a drawer bank: the tall figure is
+                    # taken off the floor, no lower on the door than an
+                    # upper's pull would sit.
+                    y = max(v_tall - bottom_w, v_upper) + half
             else:                                   # UPPER
                 y = v_upper + half
             y = min(max(y, half), max(height - half, half))

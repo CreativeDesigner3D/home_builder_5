@@ -7891,6 +7891,64 @@ class hb_closets_OT_front_pull(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class hb_closets_OT_set_pull_location(bpy.types.Operator):
+    """Say where the pulls sit on the selected doors: left to the door's
+    place in the run, or held to the top, middle or bottom of the door.
+    It is the opening's setting, so the doors sharing an opening move
+    together; the figures themselves are in Opening Properties"""
+    bl_idname = "hb_closets.set_pull_location"
+    bl_label = "Pull Location"
+    bl_options = {'UNDO'}
+
+    location: bpy.props.EnumProperty(
+        name="Location", items=const.DOOR_PULL_LOCATION_ITEMS,
+        default='AUTO')  # type: ignore
+
+    @classmethod
+    def _doors(cls, context):
+        return [f for f in hb_closets_OT_front_pull._fronts(context)
+                if f.get('hb_part_role') == types_closets.PART_ROLE_DOOR]
+
+    @classmethod
+    def poll(cls, context):
+        if not cls._doors(context):
+            cls.poll_message_set("Select doors")
+            return False
+        return True
+
+    def execute(self, context):
+        roots = []
+        openings = []
+        skipped = 0
+        for door in self._doors(context):
+            opening = types_closets._own_opening(door)
+            if opening is None:
+                skipped += 1        # a bay-wide door has no opening
+                continue
+            if opening not in openings:
+                openings.append(opening)
+                opening.hb_closet_opening.door_pull_location = self.location
+            root = types_closets.find_starter_root(door)
+            if root is not None and root not in roots:
+                roots.append(root)
+        if not openings:
+            self.report({'WARNING'},
+                        "These doors cover a whole bay; their pulls "
+                        "follow the room")
+            return {'CANCELLED'}
+        for root in roots:
+            types_closets.recalculate_closet_starter(root)
+            _apply_finish(root)
+        _redraw_viewports(context)
+        label = next(l for i, l, _d in const.DOOR_PULL_LOCATION_ITEMS
+                     if i == self.location)
+        msg = "%d opening(s): pulls at %s" % (len(openings), label.lower())
+        if skipped:
+            msg += "; %d bay-wide door(s) skipped" % skipped
+        self.report({'INFO'}, msg)
+        return {'FINISHED'}
+
+
 class hb_closets_OT_front_style(bpy.types.Operator):
     """Give the selected fronts a style of their own, or hand them back
     to the room.
@@ -11615,9 +11673,12 @@ class hb_closets_OT_opening_prompts(bpy.types.Operator):
             # door turns out to work from - the same one number, read
             # the way that convention reads it.
             v_label, v_locked = "From Top/Bottom", "Follows the door"
-        _takeover_row(col, self, 'unlock_door_pull_vertical',
-                      'door_pull_vertical_location', v_locked,
-                      label=v_label)
+        if rule == 'MIDDLE':
+            col.label(text="Centered on the door height")
+        else:
+            _takeover_row(col, self, 'unlock_door_pull_vertical',
+                          'door_pull_vertical_location', v_locked,
+                          label=v_label)
         _takeover_row(col, self, 'unlock_door_pull_edge',
                       'door_pull_horizontal_offset',
                       as_length(cp.pull_horizontal_offset),
@@ -12472,6 +12533,7 @@ classes = (
     hb_closets_OT_adj_shelf_step,
     hb_closets_OT_front_style,
     hb_closets_OT_front_pull,
+    hb_closets_OT_set_pull_location,
     hb_closets_OT_lock_l_shelf,
     hb_closets_OT_lock_shelf,
     hb_closets_OT_adj_shelf_prompts,

@@ -397,6 +397,13 @@ DOOR_PULL_FROM_EDGE = inch(1.5)
 # Tall, anything else a Base (Pull Location).
 DOOR_PULL_UPPER_ABOVE = inch(30.0)
 DOOR_PULL_TALL_OVER = inch(50.0)
+# A tall door on Auto that starts higher than this is standing on
+# something (a drawer bank under it) rather than on the floor. Its pull
+# is held at the tall figure off the FLOOR, so it stays in reach instead
+# of riding up the door by however tall the drawers are. Below it the
+# door is on the floor (over a kick at most) and reads off its own
+# bottom as usual.
+DOOR_PULL_TALL_RAISED = inch(12.0)
 DOOR_PULL_LOCATION_ITEMS = [
     ('AUTO', "Auto",
      "Pick the convention from where the door sits in the run"),
@@ -406,6 +413,7 @@ DOOR_PULL_LOCATION_ITEMS = [
      "door"),
     ('UPPER', "Upper",
      "Hold the pull up from the bottom edge of the door"),
+    ('MIDDLE', "Middle", "Center the pull on the height of the door"),
 ]
 # Door-front size limits, ported from the prior library: a swing
 # door is made up to 24 5/8" wide by 84" tall, and a lift-up - lying on
