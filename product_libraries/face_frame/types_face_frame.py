@@ -239,10 +239,15 @@ PART_ROLE_RIGHT_CORNER_FINISH_KICK = 'RIGHT_CORNER_FINISH_KICK'
 PART_ROLE_MID_FINISH_KICK = 'MID_FINISH_KICK'
 PART_ROLE_LEFT_KICK_RETURN = 'LEFT_KICK_RETURN'
 PART_ROLE_RIGHT_KICK_RETURN = 'RIGHT_KICK_RETURN'
-# Board closing an inset end's recess at a run neighbour's kick line
-# (see solver.kick_return_closure). Created on first use.
+# Loose sub kick filler closing an inset end's recess at a run
+# neighbour's kick line, and the finish board on its face (see
+# solver.kick_return_closure / kick_return_closure_finish). Created on
+# first use.
 PART_ROLE_LEFT_KICK_RETURN_CLOSURE = 'LEFT_KICK_RETURN_CLOSURE'
 PART_ROLE_RIGHT_KICK_RETURN_CLOSURE = 'RIGHT_KICK_RETURN_CLOSURE'
+PART_ROLE_LEFT_KICK_CLOSURE_FINISH = 'LEFT_KICK_CLOSURE_FINISH'
+PART_ROLE_RIGHT_KICK_CLOSURE_FINISH = 'RIGHT_KICK_CLOSURE_FINISH'
+KICK_CLOSURE_NAME = 'Loose Toe Kick Filler '
 # Loose toe kick ladder sub-base (toe_kick_type == 'LOOSE'): a freestanding
 # frame the floated carcass sits on - front + rear rail spanning between two
 # front-to-back end boards. All four are finished-material parts.
@@ -3326,13 +3331,27 @@ class FaceFrameCabinet(GeoNodeCage):
                 self._ensure_kick_return(
                     PART_ROLE_RIGHT_KICK_RETURN, 'Toe Kick Return Right',
                     mirror_z=False)
-                for close_side, close_role in (
-                        ('LEFT', PART_ROLE_LEFT_KICK_RETURN_CLOSURE),
-                        ('RIGHT', PART_ROLE_RIGHT_KICK_RETURN_CLOSURE)):
+                for close_side, close_role, finish_role in (
+                        ('LEFT', PART_ROLE_LEFT_KICK_RETURN_CLOSURE,
+                         PART_ROLE_LEFT_KICK_CLOSURE_FINISH),
+                        ('RIGHT', PART_ROLE_RIGHT_KICK_RETURN_CLOSURE,
+                         PART_ROLE_RIGHT_KICK_CLOSURE_FINISH)):
                     if solver.kick_return_closure(layout, close_side):
-                        self._ensure_loose_kick_part(
+                        filler = self._ensure_loose_kick_part(
                             close_role,
-                            'Toe Kick Return Closure '
+                            KICK_CLOSURE_NAME + close_side.title(),
+                            kind='RAIL', mirror_z=True)
+                        # Built under an earlier name as a finished
+                        # board on the kick face.
+                        if filler.name.startswith(
+                                'Toe Kick Return Closure'):
+                            filler.name = (KICK_CLOSURE_NAME
+                                           + close_side.title())
+                    if solver.kick_return_closure_finish(
+                            layout, close_side):
+                        self._ensure_loose_kick_part(
+                            finish_role,
+                            'Finish Toe Kick Filler '
                             + close_side.title(),
                             kind='RAIL', mirror_z=True)
                 # Loose ladder sub-base. Always ensured (hidden in the
@@ -3808,11 +3827,17 @@ class FaceFrameCabinet(GeoNodeCage):
                 part.set_input('Thickness', thickness)
 
             elif role in (PART_ROLE_LEFT_KICK_RETURN_CLOSURE,
-                          PART_ROLE_RIGHT_KICK_RETURN_CLOSURE):
-                seg = solver.kick_return_closure(
-                    layout,
-                    'LEFT' if role == PART_ROLE_LEFT_KICK_RETURN_CLOSURE
-                    else 'RIGHT')
+                          PART_ROLE_RIGHT_KICK_RETURN_CLOSURE,
+                          PART_ROLE_LEFT_KICK_CLOSURE_FINISH,
+                          PART_ROLE_RIGHT_KICK_CLOSURE_FINISH):
+                close_side = ('LEFT' if role.startswith('LEFT')
+                              else 'RIGHT')
+                if role in (PART_ROLE_LEFT_KICK_RETURN_CLOSURE,
+                            PART_ROLE_RIGHT_KICK_RETURN_CLOSURE):
+                    seg = solver.kick_return_closure(layout, close_side)
+                else:
+                    seg = solver.kick_return_closure_finish(
+                        layout, close_side)
                 child.hide_viewport = seg is None
                 child.hide_render = seg is None
                 if seg is None:

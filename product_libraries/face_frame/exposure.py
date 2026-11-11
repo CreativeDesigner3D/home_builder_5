@@ -593,17 +593,22 @@ def kick_continues_past_end(cab_obj, side):
     return False
 
 
-def end_kick_inset_close_y(cab_obj, side, setback):
+def end_kick_inset_closure(cab_obj, side, setback):
     """Where a floor-standing run neighbour on the same wall closes
-    cab_obj's inset end ('left' / 'right'): the Y of that neighbour's
-    kick face in cab_obj's own space, or None.
+    cab_obj's inset end ('left' / 'right'), or None. Returns a dict in
+    cab_obj's own space:
+
+      y         front face of the neighbour's sub kick
+      finish_t  thickness of the finish kick on that face (0 = none)
+      gap       from cab_obj's end to the neighbour's side panel
 
     Applies when the neighbour covers the end back to within
     ``setback`` of the cabinet front - nothing of the end shows behind
     the toe kick line, so the recess at that end only needs to run back
-    to the neighbour's kick, where a short board closes it. A shallower
-    neighbour that leaves more of the end showing than the setback does
-    not count; the inset stays open the full depth.
+    to the neighbour's kick, where a filler in line with that kick
+    closes it. A shallower neighbour that leaves more of the end
+    showing than the setback does not count; the inset stays open the
+    full depth.
     """
     if not _is_face_frame_carcass(cab_obj):
         return None
@@ -639,9 +644,20 @@ def end_kick_inset_close_y(cab_obj, side, setback):
             continue
         sib_cab = sib.face_frame_cabinet
         face = sib_front + getattr(sib_cab, 'toe_kick_setback', 0.0)
+        finish_t = 0.0
         if getattr(sib_cab, 'include_finish_toe_kick', False):
-            face -= getattr(sib_cab, 'finish_toe_kick_thickness', 0.0)
-        return face - cab_obj.location.y
+            finish_t = getattr(sib_cab, 'finish_toe_kick_thickness', 0.0)
+        # The neighbour's side stands its scribe in from the shared
+        # edge; a finished end has no scribe gap to cross.
+        gap = 0.0
+        if getattr(sib_cab, other_side + '_finished_end_condition',
+                   '') == 'UNFINISHED':
+            gap = max(0.0, getattr(sib_cab, other_side + '_scribe', 0.0))
+        return {
+            'y': face - cab_obj.location.y,
+            'finish_t': max(0.0, finish_t),
+            'gap': gap,
+        }
     return None
 
 
