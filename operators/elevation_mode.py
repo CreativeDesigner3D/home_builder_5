@@ -867,7 +867,7 @@ def enter(context, wall, keep_view=None):
     extra = _isolate(context, wall)
     _state = {'scene': context.scene.name, 'wall': wall.name,
               'r3d': r3d.as_pointer(), 'view': saved, 'extra': extra,
-              'preview': set(), 'fit': 2, 'paper': paper}
+              'preview': set(), 'fit': 3, 'paper': paper}
     _aim(r3d, wall)
     _bump_gen()
     area.tag_redraw()
@@ -3569,6 +3569,65 @@ def _side_render():
     return None
 
 
+_chrome_cache = {}
+CHROME_REFRESH = 0.3        # s the HUD's outline is kept between reads
+CHROME_JOIN_PX = 10         # HUD pieces this close count as one block
+
+
+def _chrome_rects(context, area):
+    """The HUD's blocks in this area as a few (x, y, w, h): the pinned
+    panel, the selection inspector, the tool palette and the rows of
+    buttons. The side views are pictures; they stay under these."""
+    import time
+    now = time.monotonic()
+    key = (area.as_pointer(), area.width, area.height)
+    if _chrome_cache.get('key') == key \
+            and now - _chrome_cache.get('at', 0.0) < CHROME_REFRESH:
+        return _chrome_cache['rects']
+    rects = []
+    try:
+        from . import viewport_hud, room_palette, selection_inspector
+        for fn in (viewport_hud.pinned_panel_rect, selection_inspector.rect):
+            try:
+                rects.append(fn(context, area))
+            except Exception:
+                pass
+        try:
+            rects += [r for _w, r in viewport_hud.compute_layout(context,
+                                                                 area)]
+        except Exception:
+            pass
+        try:
+            if room_palette._palette_active(context):
+                rects += [r for _k, _p, r in
+                          room_palette.compute_layout(area)]
+        except Exception:
+            pass
+    except Exception as exc:
+        print("Elevation side views HUD:", exc)
+    j = CHROME_JOIN_PX * _s()
+    blocks = []
+    for r in rects:
+        if r is None or r[2] <= 0 or r[3] <= 0:
+            continue
+        cur = [r[0], r[1], r[0] + r[2], r[1] + r[3]]
+        merged = True
+        while merged:
+            merged = False
+            for other in blocks:
+                if (cur[0] - j < other[2] and cur[2] + j > other[0]
+                        and cur[1] - j < other[3] and cur[3] + j > other[1]):
+                    cur = [min(cur[0], other[0]), min(cur[1], other[1]),
+                           max(cur[2], other[2]), max(cur[3], other[3])]
+                    blocks.remove(other)
+                    merged = True
+                    break
+        blocks.append(cur)
+    out = [(b[0], b[1], b[2] - b[0], b[3] - b[1]) for b in blocks]
+    _chrome_cache.update(key=key, at=now, rects=out)
+    return out
+
+
 def _draw_side_views(context, area, region, dims, extra, s):
     wall = active_wall(context)
     if wall is None or extra is None:
@@ -3652,10 +3711,6 @@ def _draw():
     s = _s()
 
     def paint():
-        try:
-            _draw_side_views(context, area, region, dims, extra, s)
-        except Exception as exc:
-            print(f"Elevation side views: {exc}")
         gpu.state.blend_set('ALPHA')
         if extra is not None:
             fx0, fx1, fy = extra['floor']
@@ -3743,6 +3798,18 @@ def _draw():
                         in {'MATERIAL', 'RENDERED'})
     except Exception:
         pass
+    # The side views are pictures: they go down first, and never over
+    # the HUD's panels, palette and button rows.
+    try:
+        if extra is not None and extra.get('side'):
+            from ..hb_gpu_ui import paint_outside_rects
+            paint_outside_rects(
+                _chrome_rects(context, area),
+                lambda: _draw_side_views(context, area, region, dims,
+                                         extra, s))
+            gpu.state.blend_set('NONE')
+    except Exception as exc:
+        print(f"Elevation side views: {exc}")
     try:
         try:
             from . import viewport_hud
@@ -5251,7 +5318,7 @@ class home_builder_OT_elevation_click(bpy.types.Operator):
             elif got[1].startswith('SHOW:'):
                 toggle_show_option(context.scene, got[1][5:])
                 if got[1][5:] in ('PLAN', 'ISO') and _state is not None:
-                    _state['fit'] = 2       # make room for it, or close up
+                    _state['fit'] = 3       # make room for it, or close up
             elif got[1] == 'PRINT':
                 bpy.ops.home_builder.elevation_print()
             else:
