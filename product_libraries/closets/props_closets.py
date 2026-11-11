@@ -2447,9 +2447,8 @@ class Closets_Scene_Props(PropertyGroup):
         name="Shelves Behind Doors",
         description="Put adjustable shelves into an opening when a "
                     "door is added to it, where the opening is still "
-                    "empty. Off, adding a door adds nothing else, the "
-                    "way the reference version did",
-        default=False)  # type: ignore
+                    "empty. Off, adding a door adds nothing else",
+        default=True)  # type: ignore
 
     notch_panels_for_base_board: BoolProperty(
         name="Notch Panels for Base Board",
