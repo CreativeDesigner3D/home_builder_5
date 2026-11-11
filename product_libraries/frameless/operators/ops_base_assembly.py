@@ -327,6 +327,30 @@ def clear_cages_over(context, base):
             solver_frameless.sync_cage_kick_clear(cab, on_base=True)
 
 
+def sync_cages_over_bases(scene):
+    """Set every Ladder Style cabinet's cage by whether a base assembly
+    stands under it now. Read from where things are, so it also covers
+    bases kept through a rebuild and files saved before cages were
+    lifted clear of their bases."""
+    from .. import solver_frameless
+    bases = _all_base_assemblies(scene)
+    for cab in scene.objects:
+        if not wants_base_assembly(cab):
+            continue
+        try:
+            on_base = any(stands_on(cab, base) for base in bases)
+            solver_frameless.sync_cage_kick_clear(cab, on_base=on_base)
+        except Exception:
+            pass
+
+
+def upgrade_cages(scene=None):
+    """Run on load: see ``sync_cages_over_bases``."""
+    for scn in ([scene] if scene is not None else list(bpy.data.scenes)):
+        if any(o.get('IS_BASE_ASSEMBLY') for o in scn.objects):
+            sync_cages_over_bases(scn)
+
+
 def remove_base_assemblies(objs):
     from .. import solver_frameless
     removed = 0
@@ -403,6 +427,10 @@ class hb_frameless_OT_add_base_assemblies(bpy.types.Operator):
             bpy.ops.hb_frameless.assign_cabinet_style(cabinet_name=obj.name)
             hb_utils.run_calc_fix(context, obj)
             bpy.ops.hb_frameless.toggle_mode(search_obj_name=obj.name)
+
+        # Cabinets on a base that was kept are cleared of it as well.
+        context.view_layer.update()
+        sync_cages_over_bases(context.scene)
 
         message = f"Created {len(created)} base assembly(s)"
         if kept:

@@ -1079,6 +1079,18 @@ def _solve_corner_filler(root, parts, dim_x, dim_y, dim_z):
                       length=dim_z - tkh, width=ret, thickness=mt,
                       visible=on)
 
+    # The cage is what gets clicked, so it is drawn back to the filler
+    # itself: to the face when that stands behind the door plane, and up
+    # off a separate toe kick platform that runs on under it.
+    try:
+        from . import solver_frameless as sf
+        sf.set_cage_clamp(root, sf.KICK_CLEAR_MOD, sf.KICK_CLEAR_GROUP,
+                          'Floor', 'Z', tkh, tkh > 0.0 and not kick_on)
+        sf.set_cage_clamp(root, sf.FRONT_CLEAR_MOD, sf.FRONT_CLEAR_GROUP,
+                          'Front', 'Y', face_y, not on_doors)
+    except Exception:
+        pass
+
 
 class CornerFiller(Product):
     """The wall scribe filler that closes an inside corner.

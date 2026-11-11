@@ -150,6 +150,13 @@ def load_file_post(scene):
     types_products.upgrade_products()
     solver_frameless.upgrade_cabinets()
 
+    # Cabinet cages stand clear of the base assemblies under them.
+    try:
+        from .product_libraries.frameless.operators import ops_base_assembly
+        ops_base_assembly.upgrade_cages()
+    except Exception:
+        traceback.print_exc()
+
     # Style colours are a view mode, held per file and on by default, so
     # the scene has to be painted for it on load rather than only when
     # the option is switched.

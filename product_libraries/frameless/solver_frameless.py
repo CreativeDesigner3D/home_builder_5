@@ -1449,16 +1449,24 @@ KICK_CLEAR_GROUP = 'HB Cage Kick Clear'
 LADDER_TOE_KICK = 1     # 'Ladder Style' in the Toe Kick Type prompt
 
 
-def _kick_clear_group():
-    group = bpy.data.node_groups.get(KICK_CLEAR_GROUP)
+# A wall scribe filler uses the same lift, and a second clamp that draws
+# its cage back to its face when the face stands behind the door plane.
+FRONT_CLEAR_MOD = 'Front Clear'
+FRONT_CLEAR_GROUP = 'HB Cage Front Clear'
+
+
+def _clamp_group(name, socket, axis):
+    """A group that holds one axis of every point at or above its
+    ``socket`` input."""
+    group = bpy.data.node_groups.get(name)
     if group is not None:
         return group
-    group = bpy.data.node_groups.new(KICK_CLEAR_GROUP, 'GeometryNodeTree')
+    group = bpy.data.node_groups.new(name, 'GeometryNodeTree')
     group.interface.new_socket('Geometry', in_out='INPUT',
                                socket_type='NodeSocketGeometry')
-    floor = group.interface.new_socket('Floor', in_out='INPUT',
+    limit = group.interface.new_socket(socket, in_out='INPUT',
                                        socket_type='NodeSocketFloat')
-    floor.default_value = 0.0
+    limit.default_value = 0.0
     group.interface.new_socket('Geometry', in_out='OUTPUT',
                                socket_type='NodeSocketGeometry')
     nodes, links = group.nodes, group.links
@@ -1471,22 +1479,48 @@ def _kick_clear_group():
     comb = nodes.new('ShaderNodeCombineXYZ')
     set_pos = nodes.new('GeometryNodeSetPosition')
     links.new(pos.outputs[0], sep.inputs[0])
-    links.new(sep.outputs['Z'], lift.inputs[0])
-    links.new(g_in.outputs['Floor'], lift.inputs[1])
-    links.new(sep.outputs['X'], comb.inputs['X'])
-    links.new(sep.outputs['Y'], comb.inputs['Y'])
-    links.new(lift.outputs[0], comb.inputs['Z'])
+    links.new(sep.outputs[axis], lift.inputs[0])
+    links.new(g_in.outputs[socket], lift.inputs[1])
+    for other in 'XYZ':
+        if other != axis:
+            links.new(sep.outputs[other], comb.inputs[other])
+    links.new(lift.outputs[0], comb.inputs[axis])
     links.new(g_in.outputs['Geometry'], set_pos.inputs['Geometry'])
     links.new(comb.outputs[0], set_pos.inputs['Position'])
     links.new(set_pos.outputs[0], g_out.inputs['Geometry'])
     return group
 
 
-def _floor_socket(group):
+def _kick_clear_group():
+    return _clamp_group(KICK_CLEAR_GROUP, 'Floor', 'Z')
+
+
+def _clamp_socket(group, socket):
     for item in group.interface.items_tree:
-        if getattr(item, 'in_out', None) == 'INPUT' and item.name == 'Floor':
+        if getattr(item, 'in_out', None) == 'INPUT' and item.name == socket:
             return item.identifier
     return None
+
+
+def set_cage_clamp(root, mod_name, group_name, socket, axis, value, on):
+    """Hold the ``axis`` side of a cage's drawn mesh at ``value`` with a
+    trailing modifier, or let the full box back when ``on`` is False.
+    The modifier is only added the first time it is wanted."""
+    mod = root.modifiers.get(mod_name)
+    if mod is None:
+        if not on:
+            return
+        mod = root.modifiers.new(mod_name, 'NODES')
+    if mod.node_group is None:
+        mod.node_group = _clamp_group(group_name, socket, axis)
+    key = _clamp_socket(mod.node_group, socket)
+    if on and key is not None:
+        current = hb_utils.try_get_gn_input(mod, key, 0.0)
+        if abs(float(current or 0.0) - value) > 1e-7:
+            hb_utils.set_gn_input(mod, key, value)
+            root.update_tag()
+    if mod.show_viewport != on:
+        mod.show_viewport = on
 
 
 def sync_cage_kick_clear(root, kind=None, on_base=None):
@@ -1505,21 +1539,8 @@ def sync_cage_kick_clear(root, kind=None, on_base=None):
     if (on_base and kind in ('BASE', 'TALL') and 'CORNER_TYPE' not in root
             and int(root.get('Toe Kick Type', -1)) == LADDER_TOE_KICK):
         floor = max(float(prompt(root, 'Toe Kick Height', 0.0)), 0.0)
-    if mod is None:
-        if floor <= 0.0:
-            return
-        mod = root.modifiers.new(KICK_CLEAR_MOD, 'NODES')
-    if mod.node_group is None:
-        mod.node_group = _kick_clear_group()
-    key = _floor_socket(mod.node_group)
-    if key is not None:
-        current = hb_utils.try_get_gn_input(mod, key, 0.0)
-        if abs(float(current or 0.0) - floor) > 1e-7:
-            hb_utils.set_gn_input(mod, key, floor)
-            root.update_tag()
-    on = floor > 0.0
-    if mod.show_viewport != on:
-        mod.show_viewport = on
+    set_cage_clamp(root, KICK_CLEAR_MOD, KICK_CLEAR_GROUP, 'Floor', 'Z',
+                   floor, floor > 0.0)
 
 
 def recalculate_cabinet(obj):
