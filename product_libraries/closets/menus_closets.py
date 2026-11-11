@@ -307,11 +307,9 @@ class HOME_BUILDER_MT_closet_opening_commands(bpy.types.Menu):
 
     def draw(self, context):
         # Properties, Change Opening, then the add entries, then clear.
-        # Both levels are offered: the opening dialog edits what fills
-        # this segment, the bay dialog the section it sits in.
+        # The opening's own settings are fields on the SELECTED tab;
+        # the bay dialog edits the section it sits in.
         layout = self.layout
-        layout.operator("hb_closets.opening_prompts",
-                        text="Opening Properties...", icon='WINDOW')
         layout.operator("hb_closets.bay_prompts",
                         text="Bay Properties...", icon='WINDOW')
         layout.separator()
@@ -615,17 +613,17 @@ class HOME_BUILDER_MT_closet_part_commands(bpy.types.Menu):
             offered = True
         if role in opening_roles:
             # A front across a whole bay hangs off the bay rather than
-            # an opening; its settings are the bay dialog's.
+            # an opening; its settings are the bay dialog's. Anything in
+            # an opening is set on the SELECTED tab's opening section.
             in_opening = any(p.get(types_closets.TAG_OPENING_CAGE)
                              for p in _parents(obj))
-            if in_opening or role not in (types_closets.PART_ROLE_DOOR,
-                                          types_closets.PART_ROLE_DRAWER_FRONT):
-                layout.operator("hb_closets.opening_prompts",
-                                text="Opening Properties...", icon='WINDOW')
-            elif types_closets.find_bay_cage(obj) is not None:
+            if (not in_opening
+                    and role in (types_closets.PART_ROLE_DOOR,
+                                 types_closets.PART_ROLE_DRAWER_FRONT)
+                    and types_closets.find_bay_cage(obj) is not None):
                 layout.operator("hb_closets.bay_prompts",
                                 text="Bay Properties...", icon='WINDOW')
-            offered = True
+                offered = True
         if (role in bay_roles
                 and types_closets.find_bay_cage(obj) is not None):
             layout.operator("hb_closets.bay_prompts",

@@ -6,9 +6,9 @@ face frame cabinets read. The part picked is the section that starts
 open; the title is a breadcrumb, and a click on a step above selects it.
 
 The sizes and switches that rebuild the closet as they change are
-fields here. What an opening holds is worked out by its dialog from
-several settings at once, so the opening section says what it holds and
-leaves the change to its commands -- the right-click menu's own.
+fields here. An opening's section holds everything about it -- its
+interior, rod, front, overlays, pulls and back, each a group that folds
+(opening_card) -- so there is no dialog to open for them.
 """
 
 import bpy
@@ -85,35 +85,6 @@ def _accent(sp):
     return sp.add_top_accent_shelf
 
 
-def _fill(op):
-    """What fills the opening, and how many, as its dialog reads it."""
-    if int(op.drawer_qty):
-        return f"{int(op.drawer_qty)} Drawers"
-    if int(op.rollout_qty):
-        return f"{int(op.rollout_qty)} Rollout Trays"
-    if int(op.slant_qty):
-        return f"{int(op.slant_qty)} Slanted Shoe Shelves"
-    if int(op.cubby_cols) > 1 or int(op.cubby_rows) > 1:
-        return f"Cubbies {int(op.cubby_cols)} x {int(op.cubby_rows)}"
-    if int(op.adj_shelf_qty):
-        return f"{int(op.adj_shelf_qty)} Adjustable Shelves"
-    return "Empty"
-
-
-def _opening_size(op):
-    from ...hb_types import GeoNodeObject
-    try:
-        node = GeoNodeObject(op.id_data)
-        return f"{_dist(node.get_input('Dim X'))} x {_dist(node.get_input('Dim Z'))}"
-    except Exception:
-        return None
-
-
-def _door(op):
-    swing = op.door_swing or 'NONE'
-    return None if swing == 'NONE' else swing.replace('_', ' ').title()
-
-
 # ---- Fields -----------------------------------------------------------------
 
 STARTER_FIELDS = (
@@ -153,13 +124,6 @@ BAY_FIELDS = (
         ('bool', 'is_hamper', "Hamper"),
     )}),
 )
-
-OPENING_FIELDS = (
-    ('value', _opening_size, "Size"),
-    ('value', _fill, "Holds"),
-    ('value', _door, "Door"),
-)
-
 
 # ---- The page ---------------------------------------------------------------
 
@@ -216,10 +180,13 @@ def blocks(context, item):
              {'icon': 'cab_bay', 'summary': _bay_summary, 'fields': BAY_FIELDS}),
         ), bay_obj.hb_closet_bay))
     if opening_obj is not None:
+        from . import opening_card
         out.extend(options_panel.field_blocks(context, (
             ('group', OPENING_GROUP, trail[-1],
-             {'icon': 'cab_opening', 'summary': _fill, 'fields': OPENING_FIELDS}),
-        ), opening_obj.hb_closet_opening))
+             {'icon': 'cab_opening',
+              'summary': lambda _ow: opening_card.fill_text(opening_obj),
+              'fields': opening_card.fields(opening_obj)}),
+        ), opening_card.owner(opening_obj)))
     # The commands of what is picked: its right-click menu.
     picked = {'starter': root, 'bay': bay_obj, 'opening': opening_obj}[kind]
     menu = generic_page.menu_id(context.active_object) or generic_page.menu_id(picked)
