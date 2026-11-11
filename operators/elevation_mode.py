@@ -158,6 +158,10 @@ PRODUCT_MARKERS = (
 OPENING_MARKERS = ('IS_WINDOW_BP', 'IS_ENTRY_DOOR_BP')
 
 HIDE_TAG = 'HB_ELEVATION_HIDDEN'
+# The wall's own display colour, kept while the elevation shows it white
+# (the sheet's wall is paper).
+WALL_COLOR_TAG = 'HB_ELEVATION_WALL_COLOR'
+WALL_WHITE = (1.0, 1.0, 1.0, 1.0)
 
 # ---- Module state ----------------------------------------------------------
 
@@ -626,11 +630,24 @@ def _isolate(context, wall):
             continue
         obj.hide_set(True)
         obj[HIDE_TAG] = True
+    # The wall reads as paper, the way it does on the sheet.
+    try:
+        if WALL_COLOR_TAG not in wall:
+            wall[WALL_COLOR_TAG] = list(wall.color)
+        wall.color = WALL_WHITE
+    except Exception:
+        pass
     return [o.name for o in extra]
 
 
 def _unisolate(scene):
     for obj in scene.objects:
+        if WALL_COLOR_TAG in obj:
+            try:
+                obj.color = tuple(obj[WALL_COLOR_TAG])[:4]
+            except Exception:
+                pass
+            del obj[WALL_COLOR_TAG]
         if obj.get(HIDE_TAG):
             try:
                 obj.hide_set(False)
@@ -1209,6 +1226,8 @@ SHOW_OPTIONS = (
 #    direction), 'text': str (may hold newlines),
 #    'align': 'LEFT' | 'CENTER' | 'RIGHT'}
 #   {'kind': 'LINES', 'points': [Vector, ...]} (pairs, like GPU LINES)
+#   {'kind': 'FILL', 'points': [Vector, ...]} (a flat polygon's corners
+#    in order, filled in 'color' under everything else: a return wall)
 #   {'kind': 'BUBBLE', 'origin': Vector, 'text': str} (a circled mark,
 #    the ring sized to the text on screen)
 # Any primitive may carry 'color' (RGBA) to stand out from the ink.
@@ -1394,6 +1413,7 @@ def _annotations(scene, wall):
 
 ANNOTATION_FONT_SIZE = 11
 ANNOTATION_LINE = (0.10, 0.10, 0.12, 0.9)
+NOTE_FILL = (0.78, 0.78, 0.78, 1.0)
 BUBBLE_FONT_SIZE = 12
 BUBBLE_SEGMENTS = 32
 
@@ -1456,6 +1476,20 @@ def _draw_annotations(context, region, rv3d):
     def P(v):
         return view3d_utils.location_3d_to_region_2d(region, rv3d, v)
 
+    for pr in prims:
+        if pr.get('kind') != 'FILL':
+            continue
+        pts = [P(v) for v in pr.get('points', ())]
+        if len(pts) < 3 or any(p is None for p in pts):
+            continue
+        shader = gpu.shader.from_builtin('UNIFORM_COLOR')
+        shader.bind()
+        shader.uniform_float("color", tuple(pr.get('color', NOTE_FILL)))
+        batch_for_shader(shader, 'TRI_FAN',
+                         {"pos": [(p.x, p.y) for p in pts]}).draw(shader)
+        ring = [(p.x, p.y) for p in pts]
+        _stroke(region, [q for a, b in zip(ring, ring[1:] + ring[:1])
+                         for q in (a, b)], 1.0 * s, ANNOTATION_LINE)
     lines = {}
     for pr in prims:
         if pr.get('kind') != 'LINES':
@@ -3690,6 +3724,18 @@ def _print_annotations(page, scene, wall, region, view, ps):
     def P(v):
         return view3d_utils.location_3d_to_region_2d(region, view, v)
 
+    page.line_width(0.5 * ps)
+    for pr in prims:
+        if pr.get('kind') != 'FILL':
+            continue
+        pts = [P(v) for v in pr.get('points', ())]
+        if len(pts) < 3 or any(p is None for p in pts):
+            continue
+        page.fill_color(pr.get('color', NOTE_FILL))
+        page.stroke_color(ANNOTATION_LINE)
+        ring = [(p.x, p.y) for p in pts]
+        page.polygon(ring, fill=True, stroke=False)
+        page.lines(list(zip(ring, ring[1:] + ring[:1])))
     page.line_width(1.0 * ps)
     for pr in prims:
         if pr.get('kind') != 'LINES':
