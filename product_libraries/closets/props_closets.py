@@ -1563,6 +1563,12 @@ class Closet_Bay_Props(PropertyGroup):
         default=False, update=_update_bay_prop)  # type: ignore
     # How far a bay-wide front is drawn standing open. Purely a drawing
     # setting: it moves the front and nothing else.
+    door_pull_location: EnumProperty(
+        name="Door Pull Location",
+        description="Which convention holds the pulls on the doors "
+                    "across this bay",
+        items=const.DOOR_PULL_LOCATION_ITEMS,
+        default='AUTO', update=_update_bay_prop)  # type: ignore
     open_door: FloatProperty(
         name="Open Door",
         description="How far the front across this bay is drawn standing "

@@ -7894,8 +7894,9 @@ class hb_closets_OT_front_pull(bpy.types.Operator):
 class hb_closets_OT_set_pull_location(bpy.types.Operator):
     """Say where the pulls sit on the selected doors: left to the door's
     place in the run, or held to the top, middle or bottom of the door.
-    It is the opening's setting, so the doors sharing an opening move
-    together; the figures themselves are in Opening Properties"""
+    It is the opening's setting (the bay's, for doors across a whole
+    bay), so a pair of doors moves together; the figures themselves are
+    in Opening Properties"""
     bl_idname = "hb_closets.set_pull_location"
     bl_label = "Pull Location"
     bl_options = {'UNDO'}
@@ -7922,19 +7923,24 @@ class hb_closets_OT_set_pull_location(bpy.types.Operator):
         skipped = 0
         for door in self._doors(context):
             opening = types_closets._own_opening(door)
-            if opening is None:
-                skipped += 1        # a bay-wide door has no opening
+            if opening is not None:
+                holder, props = opening, opening.hb_closet_opening
+            elif (door.get('hb_bay_door') and door.parent is not None
+                    and door.parent.get(types_closets.TAG_BAY_CAGE)):
+                # A door across the whole bay is the bay's.
+                holder, props = door.parent, door.parent.hb_closet_bay
+            else:
+                skipped += 1
                 continue
-            if opening not in openings:
-                openings.append(opening)
-                opening.hb_closet_opening.door_pull_location = self.location
+            if holder not in openings:
+                openings.append(holder)
+                if props.door_pull_location != self.location:
+                    props.door_pull_location = self.location
             root = types_closets.find_starter_root(door)
             if root is not None and root not in roots:
                 roots.append(root)
         if not openings:
-            self.report({'WARNING'},
-                        "These doors cover a whole bay; their pulls "
-                        "follow the room")
+            self.report({'WARNING'}, "No door here takes a pull location")
             return {'CANCELLED'}
         for root in roots:
             types_closets.recalculate_closet_starter(root)
@@ -7944,7 +7950,7 @@ class hb_closets_OT_set_pull_location(bpy.types.Operator):
                      if i == self.location)
         msg = "%d opening(s): pulls at %s" % (len(openings), label.lower())
         if skipped:
-            msg += "; %d bay-wide door(s) skipped" % skipped
+            msg += "; %d door(s) skipped" % skipped
         self.report({'INFO'}, msg)
         return {'FINISHED'}
 

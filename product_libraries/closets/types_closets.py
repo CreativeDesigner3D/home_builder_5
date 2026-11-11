@@ -450,6 +450,18 @@ def _convert_legacy_pull_v(opening, op, door_v, rule, bottom_w,
     return new_v
 
 
+def door_pull_choice(front, op):
+    """The pull location picked for a door: its opening's, or for a door
+    across a whole bay the bay's. 'AUTO' when nothing holds one."""
+    if op is not None:
+        return str(op.door_pull_location or 'AUTO')
+    bay = front.parent
+    if (front.get('hb_bay_door') and bay is not None
+            and bay.get(TAG_BAY_CAGE)):
+        return str(bay.hb_closet_bay.door_pull_location or 'AUTO')
+    return 'AUTO'
+
+
 def door_pull_rule(front, opening, op, height):
     """(rule, bottom_w) for a door's pull: which of Base / Tall / Upper
     it is placed by, and the world height of the door's bottom edge.
@@ -460,7 +472,7 @@ def door_pull_rule(front, opening, op, height):
         # A length-up front carries its origin at the top edge, so the
         # bottom is a door height below it.
         bottom_w -= height
-    rule = (op.door_pull_location if op is not None else 'AUTO')
+    rule = door_pull_choice(front, op)
     if rule == 'AUTO':
         # Tested on the opening the door covers (its height off the
         # floor and its own height), as the reference version did, not
@@ -4443,7 +4455,7 @@ class ClosetStarter(GeoNodeCage):
                 y = height - v_base - half
             elif rule == 'TALL':
                 y = v_tall + half
-                if ((op is None or op.door_pull_location == 'AUTO')
+                if (door_pull_choice(front, op) == 'AUTO'
                         and bottom_w > const.DOOR_PULL_TALL_RAISED):
                     # Standing on a drawer bank: the tall figure is
                     # taken off the floor, no lower on the door than an
@@ -10909,6 +10921,7 @@ def serialize_bay(bay_obj):
         'remove_shelf_cleat': bool(bp.remove_shelf_cleat),
         'bay_door_swing': bp.door_swing,
         'bay_open_door': float(bp.open_door),
+        'bay_door_pull_location': bp.door_pull_location,
         'shelves': list(shelves),
         # Which of those shelves carry a cleat of their own, held by the
         # same offsets so a paste puts one back under the same shelf.
@@ -10998,6 +11011,11 @@ def apply_bay_data(bay_obj, data):
         bp.remove_cleat = data.get('remove_cleat', False)
         bp.remove_shelf_cleat = data.get('remove_shelf_cleat', False)
         bp.open_door = float(data.get('bay_open_door', 0.0))
+        try:
+            bp.door_pull_location = str(
+                data.get('bay_door_pull_location', 'AUTO'))
+        except TypeError:
+            bp.door_pull_location = 'AUTO'
         if data.get('bay_door_swing'):
             bp.door_swing = ('TILT_OUT' if data.get('bay_is_hamper')
                              else data['bay_door_swing'])
