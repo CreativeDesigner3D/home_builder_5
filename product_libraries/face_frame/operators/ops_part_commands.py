@@ -2607,19 +2607,23 @@ class hb_face_frame_OT_door_vent_options(bpy.types.Operator):
     """Size and position of the diamond vent on the selected doors"""
     bl_idname = "hb_face_frame.door_vent_options"
     bl_label = "Diamond Vent Options"
-    bl_description = ("Set the size of one diamond and how far the "
-                      "pattern sits above or below the panel centre. The "
-                      "pattern is three diamonds wide and three tall")
+    bl_description = ("Set the overall size of the vent pattern and how "
+                      "far it sits above or below the panel centre. The "
+                      "four diamonds divide the pattern in thirds")
     bl_options = {'UNDO'}
 
-    diamond_width: FloatProperty(
-        name="Diamond Width", subtype='DISTANCE', unit='LENGTH',
-        min=0.00635, precision=4,
-        description="Width of one diamond; the pattern is three wide")  # type: ignore
-    diamond_height: FloatProperty(
-        name="Diamond Height", subtype='DISTANCE', unit='LENGTH',
-        min=0.00635, precision=4,
-        description="Height of one diamond; the pattern is three tall")  # type: ignore
+    # The pattern is three diamonds wide and three tall, so the overall
+    # size is what gets typed and one diamond is a third of it.
+    pattern_width: FloatProperty(
+        name="Overall Width", subtype='DISTANCE', unit='LENGTH',
+        min=0.01905, precision=4,
+        description="Width of the whole pattern, side point to side "
+                    "point; each diamond is a third of it")  # type: ignore
+    pattern_height: FloatProperty(
+        name="Overall Height", subtype='DISTANCE', unit='LENGTH',
+        min=0.01905, precision=4,
+        description="Height of the whole pattern, top point to bottom "
+                    "point; each diamond is a third of it")  # type: ignore
     rise: FloatProperty(
         name="Move Up", subtype='DISTANCE', unit='LENGTH', precision=4,
         description="How far the pattern sits above the panel centre. "
@@ -2640,8 +2644,9 @@ class hb_face_frame_OT_door_vent_options(bpy.types.Operator):
         doors = self._vented(context)
         obj = context.active_object
         first = obj if obj in doors else doors[0]
-        (self.diamond_width, self.diamond_height,
-         self.rise) = door_vents.vent_settings(first)
+        width, height, self.rise = door_vents.vent_settings(first)
+        self.pattern_width = width * 3.0
+        self.pattern_height = height * 3.0
         return context.window_manager.invoke_props_dialog(self, width=280)
 
     def draw(self, context):
@@ -2649,21 +2654,22 @@ class hb_face_frame_OT_door_vent_options(bpy.types.Operator):
         layout.use_property_split = True
         layout.use_property_decorate = False
         col = layout.column()
-        col.prop(self, "diamond_width")
-        col.prop(self, "diamond_height")
+        col.prop(self, "pattern_width")
+        col.prop(self, "pattern_height")
         col.prop(self, "rise")
         system = context.scene.unit_settings.system
-        col.label(text="Pattern: %s x %s" % (
+        col.label(text="Each diamond: %s x %s" % (
             bpy.utils.units.to_string(
-                system, 'LENGTH', self.diamond_width * 3.0, precision=4),
+                system, 'LENGTH', self.pattern_width / 3.0, precision=4),
             bpy.utils.units.to_string(
-                system, 'LENGTH', self.diamond_height * 3.0, precision=4)))
+                system, 'LENGTH', self.pattern_height / 3.0, precision=4)))
 
     def execute(self, context):
         from .. import door_vents
         for door in self._vented(context):
             door_vents.set_vent_settings(
-                door, self.diamond_width, self.diamond_height, self.rise)
+                door, self.pattern_width / 3.0, self.pattern_height / 3.0,
+                self.rise)
         return {'FINISHED'}
 
 
