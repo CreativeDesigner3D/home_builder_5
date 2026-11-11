@@ -2072,7 +2072,8 @@ def _layout(context, region, rv3d):
            frozenset(st.get('preview', ())), _s())
     if _layout_cache.get('key') == key:
         return _layout_cache['result']
-    result = _layout_wall(scene, wall, region, rv3d, selected=selected)
+    result = _layout_wall(scene, wall, region, rv3d, selected=selected,
+                          side_views=True)
     _layout_cache['key'] = key
     _layout_cache['result'] = result
     return result
@@ -2080,10 +2081,11 @@ def _layout(context, region, rv3d):
 
 @hb_utils.with_children_index
 def _layout_wall(scene, wall, region, rv3d, selected=(), extra=None,
-                 preview=None, face_frame=None):
+                 preview=None, face_frame=None, side_views=False):
     """_layout for any wall of `scene`, through any view. `extra` and
     `preview` as _items; `face_frame` overrides the scene's Face Frame
-    toggle."""
+    toggle. `side_views` lays out the plan and iso that are switched on
+    (where they go, and the plan's depths) as well."""
     if rv3d is None:
         return [], None
     fr = _frame(wall)
@@ -2600,7 +2602,13 @@ def _layout_wall(scene, wall, region, rv3d, selected=(), extra=None,
             d['key'] = (d['axis'], round(d['pos'] / max(tier, 1)),
                         round(d['w0'], 4))
     extra = {'ext': dims_ext, 'floor': (sx(0.0), sx(length), floor_y),
-             'items': items, 'sx': sx, 'sy': sy}
+             'items': items, 'sx': sx, 'sy': sy, 'ext_n': len(dims_ext),
+             'side': {}}
+    if side_views:
+        try:
+            _layout_side_views(scene, wall, region, dims, extra, s)
+        except Exception as exc:
+            print(f"Elevation side views: {exc}")
     return dims, extra
 
 
@@ -3064,10 +3072,9 @@ def _ortho(l, r, b, t, n, f):
                    (0.0, 0.0, 0.0, 1.0)))
 
 
-def _side_rects(wall, dims, extra, s):
-    """{kind: (x, y, w, h, camera, span)} on screen for the side views
-    that are switched on."""
-    scene = bpy.data.scenes.get(_state['scene']) if _state else None
+def _side_rects(scene, wall, dims, extra, s):
+    """{kind: (x, y, w, h, camera, span)} in the layout's own units for
+    the side views that are switched on."""
     kinds = _side_on(scene) if scene is not None else []
     if not kinds or extra is None:
         return {}
@@ -3090,6 +3097,80 @@ def _side_rects(wall, dims, extra, s):
             y = sy(height / 2.0) - h / 2.0
         out[kind] = (x, y, w, h, C, (l, r, b, t))
     return out
+
+
+PLAN_DEPTH_STEP = units.inch(1.0 / 16.0)
+
+
+def _layout_side_views(scene, wall, region, dims, extra, s):
+    """Place the side views (extra['side']) and dimension the plan: the
+    depth of each distinct product depth, once, on the product of that
+    depth nearest a wall end -- out past its outer side when nothing
+    stands there, else just inside it."""
+    rects = _side_rects(scene, wall, dims, extra, s)
+    extra['side'] = rects
+    plan = rects.get('PLAN')
+    if plan is None:
+        return
+    x, y, _w, _h, _C, (l, _r, b, _t) = plan
+    _F, Fi, length, _height = _frame(wall)
+    sx = extra['sx']
+    per_m = abs(sx(1.0) - sx(0.0))
+    items = [it for it in extra['items']
+             if not it.preview and it.kind != 'OPENING']
+    box = _side_box(wall, extra['items'])
+    cx, cy = (box[0] + box[1]) / 2.0, (box[2] + box[3]) / 2.0
+
+    def px(xw):
+        return x + (xw - cx - l) * per_m
+
+    def py(yw):
+        return y + (yw - cy - b) * per_m
+
+    fronts = {}
+    for it in items:
+        try:
+            mw = it.obj.matrix_world
+            fronts[it.name] = min((Fi @ (mw @ Vector(c))).y
+                                  for c in it.obj.bound_box)
+        except Exception:
+            continue
+    by_depth = {}
+    for it in items:
+        front = fronts.get(it.name)
+        if front is None or front > -MERGE:
+            continue
+        by_depth.setdefault(round(-front / PLAN_DEPTH_STEP), []).append(it)
+    first = FIRST_TIER_PX * s
+    gap = EXT_GAP_PX * s
+    over = EXT_OVER_PX * s
+    inset = FF_INSET_PX * s
+    new = []
+    taken = set()
+    for _steps, group in sorted(by_depth.items(), reverse=True):
+        it = min(group, key=lambda i: min(i.x0, length - i.x1))
+        side = -1 if it.x0 <= length - it.x1 else 1
+        front = fronts[it.name]
+        edge = it.x0 if side < 0 else it.x1
+        probe = edge + side * 0.02
+        beside = any(o is not it and o.x0 < probe < o.x1
+                     and fronts.get(o.name, 0.0) < -MERGE for o in items)
+        outside = not beside and (side, 'OUT') not in taken
+        if outside:
+            taken.add((side, 'OUT'))
+            pos = px(edge) + side * first
+            for yw in (front, 0.0):
+                extra['ext'].append(((px(edge) + side * gap, py(yw)),
+                                     (pos + side * over, py(yw))))
+        else:
+            pos = px(edge) - side * inset
+        new.append({'axis': 'V', 'a': py(front), 'b': py(0.0), 'pos': pos,
+                    'side': side if outside else -side, 'value': -front,
+                    'target': None, 'item': it, 'w0': front, 'horiz': True,
+                    'outward': outside, 'key': ('PLAN_D', it.name)})
+    if new:
+        _place_text(scene, new, region, ())
+        dims.extend(new)
 
 
 def _side_free():
@@ -3187,7 +3268,7 @@ def _draw_side_views(context, area, region, dims, extra, s):
     wall = active_wall(context)
     if wall is None or extra is None:
         return
-    rects = _side_rects(wall, dims, extra, s)
+    rects = extra.get('side') or {}
     for kind in list(_side_cache):
         if kind not in rects:
             entry = _side_cache.pop(kind)
@@ -3460,7 +3541,8 @@ def layout_wall(scene, wall, view, width, height, scale=1.0,
 
 
 def _print_layout(scene, wall, region, view, extra=None):
-    dims, extra = _layout_wall(scene, wall, region, view, extra=extra)
+    dims, extra = _layout_wall(scene, wall, region, view, extra=extra,
+                               side_views=True)
     return [d for d in dims if d['key'][0] != 'SEL'], extra
 
 
@@ -3469,6 +3551,8 @@ def _print_bounds(dims, extra, k, L, H):
     xs = [sx(0.0), sx(L)]
     ys = [sy(0.0), sy(H)]
     for d in dims:
+        if d['key'][0] == 'PLAN_D':
+            continue                    # the plan's own: placed after
         x, y, w, h = d['rect']
         xs += [x, x + w]
         ys += [y, y + h]
@@ -3478,7 +3562,7 @@ def _print_bounds(dims, extra, k, L, H):
         else:
             ys += [d['a'], d['b']]
             xs.append(d['pos'])
-    for a, b in extra['ext']:
+    for a, b in extra['ext'][:extra.get('ext_n')]:
         xs += [a[0], b[0]]
         ys += [a[1], b[1]]
     return min(xs), max(xs), min(ys), max(ys)
@@ -3516,16 +3600,28 @@ def _print_fit(scene, wall, W, H, extra=None):
     pad_b = extra['sy'](0.0) - y0
     extra_w = (x1 - x0) - k0 * L
     extra_h = (y1 - y0) - k0 * Hw
-    k = min((area_w - extra_w) / L, (area_h - extra_h) / Hw)
+    # Side views scale with the wall; the gap to them does not.
+    more_w = more_h = gap_w = gap_h = iso_h = 0.0
+    for kind, rect in (extra.get('side') or {}).items():
+        l, r, b, t = rect[5]
+        if kind == 'PLAN':
+            more_h, gap_h = t - b, SIDE_GAP_PX * _s()
+        else:
+            more_w, gap_w, iso_h = r - l, SIDE_GAP_PX * _s(), t - b
+    k = min((area_w - extra_w - gap_w) / (L + more_w),
+            (area_h - extra_h - gap_h) / (Hw + more_h))
+    if iso_h:
+        k = min(k, area_h / iso_h)
     label = None
     for n, text in PRINT_SCALES:
         pt_per_m = 72.0 / 0.0254 / n
         if pt_per_m <= k:
             k, label = pt_per_m, f"{text} = 1'-0\""
             break
-    ox = PRINT_MARGIN + (area_w - (k * L + extra_w)) / 2.0 + pad_l
-    oy = (PRINT_MARGIN + PRINT_TITLE
-          + (area_h - (k * Hw + extra_h)) / 2.0 + pad_b)
+    ox = (PRINT_MARGIN + pad_l
+          + (area_w - (k * (L + more_w) + extra_w + gap_w)) / 2.0)
+    oy = (PRINT_MARGIN + PRINT_TITLE + pad_b + gap_h + k * more_h
+          + (area_h - (k * (Hw + more_h) + extra_h + gap_h)) / 2.0)
     return _print_view(Fi, k, ox, oy, W, H), label
 
 
@@ -3856,6 +3952,44 @@ def _print_linework(page, context, extra, Fi, view, L, H):
     return True
 
 
+# Camera space (x right, y up, the camera looking down -z) to the print's
+# frame (x right, z up, y growing away from the viewer).
+_CAMERA_TO_PRINT = Matrix(((1, 0, 0, 0), (0, 0, -1, 0), (0, 1, 0, 0),
+                           (0, 0, 0, 1)))
+
+
+class _SidePrintView:
+    def __init__(self, k, ox, oy):
+        self.k, self.ox, self.oy = k, ox, oy
+
+
+def _print_side_views(page, context, wall, extra):
+    """The plan and iso that are switched on, as line work in the places
+    the layout gave them."""
+    rects = extra.get('side') or {}
+    if not rects:
+        return
+    names = _print_owners(extra['items'])
+    sx = extra['sx']
+    k = abs(sx(1.0) - sx(0.0))
+    for kind, (x, y, _w, _h, C, (l, _r, b, _t)) in rects.items():
+        Fi = _CAMERA_TO_PRINT @ C.inverted_safe()
+        view = _SidePrintView(k, x - l * k, y - b * k)
+        page.fill_color(PAPER)
+        page.stroke_color(PRINT_EDGE)
+        page.line_width(PRINT_EDGE_WIDTH)
+        # The wall goes down first: everything shown stands in front of
+        # it, and its faces are too big to sort among the products'.
+        for only in ({wall.name}, names):
+            faces = _print_faces(context, extra['items'], Fi, view,
+                                 only=only) if only else []
+            faces.sort(key=lambda f: -f[0])        # far first
+            for _depth, poly, edges in faces:
+                page.polygon(poly, fill=True, stroke=False)
+                if edges:
+                    page.lines(edges)
+
+
 def _print_outlines(page, extra, Fi, L, H):
     """Boxes for the products when there is no geometry to draw."""
     sx, sy = extra['sx'], extra['sy']
@@ -4096,6 +4230,10 @@ def print_wall(context, filepath, paper='TABLOID',
                              text_scale)
         except Exception as exc:
             print(f"Elevation print: interior lines: {exc}")
+        try:
+            _print_side_views(page, context, wall, extra)
+        except Exception as exc:
+            print(f"Elevation print: side views: {exc}")
         _print_dims(page, scene, dims, extra, text_scale)
         try:
             _print_annotations(page, scene, wall, region, view, text_scale)
