@@ -6,16 +6,15 @@ face frame cabinets read. The part picked is the section that starts
 open; the title is a breadcrumb, and a click on a step above selects it.
 
 The sizes and switches that rebuild the closet as they change are
-fields here. The closet's section holds what its dialog did
-(starter_card), and an opening's holds everything about it -- its
-interior, rod, front, overlays, pulls and back (opening_card) -- each a
-group that folds, so there is no dialog to open for either.
+fields here. Each section holds what its dialog did -- the closet's
+(starter_card), the bay's (bay_card) and the opening's, with its
+interior, rod, front, overlays, pulls and back (opening_card) -- in
+groups that fold, so there is no dialog to open for any of them.
 """
 
 import bpy
 
 from . import types_closets
-from ... import units
 
 
 SOURCE_KEY = 'CLOSETS'
@@ -55,32 +54,6 @@ def find(context):
         return ('bay', root, bay, None)
     return ('starter', root, None, None)
 
-
-# ---- Summaries and conditions ----------------------------------------------
-
-def _dist(value):
-    return units.unit_to_string(bpy.context.scene.unit_settings, value)
-
-
-def _bay_summary(bp):
-    return f"{_dist(bp.width)} x {_dist(bp.height)}"
-
-
-# ---- Fields -----------------------------------------------------------------
-
-BAY_FIELDS = (
-    ('locked', 'width', "Width", {'unlock': 'unlock_width'}),
-    ('locked', 'height', "Height", {'unlock': 'unlock_height'}),
-    ('locked', 'depth', "Depth", {'unlock': 'unlock_depth'}),
-    ('bool', 'floor_mounted', "Floor Mounted"),
-    ('group', 'cl_bay_more', "More", {'fields': (
-        ('bool', 'remove_bottom', "Remove Bottom"),
-        ('bool', 'remove_cleat', "Remove Cleat"),
-        ('bool', 'double_panel_right', "Double Panel Right"),
-        ('bool', 'include_center_back', "Center Back"),
-        ('bool', 'is_hamper', "Hamper"),
-    )}),
-)
 
 # ---- The page ---------------------------------------------------------------
 
@@ -134,10 +107,13 @@ def blocks(context, item):
           'fields': starter_card.fields(root)}),
     ), starter_card.owner(root)))
     if bay_obj is not None:
+        from . import bay_card
         out.extend(options_panel.field_blocks(context, (
             ('group', BAY_GROUP, trail[1],
-             {'icon': 'cab_bay', 'summary': _bay_summary, 'fields': BAY_FIELDS}),
-        ), bay_obj.hb_closet_bay))
+             {'icon': 'cab_bay',
+              'summary': lambda _ow: bay_card.summary(bay_obj),
+              'fields': bay_card.fields(bay_obj)}),
+        ), bay_card.owner(bay_obj)))
     if opening_obj is not None:
         from . import opening_card
         out.extend(options_panel.field_blocks(context, (

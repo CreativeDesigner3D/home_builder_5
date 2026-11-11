@@ -123,10 +123,8 @@ class HOME_BUILDER_MT_closet_bay_commands(bpy.types.Menu):
         # Cubbies intentionally absent here - reachable via Change Bay
         # and the opening menu. A fixed shelf and a rod are products,
         # picked from the library like every other part.
+        # The bay's own settings are fields on the SELECTED tab.
         layout = self.layout
-        layout.operator("hb_closets.bay_prompts",
-                        text="Bay Properties...", icon='WINDOW')
-        layout.separator()
         layout.menu("HOME_BUILDER_MT_closet_change_bay",
                     text="Bay Configuration", icon='PRESET')
         layout.menu("HOME_BUILDER_MT_closet_doors_drawers",
@@ -305,13 +303,10 @@ class HOME_BUILDER_MT_closet_opening_commands(bpy.types.Menu):
     bl_label = "Closet Opening Commands"
 
     def draw(self, context):
-        # Properties, Change Opening, then the add entries, then clear.
-        # The opening's own settings are fields on the SELECTED tab;
-        # the bay dialog edits the section it sits in.
+        # Change Opening, then the add entries, then clear. The
+        # opening's and the bay's own settings are fields on the
+        # SELECTED tab.
         layout = self.layout
-        layout.operator("hb_closets.bay_prompts",
-                        text="Bay Properties...", icon='WINDOW')
-        layout.separator()
         layout.menu("HOME_BUILDER_MT_closet_change_opening",
                     text="Change Opening", icon='PRESET')
         layout.separator()
@@ -570,63 +565,16 @@ class HOME_BUILDER_MT_closet_part_commands(bpy.types.Menu):
                 else 'DECORATE_LOCKED')
             op.lock = not locked
             layout.separator()
-        # A library-built part has no dialog of its own - its options
-        # live in one of the closet dialogs - so its menu opens the
-        # dialog they live in: the bay's for carcass parts, the
-        # starter's for run-level parts, the opening's for interior
-        # hardware. Panels offer the starter dialog too: that is where
-        # the Panels section stands.
+        # A library-built part has no dialog of its own: the settings of
+        # the opening, bay and closet it stands in are fields on the
+        # SELECTED tab.
         role = obj.get('hb_part_role') if obj is not None else None
-        # Fronts and the insert parts (cubby dividers and shelves,
-        # slanted shelves) open the opening's dialog too, where their
-        # insert is set up - the reference offered each its insert's prompts.
-        opening_roles = (types_closets.PART_ROLE_SHOE_FENCE,
-                         types_closets.PART_ROLE_DRAWER_BOX,
-                         types_closets.PART_ROLE_DRAWER_STRETCHER,
-                         types_closets.PART_ROLE_DOOR,
-                         types_closets.PART_ROLE_DRAWER_FRONT,
-                         types_closets.PART_ROLE_CUBBY_DIVISION,
-                         types_closets.PART_ROLE_CUBBY_SHELF,
-                         types_closets.PART_ROLE_SLANTED_SHELF)
-        bay_roles = (types_closets.PART_ROLE_BOTTOM_SHELF,
-                     types_closets.PART_ROLE_TOP_SHELF,
-                     types_closets.PART_ROLE_TOE_KICK,
-                     types_closets.PART_ROLE_CLEAT,
-                     types_closets.PART_ROLE_APPLIED_BACK,
-                     types_closets.PART_ROLE_CENTER_BACK)
-        starter_roles = (types_closets.PART_ROLE_PANEL,
-                         types_closets.PART_ROLE_COUNTERTOP,
-                         types_closets.PART_ROLE_BACKSPLASH,
-                         types_closets.PART_ROLE_ACCENT_SHELF,
-                         types_closets.PART_ROLE_BATTEN,
-                         types_closets.PART_ROLE_FILLER,
-                         types_closets.PART_ROLE_HANG_RAIL,
-                         types_closets.PART_ROLE_HANG_RAIL_COVER,
-                         types_closets.PART_ROLE_BRIDGE_SHELF)
         offered = False
         if (role == types_closets.PART_ROLE_CLEAT and obj.parent is not None
                 and obj.parent.get(types_closets.TAG_OPENING_CAGE)):
             # A cleat dropped into an opening is sized on its own.
             layout.operator("hb_closets.cleat_prompts",
                             text="Cleat Properties...", icon='WINDOW')
-            offered = True
-        if role in opening_roles:
-            # A front across a whole bay hangs off the bay rather than
-            # an opening; its settings are the bay dialog's. Anything in
-            # an opening is set on the SELECTED tab's opening section.
-            in_opening = any(p.get(types_closets.TAG_OPENING_CAGE)
-                             for p in _parents(obj))
-            if (not in_opening
-                    and role in (types_closets.PART_ROLE_DOOR,
-                                 types_closets.PART_ROLE_DRAWER_FRONT)
-                    and types_closets.find_bay_cage(obj) is not None):
-                layout.operator("hb_closets.bay_prompts",
-                                text="Bay Properties...", icon='WINDOW')
-                offered = True
-        if (role in bay_roles
-                and types_closets.find_bay_cage(obj) is not None):
-            layout.operator("hb_closets.bay_prompts",
-                            text="Bay Properties...", icon='WINDOW')
             offered = True
         if offered:
             layout.separator()
