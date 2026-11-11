@@ -164,6 +164,8 @@ STUB_TAG = 'HB_ELEVATION_RETURN'
 RETURN_MIN = units.inch(36.0)       # how far a return is shown, at least
 RETURN_PAST = units.inch(6.0)       # and past the deepest product
 RETURN_FOOT = units.inch(1.0)       # a return the iso looks over: its foot
+# Walls cut by the plan, and a return wall seen end on in the elevation.
+WALL_GRAY = (0.80, 0.80, 0.80, 1.0)
 # The wall's own display colour, kept while the elevation shows it white
 # (the sheet's wall is paper).
 WALL_COLOR_TAG = 'HB_ELEVATION_WALL_COLOR'
@@ -618,10 +620,13 @@ def _return_sides(wall):
 
 
 def _return_boxes(wall, items):
-    """([(x0, x1, y0, y1, z0, z1)] in the wall's frame, iso from the
-    left): a length of each return wall, and which side the iso looks
-    from so a return stands behind the work. With a return at both ends
-    the one nearer the iso's viewer is shown by its foot only."""
+    """([(footprint, z0, z1)] in the wall's frame, iso from the left):
+    a length of each return wall, and which side the iso looks from so
+    a return stands behind the work. A footprint is four (x, y) corners,
+    anticlockwise from above, the last two the corner's mitre: the line
+    from the inside corner to the outside one, where the return meets
+    this wall's own mitred end. With a return at both ends the one
+    nearer the iso's viewer is shown by its foot only."""
     sides = _return_sides(wall)
     if not sides:
         return [], False
@@ -642,9 +647,13 @@ def _return_boxes(wall, items):
     from_left = 'R' in sides and 'L' not in sides
     boxes = []
     for key, (t, h) in sides.items():
-        x0, x1 = (-t, 0.0) if key == 'L' else (length, length + t)
+        if key == 'L':
+            footprint = ((-t, y0), (0.0, y0), (0.0, 0.0), (-t, thick))
+        else:
+            footprint = ((length, y0), (length + t, y0),
+                         (length + t, thick), (length, 0.0))
         foot = len(sides) == 2 and key == 'R'
-        boxes.append((x0, x1, y0, thick, 0.0, RETURN_FOOT if foot else h))
+        boxes.append((footprint, 0.0, RETURN_FOOT if foot else h))
     return boxes, from_left
 
 
@@ -652,10 +661,23 @@ _BOX_FACES = ((0, 3, 2, 1), (4, 5, 6, 7), (0, 1, 5, 4), (2, 3, 7, 6),
               (1, 2, 6, 5), (3, 0, 4, 7))
 
 
+# The corners of a return's mitre in _box_corners' order, and the face
+# that lies on it (inside the corner: never seen).
+_SEAM_CORNERS = frozenset((2, 3, 6, 7))
+_SEAM_FACE = (2, 3, 7, 6)
+
+
 def _box_corners(box):
-    x0, x1, y0, y1, z0, z1 = box
-    return [(x0, y0, z0), (x1, y0, z0), (x1, y1, z0), (x0, y1, z0),
-            (x0, y0, z1), (x1, y0, z1), (x1, y1, z1), (x0, y1, z1)]
+    footprint, z0, z1 = box
+    return ([(x, y, z0) for x, y in footprint]
+            + [(x, y, z1) for x, y in footprint])
+
+
+def _return_seams(boxes):
+    """[((x, y), (x, y))] in the wall's frame: the mitre lines where
+    the returns meet the wall. Lines along them are not drawn, so the
+    corner reads as one wall turning."""
+    return [(box[0][2], box[0][3]) for box in boxes]
 
 
 def _make_stubs(scene, wall, items):
@@ -670,7 +692,7 @@ def _make_stubs(scene, wall, items):
         obj[STUB_TAG] = True
         scene.collection.objects.link(obj)
         obj.matrix_world = F
-        obj.color = WALL_WHITE
+        obj.color = WALL_GRAY
         obj.hide_select = True
         obj.hide_render = True
 
@@ -3155,12 +3177,12 @@ def _side_box(wall, items):
     from_left = False
     try:
         returns, from_left = _return_boxes(wall, items)
-        for rb in returns:
-            box[0] = min(box[0], rb[0])
-            box[1] = max(box[1], rb[1])
-            box[2] = min(box[2], rb[2])
-            box[3] = max(box[3], rb[3])
-            box[5] = max(box[5], rb[5])
+        for footprint, _z0, z1 in returns:
+            box[0] = min(box[0], min(q[0] for q in footprint))
+            box[1] = max(box[1], max(q[0] for q in footprint))
+            box[2] = min(box[2], min(q[1] for q in footprint))
+            box[3] = max(box[3], max(q[1] for q in footprint))
+            box[5] = max(box[5], z1)
     except Exception as exc:
         print(f"Elevation return walls: {exc}")
     return tuple(box) + (from_left,)
@@ -3372,12 +3394,14 @@ def _side_geometry(scene, wall, items):
     Fi = _frame(wall)[1]
     cos_feature = math.cos(PRINT_FEATURE_ANGLE)
     dg = bpy.context.evaluated_depsgraph_get()
-    tris, lines = [], []
+    tris, wall_tris, lines = [], [], []
     for inst in dg.object_instances:
         owner = inst.parent if inst.is_instance else inst.object
         if owner is None or owner.original.name not in names:
             continue
         ob = inst.object
+        is_wall = (owner.original == wall
+                   or bool(owner.original.get(STUB_TAG)))
         if ob.type != 'MESH' or _side_skip(owner.original) \
                 or (not inst.is_instance and _side_skip(ob.original)):
             continue
@@ -3410,7 +3434,7 @@ def _side_geometry(scene, wall, items):
             mesh.loop_triangles.foreach_get('vertices', tv)
         finally:
             ob.to_mesh_clear()
-        tris.append(co[tv])
+        (wall_tris if is_wall else tris).append(co[tv])
         # An edge is drawn where the surface folds past the feature
         # angle or stops (an open border, a seam).
         loop_poly = np.repeat(np.arange(npoly), total)
@@ -3423,17 +3447,41 @@ def _side_geometry(scene, wall, items):
         f1 = loop_poly[order[first_at[two] + 1]]
         feature[two] = (nrm[f0] * nrm[f1]).sum(axis=1) < cos_feature
         lines.append(co[ev[feature]].reshape(-1, 3))
+    empty = np.zeros((0, 3), np.float32)
+    lines = np.concatenate(lines) if lines else empty
+    # The mitre where a return meets the wall is not a line of the room.
+    try:
+        seams = _return_seams(_return_boxes(wall, items)[0])
+    except Exception:
+        seams = []
+    if seams and len(lines):
+        a, b = lines[0::2], lines[1::2]
+        keep = np.ones(len(a), dtype=bool)
+        level = np.abs(a[:, 2] - b[:, 2]) < 0.002
+        for (px0, py0), (px1, py1) in seams:
+            dx, dy = px1 - px0, py1 - py0
+            ln = math.hypot(dx, dy)
+            if ln < 1e-6:
+                continue
+            on = np.ones(len(a), dtype=bool)
+            for q in (a, b):
+                t = ((q[:, 0] - px0) * dx + (q[:, 1] - py0) * dy) / ln
+                off = np.abs((q[:, 0] - px0) * dy
+                             - (q[:, 1] - py0) * dx) / ln
+                on &= (off < 0.002) & (t > -0.002) & (t < ln + 0.002)
+            keep &= ~(on & level)
+        lines = np.stack((a[keep], b[keep]), axis=1).reshape(-1, 3)
     _side_geo.clear()
     _side_geo.update(
         key=key,
-        tris=(np.concatenate(tris).astype(np.float32) if tris
-              else np.zeros((0, 3), np.float32)),
-        lines=(np.concatenate(lines).astype(np.float32) if lines
-               else np.zeros((0, 3), np.float32)))
+        tris=(np.concatenate(tris).astype(np.float32) if tris else empty),
+        wall_tris=(np.concatenate(wall_tris).astype(np.float32)
+                   if wall_tris else empty),
+        lines=lines.astype(np.float32), dropped=0)
     return _side_geo
 
 
-def _side_draw(off, geo, F, C, span, size, line_px):
+def _side_draw(off, geo, F, C, span, size, line_px, wall_color=None):
     """Draw the geometry into the offscreen from the camera C: paper
     faces and inked lines, depth tested."""
     l, r, b, t = span
@@ -3452,12 +3500,16 @@ def _side_draw(off, geo, F, C, span, size, line_px):
             with gpu.matrix.push_pop(), gpu.matrix.push_pop_projection():
                 gpu.matrix.load_matrix(view)
                 gpu.matrix.load_projection_matrix(proj)
-                if len(geo['tris']):
+                for tris, color in ((geo['wall_tris'],
+                                     wall_color or (*PAPER, 1.0)),
+                                    (geo['tris'], (*PAPER, 1.0))):
+                    if not len(tris):
+                        continue
                     shader = gpu.shader.from_builtin('UNIFORM_COLOR')
                     shader.bind()
-                    shader.uniform_float("color", (*PAPER, 1.0))
+                    shader.uniform_float("color", color)
                     batch_for_shader(shader, 'TRIS',
-                                     {"pos": geo['tris']}).draw(shader)
+                                     {"pos": tris}).draw(shader)
                 if len(geo['lines']):
                     gpu.matrix.load_projection_matrix(lift @ proj)
                     shader = gpu.shader.from_builtin(
@@ -3504,8 +3556,10 @@ def _side_render():
                 if off is not None:
                     off.free()
                 off = gpu.types.GPUOffScreen(*size)
+            # The plan cuts the walls: they read light grey.
             _side_draw(off, geo, F, req['C'], req['span'], size,
-                       max(1.0, SIDE_LINE_PX * _s() * ss))
+                       max(1.0, SIDE_LINE_PX * _s() * ss),
+                       WALL_GRAY if kind == 'PLAN' else None)
             _side_cache[kind] = {'off': off, 'key': req['key'],
                                  'size': req['size'], 'tex': size,
                                  'at': time.monotonic()}
@@ -4230,6 +4284,8 @@ def _box_faces(M, box, view, deep=False):
     k, ox, oy = view.k, view.ox, view.oy
     faces = []
     for quad in _BOX_FACES:
+        if quad == _SEAM_FACE:
+            continue                    # the mitre: inside the corner
         a, b, c = pts[quad[0]], pts[quad[1]], pts[quad[2]]
         if (b - a).cross(c - a).y >= -1e-9:
             continue                    # turned away
@@ -4238,9 +4294,47 @@ def _box_faces(M, box, view, deep=False):
                     for i in quad]
         else:
             poly = [(pts[i].x * k + ox, pts[i].z * k + oy) for i in quad]
-        edges = list(zip(poly, poly[1:] + poly[:1]))
+        ring = list(zip(quad, quad[1:] + quad[:1]))
+        edges = [(poly[n], poly[(n + 1) % len(poly)])
+                 for n, (i, j) in enumerate(ring)
+                 if not (i in _SEAM_CORNERS and j in _SEAM_CORNERS
+                         and abs(i - j) != 4)]
         faces.append((sum(pts[i].y for i in quad) / 4.0, poly, edges))
     return faces
+
+
+def _drop_seam_edges(faces, M, view, boxes):
+    """Take the edges that lie along a return's mitre (top or bottom)
+    out of faces in page points: the wall's own mitred end draws one."""
+    k, ox, oy = view.k, view.ox, view.oy
+    seams = []
+    for box in boxes:
+        (ax, ay), (bx, by) = box[0][2], box[0][3]
+        for z in (box[1], box[2]):
+            p = M @ Vector((ax, ay, z))
+            q = M @ Vector((bx, by, z))
+            seams.append(((p.x * k + ox, p.z * k + oy),
+                          (q.x * k + ox, q.z * k + oy)))
+    if not seams:
+        return faces
+
+    def on(pt, seam):
+        (x0, y0), (x1, y1) = seam
+        dx, dy = x1 - x0, y1 - y0
+        ln = math.hypot(dx, dy)
+        if ln < 1e-6:
+            return False
+        t = ((pt[0] - x0) * dx + (pt[1] - y0) * dy) / ln
+        off = abs((pt[0] - x0) * dy - (pt[1] - y0) * dx) / ln
+        return off < 0.4 and -0.4 <= t <= ln + 0.4
+
+    out = []
+    for face in faces:
+        edges = [e for e in face[2]
+                 if math.hypot(e[0][0] - e[1][0], e[0][1] - e[1][1]) < 0.3
+                 or not any(on(e[0], sm) and on(e[1], sm) for sm in seams)]
+        out.append((face[0], face[1], edges) + tuple(face[3:]))
+    return out
 
 
 PRINT_RASTER_DPI = 300
@@ -4342,6 +4436,7 @@ def _print_side_views(page, context, wall, extra):
             try:
                 faces = _print_faces(context, extra['items'], Fi, view,
                                      only=names | {wall.name}, deep=True)
+                faces = _drop_seam_edges(faces, M, view, returns)
                 for rb in returns:
                     faces += _box_faces(M, rb, view, deep=True)
                 got = _raster_faces(faces, x, y, w, h)
@@ -4359,11 +4454,15 @@ def _print_side_views(page, context, wall, extra):
         # them, and their faces are too big to sort among the products'.
         back = _print_faces(context, extra['items'], Fi, view,
                             only={wall.name})
+        back = _drop_seam_edges(back, M, view, returns)
         for rb in returns:
             back += _box_faces(M, rb, view)
         front = _print_faces(context, extra['items'], Fi, view,
                              only=names) if names else []
         for faces in (back, front):
+            # The plan cuts the walls: they read light grey.
+            page.fill_color(WALL_GRAY if faces is back and kind == 'PLAN'
+                            else PAPER)
             faces.sort(key=lambda f: -f[0])        # far first
             for _depth, poly, edges in faces:
                 page.polygon(poly, fill=True, stroke=False)
