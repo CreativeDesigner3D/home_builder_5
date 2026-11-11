@@ -158,6 +158,12 @@ PRODUCT_MARKERS = (
 OPENING_MARKERS = ('IS_WINDOW_BP', 'IS_ENTRY_DOOR_BP')
 
 HIDE_TAG = 'HB_ELEVATION_HIDDEN'
+# A stand-in for the wall that turns the corner at this wall's end,
+# built while the elevation is up so its plan and iso show the return.
+STUB_TAG = 'HB_ELEVATION_RETURN'
+RETURN_MIN = units.inch(36.0)       # how far a return is shown, at least
+RETURN_PAST = units.inch(6.0)       # and past the deepest product
+RETURN_FOOT = units.inch(1.0)       # a return the iso looks over: its foot
 # The wall's own display colour, kept while the elevation shows it white
 # (the sheet's wall is paper).
 WALL_COLOR_TAG = 'HB_ELEVATION_WALL_COLOR'
@@ -581,6 +587,104 @@ def _queue_fit(area, region, r3d):
     bpy.app.timers.register(run, first_interval=0.0)
 
 
+# ---- Return walls ------------------------------------------------------------
+
+def _return_sides(wall):
+    """{'L' | 'R': (thickness, height)} of the walls joined to this
+    wall's ends that turn towards the room (an inside corner)."""
+    fr = _frame(wall)
+    if fr is None:
+        return {}
+    _F, Fi, length, height = fr
+    out = {}
+    for key, side, corner in (('L', 'left', 0.0), ('R', 'right', length)):
+        try:
+            node = hb_types.GeoNodeWall(wall).get_connected_wall(side)
+            other = node.obj if node is not None else None
+        except Exception:
+            other = None
+        if other is None or other == wall:
+            continue
+        dims = _wall_dims(other)
+        if dims is None or not dims[0]:
+            continue
+        mw = other.matrix_world
+        ends = [Fi @ mw.translation, Fi @ (mw @ Vector((dims[0], 0.0, 0.0)))]
+        far = max(ends, key=lambda q: abs(q.x - corner) + abs(q.y))
+        if far.y < -0.1:
+            out[key] = (dims[2] or 0.15, dims[1] or height)
+    return out
+
+
+def _return_boxes(wall, items):
+    """([(x0, x1, y0, y1, z0, z1)] in the wall's frame, iso from the
+    left): a length of each return wall, and which side the iso looks
+    from so a return stands behind the work. With a return at both ends
+    the one nearer the iso's viewer is shown by its foot only."""
+    sides = _return_sides(wall)
+    if not sides:
+        return [], False
+    _F, Fi, length, _height = _frame(wall)
+    dims = _wall_dims(wall)
+    thick = dims[2] if dims and dims[2] else 0.15
+    front = 0.0
+    for it in items:
+        if it.preview:
+            continue
+        try:
+            mw = it.obj.matrix_world
+            front = min(front, min((Fi @ (mw @ Vector(c))).y
+                                   for c in it.obj.bound_box))
+        except Exception:
+            continue
+    y0 = min(-RETURN_MIN, front - RETURN_PAST)
+    from_left = 'R' in sides and 'L' not in sides
+    boxes = []
+    for key, (t, h) in sides.items():
+        x0, x1 = (-t, 0.0) if key == 'L' else (length, length + t)
+        foot = len(sides) == 2 and key == 'R'
+        boxes.append((x0, x1, y0, thick, 0.0, RETURN_FOOT if foot else h))
+    return boxes, from_left
+
+
+_BOX_FACES = ((0, 3, 2, 1), (4, 5, 6, 7), (0, 1, 5, 4), (2, 3, 7, 6),
+              (1, 2, 6, 5), (3, 0, 4, 7))
+
+
+def _box_corners(box):
+    x0, x1, y0, y1, z0, z1 = box
+    return [(x0, y0, z0), (x1, y0, z0), (x1, y1, z0), (x0, y1, z0),
+            (x0, y0, z1), (x1, y0, z1), (x1, y1, z1), (x0, y1, z1)]
+
+
+def _make_stubs(scene, wall, items):
+    """Stand-in objects for the return walls, in the wall's frame."""
+    boxes, _from_left = _return_boxes(wall, items)
+    F = _frame(wall)[0]
+    for box in boxes:
+        mesh = bpy.data.meshes.new("Elevation Return Wall")
+        mesh.from_pydata(_box_corners(box), [], _BOX_FACES)
+        mesh.update()
+        obj = bpy.data.objects.new("Elevation Return Wall", mesh)
+        obj[STUB_TAG] = True
+        scene.collection.objects.link(obj)
+        obj.matrix_world = F
+        obj.color = WALL_WHITE
+        obj.hide_select = True
+        obj.hide_render = True
+
+
+def _drop_stubs(scene):
+    for obj in [o for o in scene.objects if o.get(STUB_TAG)]:
+        mesh = obj.data
+        bpy.data.objects.remove(obj, do_unlink=True)
+        try:
+            if mesh is not None and mesh.users == 0:
+                bpy.data.meshes.remove(mesh)
+        except Exception:
+            pass
+
+
 # ---- Isolation ---------------------------------------------------------------
 
 def _center_local(obj, Fi):
@@ -605,7 +709,7 @@ def _in_front_roots(scene, wall, Fi, length, height):
             continue
         if parent == wall:
             continue
-        if obj.type in {'CAMERA', 'LIGHT'}:
+        if obj.type in {'CAMERA', 'LIGHT'} or obj.get(STUB_TAG):
             continue
         c = _center_local(obj, Fi)
         if c is None:
@@ -653,10 +757,19 @@ def _isolate(context, wall):
         wall.color = WALL_WHITE
     except Exception:
         pass
-    return [o.name for o in extra]
+    names = [o.name for o in extra]
+    try:
+        _make_stubs(scene, wall, _items(scene, wall, names, ()))
+    except Exception as exc:
+        print(f"Elevation return walls: {exc}")
+    return names
 
 
 def _unisolate(scene):
+    try:
+        _drop_stubs(scene)
+    except Exception as exc:
+        print(f"Elevation return walls: {exc}")
     for obj in scene.objects:
         if WALL_COLOR_TAG in obj:
             try:
@@ -3019,8 +3132,9 @@ def _side_on(scene):
 
 
 def _side_box(wall, items):
-    """(x0, x1, y0, y1, z0, z1) in the wall's frame of the wall and what
-    stands on it."""
+    """(x0, x1, y0, y1, z0, z1, iso from the left) in the wall's frame
+    of the wall, what stands on it and the lengths of return wall shown
+    at its ends."""
     _F, Fi, length, height = _frame(wall)
     dims = _wall_dims(wall)
     thick = (dims[2] if dims and dims[2] else 0.15)
@@ -3037,19 +3151,33 @@ def _side_box(wall, items):
         box[2] = min(box[2], min(q.y for q in pts))
         box[3] = max(box[3], max(q.y for q in pts))
         box[5] = max(box[5], max(q.z for q in pts))
-    return tuple(box)
+    from_left = False
+    try:
+        returns, from_left = _return_boxes(wall, items)
+        for rb in returns:
+            box[0] = min(box[0], rb[0])
+            box[1] = max(box[1], rb[1])
+            box[2] = min(box[2], rb[2])
+            box[3] = max(box[3], rb[3])
+            box[5] = max(box[5], rb[5])
+    except Exception as exc:
+        print(f"Elevation return walls: {exc}")
+    return tuple(box) + (from_left,)
 
 
 def _side_camera(F, box, kind):
     """(camera matrix, (l, r, b, t)) of a side view: an orthographic
     camera's place in the world and the span of what it shows, in its
     own metres. The camera's x runs along the wall in both."""
-    x0, x1, y0, y1, z0, z1 = box
+    x0, x1, y0, y1, z0, z1 = box[:6]
     centre = Vector(((x0 + x1) / 2.0, (y0 + y1) / 2.0, (z0 + z1) / 2.0))
     if kind == 'PLAN':
         R = Matrix.Identity(4)
     else:
-        R = (Matrix.Rotation(ISO_YAW, 4, 'Z')
+        # From the front right, or the front left when the only return
+        # wall is on the right (it would stand in front of the work).
+        yaw = -ISO_YAW if len(box) > 6 and box[6] else ISO_YAW
+        R = (Matrix.Rotation(yaw, 4, 'Z')
              @ Matrix.Rotation(math.pi / 2.0 - ISO_PITCH, 4, 'X'))
     C = (F @ Matrix.Translation(centre) @ R
          @ Matrix.Translation((0.0, 0.0, SIDE_DIST)))
@@ -3653,7 +3781,7 @@ def _print_skip(obj):
             or obj.display_type in ('WIRE', 'BOUNDS'))
 
 
-def _print_faces(context, items, Fi, view, only=None):
+def _print_faces(context, items, Fi, view, only=None, deep=False):
     """[(depth, polygon, edges)] in page points for every face of the
     wall's products that faces the viewer; depth grows into the wall.
     Parts hidden in the viewport (a cutaway, a part toggled off on
@@ -3679,7 +3807,7 @@ def _print_faces(context, items, Fi, view, only=None):
     try:
         if shown:
             layer.update()
-        return _print_faces_now(context, owners, Fi, view)
+        return _print_faces_now(context, owners, Fi, view, deep)
     finally:
         for obj, hidden, off in shown:
             obj.hide_set(hidden, view_layer=layer)
@@ -3688,7 +3816,7 @@ def _print_faces(context, items, Fi, view, only=None):
             layer.update()
 
 
-def _print_faces_now(context, owners, Fi, view):
+def _print_faces_now(context, owners, Fi, view, deep=False):
     import numpy as np
     k, ox, oy = view.k, view.ox, view.oy
     cos_feature = math.cos(PRINT_FEATURE_ANGLE)
@@ -3761,11 +3889,19 @@ def _print_faces_now(context, owners, Fi, view):
             s0, n = start[f], total[f]
             vs = lv[s0:s0 + n]
             poly = list(zip(px[vs].tolist(), py[vs].tolist()))
+            if deep:
+                # With each corner's depth, for a depth-tested drawing.
+                poly = [(x, y, d) for (x, y), d
+                        in zip(poly, co[vs, 1].tolist())]
             edges = []
             for e in le[s0:s0 + n]:
                 if feature[e]:
                     i, j = ev[e]
-                    edges.append(((px[i], py[i]), (px[j], py[j])))
+                    if deep:
+                        edges.append(((px[i], py[i], co[i, 1]),
+                                      (px[j], py[j], co[j, 1])))
+                    else:
+                        edges.append(((px[i], py[i]), (px[j], py[j])))
             faces.append((float(co[vs, 1].mean()), poly, edges))
     return faces
 
@@ -3963,26 +4099,147 @@ class _SidePrintView:
         self.k, self.ox, self.oy = k, ox, oy
 
 
+def _box_faces(M, box, view, deep=False):
+    """A box in the wall's frame as _print_faces gives a mesh: its faces
+    turned to the viewer. `M` takes the wall's frame to the print's."""
+    pts = [M @ Vector(c) for c in _box_corners(box)]
+    k, ox, oy = view.k, view.ox, view.oy
+    faces = []
+    for quad in _BOX_FACES:
+        a, b, c = pts[quad[0]], pts[quad[1]], pts[quad[2]]
+        if (b - a).cross(c - a).y >= -1e-9:
+            continue                    # turned away
+        if deep:
+            poly = [(pts[i].x * k + ox, pts[i].z * k + oy, pts[i].y)
+                    for i in quad]
+        else:
+            poly = [(pts[i].x * k + ox, pts[i].z * k + oy) for i in quad]
+        edges = list(zip(poly, poly[1:] + poly[:1]))
+        faces.append((sum(pts[i].y for i in quad) / 4.0, poly, edges))
+    return faces
+
+
+PRINT_RASTER_DPI = 300
+PRINT_RASTER_MAX = 8192
+PRINT_RASTER_LIFT = 0.004       # m an edge is lifted off its own face
+
+
+def _raster_faces(faces, x, y, w, h):
+    """(rgb bytes top row first, px wide, px high) of depth-carrying
+    faces drawn with a depth buffer: white faces, inked edges, each
+    hidden exactly where something stands in front of it. None when
+    there is no GPU to draw with (background mode)."""
+    if bpy.app.background or not faces or w < 1 or h < 1:
+        return None
+    import numpy as np
+    ss = 2                              # drawn double size, then averaged
+    scale = PRINT_RASTER_DPI / 72.0
+    scale = min(scale, PRINT_RASTER_MAX / (ss * max(w, h)))
+    tw = max(1, int(math.ceil(w * scale))) * ss
+    th = max(1, int(math.ceil(h * scale))) * ss
+    depths = [q[2] for _d, poly, _e in faces for q in poly]
+    d0, d1 = min(depths), max(depths)
+
+    def z(d, lift=0.0):
+        return -(d - d0 + 1.0 - lift)
+
+    tris, lines = [], []
+    for _depth, poly, edges in faces:
+        pts = [(q[0], q[1], z(q[2])) for q in poly]
+        for i in range(1, len(pts) - 1):
+            tris += [pts[0], pts[i], pts[i + 1]]
+        for a, b in edges:
+            lines += [(a[0], a[1], z(a[2], PRINT_RASTER_LIFT)),
+                      (b[0], b[1], z(b[2], PRINT_RASTER_LIFT))]
+    off = gpu.types.GPUOffScreen(tw, th)
+    try:
+        with off.bind():
+            fb = gpu.state.active_framebuffer_get()
+            fb.clear(color=(1.0, 1.0, 1.0, 1.0), depth=1.0)
+            gpu.state.blend_set('NONE')
+            gpu.state.depth_mask_set(True)
+            gpu.state.depth_test_set('LESS_EQUAL')
+            try:
+                with gpu.matrix.push_pop(), gpu.matrix.push_pop_projection():
+                    gpu.matrix.load_identity()
+                    gpu.matrix.load_projection_matrix(
+                        _ortho(x, x + w, y, y + h, 0.5, (d1 - d0) + 2.0))
+                    shader = gpu.shader.from_builtin('UNIFORM_COLOR')
+                    shader.bind()
+                    shader.uniform_float("color", (1.0, 1.0, 1.0, 1.0))
+                    batch_for_shader(shader, 'TRIS',
+                                     {"pos": tris}).draw(shader)
+                    if lines:
+                        shader = gpu.shader.from_builtin(
+                            'POLYLINE_UNIFORM_COLOR')
+                        shader.bind()
+                        shader.uniform_float("viewportSize", (tw, th))
+                        shader.uniform_float(
+                            "lineWidth",
+                            max(1.5, PRINT_EDGE_WIDTH * scale * ss))
+                        shader.uniform_float("color", (0.0, 0.0, 0.0, 1.0))
+                        batch_for_shader(shader, 'LINES',
+                                         {"pos": lines}).draw(shader)
+            finally:
+                gpu.state.depth_test_set('NONE')
+                gpu.state.depth_mask_set(False)
+            buf = fb.read_color(0, 0, tw, th, 4, 0, 'UBYTE')
+    finally:
+        off.free()
+    buf.dimensions = tw * th * 4
+    try:
+        arr = np.frombuffer(buf, dtype=np.uint8)
+    except Exception:
+        arr = np.array(buf, dtype=np.uint8)
+    arr = arr.reshape(th, tw, 4)[::-1, :, :3].astype(np.float32)
+    arr = arr.reshape(th // ss, ss, tw // ss, ss, 3).mean(axis=(1, 3))
+    return arr.astype(np.uint8).tobytes(), tw // ss, th // ss
+
+
 def _print_side_views(page, context, wall, extra):
-    """The plan and iso that are switched on, as line work in the places
-    the layout gave them."""
+    """The plan and iso that are switched on, in the places the layout
+    gave them. The plan is line work. The iso is drawn with a depth
+    buffer and set as a picture, so every part hides what is behind it;
+    with no GPU (background mode) it falls back to line work painted
+    far to near, which mis-orders some faces at that angle."""
     rects = extra.get('side') or {}
     if not rects:
         return
     names = _print_owners(extra['items'])
+    F = _frame(wall)[0]
+    returns, _from_left = _return_boxes(wall, extra['items'])
     sx = extra['sx']
     k = abs(sx(1.0) - sx(0.0))
-    for kind, (x, y, _w, _h, C, (l, _r, b, _t)) in rects.items():
+    for kind, (x, y, w, h, C, (l, _r, b, _t)) in rects.items():
         Fi = _CAMERA_TO_PRINT @ C.inverted_safe()
         view = _SidePrintView(k, x - l * k, y - b * k)
+        M = Fi @ F
+        if kind == 'ISO':
+            try:
+                faces = _print_faces(context, extra['items'], Fi, view,
+                                     only=names | {wall.name}, deep=True)
+                for rb in returns:
+                    faces += _box_faces(M, rb, view, deep=True)
+                got = _raster_faces(faces, x, y, w, h)
+            except Exception as exc:
+                print(f"Elevation print: iso picture: {exc}")
+                got = None
+            if got is not None:
+                rgb, pw, ph = got
+                page.image(rgb, pw, ph, x, y, w, h)
+                continue
         page.fill_color(PAPER)
         page.stroke_color(PRINT_EDGE)
         page.line_width(PRINT_EDGE_WIDTH)
-        # The wall goes down first: everything shown stands in front of
-        # it, and its faces are too big to sort among the products'.
-        for only in ({wall.name}, names):
-            faces = _print_faces(context, extra['items'], Fi, view,
-                                 only=only) if only else []
+        # The walls go down first: everything shown stands in front of
+        # them, and their faces are too big to sort among the products'.
+        back = _print_faces(context, extra['items'], Fi, view,
+                            only={wall.name})
+        for rb in returns:
+            back += _box_faces(M, rb, view)
+        front = _print_faces(context, extra['items'], Fi, view,
+                             only=names) if names else []
+        for faces in (back, front):
             faces.sort(key=lambda f: -f[0])        # far first
             for _depth, poly, edges in faces:
                 page.polygon(poly, fill=True, stroke=False)
