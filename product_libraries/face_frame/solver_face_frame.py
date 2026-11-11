@@ -201,11 +201,13 @@ class FaceFrameLayout:
         self.kick_inset_right = (cab.inset_toe_kick_right
                                  if self.has_toe_kick else 0.0)
         # An end inset beside a run neighbour that covers the end back to
-        # the kick line has nothing to recess: drop it so the side runs
-        # to the floor and the kick closes against the neighbour instead
-        # of leaving a void between the two cabinets.
+        # the kick line only shows as far back as that neighbour's kick:
+        # kick_close_left / _right hold the Y where a short board closes
+        # the recess there (None = open the full depth).
+        self.kick_close_left = None
+        self.kick_close_right = None
         if self.kick_inset_left > 0 or self.kick_inset_right > 0:
-            self._drop_covered_end_insets(cabinet_obj, cab)
+            self._close_covered_end_insets(cabinet_obj, cab)
         # Rear inset: the kick recessed at the back as well (an island's
         # seating side). Only the kicks that build a sub-base - NOTCH and
         # the loose ladders - have a back to recess.
@@ -386,25 +388,34 @@ class FaceFrameLayout:
                     'division_offset': 0.0,
                 })
 
-    def _drop_covered_end_insets(self, cabinet_obj, cab):
-        """Zero kick_inset_left / _right where exposure finds the end
-        covered by a run neighbour back to the toe kick line."""
+    def _close_covered_end_insets(self, cabinet_obj, cab):
+        """Set kick_close_left / _right where exposure finds the end
+        covered by a run neighbour back to the toe kick line. A
+        neighbour whose kick sits in front of this cabinet's own leaves
+        nothing of the recess to see, so the inset is dropped there."""
         try:
             from . import exposure
         except Exception:
             return
         setback = getattr(cab, 'toe_kick_setback', 0.0)
+        own_face = -cab.depth + setback
+        if getattr(cab, 'include_finish_toe_kick', False):
+            own_face -= getattr(cab, 'finish_toe_kick_thickness', 0.0)
         for side in ('left', 'right'):
             attr = 'kick_inset_' + side
             if getattr(self, attr) <= 0:
                 continue
             try:
-                covered = exposure.end_kick_inset_covered(
+                close_y = exposure.end_kick_inset_close_y(
                     cabinet_obj, side, setback)
             except Exception:
-                covered = False
-            if covered:
+                close_y = None
+            if close_y is None:
+                continue
+            if close_y < own_face - 1e-6:
                 setattr(self, attr, 0.0)
+            else:
+                setattr(self, 'kick_close_' + side, close_y)
 
     def _read_bay(self, bay_obj):
         bp = bay_obj.face_frame_bay
@@ -2049,6 +2060,33 @@ def right_kick_return_dims(layout):
     width = layout.bays[layout.bay_count - 1]['kick_height']
     thickness = layout.tkt
     return (length, width, thickness)
+
+
+def kick_return_closure(layout, side):
+    """Board closing an inset end's recess at a run neighbour's kick
+    line ('LEFT' / 'RIGHT'), or None. It spans the inset from the
+    cabinet end to the return's outer face, front face on the
+    neighbour's kick face (Thickness extends +Y), so the recess reads
+    only as deep as the step between the two kicks."""
+    if side == 'LEFT':
+        if not has_left_kick_return(layout):
+            return None
+        close_y, inset, bay, x = (layout.kick_close_left,
+                                  layout.kick_inset_left, 0, 0.0)
+    else:
+        if not has_right_kick_return(layout):
+            return None
+        inset = layout.kick_inset_right
+        close_y, bay, x = (layout.kick_close_right, layout.bay_count - 1,
+                           layout.dim_x - inset)
+    if close_y is None or inset <= 1e-6:
+        return None
+    return {
+        'x': x, 'y': close_y, 'z': 0.0,
+        'length': inset,
+        'width': layout.bays[bay]['kick_height'],
+        'thickness': layout.tkt,
+    }
 
 
 # ---------------------------------------------------------------------------

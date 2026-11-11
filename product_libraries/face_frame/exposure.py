@@ -593,19 +593,23 @@ def kick_continues_past_end(cab_obj, side):
     return False
 
 
-def end_kick_inset_covered(cab_obj, side, setback):
-    """True when a floor-standing run neighbour on the same wall covers
-    cab_obj's given end ('left' / 'right') back to within ``setback`` of
-    the cabinet front - i.e. nothing of that end shows behind the toe
-    kick line, so an end inset there would only open a void between the
-    two cabinets. A shallower neighbour that leaves more of the end
-    showing than the setback does not count; the inset still applies.
+def end_kick_inset_close_y(cab_obj, side, setback):
+    """Where a floor-standing run neighbour on the same wall closes
+    cab_obj's inset end ('left' / 'right'): the Y of that neighbour's
+    kick face in cab_obj's own space, or None.
+
+    Applies when the neighbour covers the end back to within
+    ``setback`` of the cabinet front - nothing of the end shows behind
+    the toe kick line, so the recess at that end only needs to run back
+    to the neighbour's kick, where a short board closes it. A shallower
+    neighbour that leaves more of the end showing than the setback does
+    not count; the inset stays open the full depth.
     """
     if not _is_face_frame_carcass(cab_obj):
-        return False
+        return None
     parent = cab_obj.parent
     if parent is None or _is_corner_cabinet(cab_obj):
-        return False
+        return None
     cab = cab_obj.face_frame_cabinet
     kick_h = getattr(cab, 'toe_kick_height', 0.0)
     cab_x = cab_obj.location.x
@@ -630,10 +634,15 @@ def end_kick_inset_covered(cab_obj, side, setback):
             continue
         # Fronts are at negative Y; how far the neighbour's front sits
         # behind ours is the part of our end left showing.
-        showing = _side_front_y(sib, other_side) - own_front
-        if showing <= setback + EPS:
-            return True
-    return False
+        sib_front = _side_front_y(sib, other_side)
+        if sib_front - own_front > setback + EPS:
+            continue
+        sib_cab = sib.face_frame_cabinet
+        face = sib_front + getattr(sib_cab, 'toe_kick_setback', 0.0)
+        if getattr(sib_cab, 'include_finish_toe_kick', False):
+            face -= getattr(sib_cab, 'finish_toe_kick_thickness', 0.0)
+        return face - cab_obj.location.y
+    return None
 
 
 def finish_kick_reach_stale(cab_obj):

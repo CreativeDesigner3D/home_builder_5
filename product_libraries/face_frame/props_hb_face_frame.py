@@ -3132,6 +3132,7 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
         'LEFT_CORNER_FINISH_KICK', 'RIGHT_CORNER_FINISH_KICK',
         'DIAGONAL_FINISH_KICK',
         'LEFT_KICK_RETURN', 'RIGHT_KICK_RETURN',
+        'LEFT_KICK_RETURN_CLOSURE', 'RIGHT_KICK_RETURN_CLOSURE',
         # Loose ladder sub-base boards - finished material
         'LOOSE_KICK_FRONT', 'LOOSE_KICK_REAR',
         'LOOSE_KICK_END_LEFT', 'LOOSE_KICK_END_RIGHT',

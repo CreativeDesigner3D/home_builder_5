@@ -239,6 +239,10 @@ PART_ROLE_RIGHT_CORNER_FINISH_KICK = 'RIGHT_CORNER_FINISH_KICK'
 PART_ROLE_MID_FINISH_KICK = 'MID_FINISH_KICK'
 PART_ROLE_LEFT_KICK_RETURN = 'LEFT_KICK_RETURN'
 PART_ROLE_RIGHT_KICK_RETURN = 'RIGHT_KICK_RETURN'
+# Board closing an inset end's recess at a run neighbour's kick line
+# (see solver.kick_return_closure). Created on first use.
+PART_ROLE_LEFT_KICK_RETURN_CLOSURE = 'LEFT_KICK_RETURN_CLOSURE'
+PART_ROLE_RIGHT_KICK_RETURN_CLOSURE = 'RIGHT_KICK_RETURN_CLOSURE'
 # Loose toe kick ladder sub-base (toe_kick_type == 'LOOSE'): a freestanding
 # frame the floated carcass sits on - front + rear rail spanning between two
 # front-to-back end boards. All four are finished-material parts.
@@ -3322,6 +3326,15 @@ class FaceFrameCabinet(GeoNodeCage):
                 self._ensure_kick_return(
                     PART_ROLE_RIGHT_KICK_RETURN, 'Toe Kick Return Right',
                     mirror_z=False)
+                for close_side, close_role in (
+                        ('LEFT', PART_ROLE_LEFT_KICK_RETURN_CLOSURE),
+                        ('RIGHT', PART_ROLE_RIGHT_KICK_RETURN_CLOSURE)):
+                    if solver.kick_return_closure(layout, close_side):
+                        self._ensure_loose_kick_part(
+                            close_role,
+                            'Toe Kick Return Closure '
+                            + close_side.title(),
+                            kind='RAIL', mirror_z=True)
                 # Loose ladder sub-base. Always ensured (hidden in the
                 # dispatch loop unless toe_kick_type == 'LOOSE'), so a
                 # toe-kick-type change toggles visibility without
@@ -3793,6 +3806,21 @@ class FaceFrameCabinet(GeoNodeCage):
                 part.set_input('Length', length)
                 part.set_input('Width', width)
                 part.set_input('Thickness', thickness)
+
+            elif role in (PART_ROLE_LEFT_KICK_RETURN_CLOSURE,
+                          PART_ROLE_RIGHT_KICK_RETURN_CLOSURE):
+                seg = solver.kick_return_closure(
+                    layout,
+                    'LEFT' if role == PART_ROLE_LEFT_KICK_RETURN_CLOSURE
+                    else 'RIGHT')
+                child.hide_viewport = seg is None
+                child.hide_render = seg is None
+                if seg is None:
+                    continue
+                child.location = (seg['x'], seg['y'], seg['z'])
+                part.set_input('Length', seg['length'])
+                part.set_input('Width', seg['width'])
+                part.set_input('Thickness', seg['thickness'])
 
             # ---- Loose toe kick ladder (visible only for LOOSE) ----
             elif role == PART_ROLE_LOOSE_KICK_FRONT:
