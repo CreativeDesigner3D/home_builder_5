@@ -401,13 +401,13 @@ def _paint_like_cabinet(root, part_obj):
     finish, _ = style.get_finish_material()
     edge, _front_edge = style.get_edge_materials()
     part = GeoNodeCutpart(part_obj)
-    for name, mat in (('Top Surface', finish), ('Bottom Surface', finish),
-                      ('Edge W1', edge), ('Edge W2', edge),
-                      ('Edge L1', edge), ('Edge L2', edge)):
+    for name, mat in (('Top Surface', finish), ('Bottom Surface', finish)):
         try:
             part.set_input(name, mat)
         except Exception:
             pass
+    from . import edgebanding_frameless
+    edgebanding_frameless.apply_edges(part_obj, edge)
 
 
 def _solve_toe_kick(root, parts, p, dim_x, dim_y):
@@ -1804,6 +1804,12 @@ def _solve_splitter(splitter_obj, vertical):
                 set_part(board, (x + size, 0.0, 0.0), length=dim_z,
                          width=dim_y, thickness=mt)
             x += size + mt
+    # A board added after the cabinet was styled is painted as it is
+    # made; the ones already painted are left alone.
+    root = cabinet_root(splitter_obj)
+    for (role, _i), board in parts.items():
+        if role == 'SPLITTER' and board is not None:
+            paint_new_parts(root, board)
 
 
 def link_dims(parent_obj, child_obj, dims):
@@ -2069,6 +2075,38 @@ def _drawer_box_system():
     return getattr(props, 'drawer_box_system', DRAWER_BOX_PARAMETRIC)
 
 
+# What a parametric box is built from (GeoNodeDrawerBox.create), put
+# back when a box leaves a bought system so it does not keep that
+# system's boards and finish.
+_PARAMETRIC_BOX_INPUTS = (
+    ("Material Thickness", inch(0.625)),
+    ("Bottom Thickness", inch(0.25)),
+    ("Drawer Bottom Z Location", inch(0.5)),
+    ("Material", None),
+    ("Side Material", None),
+    ("Use Side Material", False),
+    ("Side Outset", 0.0),
+    ("Side Thickness", 0.0),
+    ("Side Height Reduce", 0.0),
+)
+
+
+def _style_drawer_box(box_obj, system):
+    """Boards and finish for the box: the closet library's for a bought
+    system or wood box, the parametric box's own otherwise."""
+    from ...hb_types import GeoNodeObject
+    gb = GeoNodeObject(box_obj)
+    if system is not None:
+        from ..closets import drawer_boxes_closets as boxes
+        boxes.style_box(gb, system)
+        return
+    for socket, value in _PARAMETRIC_BOX_INPUTS:
+        try:
+            gb.set_input(socket, value)
+        except Exception:
+            pass
+
+
 def _solve_drawer_box(front_obj, box_obj, insert_obj, length, width,
                       overlays, hidden):
     clear_drivers(box_obj)
@@ -2084,27 +2122,46 @@ def _solve_drawer_box(front_obj, box_obj, insert_obj, length, width,
             max(length - top - bottom - top_clr - bottom_clr, 0.0))
     location = (bottom + bottom_clr, -left - side, 0.0)
     system = _drawer_box_system()
-    for key in ('hb_drawer_box_type', 'hb_drawer_box_size'):
+    for key in ('hb_drawer_box_type', 'hb_drawer_box_size',
+                'hb_box_warning', 'hb_open_height'):
         if key in box_obj:
             del box_obj[key]
+    styled = None
     if system == 'NONE':
         hidden = True
     elif system != DRAWER_BOX_PARAMETRIC:
-        # A bought system (or standard wood boxes): the box takes the
-        # system's standard size for the opening it sits in and the
-        # system's own clearances, the way the closet library sizes one.
+        # A bought system (or standard wood boxes) is built exactly the
+        # way the closet library builds one: the system's standard size
+        # for the clear opening the front covers, the closet's wood box
+        # deducts where a wood box falls short of a standard, the
+        # system's side gap and floor stand-off (giving way when the
+        # opening is tighter than it), its board thicknesses and finish,
+        # and the warning that says when a size cannot be bought.
         from ..closets import drawer_boxes_closets as boxes
+        from ..closets import const_closets
         clear_h = max(length - top - bottom, 0.0)
         clear_w = max(width - left - right, 0.0)
-        sized = boxes.size_box(system, clear_h, depth, dims[2], dims[1])
+        wood_h = max(clear_h - const_closets.DRAWER_BOX_HEIGHT_DEDUCT,
+                     inch(2.0))
+        wood_d = max(depth - const_closets.DRAWER_BOX_DEPTH_DEDUCT,
+                     inch(2.0))
+        sized = boxes.size_box(system, clear_h, depth, wood_h, wood_d)
         if sized is not None:
             box_h, box_d, tag = sized
             gap = boxes.side_gap(system)
-            dims = (max(clear_w - gap * 2.0, 0.0), box_d, box_h)
-            location = (bottom + boxes.floor_gap(system), -left - gap, 0.0)
+            room = max(clear_h, inch(1.0))
+            lift = min(boxes.floor_gap(system), max(0.0, room - box_h))
+            dims = (max(clear_w - gap * 2.0, inch(2.0)), box_d, box_h)
+            location = (bottom + lift, -left - gap, 0.0)
             box_obj['hb_drawer_box_type'] = system
             box_obj['hb_drawer_box_size'] = tag
+            box_obj['hb_open_height'] = clear_h
+            warning = boxes.box_warning(system, clear_h, depth, wood_d)
+            if warning:
+                box_obj['hb_box_warning'] = warning
+            styled = boxes
     set_cage(box_obj, location, *dims)
+    _style_drawer_box(box_obj, system if styled is not None else None)
     box_obj.hide_viewport = hidden
     box_obj.hide_render = hidden
     # The box construction pick and the inserts inside the box.
@@ -2172,16 +2229,40 @@ def _paint_interior(root, part_obj):
         return
     index = root.get('CABINET_STYLE_INDEX', 0)
     style = styles[index] if 0 <= index < len(styles) else styles[0]
-    face, _ = style.get_interior_material()
+    if root.get('Finished Interior', False):
+        face, _ = style.get_finish_material()
+    else:
+        face, _ = style.get_interior_material()
     edge, _front_edge = style.get_edge_materials()
     part = GeoNodeCutpart(part_obj)
-    for name, mat in (('Top Surface', face), ('Bottom Surface', face),
-                      ('Edge W1', edge), ('Edge W2', edge),
-                      ('Edge L1', edge), ('Edge L2', edge)):
+    for name, mat in (('Top Surface', face), ('Bottom Surface', face)):
         try:
             part.set_input(name, mat)
         except Exception:
             pass
+    from . import edgebanding_frameless
+    edgebanding_frameless.apply_edges(part_obj, edge)
+
+
+def paint_new_parts(root, top):
+    """Paint the cutparts under ``top`` that were made after the cabinet
+    was styled (a fixed shelf or division added later, and the shelves
+    of its new sections) the way the style painted the rest: interior
+    faces and the cabinet banding on the edges their rule bands. A part
+    with no material is left out of the cut list, so a part is never
+    left bare (the closet library paints its new shelves the same way).
+    Parts that already carry a material are left as they are."""
+    if root is None or top is None:
+        return
+    for obj in [top] + list(top.children_recursive):
+        if 'CABINET_PART' not in obj or obj.get('IS_CABINET_FRONT'):
+            continue
+        try:
+            if GeoNodeCutpart(obj).get_input('Top Surface') is not None:
+                continue
+        except Exception:
+            continue
+        _paint_interior(root, obj)
 
 
 # How far an insert's fronts are open, 0 closed to 1 fully open. Written

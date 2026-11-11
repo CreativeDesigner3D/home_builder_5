@@ -780,6 +780,10 @@ def split_host(context, host, kind, section_type='EMPTY'):
         hb_utils.run_calc_fix(context, cabinet)
         update_shelf_quantities(context, cabinet)
         hb_utils.run_calc_fix(context, cabinet)
+    # The fixed shelf or division and the shelves of its new sections
+    # are painted like the rest of the styled cabinet.
+    solver_frameless.paint_new_parts(
+        solver_frameless.cabinet_root(splitter.obj), splitter.obj)
     return splitter.obj
 
 

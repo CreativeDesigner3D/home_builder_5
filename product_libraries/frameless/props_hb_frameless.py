@@ -1222,10 +1222,9 @@ class Frameless_Cabinet_Style(PropertyGroup):
 
             part.set_input("Top Surface", top_mat)
             part.set_input("Bottom Surface", bottom_mat)
-            part.set_input("Edge W1", edge)
-            part.set_input("Edge W2", edge)
-            part.set_input("Edge L1", edge)
-            part.set_input("Edge L2", edge)
+            # Carcass parts are banded only where an edge shows.
+            from . import edgebanding_frameless
+            edgebanding_frameless.apply_edges(child, edge)
             # A turned leg is a static mesh carrying its own material, taken
             # from Top Surface when it was turned; give it the new one.
             turned_leg.sync_static_material(child)
