@@ -533,6 +533,12 @@ def _fit_step(area, region, r3d):
     side = 120 * s
     top = 150 * s
     bottom = 130 * s
+    try:
+        # Room for the legend under the elevation.
+        bottom += _legend_height(bpy.data.scenes.get(_state['scene']),
+                                 wall, s)
+    except Exception:
+        pass
     avail_w = max(100.0, (xmax - xmin) - 2 * side)
     avail_h = max(100.0, (ymax - ymin) - top - bottom)
     px_per_m = cur_w / length
@@ -1385,6 +1391,8 @@ SHOW_OPTIONS = (
 #   {'kind': 'LINES', 'points': [Vector, ...]} (pairs, like GPU LINES)
 #   {'kind': 'FILL', 'points': [Vector, ...]} (a flat polygon's corners
 #    in order, filled in 'color' under everything else: a return wall)
+#   {'kind': 'LEGEND', 'rows': [(mark, text), ...]} (what the circled
+#    marks on this wall stand for: listed in a box under the elevation)
 #   {'kind': 'BUBBLE', 'origin': Vector, 'text': str} (a circled mark,
 #    the ring sized to the text on screen)
 # Any primitive may carry 'color' (RGBA) to stand out from the ink.
@@ -3659,6 +3667,98 @@ def _draw_side_views(context, area, region, dims, extra, s):
     gpu.state.blend_set('ALPHA')
 
 
+# ---- Legend ------------------------------------------------------------------
+
+LEGEND_TITLE = "LEGEND"
+LEGEND_GAP_PX = 22          # under the lowest dimension
+
+
+def _legend_lines(scene, wall):
+    """The legend's lines for a wall, top to bottom; empty with no
+    legend (or with the notes switched off)."""
+    if not show_option(scene, 'ANNOTATIONS'):
+        return []
+    rows = []
+    for pr in _annotations(scene, wall):
+        if pr.get('kind') == 'LEGEND':
+            rows += list(pr.get('rows') or ())
+    lines = []
+    for mark, text in rows:
+        parts = _note_numbers(scene, str(text or '')).splitlines() or ['']
+        lines.append(f"{mark}   {parts[0]}".rstrip())
+        lines += ["       " + extra_line for extra_line in parts[1:]]
+    return lines
+
+
+def _legend_height(scene, wall, s):
+    """Room the legend takes under the elevation, gap included."""
+    lines = _legend_lines(scene, wall)
+    if not lines:
+        return 0.0
+    size = ANNOTATION_FONT_SIZE * s
+    return (len(lines) + 1) * size * 1.5 + 8 * s + LEGEND_GAP_PX * s
+
+
+def _legend_box(scene, wall, dims, extra, s):
+    """(x, y, w, h, [(text, x, baseline y, is title)]) of the legend:
+    a box under the elevation's lowest dimension, from the wall's
+    start. None with nothing to list."""
+    lines = _legend_lines(scene, wall)
+    if not lines or extra is None:
+        return None
+    size = ANNOTATION_FONT_SIZE * s
+    lh = size * 1.5
+    pad = 6 * s
+    _F, _Fi, length, height = _frame(wall)
+    _x0, _x1, by0, _y1 = _print_bounds(dims, extra, 1.0, length, height)
+    texts = [LEGEND_TITLE] + lines
+    w = max(_blf_measure(t, size) for t in texts) + 2 * pad
+    h = len(texts) * lh + 8 * s
+    x = extra['sx'](0.0)
+    y = by0 - LEGEND_GAP_PX * s - h
+    out = []
+    for i, t in enumerate(texts):
+        out.append((t, x + pad, y + h - 4 * s - (i + 1) * lh + lh * 0.3,
+                    i == 0))
+    return x, y, w, h, out
+
+
+def _draw_legend(context, region, dims, extra, s):
+    wall = active_wall(context)
+    if wall is None:
+        return
+    box = _legend_box(context.scene, wall, dims, extra, s)
+    if box is None:
+        return
+    x, y, w, h, texts = box
+    shader = gpu.shader.from_builtin('UNIFORM_COLOR')
+    shader.bind()
+    draw_round_rect(shader, x, y, w, h, 2 * s, (*PAPER, 0.92))
+    ring = [(x, y), (x + w, y), (x + w, y + h), (x, y + h)]
+    _stroke(region, [q for a, b in zip(ring, ring[1:] + ring[:1])
+                     for q in (a, b)], 1.0 * s, ANNOTATION_LINE)
+    blf.size(0, ANNOTATION_FONT_SIZE * s)
+    for text, tx, ty, _title in texts:
+        blf.color(0, *TEXT)
+        blf.position(0, tx, ty, 0)
+        draw_glyphs(0, text)
+
+
+def _print_legend(page, scene, wall, dims, extra, ps):
+    box = _legend_box(scene, wall, dims, extra, ps)
+    if box is None:
+        return
+    x, y, w, h, texts = box
+    page.stroke_color(ANNOTATION_LINE)
+    page.line_width(0.75 * ps)
+    page.fill_color(PAPER)
+    page.rect(x, y, w, h, fill=True, stroke=True)
+    page.fill_color(TEXT)
+    for text, tx, ty, title in texts:
+        page.text(tx, ty, text, ANNOTATION_FONT_SIZE * ps,
+                  font=hb_pdf.BOLD if title else hb_pdf.REGULAR)
+
+
 def _draw_adding(region, extra, s):
     """The height string being clicked in: the level under the cursor
     as a guide across the wall, and the levels picked so far."""
@@ -3789,6 +3889,10 @@ def _draw():
             _draw_adding(region, extra, s)
         if _hover_chain is not None and _drag is None and _adding is None:
             _draw_remove_chip(dims, s)
+        try:
+            _draw_legend(context, region, dims, extra, s)
+        except Exception as exc:
+            print(f"Elevation legend: {exc}")
         _draw_bar(context, area)
         gpu.state.blend_set('NONE')
 
@@ -3969,9 +4073,11 @@ def _print_fit(scene, wall, W, H, extra=None):
     x0, x1, y0, y1 = _print_bounds(dims, extra, k0, L, Hw)
     # The dimension tiers keep their size in pt whatever the scale.
     pad_l = extra['sx'](0.0) - x0
-    pad_b = extra['sy'](0.0) - y0
+    # The legend hangs under the lowest dimension, at a fixed size.
+    legend_h = _legend_height(scene, wall, _s())
+    pad_b = extra['sy'](0.0) - y0 + legend_h
     extra_w = (x1 - x0) - k0 * L
-    extra_h = (y1 - y0) - k0 * Hw
+    extra_h = (y1 - y0) - k0 * Hw + legend_h
     # Side views scale with the wall; the gap to them does not.
     more_w = more_h = gap_w = gap_h = iso_h = 0.0
     for kind, rect in (extra.get('side') or {}).items():
@@ -4782,6 +4888,10 @@ def print_wall(context, filepath, paper='TABLOID',
         except Exception as exc:
             print(f"Elevation print: side views: {exc}")
         _print_dims(page, scene, dims, extra, text_scale)
+        try:
+            _print_legend(page, scene, wall, dims, extra, text_scale)
+        except Exception as exc:
+            print(f"Elevation print: legend: {exc}")
         try:
             _print_annotations(page, scene, wall, region, view, text_scale)
         except Exception as exc:
