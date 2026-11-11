@@ -152,6 +152,23 @@ def get_interior_bp(obj):
     return None
 
 
+def is_hidden_interior_part(obj):
+    """Whether a drawing shows this part as hidden lines: a cabinet's
+    interior part, or a closet part standing behind a door."""
+    if obj is None:
+        return False
+    if (obj.get('IS_FRAMELESS_INTERIOR_PART')
+            or obj.get('IS_FACE_FRAME_INTERIOR_PART')):
+        return True
+    if not str(obj.get('hb_part_role') or '').startswith('CLOSET_'):
+        return False
+    try:
+        from .product_libraries.closets import types_closets
+        return types_closets.behind_door(obj)
+    except Exception:
+        return False
+
+
 def get_interior_part_bp(obj):
     """Check if object is an interior part."""
     if obj is None:

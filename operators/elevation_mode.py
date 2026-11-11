@@ -3405,7 +3405,8 @@ def _interior_names(items):
     names = set()
 
     def walk(obj, inside):
-        inside = inside or any(obj.get(m) for m in INTERIOR_MARKERS)
+        inside = (inside or any(obj.get(m) for m in INTERIOR_MARKERS)
+                  or hb_utils.is_hidden_interior_part(obj))
         if inside:
             names.add(obj.name)
         for child in obj.children:

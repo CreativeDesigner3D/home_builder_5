@@ -8293,6 +8293,46 @@ def find_bay_cage(obj):
     return None
 
 
+# Parts that stand at the back of an opening: a door in front of them
+# hides them, but their outline is the opening's own, so drawing it as a
+# hidden line would only double the door's edges.
+_BACK_ROLES = frozenset(('CLOSET_APPLIED_BACK', 'CLOSET_CENTER_BACK',
+                         'CLOSET_CAPTURED_BACK'))
+
+
+def behind_door(obj):
+    """Whether a part stands inside an opening that a door covers - one
+    hung on the opening, or one across its whole bay on that face. The
+    shelves, rods, drawers and accessories in there are what a drawing
+    shows as hidden lines. False for the door itself and what rides on
+    it (pull, hamper bags), for the opening's back, and for cages."""
+    if obj is None or obj.get(TAG_OPENING_CAGE) or obj.get(TAG_BAY_CAGE) \
+            or obj.get(TAG_CORNER_OPENING_CAGE):
+        return False
+    if obj.get('hb_part_role') in _BACK_ROLES:
+        return False
+    current = obj
+    while current is not None:
+        if current.get('hb_part_role') == PART_ROLE_DOOR:
+            return False
+        if current.get(TAG_BAY_CAGE) or current.get(TAG_STARTER_CAGE):
+            return False
+        if (current.get(TAG_OPENING_CAGE)
+                or current.get(TAG_CORNER_OPENING_CAGE)):
+            if any(c.get('hb_part_role') == PART_ROLE_DOOR
+                   for c in current.children):
+                return True
+            bay = find_bay_cage(current)
+            try:
+                if bay is not None and bay_door_swing(
+                        bay, current.get(PROP_OPENING_SIDE, 'FRONT')):
+                    return True
+            except Exception:
+                pass
+        current = current.parent
+    return False
+
+
 # How far a door (or lift-up) swings fully open - the reference's Door
 # Rotation prompt, 120 degrees.
 DOOR_OPEN_ANGLE = math.radians(120.0)

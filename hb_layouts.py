@@ -1955,11 +1955,11 @@ class ElevationView(LayoutView):
                                dashed_col: bpy.types.Collection):
         """Recursively sort an object tree into solid and dashed collections.
         
-        Interior parts (frameless or face frame) go to dashed, all other visible
-        geometry goes to solid. Cages and helpers are skipped but their children are processed.
+        Interior parts (frameless or face frame) and closet parts behind a
+        door go to dashed, all other visible geometry goes to solid. Cages and helpers are skipped but their children are processed.
         """
         if not self._is_cage(obj) and not self._is_helper(obj):
-            if obj.get('IS_FRAMELESS_INTERIOR_PART') or obj.get('IS_FACE_FRAME_INTERIOR_PART'):
+            if hb_utils.is_hidden_interior_part(obj):
                 if obj.name not in dashed_col.objects:
                     dashed_col.objects.link(obj)
             else:
@@ -2959,8 +2959,7 @@ class MultiView(LayoutView):
 
         def visit(o):
             if (not is_cage_object(o) and not is_helper_object(o)
-                    and (o.get('IS_FRAMELESS_INTERIOR_PART')
-                         or o.get('IS_FACE_FRAME_INTERIOR_PART'))
+                    and hb_utils.is_hidden_interior_part(o)
                     and occluded(o)):
                 if o.name not in dashed.objects:
                     dashed.objects.link(o)
