@@ -3700,7 +3700,8 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
 
             # An arched finished back is a bent mesh the same way.
             if ((role in ('BEADBOARD', 'SHIPLAP', 'V_GROOVE', 'WOOD_TOP',
-                          'WOOD_TOP_EDGE', 'INSET_PANEL', 'FINISHED_BACK')
+                          'WOOD_TOP_EDGE', 'INSET_PANEL', 'FINISHED_BACK',
+                          'DRAWER_LOOK_STILE')
                  or child.get('hb_return_member'))
                     and child.get('HB_STATIC_TEXTURED')):
                 slot_mat = ov_mat if ov_mat is not None else finish_mat
@@ -11700,6 +11701,37 @@ class Face_Frame_Drawer_Look_Opening(PropertyGroup):
     )  # type: ignore
 
 
+def _update_drawer_split_look(self, context):
+    """Sync the face-width list to the side-by-side count (faces start
+    equal), then recalc."""
+    from . import types_face_frame
+    coll = self.drawer_split_faces
+    n = 0 if self.drawer_split_look == 'NONE' else int(self.drawer_split_look)
+    with types_face_frame.suspend_recalc():
+        while len(coll) > n:
+            coll.remove(len(coll) - 1)
+        while len(coll) < n:
+            coll.add()
+        for item in coll:
+            item.unlock_size = False
+    types_face_frame.recalculate_face_frame_cabinet(self.id_data)
+
+
+class Face_Frame_Drawer_Split_Face(PropertyGroup):
+    """One face width of a drawer front built to look like several
+    drawers side by side, left to right. unlock_size = the user typed
+    this width (held); the rest share what is left equally."""
+    size: FloatProperty(
+        name="Face Width", default=units.inch(6.0), unit='LENGTH',
+        precision=4, update=_update_cabinet_dim,
+    )  # type: ignore
+    unlock_size: BoolProperty(
+        name="Unlock Face Width",
+        description="Hold this face width; locked faces share the remainder equally",
+        default=False, update=_update_cabinet_dim,
+    )  # type: ignore
+
+
 class Face_Frame_Opening_Props(PropertyGroup):
     """Per-opening state for face frame cabinets. Attached to each
     opening's cage object as bpy.types.Object.face_frame_opening.
@@ -12043,6 +12075,49 @@ class Face_Frame_Opening_Props(PropertyGroup):
     # the division count by _update_drawer_look_divisions; consumed by
     # _build_drawer_look_fronts (front height = opening height + overlays).
     drawer_look_openings: CollectionProperty(type=Face_Frame_Drawer_Look_Opening)  # type: ignore
+    # Side-by-side drawer look: one drawer whose front is built from N
+    # separate faces with an integral stile piece between each pair, all
+    # applied to the drawer box front, so it reads as N drawers in a row.
+    # Each stile piece is cut wider than its face by a groove down each
+    # edge (the shadow line against the neighbouring face). Drawer fronts
+    # only, and ignored while drawer_look_divisions is set. Built by
+    # _build_drawer_split_fronts.
+    drawer_split_look: EnumProperty(
+        name="Side-by-Side Look",
+        description="Build this drawer front as N drawer faces side by side "
+                    "with an integral stile between them (still one drawer)",
+        items=[
+            ('NONE', "None", "One drawer front"),
+            ('2', "2 Drawers", "Two faces, one stile"),
+            ('3', "3 Drawers", "Three faces, two stiles"),
+            ('4', "4 Drawers", "Four faces, three stiles"),
+        ],
+        default='NONE',
+        update=_update_drawer_split_look,
+    )  # type: ignore
+    # Face widths, left to right; synced to the count by
+    # _update_drawer_split_look.
+    drawer_split_faces: CollectionProperty(type=Face_Frame_Drawer_Split_Face)  # type: ignore
+    drawer_split_stile_width: FloatProperty(
+        name="Integral Stile Width",
+        description="Visible face of the stile between two drawer faces",
+        default=units.inch(1.5), min=units.inch(0.25), unit='LENGTH',
+        precision=4, update=_update_cabinet_dim,
+    )  # type: ignore
+    drawer_split_groove_width: FloatProperty(
+        name="Groove Width",
+        description="Width of the groove down each edge of an integral "
+                    "stile. The stile piece is cut two grooves wider than "
+                    "its visible face",
+        default=units.inch(0.09375), min=0.0, unit='LENGTH',
+        precision=4, update=_update_cabinet_dim,
+    )  # type: ignore
+    drawer_split_groove_depth: FloatProperty(
+        name="Groove Depth",
+        description="Depth of the integral stile grooves, from the face",
+        default=units.inch(0.125), min=0.0, unit='LENGTH',
+        precision=4, update=_update_cabinet_dim,
+    )  # type: ignore
     # Door-look door: a single LEFT / RIGHT swing leaf shown as N door
     # panels side by side (doors battened together), still one door.
     # Ignored while drawer_look_divisions is set.
@@ -15486,6 +15561,7 @@ classes = (
     Face_Frame_Interior_Item,
     Face_Frame_Interior_Region_Props,
     Face_Frame_Drawer_Look_Opening,
+    Face_Frame_Drawer_Split_Face,
     Face_Frame_Opening_Props,
     Face_Frame_Splitter_Width,
     Face_Frame_Split_Props,

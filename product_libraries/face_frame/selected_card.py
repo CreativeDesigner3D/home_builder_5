@@ -351,6 +351,19 @@ def _drawer_look_ok(op):
     return _single_door(op) or op.front_type == 'DRAWER_FRONT'
 
 
+def _drawer_split_ok(op):
+    """One drawer front built as several faces side by side: drawer
+    fronts on the box construction that takes applied faces, and not
+    while the stacked drawer look is on."""
+    return (op.front_type == 'DRAWER_FRONT'
+            and op.drawer_look_divisions == 'NONE'
+            and types_face_frame.drawer_split_look_allowed(op.id_data))
+
+
+def _drawer_split_on(op):
+    return _drawer_split_ok(op) and op.drawer_split_look != 'NONE'
+
+
 def _door_look_ok(op):
     return ((_single_door(op) and op.drawer_look_divisions == 'NONE')
             or (op.front_type == 'DOOR' and op.hinge_side == 'DOUBLE'))
@@ -1039,6 +1052,13 @@ def front_detail_fields():
         ('bool', 'add_apron', "Add Apron", {'when': _is_door}),
         ('distance', 'apron_height', "Apron Height", {'when': _apron}),
         ('enum', 'drawer_look_divisions', "Drawer-Look", {'when': _drawer_look_ok}),
+        ('enum', 'drawer_split_look', "Side-by-Side Look", {'when': _drawer_split_ok}),
+        ('distance', 'drawer_split_stile_width', "Integral Stile",
+         {'when': _drawer_split_on}),
+        ('distance', 'drawer_split_groove_width', "Groove Width",
+         {'when': _drawer_split_on}),
+        ('distance', 'drawer_split_groove_depth', "Groove Depth",
+         {'when': _drawer_split_on}),
         ('enum', 'door_look_divisions', "Door-Look", {'when': _door_look_ok}),
         ('enum', 'door_look_direction', "Door-Look Layout", {'when': _door_look_layout}),
         ('distance', 'door_look_top_height', "Top Door Height", {'when': _door_look_top}),
@@ -1133,6 +1153,16 @@ def _drawer_look_rows(op):
     return out
 
 
+def _drawer_split_rows(op):
+    """[(fields, owner)] for a side-by-side drawer front's face widths,
+    left to right."""
+    if not _drawer_split_on(op):
+        return []
+    return [((('locked', 'size', "Face %d" % (idx + 1),
+               {'unlock': 'unlock_size'}),), face)
+            for idx, face in enumerate(op.drawer_split_faces)]
+
+
 def _owners_group(context, key, label, summary, parts):
     """A folding group, as a 'group' field draws one, whose fields sit
     on more than one owner: [(fields, owner)]. Left out when nothing in
@@ -1170,6 +1200,10 @@ def opening_group_blocks(context, opening_obj):
     if rows:
         out += _owners_group(context, 'ff_opening_rows', "Drawer Heights",
                              "%d rows" % len(op.drawer_look_openings), rows)
+    faces = _drawer_split_rows(op)
+    if faces:
+        out += _owners_group(context, 'ff_opening_faces', "Drawer Face Widths",
+                             "%d faces" % len(op.drawer_split_faces), faces)
     out += _owners_group(context, 'ff_opening_finish', "Finish",
                          _finish_summary(op),
                          [(finish_fields(), op), (finish_tex, cab)])

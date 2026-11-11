@@ -1577,6 +1577,29 @@ def draw_opening_properties(layout, opening_obj):
                     heights_box.prop(below, 'no_rail_above',
                                      text="Remove Rail")
 
+        # Side-by-side drawer look: one drawer front built from several
+        # faces with integral stiles between them.
+        if (op.front_type == 'DRAWER_FRONT'
+                and op.drawer_look_divisions == 'NONE'
+                and types_face_frame.drawer_split_look_allowed(opening_obj)):
+            fcol.prop(op, 'drawer_split_look', text="Side-by-Side Look")
+            if op.drawer_split_look != 'NONE':
+                faces_box = fcol.box()
+                faces_box.label(text="Drawer Face Widths (left to right)")
+                for idx, item in enumerate(op.drawer_split_faces):
+                    frow = faces_box.row(align=True)
+                    field = frow.row(align=True)
+                    field.enabled = item.unlock_size
+                    field.prop(item, 'size', text="Face " + str(idx + 1))
+                    frow.prop(item, 'unlock_size', text="",
+                              icon='UNLOCKED' if item.unlock_size else 'LOCKED')
+                faces_box.prop(op, 'drawer_split_stile_width',
+                               text="Integral Stile")
+                faces_box.prop(op, 'drawer_split_groove_width',
+                               text="Groove Width")
+                faces_box.prop(op, 'drawer_split_groove_depth',
+                               text="Groove Depth")
+
         # Tilt-out flag (false fronts only): label-only -- the 2D elevation
         # prints TILT-OUT instead of FALSE. No geometry change.
         # Pull: a false front is bare by default; turn it on where the

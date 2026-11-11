@@ -551,6 +551,84 @@ PART_ROLE_DRAWER_LOOK_FRONT = 'DRAWER_LOOK_FRONT'
 # Faux mid-rail strip between drawer-look fronts, added only for FULL
 # INSET (proud of the inset fronts, like a real inset face frame).
 PART_ROLE_DRAWER_LOOK_RAIL = 'DRAWER_LOOK_RAIL'
+# Side-by-side drawer look: the integral stile piece between two drawer
+# faces of one drawer front. A static mesh (grooved down both edges); its
+# cutpart still carries the cut size.
+PART_ROLE_DRAWER_LOOK_STILE = 'DRAWER_LOOK_STILE'
+# Box construction a side-by-side drawer front is built on: the faces
+# and stiles are applied to that box's own front.
+DRAWER_SPLIT_BOX_CONSTRUCTION = 'English'
+# Which edge of a front leaf its origin sits on, seen from the front.
+DRAWER_SPLIT_ORIGIN_IS_LEFT = True
+
+
+def opening_box_construction_name(opening_obj):
+    """Printed name of the drawer box construction an opening builds
+    to: its own pick, else its cabinet style's. '' when unknown."""
+    op = getattr(opening_obj, 'face_frame_opening', None)
+    if op is not None and (getattr(op, 'drawer_box_construction', '') or ''):
+        return (getattr(op, 'drawer_box_construction_label', '')
+                or op.drawer_box_construction)
+    root = find_cabinet_root(opening_obj)
+    style_name = root.get('STYLE_NAME') if root is not None else None
+    if not style_name:
+        return ''
+    from . import props_hb_face_frame as props
+    ff = props.get_style_props()
+    for cs in (ff.cabinet_styles if ff is not None else ()):
+        if cs.name != style_name:
+            continue
+        try:
+            if cs.ss_drawer_box_construction_is_custom:
+                return cs.ss_drawer_box_construction_custom or ''
+            return cs.ss_drawer_box_construction or ''
+        except (AttributeError, TypeError):
+            return ''
+    return ''
+
+
+def drawer_split_look_allowed(opening_obj):
+    """A side-by-side drawer front needs the box whose front the faces
+    are applied to. Allowed when the construction is unknown."""
+    name = opening_box_construction_name(opening_obj)
+    return not name or name == DRAWER_SPLIT_BOX_CONSTRUCTION
+
+
+def drawer_split_stile_piece_width(op_props):
+    """Cut width of an integral stile piece: its visible face plus the
+    groove down each edge."""
+    return (op_props.drawer_split_stile_width
+            + 2.0 * max(0.0, op_props.drawer_split_groove_width))
+
+
+def drawer_split_face_widths(width, op_props):
+    """Face widths, left to right, of a side-by-side drawer front
+    ``width`` wide, or None when the look is off or does not fit. Typed
+    (unlocked) widths are kept; the rest share what the stile pieces
+    leave equally."""
+    look = getattr(op_props, 'drawer_split_look', 'NONE')
+    if look == 'NONE':
+        return None
+    n = int(look)
+    available = width - (n - 1) * drawer_split_stile_piece_width(op_props)
+    faces = getattr(op_props, 'drawer_split_faces', None)
+    if faces is not None and len(faces) == n:
+        spec = [(f.size, bool(f.unlock_size)) for f in faces]
+    else:
+        spec = [(0.0, False)] * n
+    auto = [k for k, (s, h) in enumerate(spec) if not h]
+    if not auto:
+        # Every width typed: the last one takes up the difference.
+        spec[-1] = (0.0, False)
+        auto = [n - 1]
+    held = sum(s for s, h in spec if h)
+    share = (available - held) / len(auto)
+    widths = [s if h else share for s, h in spec]
+    if any(w <= inch(0.5) for w in widths):
+        return None
+    return widths
+
+
 # Door-look door: the same carrier trick sideways - one working leaf
 # wearing N applied door panels side by side (battened pair look), with
 # the double-door center reveal between them. Styled from the door pool.
@@ -14413,6 +14491,12 @@ class FaceFrameCabinet(GeoNodeCage):
                 and getattr(op_props, 'door_look_divisions', 'NONE') != 'NONE'
                 and _door_look_hinge_ok(op_props)
             )
+            # Side-by-side drawer look: one drawer front built from N
+            # faces with integral stiles between; a pull per face.
+            split_faces = None
+            if (not drawer_look and leaf['role'] == PART_ROLE_DRAWER_FRONT
+                    and drawer_split_look_allowed(opening_obj)):
+                split_faces = drawer_split_face_widths(width, op_props)
             # Tri-view mirror doors carry no pulls (touch-open per the
             # production spec) -- both the three-bay build and legacy
             # single-opening builds.
@@ -14420,7 +14504,8 @@ class FaceFrameCabinet(GeoNodeCage):
                         or self.obj.get('HB_TRIVIEW_DOORS'))
             # Bi-fold pairs pull from the lead leaf only.
             pull = None
-            if not drawer_look and not no_pulls and not leaf.get('no_pull'):
+            if (not drawer_look and split_faces is None and not no_pulls
+                    and not leaf.get('no_pull')):
                 pull = self._create_pull_for_front(front, leaf['role'], leaf,
                                                    op_props)
             # A pull-out whose product is modeled carries the unit
@@ -14431,6 +14516,10 @@ class FaceFrameCabinet(GeoNodeCage):
                 self._create_drawer_box_for_front(pivot, leaf, rect, op_props)
             if drawer_look:
                 self._build_drawer_look_fronts(front, leaf, op_props)
+            elif split_faces is not None:
+                self._build_drawer_split_fronts(
+                    front, leaf, op_props, split_faces,
+                    pulls_on=not no_pulls and not leaf.get('no_pull'))
             elif door_look:
                 self._build_door_look_fronts(front, leaf, op_props, pull)
         # Racks and trays mounted on the back of the fronts swing with
@@ -14672,6 +14761,116 @@ class FaceFrameCabinet(GeoNodeCage):
                 rail.set_input('Thickness', thickness)
             if i < n - 1:
                 z += h + gaps[i]
+
+    def _build_drawer_split_fronts(self, front, leaf, op_props, face_ws,
+                                   pulls_on=True):
+        """Build one drawer front as N faces side by side with an
+        integral stile piece between each pair, so one drawer reads as
+        N drawers in a row.
+
+        No backing slab: every piece is applied straight to the drawer
+        box front. The leaf itself becomes one of the faces (it keeps
+        the DRAWER_FRONT role, so the drawer still counts and styles as
+        one drawer); the other faces are DRAWER_LOOK_FRONT parts and the
+        stiles DRAWER_LOOK_STILE parts, all children of the leaf and
+        tiled edge to edge across the front. A stile piece is cut two
+        grooves wider than its visible face, with a groove down each
+        edge of the face. ``face_ws`` runs left to right as seen from
+        the front; each face gets its own pull.
+        """
+        length, width, thickness = leaf['part_dims']
+        n = len(face_ws)
+        faces = getattr(op_props, 'drawer_split_faces', None)
+        # Show the worked-out width in the locked rows.
+        if faces is not None and len(faces) == n:
+            for k, w in enumerate(face_ws):
+                if not faces[k].unlock_size and abs(faces[k].size - w) > 1e-6:
+                    faces[k].size = w
+        piece_w = drawer_split_stile_piece_width(op_props)
+        groove_w = max(0.0, op_props.drawer_split_groove_width)
+        groove_d = min(max(0.0, op_props.drawer_split_groove_depth),
+                       thickness / 2.0)
+        scene_props = bpy.context.scene.hb_face_frame
+
+        # The leaf's local -Y runs across the front from its origin
+        # edge. The leaf takes the face at that edge; the rest follow.
+        order = (list(range(n)) if DRAWER_SPLIT_ORIGIN_IS_LEFT
+                 else list(range(n - 1, -1, -1)))
+        lead = front.obj
+        lead['HB_DRAWER_SPLIT_FACES'] = n
+        lead['HB_DRAWER_SPLIT_INDEX'] = order[0] + 1
+        front.set_input('Width', face_ws[order[0]])
+        if pulls_on:
+            self._add_drawer_look_pull(lead, length, face_ws[order[0]],
+                                       thickness, scene_props)
+        y = face_ws[order[0]]
+        for count, i in enumerate(order[1:], start=1):
+            stile = CabinetPart()
+            stile.create("Integral Stile " + str(min(i, order[count - 1]) + 1))
+            stile.obj.parent = lead
+            stile.obj['hb_part_role'] = PART_ROLE_DRAWER_LOOK_STILE
+            stile.obj['CABINET_PART'] = True
+            stile.obj.rotation_euler = (0.0, 0.0, 0.0)
+            stile.set_input('Mirror Y', True)
+            stile.obj.location = (0.0, -y, 0.0)
+            stile.set_input('Length', length)
+            stile.set_input('Width', piece_w)
+            stile.set_input('Thickness', thickness)
+            stile.obj['HB_STILE_FACE_WIDTH'] = (
+                op_props.drawer_split_stile_width)
+            stile.obj['HB_GROOVE_WIDTH'] = groove_w
+            stile.obj['HB_GROOVE_DEPTH'] = groove_d
+            if groove_w > 0.0 and groove_d > 0.0:
+                self._grooved_stile_mesh(stile.obj, length, piece_w,
+                                         thickness, groove_w, groove_d)
+            y += piece_w
+
+            panel = CabinetPart()
+            panel.create("Drawer Face " + str(i + 1))
+            panel.obj.parent = lead
+            panel.obj['hb_part_role'] = PART_ROLE_DRAWER_LOOK_FRONT
+            panel.obj['CABINET_PART'] = True
+            panel.obj['HB_DRAWER_SPLIT_INDEX'] = i + 1
+            panel.obj.rotation_euler = (0.0, 0.0, 0.0)
+            panel.set_input('Mirror Y', True)
+            panel.obj.location = (0.0, -y, 0.0)
+            panel.set_input('Length', length)
+            panel.set_input('Width', face_ws[i])
+            panel.set_input('Thickness', thickness)
+            if pulls_on:
+                self._add_drawer_look_pull(panel.obj, length, face_ws[i],
+                                           thickness, scene_props)
+            y += face_ws[i]
+
+    @staticmethod
+    def _grooved_stile_mesh(part_obj, length, width, thickness,
+                            groove_w, groove_d):
+        """Write an integral stile mesh into ``part_obj``: a board with
+        a square groove down each long edge of its face. Cutpart space:
+        X 0..length, Y 0..-width, face on z = thickness."""
+        import bmesh
+        t = thickness
+        loop = [(0.0, 0.0), (width, 0.0), (width, t - groove_d),
+                (width - groove_w, t - groove_d), (width - groove_w, t),
+                (groove_w, t), (groove_w, t - groove_d),
+                (0.0, t - groove_d)]
+        bm = bmesh.new()
+        ring0 = [bm.verts.new((0.0, -u, z)) for u, z in loop]
+        ring1 = [bm.verts.new((length, -u, z)) for u, z in loop]
+        bm.faces.new(ring0)
+        bm.faces.new(list(reversed(ring1)))
+        for i in range(len(loop)):
+            j = (i + 1) % len(loop)
+            bm.faces.new((ring0[i], ring0[j], ring1[j], ring1[i]))
+        bmesh.ops.recalc_face_normals(bm, faces=bm.faces[:])
+        bm.to_mesh(part_obj.data)
+        bm.free()
+        mod_name = getattr(part_obj.home_builder, 'mod_name', '')
+        mod = part_obj.modifiers.get(mod_name) if mod_name else None
+        if mod is not None:
+            mod.show_viewport = False
+            mod.show_render = False
+        part_obj[TAG_STATIC_TEXTURED] = True
 
     def _build_door_look_fronts(self, front, leaf, op_props, pull=None):
         """Lay N applied door panels side by side on one DOOR leaf so it

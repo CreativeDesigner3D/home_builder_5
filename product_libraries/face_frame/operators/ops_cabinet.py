@@ -2327,6 +2327,8 @@ _FRONT_PROPS = (
     'lift_up_servo',
     'door_look_divisions', 'door_look_direction', 'door_look_top_height',
     'drawer_look_divisions',
+    'drawer_split_look', 'drawer_split_stile_width',
+    'drawer_split_groove_width', 'drawer_split_groove_depth',
     'drawer_box_construction', 'drawer_box_construction_label',
     'drawer_slides', 'drawer_slides_label',
 )
