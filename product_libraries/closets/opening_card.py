@@ -334,9 +334,29 @@ def _after(obj, context):
     if root is None:
         return
     ops = _ops()
+    # What was picked: the opening itself, or a part standing in it.
+    active = context.view_layer.objects.active
+    names = [active.name if active is not None else "", obj.name]
     types_closets.recalculate_closet_starter(root)
     ops._apply_finish(root)
-    ops._apply_selection_shading(context, root)
+    # The shading pass deselects everything. What was picked is picked
+    # again - the part if it is still there, else its opening, else the
+    # closet - or the page being edited would close under the field
+    # that was just changed.
+    ops._apply_selection_shading(context, root, keep_active=False)
+    for name in names:
+        target = bpy.data.objects.get(name) if name else None
+        if target is None or types_closets.find_opening_cage(target) is None:
+            continue
+        try:
+            target.select_set(True)
+        except (RuntimeError, ReferenceError):
+            continue
+        if target.select_get():
+            context.view_layer.objects.active = target
+            return
+    root.select_set(True)
+    context.view_layer.objects.active = root
 
 
 def _ensure():
