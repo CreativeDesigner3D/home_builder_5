@@ -3122,7 +3122,7 @@ SIDE_DIST = 60.0            # m the side views' cameras stand off
 SIDE_MARGIN = 0.05          # m of paper kept round what they show
 SIDE_GAP_PX = 34            # between the dimensions and a side view
 SIDE_MAX_PX = 4096
-SIDE_REFRESH = 0.12         # s between redraws while the model changes
+SIDE_REFRESH = 0.25         # s between redraws while the model changes
 ISO_YAW = math.radians(35.0)
 ISO_PITCH = math.radians(25.0)
 _side_cache = {}
@@ -3310,6 +3310,7 @@ def _side_free():
             pass
     _side_cache.clear()
     _side_wanted.clear()
+    _side_geo.clear()
 
 
 def _side_texture(context, area, region, kind, rect):
@@ -3340,10 +3341,141 @@ def _side_texture(context, area, region, kind, rect):
 _side_wanted = {}
 
 
+SIDE_LINE_PX = 1.3          # a side view's line, in screen pixels
+SIDE_SUPER = 2              # drawn this much oversize, shown smoothed
+SIDE_LIFT = 0.004           # m a line is lifted off its own face
+SIDE_DEPTH = 20.0           # m of depth kept either side of the work
+_side_geo = {}
+
+
+def _side_skip(obj):
+    """Not part of the picture: cages, wire boxes, text, and what is
+    left out of renders (cutters) other than the return wall stand-ins."""
+    return (obj.get('IS_GEONODE_CAGE') or obj.type == 'FONT'
+            or obj.display_type in ('WIRE', 'BOUNDS')
+            or (obj.hide_render and not obj.get(STUB_TAG)))
+
+
+def _side_geometry(scene, wall, items):
+    """The wall and what stands on it as triangles and edge lines in
+    the wall's frame, read once per change of the model: {'tris': n x 3
+    array, 'lines': m x 3 array (pairs)}. The edges are where a surface
+    folds or ends; with a depth buffer nothing else is needed to draw
+    the wall from any side. Cages and selection aids are left out, so
+    the pictures look the same in every mode."""
+    import numpy as np
+    key = (_gen, scene.name, wall.name)
+    if _side_geo.get('key') == key:
+        return _side_geo
+    names = _print_owners(items) | {wall.name}
+    names |= {o.name for o in scene.objects if o.get(STUB_TAG)}
+    Fi = _frame(wall)[1]
+    cos_feature = math.cos(PRINT_FEATURE_ANGLE)
+    dg = bpy.context.evaluated_depsgraph_get()
+    tris, lines = [], []
+    for inst in dg.object_instances:
+        owner = inst.parent if inst.is_instance else inst.object
+        if owner is None or owner.original.name not in names:
+            continue
+        ob = inst.object
+        if ob.type != 'MESH' or _side_skip(owner.original) \
+                or (not inst.is_instance and _side_skip(ob.original)):
+            continue
+        try:
+            mesh = ob.to_mesh()
+        except Exception:
+            continue
+        try:
+            nv, npoly, nl, ne = (len(mesh.vertices), len(mesh.polygons),
+                                 len(mesh.loops), len(mesh.edges))
+            if not npoly:
+                continue
+            M = np.array(Fi @ inst.matrix_world)
+            co = np.empty(nv * 3)
+            mesh.vertices.foreach_get('co', co)
+            co = co.reshape(-1, 3) @ M[:3, :3].T + M[:3, 3]
+            nrm = np.empty(npoly * 3)
+            mesh.polygons.foreach_get('normal', nrm)
+            nrm = nrm.reshape(-1, 3) @ np.linalg.inv(M[:3, :3])
+            nrm /= np.maximum(np.linalg.norm(nrm, axis=1), 1e-12)[:, None]
+            total = np.empty(npoly, dtype=np.int64)
+            mesh.polygons.foreach_get('loop_total', total)
+            le = np.empty(nl, dtype=np.int64)
+            mesh.loops.foreach_get('edge_index', le)
+            ev = np.empty(ne * 2, dtype=np.int64)
+            mesh.edges.foreach_get('vertices', ev)
+            ev = ev.reshape(-1, 2)
+            mesh.calc_loop_triangles()
+            tv = np.empty(len(mesh.loop_triangles) * 3, dtype=np.int64)
+            mesh.loop_triangles.foreach_get('vertices', tv)
+        finally:
+            ob.to_mesh_clear()
+        tris.append(co[tv])
+        # An edge is drawn where the surface folds past the feature
+        # angle or stops (an open border, a seam).
+        loop_poly = np.repeat(np.arange(npoly), total)
+        count = np.bincount(le, minlength=ne)
+        order = np.argsort(le, kind='stable')
+        first_at = np.concatenate(([0], np.cumsum(count)[:-1]))
+        feature = count != 2
+        two = count == 2
+        f0 = loop_poly[order[first_at[two]]]
+        f1 = loop_poly[order[first_at[two] + 1]]
+        feature[two] = (nrm[f0] * nrm[f1]).sum(axis=1) < cos_feature
+        lines.append(co[ev[feature]].reshape(-1, 3))
+    _side_geo.clear()
+    _side_geo.update(
+        key=key,
+        tris=(np.concatenate(tris).astype(np.float32) if tris
+              else np.zeros((0, 3), np.float32)),
+        lines=(np.concatenate(lines).astype(np.float32) if lines
+               else np.zeros((0, 3), np.float32)))
+    return _side_geo
+
+
+def _side_draw(off, geo, F, C, span, size, line_px):
+    """Draw the geometry into the offscreen from the camera C: paper
+    faces and inked lines, depth tested."""
+    l, r, b, t = span
+    near, far = SIDE_DIST - SIDE_DEPTH, SIDE_DIST + SIDE_DEPTH
+    proj = _ortho(l, r, b, t, near, far)
+    # Lines sit a hair nearer than the faces they edge.
+    lift = Matrix.Translation((0.0, 0.0, -2.0 * SIDE_LIFT / (far - near)))
+    view = C.inverted_safe() @ F
+    with off.bind():
+        fb = gpu.state.active_framebuffer_get()
+        fb.clear(color=(*PAPER, 1.0), depth=1.0)
+        gpu.state.blend_set('NONE')
+        gpu.state.depth_mask_set(True)
+        gpu.state.depth_test_set('LESS_EQUAL')
+        try:
+            with gpu.matrix.push_pop(), gpu.matrix.push_pop_projection():
+                gpu.matrix.load_matrix(view)
+                gpu.matrix.load_projection_matrix(proj)
+                if len(geo['tris']):
+                    shader = gpu.shader.from_builtin('UNIFORM_COLOR')
+                    shader.bind()
+                    shader.uniform_float("color", (*PAPER, 1.0))
+                    batch_for_shader(shader, 'TRIS',
+                                     {"pos": geo['tris']}).draw(shader)
+                if len(geo['lines']):
+                    gpu.matrix.load_projection_matrix(lift @ proj)
+                    shader = gpu.shader.from_builtin(
+                        'POLYLINE_UNIFORM_COLOR')
+                    shader.bind()
+                    shader.uniform_float("viewportSize", size)
+                    shader.uniform_float("lineWidth", line_px)
+                    shader.uniform_float("color", (*PRINT_EDGE, 1.0))
+                    batch_for_shader(shader, 'LINES',
+                                     {"pos": geo['lines']}).draw(shader)
+        finally:
+            gpu.state.depth_test_set('NONE')
+            gpu.state.depth_mask_set(False)
+
+
 def _side_render():
-    """Draw the side views that were asked for. Overlays are off for
-    the picture (cage wires, selection outlines, origins): it shows the
-    work, as a sheet does."""
+    """Draw the side views that were asked for, as line drawings of the
+    wall's own geometry."""
     import time
     _side_wanted.pop('queued', None)
     wanted = {k: v for k, v in _side_wanted.items() if k in ('PLAN', 'ISO')}
@@ -3351,43 +3483,33 @@ def _side_render():
     if _state is None:
         return None
     scene = bpy.data.scenes.get(_state['scene'])
-    if scene is None:
+    wall = bpy.data.objects.get(_state['wall'])
+    if scene is None or wall is None or _frame(wall) is None:
         return None
+    try:
+        geo = _side_geometry(scene, wall, _items(scene, wall))
+    except Exception as exc:
+        print(f"Elevation side views: {exc}")
+        return None
+    F = _frame(wall)[0]
     for kind, req in wanted.items():
-        area, region = req['area'], req['region']
         try:
-            space = area.spaces.active
-            window = next((win for win in bpy.context.window_manager.windows
-                           if any(a == area for a in win.screen.areas)),
-                          None)
-            if window is None or window.scene != scene:
-                continue
+            tw, th = req['size']
+            ss = SIDE_SUPER if max(tw, th) * SIDE_SUPER <= SIDE_MAX_PX \
+                else 1
+            size = (tw * ss, th * ss)
             entry = _side_cache.get(kind)
             off = entry['off'] if entry is not None else None
-            if off is None or entry['size'] != req['size']:
+            if off is None or entry.get('tex') != size:
                 if off is not None:
                     off.free()
-                off = gpu.types.GPUOffScreen(*req['size'])
-            l, r, b, t = req['span']
-            gen_before = _gen
-            overlays = space.overlay.show_overlays
-            space.overlay.show_overlays = False
-            try:
-                off.draw_view3d(scene, window.view_layer, space, region,
-                                req['C'].inverted_safe(),
-                                _ortho(l, r, b, t, 0.1, 2.0 * SIDE_DIST),
-                                do_color_management=True,
-                                draw_background=True)
-            finally:
-                space.overlay.show_overlays = overlays
-            key = req['key']
-            if _gen != gen_before:
-                # Drawing the view counted as a change of its own.
-                key = (_gen,) + key[1:]
-            _side_cache[kind] = {'off': off, 'key': key,
-                                 'size': req['size'],
+                off = gpu.types.GPUOffScreen(*size)
+            _side_draw(off, geo, F, req['C'], req['span'], size,
+                       max(1.0, SIDE_LINE_PX * _s() * ss))
+            _side_cache[kind] = {'off': off, 'key': req['key'],
+                                 'size': req['size'], 'tex': size,
                                  'at': time.monotonic()}
-            area.tag_redraw()
+            req['area'].tag_redraw()
         except Exception as exc:
             print(f"Elevation side view {kind}: {exc}")
     return None
