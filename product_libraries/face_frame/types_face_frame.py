@@ -22829,13 +22829,19 @@ def _default_side_props(side, stile_width, depth):
     a freshly-exterior side - what a new cabinet edge looks like at
     creation time. Used during break to reset both halves' new
     boundary edges to a clean default state.
+
+    A break edge sits against the other half, so it starts with the
+    neighbor scribe and stays auto-managed (writing the scribe pins the
+    side, so the auto flag is restated here); a typed scribe still pins
+    it afterwards.
     """
     pre = 'right_' if side == 'RIGHT' else 'left_'
     suf = '_right' if side == 'RIGHT' else '_left'
     return {
         f'{pre}finished_end_condition': 'UNFINISHED',
+        f'{pre}finish_end_auto': True,
         f'{pre}exposed': True,
-        f'{pre}scribe': 0.0,
+        f'{pre}scribe': inch(0.25),
         f'{pre}flush_x_amount': inch(4.0),
         f'{pre}flush_x_thickness': FLUSH_X_THICKNESS,
         f'blind{suf}': False,
