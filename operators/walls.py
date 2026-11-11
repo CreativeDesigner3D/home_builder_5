@@ -6523,14 +6523,23 @@ class home_builder_walls_OT_show_all_walls(bpy.types.Operator):
         # have hidden walls + children with no marker. Unhide those too --
         # this CAN reveal internal parts on such old files (a prompt edit
         # re-hides them); marker-stamped hides never take this path.
+        # A wall Cutaway is hiding is not one of those: the view owns it
+        # and shows it again by itself. And a part hidden from renders
+        # too was switched off by its product (a removed bottom, an
+        # unused kick), never by Hide Wall, so it stays off.
+        from .. import hb_cutaway
         for obj in context.scene.objects:
             if not _in_view_layer(context, obj):
+                continue
+            if obj.get(hb_cutaway.CUT_KEY):
                 continue
             if obj.get('IS_WALL_BP') and (obj.hide_get() or obj.hide_viewport):
                 obj.hide_set(False)
                 obj.hide_viewport = False
                 for child in obj.children_recursive:
                     if not _in_view_layer(context, child):
+                        continue
+                    if child.hide_viewport and child.hide_render:
                         continue
                     child.hide_set(False)
                     child.hide_viewport = False
