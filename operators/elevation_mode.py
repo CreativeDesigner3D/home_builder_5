@@ -63,7 +63,7 @@ import bpy
 import blf
 import gpu
 from gpu_extras.batch import batch_for_shader
-from mathutils import Vector, Euler
+from mathutils import Vector, Euler, Matrix
 from mathutils.geometry import intersect_line_plane
 from bpy_extras import view3d_utils
 
@@ -527,13 +527,29 @@ def _fit_step(area, region, r3d):
     bottom = 130 * s
     avail_w = max(100.0, (xmax - xmin) - 2 * side)
     avail_h = max(100.0, (ymax - ymin) - top - bottom)
-    k = min(avail_w / cur_w, avail_h / cur_h)
     px_per_m = cur_w / length
+    # Side views switched on take their room: the plan under the
+    # elevation, the iso to its right.
+    more_w = more_h = 0.0
+    try:
+        scene = bpy.data.scenes.get(_state['scene'])
+        kinds = _side_on(scene) if scene is not None else []
+        if kinds:
+            box = _side_box(wall, _items(scene, wall))
+            for kind in kinds:
+                _C, (l, r, b, t) = _side_camera(F, box, kind)
+                if kind == 'PLAN':
+                    more_h = (t - b) * px_per_m + (SIDE_GAP_PX + 60) * s
+                else:
+                    more_w = (r - l) * px_per_m + (SIDE_GAP_PX + 70) * s
+    except Exception as exc:
+        print("Elevation fit side views:", exc)
+    k = min(avail_w / (cur_w + more_w), avail_h / (cur_h + more_h))
     # Centre the wall in the space left for it.
     want_x = (xmin + xmax) / 2.0
     want_y = ymin + bottom + avail_h / 2.0
-    have_x = (p0.x + p1.x) / 2.0
-    have_y = (p0.y + p1.y) / 2.0
+    have_x = (p0.x + p1.x) / 2.0 + more_w / 2.0
+    have_y = (p0.y + p1.y) / 2.0 - more_h / 2.0
     dx = (have_x - want_x) / px_per_m
     dz = (have_y - want_y) / px_per_m
     axis_x = F.to_3x3().normalized() @ Vector((1.0, 0.0, 0.0))
@@ -727,6 +743,7 @@ def leave(context=None, restore_view=True):
     if _state is None:
         return
     st, _state, _edit = _state, None, None
+    _side_free()
     scene = bpy.data.scenes.get(st['scene'])
     if scene is not None:
         _unisolate(scene)
@@ -1215,6 +1232,10 @@ SHOW_OPTIONS = (
     ('INTERIORS', "Interior Lines", False),
     # Values as decimal inches (25.875") instead of fractions (25 7/8").
     ('DECIMAL', "Decimal Inches", False),
+    # The wall from above, under the elevation, and from the front
+    # right, beside it: the three views a sheet shows together.
+    ('PLAN', "Plan View", False),
+    ('ISO', "Iso View", False),
 )
 
 
@@ -2967,6 +2988,232 @@ def _draw_remove_chip(dims, s):
                (1.0, 1.0, 1.0, 1.0))
 
 
+# ---- Plan and iso beside the elevation ---------------------------------------
+#
+# The elevation is the viewport's own picture of the wall. Its plan and
+# iso are the same scene drawn from two more directions into textures
+# and set beside it, at the elevation's scale: the plan under it (lined
+# up with it, the wall at the top), the iso to its right. They are
+# pictures, redrawn when the model or the zoom changes.
+
+SIDE_DIST = 60.0            # m the side views' cameras stand off
+SIDE_MARGIN = 0.05          # m of paper kept round what they show
+SIDE_GAP_PX = 34            # between the dimensions and a side view
+SIDE_MAX_PX = 4096
+SIDE_REFRESH = 0.12         # s between redraws while the model changes
+ISO_YAW = math.radians(35.0)
+ISO_PITCH = math.radians(25.0)
+_side_cache = {}
+
+
+def _side_on(scene):
+    return [k for k in ('PLAN', 'ISO') if show_option(scene, k)]
+
+
+def _side_box(wall, items):
+    """(x0, x1, y0, y1, z0, z1) in the wall's frame of the wall and what
+    stands on it."""
+    _F, Fi, length, height = _frame(wall)
+    dims = _wall_dims(wall)
+    thick = (dims[2] if dims and dims[2] else 0.15)
+    box = [0.0, length, 0.0, thick, 0.0, height]
+    objs = [wall] + [it.obj for it in items if not it.preview]
+    for obj in objs:
+        try:
+            mw = obj.matrix_world
+            pts = [Fi @ (mw @ Vector(c)) for c in obj.bound_box]
+        except Exception:
+            continue
+        box[0] = min(box[0], min(q.x for q in pts))
+        box[1] = max(box[1], max(q.x for q in pts))
+        box[2] = min(box[2], min(q.y for q in pts))
+        box[3] = max(box[3], max(q.y for q in pts))
+        box[5] = max(box[5], max(q.z for q in pts))
+    return tuple(box)
+
+
+def _side_camera(F, box, kind):
+    """(camera matrix, (l, r, b, t)) of a side view: an orthographic
+    camera's place in the world and the span of what it shows, in its
+    own metres. The camera's x runs along the wall in both."""
+    x0, x1, y0, y1, z0, z1 = box
+    centre = Vector(((x0 + x1) / 2.0, (y0 + y1) / 2.0, (z0 + z1) / 2.0))
+    if kind == 'PLAN':
+        R = Matrix.Identity(4)
+    else:
+        R = (Matrix.Rotation(ISO_YAW, 4, 'Z')
+             @ Matrix.Rotation(math.pi / 2.0 - ISO_PITCH, 4, 'X'))
+    C = (F @ Matrix.Translation(centre) @ R
+         @ Matrix.Translation((0.0, 0.0, SIDE_DIST)))
+    Ci = C.inverted_safe()
+    xs, ys = [], []
+    for x in (x0, x1):
+        for y in (y0, y1):
+            for z in (z0, z1):
+                q = Ci @ (F @ Vector((x, y, z)))
+                xs.append(q.x)
+                ys.append(q.y)
+    m = SIDE_MARGIN
+    return C, (min(xs) - m, max(xs) + m, min(ys) - m, max(ys) + m)
+
+
+def _ortho(l, r, b, t, n, f):
+    return Matrix(((2.0 / (r - l), 0.0, 0.0, -(r + l) / (r - l)),
+                   (0.0, 2.0 / (t - b), 0.0, -(t + b) / (t - b)),
+                   (0.0, 0.0, -2.0 / (f - n), -(f + n) / (f - n)),
+                   (0.0, 0.0, 0.0, 1.0)))
+
+
+def _side_rects(wall, dims, extra, s):
+    """{kind: (x, y, w, h, camera, span)} on screen for the side views
+    that are switched on."""
+    scene = bpy.data.scenes.get(_state['scene']) if _state else None
+    kinds = _side_on(scene) if scene is not None else []
+    if not kinds or extra is None:
+        return {}
+    F, _Fi, length, height = _frame(wall)
+    sx, sy = extra['sx'], extra['sy']
+    per_m = abs(sx(1.0) - sx(0.0))
+    box = _side_box(wall, extra['items'])
+    bx0, bx1, by0, _by1 = _print_bounds(dims, extra, 1.0, length, height)
+    gap = SIDE_GAP_PX * s
+    out = {}
+    for kind in kinds:
+        C, (l, r, b, t) = _side_camera(F, box, kind)
+        w, h = (r - l) * per_m, (t - b) * per_m
+        if kind == 'PLAN':
+            # Lined up with the elevation: the camera's x is the wall's.
+            x = sx((box[0] + box[1]) / 2.0 + l)
+            y = by0 - gap - h
+        else:
+            x = bx1 + gap
+            y = sy(height / 2.0) - h / 2.0
+        out[kind] = (x, y, w, h, C, (l, r, b, t))
+    return out
+
+
+def _side_free():
+    for entry in _side_cache.values():
+        try:
+            entry['off'].free()
+        except Exception:
+            pass
+    _side_cache.clear()
+    _side_wanted.clear()
+
+
+def _side_texture(context, area, region, kind, rect):
+    """The side view's picture. It is drawn off the draw pass, from a
+    timer: the draw asks for one when the model, the shading or the zoom
+    has changed and shows the last picture until the new one is in."""
+    _x, _y, w, h, C, (l, r, b, t) = rect
+    tw = int(max(16, min(SIDE_MAX_PX, round(w))))
+    th = int(max(16, min(SIDE_MAX_PX, round(h))))
+    entry = _side_cache.get(kind)
+    key = (_gen, _state['wall'], area.spaces.active.shading.type,
+           tuple(round(v, 4) for v in (l, r, b, t)))
+    if entry is not None and entry['key'] == key \
+            and 0.8 <= tw / entry['size'][0] <= 1.25:
+        return entry['off']
+    _side_wanted[kind] = {'area': area, 'region': region, 'C': C.copy(),
+                          'span': (l, r, b, t), 'size': (tw, th),
+                          'key': key}
+    if not _side_wanted.get('queued'):
+        import time
+        _side_wanted['queued'] = True
+        since = time.monotonic() - (entry['at'] if entry else 0.0)
+        bpy.app.timers.register(
+            _side_render, first_interval=max(0.0, SIDE_REFRESH - since))
+    return entry['off'] if entry is not None else None
+
+
+_side_wanted = {}
+
+
+def _side_render():
+    """Draw the side views that were asked for. Overlays are off for
+    the picture (cage wires, selection outlines, origins): it shows the
+    work, as a sheet does."""
+    import time
+    _side_wanted.pop('queued', None)
+    wanted = {k: v for k, v in _side_wanted.items() if k in ('PLAN', 'ISO')}
+    _side_wanted.clear()
+    if _state is None:
+        return None
+    scene = bpy.data.scenes.get(_state['scene'])
+    if scene is None:
+        return None
+    for kind, req in wanted.items():
+        area, region = req['area'], req['region']
+        try:
+            space = area.spaces.active
+            window = next((win for win in bpy.context.window_manager.windows
+                           if any(a == area for a in win.screen.areas)),
+                          None)
+            if window is None or window.scene != scene:
+                continue
+            entry = _side_cache.get(kind)
+            off = entry['off'] if entry is not None else None
+            if off is None or entry['size'] != req['size']:
+                if off is not None:
+                    off.free()
+                off = gpu.types.GPUOffScreen(*req['size'])
+            l, r, b, t = req['span']
+            gen_before = _gen
+            overlays = space.overlay.show_overlays
+            space.overlay.show_overlays = False
+            try:
+                off.draw_view3d(scene, window.view_layer, space, region,
+                                req['C'].inverted_safe(),
+                                _ortho(l, r, b, t, 0.1, 2.0 * SIDE_DIST),
+                                do_color_management=True,
+                                draw_background=True)
+            finally:
+                space.overlay.show_overlays = overlays
+            key = req['key']
+            if _gen != gen_before:
+                # Drawing the view counted as a change of its own.
+                key = (_gen,) + key[1:]
+            _side_cache[kind] = {'off': off, 'key': key,
+                                 'size': req['size'],
+                                 'at': time.monotonic()}
+            area.tag_redraw()
+        except Exception as exc:
+            print(f"Elevation side view {kind}: {exc}")
+    return None
+
+
+def _draw_side_views(context, area, region, dims, extra, s):
+    wall = active_wall(context)
+    if wall is None or extra is None:
+        return
+    rects = _side_rects(wall, dims, extra, s)
+    for kind in list(_side_cache):
+        if kind not in rects:
+            entry = _side_cache.pop(kind)
+            try:
+                entry['off'].free()
+            except Exception:
+                pass
+    if not rects:
+        return
+    shader = gpu.shader.from_builtin('IMAGE')
+    for kind, rect in rects.items():
+        x, y, w, h = rect[:4]
+        if w < 8 or h < 8:
+            continue
+        off = _side_texture(context, area, region, kind, rect)
+        if off is None:
+            continue
+        gpu.state.blend_set('NONE')
+        shader.bind()
+        shader.uniform_sampler("image", off.texture_color)
+        batch_for_shader(shader, 'TRI_FAN', {
+            "pos": ((x, y), (x + w, y), (x + w, y + h), (x, y + h)),
+            "texCoord": ((0, 0), (1, 0), (1, 1), (0, 1))}).draw(shader)
+    gpu.state.blend_set('ALPHA')
+
+
 def _draw_adding(region, extra, s):
     """The height string being clicked in: the level under the cursor
     as a guide across the wall, and the levels picked so far."""
@@ -3019,6 +3266,10 @@ def _draw():
     s = _s()
 
     def paint():
+        try:
+            _draw_side_views(context, area, region, dims, extra, s)
+        except Exception as exc:
+            print(f"Elevation side views: {exc}")
         gpu.state.blend_set('ALPHA')
         if extra is not None:
             fx0, fx1, fy = extra['floor']
@@ -4381,6 +4632,8 @@ class home_builder_OT_elevation_click(bpy.types.Operator):
                         pass
             elif got[1].startswith('SHOW:'):
                 toggle_show_option(context.scene, got[1][5:])
+                if got[1][5:] in ('PLAN', 'ISO') and _state is not None:
+                    _state['fit'] = 2       # make room for it, or close up
             elif got[1] == 'PRINT':
                 bpy.ops.home_builder.elevation_print()
             else:
@@ -4747,6 +5000,35 @@ def _glyph_annotation(shader, rect, color):
     draw_lines(shader, pts, color)
 
 
+def _glyph_plan(shader, rect, color):
+    """A wall seen from above with a cabinet run in front of it."""
+    rx, ry, rw, rh = rect
+    w, h = rw * 0.56, rh * 0.44
+    x0 = rx + (rw - w) / 2.0
+    y0 = ry + (rh - h) / 2.0
+    x1, y1 = x0 + w, y0 + h
+    t = h * 0.22
+    draw_lines(shader, [(x0, y1), (x1, y1), (x0, y1 - t), (x1, y1 - t),
+                        (x0, y1), (x0, y1 - t), (x1, y1), (x1, y1 - t),
+                        (x0, y1 - t), (x0, y0), (x0, y0), (x0 + w * 0.7, y0),
+                        (x0 + w * 0.7, y0), (x0 + w * 0.7, y1 - t)], color)
+
+
+def _glyph_iso(shader, rect, color):
+    """A box seen from a corner."""
+    rx, ry, rw, rh = rect
+    cx, cy = rx + rw / 2.0, ry + rh / 2.0
+    a = min(rw, rh) * 0.24
+    top, mid, bot = cy + a, cy + a * 0.45, cy - a
+    low = cy - a * 0.45
+    pts = [(cx, top), (cx + a, mid), (cx + a, mid), (cx, cy - a * 0.1),
+           (cx, cy - a * 0.1), (cx - a, mid), (cx - a, mid), (cx, top),
+           (cx - a, mid), (cx - a, low), (cx - a, low), (cx, bot),
+           (cx, bot), (cx + a, low), (cx + a, low), (cx + a, mid),
+           (cx, cy - a * 0.1), (cx, bot)]
+    draw_lines(shader, pts, color)
+
+
 def _glyph_decimal(shader, rect, color):
     """A decimal value, lettered."""
     rx, ry, rw, rh = rect
@@ -4781,6 +5063,8 @@ _SHOW_GLYPHS = {
     'ANNOTATIONS': icon_glyph('pencil', _glyph_annotation),
     'INTERIORS': _glyph_interiors,
     'DECIMAL': _glyph_decimal,
+    'PLAN': _glyph_plan,
+    'ISO': _glyph_iso,
 }
 
 
