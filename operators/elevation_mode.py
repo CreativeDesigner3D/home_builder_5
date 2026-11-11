@@ -1033,6 +1033,9 @@ def format_length(scene, value):
     us = scene.unit_settings
     if us.system == 'IMPERIAL' and us.length_unit != 'FEET':
         n = int(round(units.meter_to_inch(value) * 16.0))
+        if show_option(scene, 'DECIMAL'):
+            # The same sixteenth the fraction would show, as a decimal.
+            return f"{n / 16.0:.4f}".rstrip('0').rstrip('.') + '"'
         neg = n < 0
         n = abs(n)
         whole, rem = divmod(n, 16)
@@ -1193,6 +1196,8 @@ SHOW_OPTIONS = (
     # What stands inside the cabinets (shelves, dividers, roll-outs),
     # drawn through the fronts as dashed lines.
     ('INTERIORS', "Interior Lines", False),
+    # Values as decimal inches (25.875") instead of fractions (25 7/8").
+    ('DECIMAL', "Decimal Inches", False),
 )
 
 
@@ -4636,6 +4641,19 @@ def _glyph_annotation(shader, rect, color):
     draw_lines(shader, pts, color)
 
 
+def _glyph_decimal(shader, rect, color):
+    """A decimal value, lettered."""
+    rx, ry, rw, rh = rect
+    text = ".00"
+    blf.size(0, rh * 0.42)
+    tw = blf.dimensions(0, text)[0]
+    th = blf.dimensions(0, "0")[1]
+    blf.color(0, *color)
+    blf.position(0, rx + (rw - tw) / 2.0, ry + (rh - th) / 2.0, 0)
+    draw_glyphs(0, text)
+    shader.bind()
+
+
 def _glyph_interiors(shader, rect, color):
     """A cabinet box with two dashed shelves across it."""
     rx, ry, rw, rh = rect
@@ -4656,6 +4674,7 @@ _SHOW_GLYPHS = {
     'FACE_FRAME': icon_glyph('cab_face_frame', _glyph_face_frame),
     'ANNOTATIONS': icon_glyph('pencil', _glyph_annotation),
     'INTERIORS': _glyph_interiors,
+    'DECIMAL': _glyph_decimal,
 }
 
 
