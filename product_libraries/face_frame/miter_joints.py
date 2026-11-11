@@ -489,15 +489,17 @@ def apply_root(root):
 # the scribe. Mitering the stile cuts its back face short of the edge
 # (by the most on the short part of a one-sided joint), and a side left
 # at its usual scribe would hang past the cut into the void behind the
-# joint. While a side is auto-managed and unfinished, its scribe is
-# raised until the side lands on the stile with at least MIN_BEARING of
-# stile beyond it, never so far that the side passes the stile's inner
-# edge into the opening. A side already that far in is left where it is.
+# joint. While a side is unfinished - picked automatically or set by the
+# user - its scribe is raised until the side lands on the stile with at
+# least MIN_BEARING of stile beyond it, never so far that the side
+# passes the stile's inner edge into the opening. A side already that
+# far in is left where it is.
 #
 # The scribe the side had before is kept on the cabinet, next to the
 # value written, under SCRIBE_KEY ({side: [base, written]}). Taking the
-# miter off puts the base back. A scribe typed by hand turns the side's
-# auto flag off, and from then on the typed value stands.
+# miter off puts the base back. A scribe typed by hand after the joint
+# moved it stands for as long as the joint does: the stamp is kept with
+# a third, truthy entry so later rebuilds leave the side alone.
 
 SCRIBE_KEY = 'HB_MITER_SCRIBE'
 MIN_BEARING = units.inch(0.25)
@@ -568,7 +570,7 @@ def _scribe_needed(root, stile, other, mode, side):
 
 
 def sync_scribes(root):
-    """Set the scribe of each auto-managed, unfinished side whose end
+    """Set the scribe of each unfinished side whose end
     stile is mitered (see above). Returns True when a scribe changed, so
     the caller rebuilds the cabinet."""
     cab = getattr(root, 'face_frame_cabinet', None)
@@ -596,19 +598,25 @@ def sync_scribes(root):
         cur = getattr(cab, prop)
         auto = getattr(cab, f'{side}_finish_end_auto')
         stamp = stamps.get(side)
-        if stamp is not None and abs(cur - stamp[1]) > 1e-6:
+        pinned = stamp is not None and len(stamp) > 2 and bool(stamp[2])
+        if (stamp is not None and not pinned
+                and abs(cur - stamp[1]) > 1e-6):
             if not auto:
-                # Typed by hand: that value stands.
-                del stamps[side]
-                continue
-            # The exposure pass re-derived the scribe: that is the new
-            # base.
-            stamp = [cur, cur]
-        managed = (auto and getattr(cab, f'{side}_finished_end_condition')
-                   == 'UNFINISHED')
-        if side not in wanted or not managed:
+                # Typed by hand since the joint moved it: that value
+                # stands for as long as the joint does.
+                stamp = stamps[side] = [cur, cur, 1]
+                pinned = True
+            else:
+                # The exposure pass re-derived the scribe: that is the
+                # new base.
+                stamp = [cur, cur]
+        unfinished = (getattr(cab, f'{side}_finished_end_condition')
+                      == 'UNFINISHED')
+        if pinned and side in wanted and unfinished:
+            continue
+        if side not in wanted or not unfinished:
             if stamp is not None:
-                if abs(cur - stamp[0]) > 1e-6:
+                if not pinned and abs(cur - stamp[0]) > 1e-6:
                     cab[prop] = stamp[0]     # no update callback
                     changed = True
                 del stamps[side]
@@ -624,6 +632,22 @@ def sync_scribes(root):
     elif SCRIBE_KEY in root:
         del root[SCRIBE_KEY]
     return changed
+
+
+def held_scribe(root, side, scribe):
+    """The scribe another pass should write for one side ('left' /
+    'right') when it wants ``scribe`` there: no less than what a miter
+    joint on that side's stile has raised it to. ``scribe`` becomes the
+    value put back when the miter comes off."""
+    stamps = _scribe_stamps(root)
+    stamp = stamps.get(side)
+    if stamp is None or (len(stamp) > 2 and stamp[2]):
+        return scribe
+    held = max(scribe, stamp[1])
+    if abs(stamp[0] - scribe) > 1e-6 or abs(stamp[1] - held) > 1e-6:
+        stamps[side] = [scribe, held]
+        root[SCRIBE_KEY] = json.dumps(stamps)
+    return held
 
 
 def _rescribe(root):

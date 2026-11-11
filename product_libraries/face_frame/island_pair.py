@@ -509,7 +509,14 @@ def sync(root):
             # board here" flag - 0.0 is a real thickness, the applied
             # face frames use it.
             scribe, thickness = _cover_buildup(other, other_side)
-            if getattr(cab, f'{key}_scribe') != scribe:
+            # A mitered end stile may have moved the side further in;
+            # that stands over the far run's setback.
+            try:
+                from . import miter_joints
+                scribe = miter_joints.held_scribe(root, key, scribe)
+            except Exception:
+                pass
+            if abs(getattr(cab, f'{key}_scribe') - scribe) > 1e-6:
                 setattr(cab, f'{key}_scribe', scribe)
             cover_key = _key(side, 'COVER_T')
             if thickness is None:
