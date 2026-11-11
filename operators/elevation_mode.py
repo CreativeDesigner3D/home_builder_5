@@ -1330,6 +1330,34 @@ def _hide_text_objects(scene_name, names):
 NOTE_SAME = 0.15
 
 
+_NOTE_NUMBER = re.compile(
+    r'(?<![\w./])(\d+ \d+/\d+|\d+/\d+|\d*\.\d+|\d+)"')
+
+
+def _note_numbers(scene, text):
+    """A note's inch values (D-25.5", 4" FLUSH FIN) written the way the
+    dimensions are: fractions, or decimals with Decimal Inches on."""
+    us = scene.unit_settings
+    if us.system != 'IMPERIAL' or us.length_unit == 'FEET' or '"' not in text:
+        return text
+
+    def swap(m):
+        raw = m.group(1)
+        try:
+            if '/' in raw:
+                whole, _sp, frac = raw.rpartition(' ')
+                num, den = frac.split('/')
+                inches = (float(whole) if whole else 0.0) \
+                    + float(num) / float(den)
+            else:
+                inches = float(raw)
+        except (ValueError, ZeroDivisionError):
+            return m.group(0)
+        return format_length(scene, units.inch(inches))
+
+    return _NOTE_NUMBER.sub(swap, text)
+
+
 @hb_utils.with_children_index
 def _annotations(scene, wall):
     key = (_gen, scene.name, wall.name, len(_annotation_sources))
@@ -1351,6 +1379,14 @@ def _annotations(scene, wall):
                 prims.append(pr)
     except Exception as exc:
         print(f"Elevation annotations: {exc}")
+    out = []
+    for pr in prims:
+        if pr.get('kind') == 'TEXT' and pr.get('text'):
+            text = _note_numbers(scene, pr['text'])
+            if text != pr['text']:
+                pr = dict(pr, text=text)
+        out.append(pr)
+    prims = out
     _annotation_cache['key'] = key
     _annotation_cache['prims'] = prims
     return prims
@@ -1728,11 +1764,14 @@ def _face_frame_layout(items, Fi):
     x0, x1, z)] the end sections of an upper whose bays step, each
     across its stiles' outer edges, z its bottom}. A blind cabinet's
     hidden blind strip leads (or ends) its row's segments, so the chain
-    reads blind, stile, opening ... to the cabinet's edge. 'drops':
+    reads blind, stile, opening ... to the cabinet's edge. A tall's
+    frame reads in both rows, over its top and under the floor. 'open':
+    {(item name, opening start)} the openings left open for a
+    refrigerator, which say so under the floor. 'drops':
     see _front_drops; a drop's filler stiles stand in the dropped band
     only, so they are not stiles of the frame."""
     out = {'lower': [], 'upper': [], 'columns': [], 'sections': [],
-           'drops': [], 'stiles': {}}
+           'drops': [], 'stiles': {}, 'open': set()}
     for it in items:
         if it.preview or it.shelf \
                 or not it.obj.get('IS_FACE_FRAME_CABINET_CAGE'):
@@ -1769,6 +1808,22 @@ def _face_frame_layout(items, Fi):
             if it.x1 - fx1 > MERGE:
                 segs.append((fx1, it.x1, it))
         out[row] += segs
+        if it.tall and it.kind == 'LOWER':
+            out['lower'] += segs
+        # An opening a refrigerator stands in is marked open.
+        try:
+            for child in it.obj.children_recursive:
+                if child.get('SIZE_ROLE') != 'REFRIGERATOR':
+                    continue
+                box = _wall_box(child, Fi)
+                if box is None:
+                    continue
+                cx = (box[0] + box[1]) / 2.0
+                for a, b, _it in segs:
+                    if a < cx < b:
+                        out['open'].add((it.name, round(a, 4)))
+        except Exception:
+            pass
         # A frame standing on a kick: its column chains start at the
         # floor, so the kick reads with the rails above it.
         kick = it.kind == 'LOWER' and MERGE < fz0 < KICK_MAX
@@ -2101,7 +2156,11 @@ def _layout_wall(scene, wall, region, rv3d, selected=(), extra=None,
                          'item': it, 'w0': a,
                          'stile': ff_all['stiles'].get(
                              (it.name, round(a, 4))),
-                         'key': ('FF_W', it.name, round(a, 4))})
+                         'key': ('FF_W', it.name, round(a, 4), side)})
+            # Under the floor, beside the opening it describes: over the
+            # top it would read as a note on the cabinet above.
+            if side < 0 and (it.name, round(a, 4)) in ff_all['open']:
+                dims[-1]['suffix'] = " OPEN"
 
     # Below the floor: the face frames' stiles and openings, the
     # floor-standing run, then the overall length.
