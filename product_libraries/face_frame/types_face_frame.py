@@ -900,6 +900,10 @@ PART_ROLE_DRAWER_INSERT = 'DRAWER_INSERT'
 DRAWER_INTERIOR_EDITABLE_ROLES = frozenset({PART_ROLE_DRAWER_DIVIDER,
                                             PART_ROLE_DRAWER_INSERT})
 DRAWER_INSERT_BUILD_INDEX = 'hb_drawer_build_index'
+# Which of the opening's interior items built a drawer insert or divider
+# (its index in the list), so a picture of the drawer can tell the parts
+# of one accessory from the next. -1 when it is not known.
+DRAWER_ITEM_INDEX = 'hb_drawer_item_index'
 # Hidden boolean cutter carving the U-notch of a sink duo drawer box.
 # A wire child of the box, so it lives and dies with the box's own
 # wipe-and-rebuild lifecycle.
@@ -15317,6 +15321,7 @@ class FaceFrameCabinet(GeoNodeCage):
         # hand-edited part can find the one it stands in for.
         obj[DRAWER_INSERT_BUILD_INDEX] = sum(
             1 for c in box_obj.children if c.get('hb_part_role') == role)
+        obj[DRAWER_ITEM_INDEX] = getattr(self, '_drawer_item_index', -1)
         obj.parent = box_obj
         obj['hb_part_role'] = role
         obj['MENU_ID'] = 'HOME_BUILDER_MT_face_frame_drawer_box_commands'
@@ -15372,9 +15377,11 @@ class FaceFrameCabinet(GeoNodeCage):
         joins the pack: running front to back it butts the accessory
         before it and moves the cursor on by its own thickness.
         """
-        items = [it for it in getattr(op_props, 'interior_items', ())
-                 if it.kind == 'ACCESSORY'
-                 and getattr(it, 'accessory_render', '')]
+        indexed = [(i, it) for i, it in
+                   enumerate(getattr(op_props, 'interior_items', ()))
+                   if it.kind == 'ACCESSORY'
+                   and getattr(it, 'accessory_render', '')]
+        items = [it for _i, it in indexed]
         if not items:
             return
         side, front, floor = self._drawer_box_interior(box_obj)
@@ -15388,7 +15395,9 @@ class FaceFrameCabinet(GeoNodeCage):
             return
         fill_w = self._drawer_insert_fill_width(inner, items)
         cursor = inner.x0
-        for item in items:
+        for index, item in indexed:
+            # Stamped on every part this item builds (DRAWER_ITEM_INDEX).
+            self._drawer_item_index = index
             kind, params = parse_render_hint(item.accessory_render)
             spec = DRAWER_INSERT_BUILDERS.get(kind)
             if spec is None:
@@ -15414,6 +15423,7 @@ class FaceFrameCabinet(GeoNodeCage):
                 builder(box_obj, rect, item, params)
                 cursor = rect.x1
         self._emit_drawer_dividers(box_obj, inner)
+        self._drawer_item_index = -1
 
     @staticmethod
     def _drawer_insert_fill_width(inner, items):
@@ -15534,7 +15544,7 @@ class FaceFrameCabinet(GeoNodeCage):
         self._write_divider_space_sizes(item, centers, span0, span1, th)
         run = SimpleNamespace(
             item=item, lengthwise=lengthwise, centers=centers, th=th,
-            rect=rect)
+            rect=rect, index=getattr(self, '_drawer_item_index', -1))
         runs = getattr(rect, 'divider_runs', None)
         if runs is not None:
             runs.append(run)
@@ -15618,6 +15628,7 @@ class FaceFrameCabinet(GeoNodeCage):
         runs side to side of the box, or between the faces of the
         crossing dividers bounding the spaces it was limited to."""
         rect, th, item = run.rect, run.th, run.item
+        self._drawer_item_index = getattr(run, 'index', -1)
         z0, z1 = rect.z0, rect.z0 + rect.h
         # The run's own length lies across the crossing dividers.
         a0, a1 = ((rect.y0, rect.y1) if run.lengthwise

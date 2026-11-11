@@ -27,6 +27,7 @@ from ... import accessory_registry
 from ...units import meter_to_inch
 from . import types_face_frame
 from .operators import ops_cabinet
+from . import drawer_page
 
 DRAWER_BOX_MENU = 'HOME_BUILDER_MT_face_frame_drawer_box_commands'
 
@@ -623,6 +624,15 @@ def drawer_blocks(context, part_obj):
         if opening is not None and opening not in openings:
             openings.append(opening)
     out = []
+    pictured = False
+    if len(boxes) == 1 and len(openings) == 1:
+        # The drawer from above: what is in it, where, and quick adds.
+        try:
+            out.extend(drawer_page.blocks(context, part_obj, openings[0]))
+            out.append(('gap', None))
+            pictured = True
+        except Exception as ex:
+            print('Home Builder: drawer picture failed: %s' % ex)
     if len(boxes) == 1:
         size = generic_page._size_text(context, part_obj)
         if size:
@@ -643,10 +653,13 @@ def drawer_blocks(context, part_obj):
         out.append(('actions', (
             ("Drawer Interior", 'hb_face_frame.drawer_interior', None, None),
             ("Open / Close", 'hb_face_frame.toggle_front_open', None, None))))
-        out.append(('actions', (
-            ("Box Size", 'hb_face_frame.drawer_box_prompts', None, None),
-            ("Rollout Above", 'hb_face_frame.rollout_above_drawer_prompts',
-             None, None))))
+        # The picture's own row already has the roll-outs above.
+        row = [("Box Size", 'hb_face_frame.drawer_box_prompts', None, None)]
+        if not pictured:
+            row.append(("Rollout Above",
+                        'hb_face_frame.rollout_above_drawer_prompts',
+                        None, None))
+        out.append(('actions', tuple(row)))
 
     out.append(('gap', None))
     out.append(('label', "Accessories"))
@@ -707,6 +720,7 @@ classes = (
 def register():
     for cls in classes:
         bpy.utils.register_class(cls)
+    drawer_page.register()
     wm = bpy.types.WindowManager
     wm.hb_accessory_search = bpy.props.StringProperty(
         name="Search", description="Find accessories by name, section, "
@@ -720,5 +734,6 @@ def unregister():
     for name in ('hb_accessory_search', 'hb_accessory_section'):
         if hasattr(bpy.types.WindowManager, name):
             delattr(bpy.types.WindowManager, name)
+    drawer_page.unregister()
     for cls in reversed(classes):
         bpy.utils.unregister_class(cls)
