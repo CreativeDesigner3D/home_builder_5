@@ -264,7 +264,11 @@ def auto_join_on(context):
 # library's: a catalog opts in by naming the operator namespace its
 # group operators live under (USER_GROUPS) and a user_groups() that
 # lists what is saved. Creating, saving and placing a group fire those
-# operators -- the ones the sidebar's User box fires.
+# operators -- the ones the sidebar's User box fires. A library whose
+# saved products are not cabinet groups names its own: USER_ACTIONS for
+# the header's buttons, USER_LOAD for the operator that places one (it
+# is handed the file as ``filepath``) and USER_EMPTY_NOTE for the line
+# shown while nothing is saved.
 
 USER_SECTION = 'user'
 USER_CATEGORY = 'USER'
@@ -282,9 +286,13 @@ def _user_ns(cat):
     return getattr(cat, 'USER_GROUPS', None) if cat else None
 
 
-def _user_actions(ns):
+def _user_actions(cat):
     """The User header's buttons: (label, operator, tip, tip when the
     operator cannot run)."""
+    own = getattr(cat, 'USER_ACTIONS', None)
+    if own is not None:
+        return tuple(own)
+    ns = _user_ns(cat)
     return (
         ("Create Group", '%s.create_cabinet_group' % ns,
          "Group the selected cabinets", "Group the selected cabinets"),
@@ -525,14 +533,15 @@ def compute_layout(context, rect):
         if not group and not keep:
             continue
         section = _section_by_key(cat, key)
-        actions = _user_actions(user_ns) if key == USER_SECTION else ()
+        actions = _user_actions(cat) if key == USER_SECTION else ()
         blocks.append(('header', (key, section['label'],
                                   _section_toggle(context, section),
                                   actions)))
         if key in _collapsed:
             continue
         if not group:
-            blocks.append(('note', USER_EMPTY_NOTE))
+            blocks.append(('note', getattr(cat, 'USER_EMPTY_NOTE',
+                                           USER_EMPTY_NOTE)))
             continue
         for i in range(0, len(group), COLS):
             blocks.append(('row', group[i:i + COLS]))
@@ -898,7 +907,8 @@ def hit(context, mx, my, entries):
         # The panel stays up: picking from it does not dismiss it, so a
         # second cabinet is one click away rather than a reopen.
         if product.get('filepath'):
-            _run('%s.load_cabinet_group_from_library' % _user_ns(cat),
+            _run(getattr(cat, 'USER_LOAD', None)
+                 or '%s.load_cabinet_group_from_library' % _user_ns(cat),
                  filepath=product['filepath'])
         elif cat is not None:
             cat.place(context, product)

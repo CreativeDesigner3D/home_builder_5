@@ -22,13 +22,8 @@ class HOME_BUILDER_MT_closet_starter_commands(bpy.types.Menu):
 
     def draw(self, context):
         layout = self.layout
-        # The starter's own settings are fields on the SELECTED tab.
-        # The reference's Change Number of Openings: 1 to 8 bays across the same
-        # overall width. Not offered on a corner unit (one bay).
-        if bpy.ops.hb_closets.change_number_of_openings.poll():
-            layout.operator("hb_closets.change_number_of_openings",
-                            text="Change Number of Openings...",
-                            icon='MOD_ARRAY')
+        # The starter's own settings are fields on the SELECTED tab,
+        # and bays are added and taken out from the bay's own commands.
         # Duplicate: copy-and-place. Seeds the placement modal from
         # this starter; the drop deep-copies the hierarchy so all bay
         # configs come along. F in the modal toggles fill-the-gap.

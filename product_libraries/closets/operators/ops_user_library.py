@@ -135,6 +135,16 @@ def _library_blend_path(filepath):
     return None
 
 
+def _forget_browser():
+    """Have the viewport library read the folder again, so a closet
+    just saved or deleted shows there without a wait."""
+    try:
+        from ....operators import library_panel
+        library_panel.forget_user_groups()
+    except Exception:
+        pass
+
+
 def _safe_name(name):
     return "".join(c for c in name if c.isalnum() or c in (' ', '-', '_')
                    ).strip()
@@ -240,6 +250,7 @@ class hb_closets_OT_save_closet_to_library(bpy.types.Operator):
             if parent is None:
                 root.matrix_world = matrix
         clear_previews()
+        _forget_browser()
         self.report({'INFO'}, f"Saved {name} to the closet library")
         return {'FINISHED'}
 
@@ -361,6 +372,7 @@ class hb_closets_OT_delete_library_closet(bpy.types.Operator):
         if os.path.isfile(thumb):
             os.remove(thumb)
         clear_previews()
+        _forget_browser()
         for area in context.screen.areas:
             area.tag_redraw()
         return {'FINISHED'}

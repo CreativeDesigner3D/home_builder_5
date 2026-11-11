@@ -326,6 +326,24 @@ OPTION_PAGES = {
 }
 
 
+# Saved closets. The browser draws its User section from these: Save
+# on its header saves the selected closet, and a tile places one.
+USER_GROUPS = 'hb_closets'
+USER_ACTIONS = (
+    ("Save", 'hb_closets.save_closet_to_library',
+     "Save the selected closet to the library",
+     "Select a closet to save it"),
+)
+USER_LOAD = 'hb_closets.load_closet_from_library'
+USER_EMPTY_NOTE = "Select a closet, then Save"
+
+
+def user_groups():
+    """Every saved closet: [{name, filepath, thumbnail}]."""
+    from .operators import ops_user_library
+    return ops_user_library.get_library_items()
+
+
 def place(context, product):
     """Put one product in the scene, through whichever operator owns it --
     a starter by name, a loose part by the operator it carries."""
