@@ -185,6 +185,14 @@ def _ensure():
     y_get, y_set = _axis(1)
     z_get, z_set = _axis(2)
     props.update({
+        'name': P.computed(lambda root: root.name,
+                           lambda root, value: setattr(root, 'name',
+                                                       str(value)),
+                           type='STRING'),
+        'hidden': P.computed(
+            lambda root: bool(root.hide_viewport),
+            lambda root, value: setattr(root, 'hide_viewport', bool(value)),
+            type='BOOLEAN'),
         'loc_x': P.computed(_get_x, _set_x, unit='LENGTH', precision=4),
         'loc_y': P.computed(y_get, y_set, unit='LENGTH', precision=4),
         'loc_z': P.computed(z_get, z_set, unit='LENGTH', precision=4),
@@ -427,6 +435,7 @@ def fields(root):
     is_filler = bool(getattr(cls, 'is_filler', False))
     hangs = _ops()._has_hang_line(sp, is_corner, is_filler)
     out = [
+        ('text', 'name', "Name"),
         ('distance', 'width', "Width"),
         ('distance', 'height', "Height"),
         ('distance', 'depth', "Depth"),
@@ -438,7 +447,8 @@ def fields(root):
         out.append(('enum', 'all_heights', "Set All Bay Heights"))
     out.append(('group', 'cl_st_location', "Location", {
         'summary': lambda _ow: "X " + _dist(_get_x(root)),
-        'fields': _location_fields(root)}))
+        'fields': _location_fields(root)
+        + (('bool', 'hidden', "Hide In Viewport"),)}))
     if is_filler:
         out.append(('group', 'cl_st_filler', "Filler",
                     {'fields': _filler_fields(root)}))
