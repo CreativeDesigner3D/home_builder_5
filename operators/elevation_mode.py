@@ -5900,22 +5900,34 @@ def print_wall(context, filepath, paper='TABLOID',
     work at a drafting scale with the view's dimensions and notes over
     it, all as vectors. The wall on screen, or `wall` of the context's
     scene with no elevation showing. Returns the path written."""
-    global _print_scale
-    scene = context.scene
-    front = None            # the elevation on screen knows its own
     if wall is None:
         wall = active_wall(context)
         if wall is None:
             raise RuntimeError("No wall is shown in elevation")
-    elif wall != active_wall(context):
+    W, H = PRINT_PAPER.get(paper, PRINT_PAPER['TABLOID'])
+    doc = hb_pdf.Document()
+    draw_wall(doc.add_page(W, H), context, wall, W, H, text_scale)
+    return _print_save(doc, filepath)
+
+
+def draw_wall(page, context, wall, W, H, text_scale=PRINT_TEXT_SCALE,
+              title=True):
+    """Draw a wall's printed page onto `page`, W x H points with its
+    origin bottom left: anything with hb_pdf.Page's drawing methods, so
+    another add-on can set the drawing into a sheet of its own (inside
+    its title block, among its other pages). `title` False leaves the
+    strip along the bottom empty for the caller's. Returns the drafting
+    scale's label ("1/2\" = 1'-0\""), or None when the wall had to be
+    fitted off scale."""
+    global _print_scale
+    scene = context.scene
+    front = None            # the elevation on screen knows its own
+    if wall != active_wall(context):
         front = _front_names(scene, wall)
     if _frame(wall) is None:
         raise RuntimeError("The wall has no elevation to print")
-    W, H = PRINT_PAPER.get(paper, PRINT_PAPER['TABLOID'])
     _F, Fi, L, Hw = _frame(wall)
     region = _PrintRegion(W, H)
-    doc = hb_pdf.Document()
-    page = doc.add_page(W, H)
     _print_scale = text_scale
     try:
         view, label = _print_fit(scene, wall, W, H, front)
@@ -5946,8 +5958,25 @@ def print_wall(context, filepath, paper='TABLOID',
             print(f"Elevation print: notes: {exc}")
     finally:
         _print_scale = None
-    _print_title(page, scene, wall, label, W)
-    return _print_save(doc, filepath)
+    if title:
+        _print_title(page, scene, wall, label, W)
+    return label
+
+
+# Another add-on may take over the bar's Print PDF (to print its own
+# sheet set round the wall): fn(context, filepath, wall) returning the
+# path it wrote, or None to leave this print to the view.
+_print_handlers = []
+
+
+def register_print_handler(fn):
+    if fn not in _print_handlers:
+        _print_handlers.append(fn)
+
+
+def unregister_print_handler(fn):
+    if fn in _print_handlers:
+        _print_handlers.remove(fn)
 
 
 def _print_save(doc, filepath):
@@ -6010,7 +6039,13 @@ class home_builder_OT_elevation_print(bpy.types.Operator):
         path = bpy.path.abspath(self.filepath) if self.filepath \
             else _print_default_path(context)
         try:
-            path = print_wall(context, path, self.paper, self.text_scale)
+            done = None
+            for fn in list(_print_handlers):
+                done = fn(context, path, active_wall(context))
+                if done:
+                    break
+            path = done or print_wall(context, path, self.paper,
+                                      self.text_scale)
         except Exception as exc:
             self.report({'ERROR'}, f"Could not print: {exc}")
             return {'CANCELLED'}
