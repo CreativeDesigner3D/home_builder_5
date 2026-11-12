@@ -1927,10 +1927,13 @@ def _draw_interior_items_section(layout, target_props, target_name=""):
             # solver), so no spacer_height row -- same as pullouts.
         elif item.kind == 'TRAY_DIVIDERS':
             sub.prop(item, 'tray_qty', text="Qty")
-            sub.prop(item, 'tray_remove_shelf', text="Remove Locked Shelf")
+            from . import interior_page
+            sub.prop(item, 'tray_remove_shelf',
+                     text="Remove " + interior_page.tray_shelf_label(item))
             shelf_row = sub.row()
             shelf_row.enabled = not item.tray_remove_shelf
-            shelf_row.prop(item, 'tray_opening_height', text="Opening Height")
+            shelf_row.prop(item, 'tray_opening_height',
+                           text="Tray Divider Height")
             sub.prop(item, 'tray_divider_thickness', text="Divider Thickness")
             sub.prop(item, 'tray_setback', text="Setback")
             sub.prop(item, 'bottom_offset', text="From Bottom")

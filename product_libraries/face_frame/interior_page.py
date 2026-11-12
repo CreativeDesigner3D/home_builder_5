@@ -656,6 +656,17 @@ def kind_label(kind):
                  if ident == kind), kind.replace('_', ' ').title())
 
 
+def tray_shelf_label(it):
+    """What the board over a set of tray dividers is called. In an upper
+    it is a fixed shelf with storage above; in a base or tall cabinet
+    the space it leaves above the trays is the roll storage."""
+    obj = getattr(it, 'id_data', None)
+    while obj is not None and not obj.get(tff.TAG_CABINET_CAGE):
+        obj = obj.parent
+    kind = obj.face_frame_cabinet.cabinet_type if obj is not None else ''
+    return "Fixed Shelf Above" if kind == 'UPPER' else "Roll Storage"
+
+
 def _summary(it):
     k = it.kind
     if k in _SHELVES:
@@ -769,8 +780,8 @@ def _item_fields(it, index=0, owner_name=""):
     elif k == 'TRAY_DIVIDERS':
         f += [
             ('number', 'tray_qty', "Dividers"),
-            ('bool', 'tray_remove_shelf', "Remove Locked Shelf"),
-            ('distance', 'tray_opening_height', "Opening Height",
+            ('bool', 'tray_remove_shelf', "Remove " + tray_shelf_label(it)),
+            ('distance', 'tray_opening_height', "Tray Divider Height",
              {'when': lambda o: not o.tray_remove_shelf}),
             ('distance', 'tray_divider_thickness', "Divider Thickness"),
             ('distance', 'tray_setback', "Setback"),

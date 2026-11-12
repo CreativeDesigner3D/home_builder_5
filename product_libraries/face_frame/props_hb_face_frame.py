@@ -11532,13 +11532,13 @@ class Face_Frame_Interior_Item(bpy.types.PropertyGroup):
         update=_update_cabinet_dim,
     )  # type: ignore
     tray_remove_shelf: BoolProperty(
-        name="Remove Locked Shelf",
-        description="When on, dividers run the full opening height. Off = dividers stop at a horizontal locked shelf at Tray Opening Height",
+        name="Remove Shelf Above",
+        description="When on, dividers run the full opening height. Off = dividers stop at a fixed shelf at the Tray Divider Height",
         default=False, update=_update_cabinet_dim,
     )  # type: ignore
     tray_opening_height: FloatProperty(
-        name="Tray Opening Height",
-        description="Clear height under the locked shelf, from the bottom of the dividers to the underside of the shelf (only when Remove Locked Shelf is off)",
+        name="Tray Divider Height",
+        description="Height of the tray dividers: from their bottom to the underside of the shelf above them (only while that shelf is kept)",
         default=units.inch(20.5), unit='LENGTH', precision=4,
         update=_update_cabinet_dim,
     )  # type: ignore
