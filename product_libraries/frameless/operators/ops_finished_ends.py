@@ -537,10 +537,42 @@ def set_finish_condition(context, cabinet_obj, side, condition):
         with context.temp_override(object=cabinet_obj, active_object=cabinet_obj,
                                    selected_objects=[cabinet_obj]):
             bpy.ops.hb_frameless.update_finished_end('EXEC_DEFAULT', **kwargs)
+    if side == 'BOTTOM' and solver_frameless.FINISHED_BOTTOM_KEY in cabinet_obj:
+        # The bottom itself is being set: an applied panel under it goes.
+        cabinet_obj[solver_frameless.FINISHED_BOTTOM_KEY] = 0
     if part is not None:
         part['Finish Top'] = False
         part['Finish Bottom'] = condition == 'FINISHED'
     return True
+
+
+# The panels of finished stock that can be applied under an upper, as
+# the cabinet's Finished Bottom prompt numbers them.
+FINISHED_BOTTOM_PANELS = [
+    ('1', "Applied 1/4\" Panel", "A 1/4 in panel of finished stock under the cabinet"),
+    ('2', "Applied 3/4\" Panel", "A 3/4 in panel of finished stock under the cabinet"),
+]
+
+
+def takes_finished_bottom(cabinet_obj):
+    """A straight upper: the cabinet whose underside is seen."""
+    return (cabinet_obj is not None
+            and bool(cabinet_obj.get('IS_FRAMELESS_CABINET_CAGE'))
+            and not cabinet_obj.get('IS_CORNER_CABINET')
+            and solver_frameless.carcass_kind(cabinet_obj) == 'UPPER')
+
+
+def finished_bottom_cabinets(context):
+    """The selected cabinets a bottom finish applies to."""
+    objs = list(context.selected_objects)
+    if context.object is not None and context.object not in objs:
+        objs.append(context.object)
+    cabinets = []
+    for obj in objs:
+        cabinet = hb_utils.get_cabinet_bp(obj)
+        if takes_finished_bottom(cabinet) and cabinet not in cabinets:
+            cabinets.append(cabinet)
+    return cabinets
 
 
 def _cabinet_style(cabinet_obj):
@@ -663,10 +695,42 @@ class hb_frameless_OT_auto_finish_condition(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class hb_frameless_OT_set_finished_bottom_panel(bpy.types.Operator):
+    """Apply a panel of finished stock under the selected upper cabinets"""
+    bl_idname = "hb_frameless.set_finished_bottom_panel"
+    bl_label = "Finished Bottom Panel"
+    bl_description = "Apply a panel of finished stock under the cabinet"
+    bl_options = {'UNDO'}
+
+    panel: bpy.props.EnumProperty(
+        name="Panel", items=FINISHED_BOTTOM_PANELS, default='1') # type: ignore
+
+    @classmethod
+    def poll(cls, context):
+        return context.object is not None and hb_utils.get_cabinet_bp(context.object) is not None
+
+    def execute(self, context):
+        cabinets = finished_bottom_cabinets(context)
+        if not cabinets:
+            self.report({'WARNING'}, "Select an upper cabinet")
+            return {'CANCELLED'}
+        for cabinet in cabinets:
+            cabinet[solver_frameless.FINISHED_BOTTOM_KEY] = int(self.panel)
+            # Covered by the panel, the bottom itself goes unfinished.
+            part = solver_frameless.carcass_parts(cabinet).get('BOTTOM')
+            if part is not None:
+                part['Finish Top'] = False
+                part['Finish Bottom'] = False
+            hb_utils.run_calc_fix(context, cabinet)
+            _paint(cabinet)
+        return {'FINISHED'}
+
+
 classes = (
     hb_frameless_OT_update_finished_end,
     hb_frameless_OT_applied_panel_prompts,
     hb_frameless_OT_set_finish_condition,
+    hb_frameless_OT_set_finished_bottom_panel,
     hb_frameless_OT_auto_finish_condition,
 )
 

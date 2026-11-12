@@ -80,6 +80,16 @@ def _draw_finish_conditions(layout, side, sides_label=None, panels=True,
                         text="Automatic").side = side
 
 
+def _draw_bottom_finish(layout, side, label):
+    """An upper's underside: the bottom itself unfinished or finished,
+    or a panel of finished stock applied under it."""
+    from .operators import ops_finished_ends
+    _draw_finish_conditions(layout, side, label, panels=False)
+    for ident, name, _desc in ops_finished_ends.FINISHED_BOTTOM_PANELS:
+        layout.operator("hb_frameless.set_finished_bottom_panel",
+                        text=name).panel = ident
+
+
 class HOME_BUILDER_MT_finish_condition(bpy.types.Menu):
     """A side's finish condition on every selected cabinet."""
     bl_label = "Finish Condition"
@@ -92,6 +102,10 @@ class HOME_BUILDER_MT_finish_condition(bpy.types.Menu):
                                     auto=side in ('LEFT', 'RIGHT'))
             layout.separator()
         _draw_finish_conditions(layout, 'TOP', "Top:", panels=False)
+        from .operators import ops_finished_ends
+        if ops_finished_ends.finished_bottom_cabinets(context):
+            layout.separator()
+            _draw_bottom_finish(layout, 'BOTTOM', "Bottom:")
 
 
 class HOME_BUILDER_MT_carcass_part_commands(bpy.types.Menu):
@@ -106,7 +120,10 @@ class HOME_BUILDER_MT_carcass_part_commands(bpy.types.Menu):
         obj = context.object
         side = ops_finished_ends.FINISH_ROLE_SIDES.get(
             obj.get(solver_frameless.PART_ROLE_KEY)) if obj else None
-        if side is not None:
+        if side == 'BOTTOM' and ops_finished_ends.takes_finished_bottom(obj.parent):
+            _draw_bottom_finish(layout, 'PART', "Bottom Finish:")
+            layout.separator()
+        elif side is not None:
             _draw_finish_conditions(layout, 'PART', side.title() + " Finish:",
                                     panels=side in ops_finished_ends.PANEL_SIDES,
                                     auto=side in ('LEFT', 'RIGHT'))
