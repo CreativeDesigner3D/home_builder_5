@@ -182,6 +182,8 @@ _mouse = (-1, -1)
 _hover = None           # dim key or bar part under the cursor
 _hover_chain = None     # the height string under the cursor (its chain id)
 _drag = None            # a height string being dragged sideways
+_card_pick = None       # the detail card clicked on (its id)
+_card_drag = None       # a detail card being dragged to a new place
 _adding = None          # a height string being clicked in
 _gen = 0
 _print_scale = None    # set while printing: px -> pt
@@ -2227,7 +2229,8 @@ def _layout(context, region, rv3d):
     key = (_gen, scene.name, wall.name, region.width, region.height,
            tuple(round(v, 5) for row in rv3d.perspective_matrix for v in row),
            selected, show_option(scene, 'FACE_FRAME'),
-           frozenset(st.get('preview', ())), _s())
+           frozenset(st.get('preview', ())), _s(),
+           _cards_stamp(scene, wall), wall.get(CARDS_PROP))
     if _layout_cache.get('key') == key:
         return _layout_cache['result']
     result = _layout_wall(scene, wall, region, rv3d, selected=selected,
@@ -3699,9 +3702,16 @@ def _draw_side_views(context, area, region, dims, extra, s):
 #    'valign': 'TOP' | 'CENTER' | 'BOTTOM', 'angle': radians,
 #    'mask': True to clear the card behind the text}
 # A card is scaled whole to its place, letters and line weights with it.
+# A source may come with stamp(scene, wall): anything that compares
+# unequal once its cards have changed, for cards whose drawing can
+# change without the room itself changing. A click on a card picks it
+# (picked_card()), for whoever shows its settings; a drag moves it to
+# another place in the stack, kept with the wall.
 
 _card_sources = []
+_card_stamps = {}
 _card_cache = {}
+CARDS_PROP = 'HB_ELEVATION_CARDS'
 
 CARD_INK = (0.07, 0.07, 0.08, 1.0)
 CARD_GAP_PX = 14            # between cards
@@ -3714,16 +3724,74 @@ CARD_CAP = 0.70             # a capital's height, of the letter size
 CARD_LEADING = 1.25
 
 
-def register_card_source(fn):
+def register_card_source(fn, stamp=None):
     if fn not in _card_sources:
         _card_sources.append(fn)
+    if stamp is not None:
+        _card_stamps[fn] = stamp
     _bump_gen()
 
 
 def unregister_card_source(fn):
     if fn in _card_sources:
         _card_sources.remove(fn)
+    _card_stamps.pop(fn, None)
     _bump_gen()
+
+
+def _cards_stamp(scene, wall):
+    """What the sources say their cards look like now."""
+    if not _card_stamps or scene is None or wall is None \
+            or not show_option(scene, 'DETAILS'):
+        return None
+    out = []
+    for fn in list(_card_sources):
+        stamp = _card_stamps.get(fn)
+        if stamp is None:
+            continue
+        try:
+            out.append(stamp(scene, wall))
+        except Exception:
+            out.append(None)
+    return tuple(out)
+
+
+def _card_order(wall):
+    try:
+        order = json.loads(wall.get(CARDS_PROP) or '[]')
+        return [str(i) for i in order] if isinstance(order, list) else []
+    except Exception:
+        return []
+
+
+def picked_card(context=None):
+    """The id of the detail card picked in the elevation on screen, or
+    None."""
+    if _card_pick is None or _state is None:
+        return None
+    context = context or bpy.context
+    wall = active_wall(context)
+    if wall is None or context.scene is None:
+        return None
+    if any(c.get('id') == _card_pick for c in _cards(context.scene, wall)):
+        return _card_pick
+    return None
+
+
+def pick_card(card_id):
+    global _card_pick
+    _card_pick = card_id
+    _redraw_views()
+
+
+def _redraw_views():
+    try:
+        for window in bpy.context.window_manager.windows:
+            for area in window.screen.areas:
+                if area.type == 'VIEW_3D':
+                    area.tag_redraw()
+    except Exception:
+        pass
 
 
 def _cards(scene, wall):
@@ -3732,7 +3800,8 @@ def _cards(scene, wall):
     if not _card_sources or scene is None \
             or not show_option(scene, 'DETAILS'):
         return []
-    key = (_gen, scene.name, wall.name, len(_card_sources))
+    key = (_gen, scene.name, wall.name, len(_card_sources),
+           _cards_stamp(scene, wall), wall.get(CARDS_PROP))
     if _card_cache.get('key') == key:
         return _card_cache['cards']
     cards = []
@@ -3744,6 +3813,13 @@ def _cards(scene, wall):
                     cards.append(card)
         except Exception as exc:
             print(f"Elevation detail cards: {exc}")
+    # The order the cards were dragged into; new ones after.
+    order = {cid: i for i, cid in enumerate(_card_order(wall))}
+    if order:
+        cards = [c for _i, c in sorted(
+            enumerate(cards),
+            key=lambda ic: (order.get(str(ic[1].get('id')), len(order)),
+                            ic[0]))]
     _card_cache['key'] = key
     _card_cache['cards'] = cards
     return cards
@@ -3910,6 +3986,69 @@ def _draw_cards(region, extra, s):
             draw_glyphs(0, text)
         blf.rotation(0, 0.0)
         blf.disable(0, blf.ROTATION)
+    # The picked card, and one on its way to a new place.
+    drag = _card_drag if _card_drag and _card_drag.get('moved') else None
+    for card in cards:
+        x, y, w, h = card['rect']
+        ring = _rect_ring(x, y, w, h)
+        if drag is not None and card['id'] == drag.get('over') \
+                and card['id'] != drag['id']:
+            hb_dim_style.polyline(region, ring, 3.0 * s, HOVER)
+        elif card['id'] == _card_pick and drag is None:
+            hb_dim_style.polyline(region, ring, 2.0 * s, HOVER)
+    if drag is not None:
+        for card in cards:
+            if card['id'] == drag['id']:
+                x, y, w, h = card['rect']
+                dx, dy = drag['x'] - drag['mx'], drag['y'] - drag['my']
+                shader.bind()
+                draw_round_rect(shader, x + dx, y + dy, w, h, 0.0,
+                                (HOVER[0], HOVER[1], HOVER[2], 0.12))
+                hb_dim_style.polyline(region,
+                                      _rect_ring(x + dx, y + dy, w, h),
+                                      1.5 * s, HOVER)
+
+
+def _rect_ring(x, y, w, h):
+    return [(x, y), (x + w, y), (x + w, y), (x + w, y + h),
+            (x + w, y + h), (x, y + h), (x, y + h), (x, y)]
+
+
+def _card_at(extra, mx, my):
+    """The placed card under the cursor, or None."""
+    for card in (extra or {}).get('cards') or ():
+        x, y, w, h = card['rect']
+        if x <= mx <= x + w and y <= my <= y + h:
+            return card
+    return None
+
+
+def _card_nearest(extra, mx, my):
+    """The placed card a dragged one is dropped on: the one under the
+    cursor, else the nearest."""
+    cards = (extra or {}).get('cards') or ()
+    hit = _card_at(extra, mx, my)
+    if hit is not None or not cards:
+        return hit
+
+    def away(card):
+        x, y, w, h = card['rect']
+        return (mx - (x + w / 2.0)) ** 2 + (my - (y + h / 2.0)) ** 2
+    return min(cards, key=away)
+
+
+def _move_card(wall, extra, card_id, onto_id):
+    """Put a card in another's place in the stack; the rest close up."""
+    ids = [str(c['id']) for c in (extra or {}).get('cards') or ()]
+    card_id, onto_id = str(card_id), str(onto_id)
+    if card_id not in ids or onto_id not in ids or card_id == onto_id:
+        return False
+    to = ids.index(onto_id)
+    ids.remove(card_id)
+    ids.insert(to, card_id)
+    wall[CARDS_PROP] = json.dumps(ids)
+    _bump_gen()
+    return True
 
 
 def _print_cards(page, extra):
@@ -5702,7 +5841,23 @@ class home_builder_OT_elevation_click(bpy.types.Operator):
                          'dim': got[1] if got is not None else None}
                 bpy.ops.home_builder.elevation_drag_height('INVOKE_DEFAULT')
                 return {'FINISHED'}
+        global _card_drag, _card_pick
         if got is None:
+            try:
+                _dims, extra = _layout(context, context.region,
+                                       context.region_data)
+                card = _card_at(extra, mx, my)
+            except Exception:
+                card = None
+            if card is not None:
+                _card_drag = {'id': card['id'], 'mx': mx, 'my': my,
+                              'x': mx, 'y': my, 'moved': False,
+                              'over': None}
+                bpy.ops.home_builder.elevation_drag_card('INVOKE_DEFAULT')
+                return {'FINISHED'}
+            if _card_pick is not None:
+                _card_pick = None
+                context.area.tag_redraw()
             return {'PASS_THROUGH'}
         if got[0] == 'BAR':
             if got[1] == 'EXIT':
@@ -5721,7 +5876,8 @@ class home_builder_OT_elevation_click(bpy.types.Operator):
                         pass
             elif got[1].startswith('SHOW:'):
                 toggle_show_option(context.scene, got[1][5:])
-                if got[1][5:] in ('PLAN', 'ISO') and _state is not None:
+                if got[1][5:] in ('PLAN', 'ISO', 'DETAILS') \
+                        and _state is not None:
                     _state['fit'] = 3       # make room for it, or close up
             elif got[1] == 'PRINT':
                 bpy.ops.home_builder.elevation_print()
@@ -5797,6 +5953,75 @@ class home_builder_OT_elevation_drag_height(bpy.types.Operator):
         if event.type in {'ESC', 'RIGHTMOUSE'} and event.value == 'PRESS':
             if _drag['moved']:
                 _chain_put(wall, chain, _drag['start'])
+            self._end(context)
+            return {'CANCELLED'}
+        return {'RUNNING_MODAL'}
+
+
+class home_builder_OT_elevation_drag_card(bpy.types.Operator):
+    """Click a detail card to pick it; drag it onto another to move it
+    there in the stack. The order is kept with the wall"""
+    bl_idname = "home_builder.elevation_drag_card"
+    bl_label = "Move Detail Card"
+    bl_options = {'INTERNAL', 'UNDO'}
+
+    def invoke(self, context, event):
+        if _card_drag is None:
+            return {'CANCELLED'}
+        _card_drag['owner'] = id(self)
+        context.window_manager.modal_handler_add(self)
+        return {'RUNNING_MODAL'}
+
+    def _end(self, context):
+        global _card_drag
+        _card_drag = None
+        if context.area:
+            context.area.tag_redraw()
+
+    def modal(self, context, event):
+        global _card_pick
+        drag = _card_drag
+        if drag is None or drag.get('owner') != id(self):
+            return {'CANCELLED'}
+        wall = active_wall(context)
+        if wall is None:
+            self._end(context)
+            return {'CANCELLED'}
+        if event.type in {'MOUSEMOVE', 'INBETWEEN_MOUSEMOVE'}:
+            drag['x'], drag['y'] = event.mouse_region_x, event.mouse_region_y
+            far = max(abs(drag['x'] - drag['mx']), abs(drag['y'] - drag['my']))
+            if not drag['moved'] and far < 5 * _s():
+                return {'RUNNING_MODAL'}
+            drag['moved'] = True
+            _dims, extra = _layout(context, context.region,
+                                   context.region_data)
+            over = _card_nearest(extra, drag['x'], drag['y'])
+            drag['over'] = over['id'] if over is not None else None
+            context.area.tag_redraw()
+            return {'RUNNING_MODAL'}
+        if event.type == 'LEFTMOUSE' and event.value == 'RELEASE':
+            moved, card_id, over = drag['moved'], drag['id'], drag['over']
+            self._end(context)
+            if not moved:
+                # A plain click picks the card, and only the card.
+                for obj in list(context.selected_objects):
+                    try:
+                        obj.select_set(False)
+                    except Exception:
+                        pass
+                try:
+                    context.view_layer.objects.active = None
+                except Exception:
+                    pass
+                _card_pick = card_id
+                _redraw_views()
+                return {'CANCELLED'}
+            _dims, extra = _layout(context, context.region,
+                                   context.region_data)
+            if over is not None and _move_card(wall, extra, card_id, over):
+                return {'FINISHED'}
+            return {'CANCELLED'}
+        if event.type in {'ESC', 'RIGHTMOUSE'} and event.value == 'PRESS':
             self._end(context)
             return {'CANCELLED'}
         return {'RUNNING_MODAL'}
@@ -6234,6 +6459,7 @@ classes = (
     home_builder_OT_elevation_click,
     home_builder_OT_elevation_edit_dim,
     home_builder_OT_elevation_drag_height,
+    home_builder_OT_elevation_drag_card,
     home_builder_OT_elevation_reset_height,
     home_builder_OT_elevation_add_height,
     home_builder_OT_elevation_print,
