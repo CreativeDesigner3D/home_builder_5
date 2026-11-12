@@ -21,7 +21,8 @@ The rest band like the closet part they stand in for: a fixed shelf,
 division or drawer-bank splitter like a closet fixed shelf / division
 (front only), a front stretcher like a closet drawer stretcher (front
 only), a toe kick like a closet toe kick (none), a misc part like a
-closet misc part.
+closet misc part. A sink sub front bands its bottom edge only: the top
+is under the countertop and the ends butt the sides.
 
 BAND_EDGES is written in the closet's frame, where L2 is the front
 edge, L1 the back and W1 / W2 the ends. A frameless part's edge
@@ -52,6 +53,9 @@ BAND_EDGES = {
     'SHELF': ('L2',),
     'SPLITTER': ('L2',),
     'FRONT_STRETCHER': ('L2',),
+    # A sink sub front stands on edge under the countertop, between the
+    # sides: only its bottom edge shows.
+    'SINK_APRON': ('L2',),
     'TOE_KICK': (),
     'LEFT_TOE_KICK': (),
     'RIGHT_TOE_KICK': (),
