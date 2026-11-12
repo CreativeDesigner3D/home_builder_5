@@ -519,6 +519,8 @@ def show_page(context, page):
 
 TAB_CHARS = 26              # a tab's title is cut to this
 TAB_MIN_CHARS = 6
+TAB_ROW_MAX_PX = 70         # a HUD widget no taller than this is a button in a row
+TAB_TOP_BAND_PX = 140       # rows this near the top are the ones the tabs clear
 
 
 def _tabs_layout(context, area):
@@ -548,6 +550,25 @@ def _tabs_layout(context, area):
         chars -= 2
     x = (xmin + xmax) / 2.0 - min(total, room) / 2.0
     y = ymax - 14 * s - h
+    # Under the HUD's own rows along the top (the selection modes, the
+    # view buttons): the tabs take the next line down.
+    try:
+        from . import viewport_hud
+        x1 = x + min(total, room)
+        rows = [r for _w, r in viewport_hud.compute_layout(context, area)
+                if r is not None and r[3] <= TAB_ROW_MAX_PX * s
+                and r[1] + r[3] >= ymax - TAB_TOP_BAND_PX * s
+                and r[0] < x1 and r[0] + r[2] > x]
+        # Each pass clears the row the tabs still touch; two rows of
+        # buttons take two.
+        for _pass in range(4):
+            hit = [r for r in rows
+                   if r[1] - 6 * s < y + h and r[1] + r[3] + 6 * s > y]
+            if not hit:
+                break
+            y = min(r[1] for r in hit) - 6 * s - h
+    except Exception as exc:
+        print("Drawings tabs:", exc)
     out = []
     for page, label, w in zip(listed, labels, widths):
         out.append((page, (x, y, w, h), label))
@@ -593,12 +614,16 @@ def _draw_picture(context, area, region):
     if img is not None and img.size[0] > 0 and img.size[1] > 0:
         xmin, xmax, ymin, ymax = get_visible_window_bounds(area)
         pad = 58 * s
+        # Between the bar at the bottom and the tabs at the top.
+        tabs = _tabs_layout(context, area)
+        top = (tabs[0][1][1] - 10 * s) if tabs else ymax - pad
+        bottom = ymin + pad
         aw = max(40.0, xmax - xmin - 24 * s)
-        ah = max(40.0, ymax - ymin - 2 * pad)
+        ah = max(40.0, top - bottom)
         k = min(aw / img.size[0], ah / img.size[1])
         w, h = img.size[0] * k, img.size[1] * k
         x = (xmin + xmax) / 2.0 - w / 2.0
-        y = (ymin + ymax) / 2.0 - h / 2.0
+        y = (bottom + top) / 2.0 - h / 2.0
         try:
             tex = gpu.texture.from_image(img)
             ish = gpu.shader.from_builtin('IMAGE')
