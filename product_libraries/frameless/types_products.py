@@ -1333,6 +1333,10 @@ class VoidedCornerUpper(VoidedCorner):
 # ---------------------------------------------------------------------------
 
 BASE_ASSEMBLY_SUPPORT_SPACING = inch(16)
+# The back rail is held this far off the wall, so the base can be
+# scribed and levelled without the rail fouling the wall.
+BASE_ASSEMBLY_BACK_GAP = inch(0.25)
+BACK_GAP_KEY = 'Back Gap'
 
 
 # (Finish Top, Finish Bottom) for the parts that show: whichever surface
@@ -1362,6 +1366,11 @@ def _solve_base_assembly(root, parts, dim_x, dim_y, dim_z):
     # the wall; the end itself stays under the cabinet side.
     ext_l = float(_prompt(root, 'Left Front Extension', 0.0))
     ext_r = float(_prompt(root, 'Right Front Extension', 0.0))
+    if BACK_GAP_KEY in root:
+        _solve_base_assembly_capped(root, parts, dim_x, dim_y, dim_z, mt,
+                                    spacing, ext_l, ext_r)
+        return
+    # Bases built before the back gap keep the frame they were cut to.
     part = parts.get('BASE_FRONT')
     if part is not None:
         _set_part(part, (-ext_l, -dim_y, 0.0),
@@ -1394,6 +1403,54 @@ def _solve_base_assembly(root, parts, dim_x, dim_y, dim_z):
         _set_array(part, count, -pitch)
 
 
+def _solve_base_assembly_capped(root, parts, dim_x, dim_y, dim_z, mt,
+                                spacing, ext_l, ext_r):
+    """The frame as the shop cuts it. An end that shows or butts the
+    next base is a full-depth piece with the kick face and the back rail
+    between the two ends. An end at a wall, where the kick face runs on
+    to the wall, is a cross piece between the face and the rail instead.
+    The rail stands off the wall by the back gap."""
+    gap = max(float(_prompt(root, BACK_GAP_KEY, 0.0)), 0.0)
+    cap_l = 0.0 if ext_l > 0.0 else mt
+    cap_r = 0.0 if ext_r > 0.0 else mt
+    inner = max(dim_y - mt * 2.0 - gap, 0.0)
+
+    part = parts.get('BASE_FRONT')
+    if part is not None:
+        _set_part(part, (cap_l - ext_l, -dim_y, 0.0),
+                  length=dim_x + ext_l + ext_r - cap_l - cap_r,
+                  width=dim_z, thickness=mt)
+
+    part = parts.get('BASE_BACK')
+    if part is not None:
+        _set_part(part, (cap_l, -gap, 0.0),
+                  length=dim_x - cap_l - cap_r, width=dim_z, thickness=mt)
+
+    for role, x, cap in (('BASE_LEFT_END', 0.0, cap_l),
+                         ('BASE_RIGHT_END', dim_x, cap_r)):
+        part = parts.get(role)
+        if part is None:
+            continue
+        if cap > 0.0:
+            _set_part(part, (x, 0.0, 0.0),
+                      length=dim_y, width=dim_z, thickness=mt)
+        else:
+            _set_part(part, (x, -(gap + mt), 0.0),
+                      length=inner, width=dim_z, thickness=mt)
+
+    part = parts.get('BASE_SUPPORT')
+    if part is not None:
+        bays = 1
+        if spacing > 0.0:
+            bays = max(int(math.ceil((dim_x - mt) / spacing - 1e-6)), 1)
+        pitch = (dim_x - mt) / bays
+        count = bays - 1
+        _set_part(part, (pitch, -(gap + mt), 0.0),
+                  length=inner, width=dim_z, thickness=mt,
+                  visible=count > 0)
+        _set_array(part, count, -pitch)
+
+
 class BaseAssembly(Product):
     """The ladder base a run of base and tall cabinets stands on.
 
@@ -1422,6 +1479,7 @@ class BaseAssembly(Product):
                           BASE_ASSEMBLY_SUPPORT_SPACING)
         self.add_property('Left Front Extension', 'DISTANCE', 0.0)
         self.add_property('Right Front Extension', 'DISTANCE', 0.0)
+        self.add_property(BACK_GAP_KEY, 'DISTANCE', BASE_ASSEMBLY_BACK_GAP)
 
         self.add_part('Front', 'BASE_FRONT', rotation=(90, 0, 0), mirror='Z',
                       finish=BASE_ASSEMBLY_FINISH['BASE_FRONT'])

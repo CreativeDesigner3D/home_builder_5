@@ -12,8 +12,10 @@ the floor) and a facing, touch end to end, and agree on their back line,
 depth, floor height and toe kick. Anything else between two cabinets --
 a range, a dishwasher, a change of depth -- ends one stretch and starts
 the next, and a stretch longer than MAX_LENGTH is cut at a cabinet joint.
-An end that nothing stands against is an exposed end: the base steps
-back from it by the toe kick setback, the way it does from the front.
+An end that nothing stands against is an exposed end: the base is held
+in from it by END_INSET, or by the cabinet's own Hold In From Ends when
+that is set. That is less than the step back from the front: the end
+only has to clear the finished side standing over it.
 """
 import bpy
 import math
@@ -30,6 +32,8 @@ MAX_LENGTH = units.inch(96.0)       # longest single base
 JOIN_GAP = units.inch(0.25)         # cabinets this close are end to end
 ALIGN_TOL = units.inch(0.0625)      # same back line / depth / floor
 WALL_END_REACH = units.inch(2.0)    # a corner filler's worth of wall end
+END_INSET = units.inch(1.0)         # the base held in from an end that shows
+END_INSET_KEY = 'Toe Kick End Inset'
 
 MEMBERS_KEY = 'BASE_ASSEMBLY_MEMBERS'
 # Set once a base has been placed or resized by hand: Add Base
@@ -260,10 +264,15 @@ def create_base_assembly(context, frame, members):
     first, last = members[0], members[-1]
     open_left, open_right = exposed_ends(context, frame, members)
     setback = first.kick_setback
-    # A flush kick runs out to an exposed end rather than stepping back.
-    end_setback = max(setback, 0.0)
-    x0 = first.x0 + (end_setback if open_left else 0.0)
-    x1 = last.x1 - (end_setback if open_right else 0.0)
+
+    def end_inset(member):
+        # A flush kick runs out to an exposed end rather than stepping back.
+        if setback <= 0.0:
+            return 0.0
+        own = float(member.obj.get(END_INSET_KEY, 0.0) or 0.0)
+        return own if own > 0.0 else END_INSET
+    x0 = first.x0 + (end_inset(first) if open_left else 0.0)
+    x1 = last.x1 - (end_inset(last) if open_right else 0.0)
     if x1 - x0 <= 0.0 or first.kick_height <= 0.0:
         return None
 
