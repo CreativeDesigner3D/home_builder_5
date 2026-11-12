@@ -183,6 +183,8 @@ class hb_frameless_OT_product_prompts(bpy.types.Operator):
             self.draw_voided_corner(layout, obj)
         elif self.part_type == 'CORNER_FILLER':
             self.draw_corner_filler(layout, obj)
+        elif self.part_type == 'L_CROWN':
+            self.draw_l_crown(layout, obj)
 
     def draw_floating_shelf(self, layout, obj):
         box = layout.box()
@@ -296,6 +298,15 @@ class hb_frameless_OT_product_prompts(bpy.types.Operator):
                 row.prop(obj, '["%s"]' % key, text="")
             if 'Toe Kick Piece' in obj:
                 col.prop(obj, '["Toe Kick Piece"]', text="Toe Kick Piece")
+
+    def draw_l_crown(self, layout, obj):
+        box = layout.box()
+        box.label(text="L Crown")
+        col = box.column(align=True)
+        row = col.row(align=True)
+        row.label(text="Return Cleat Depth:")
+        row.prop(obj, '["%s"]' % types_products.RETURN_CLEAT_KEY, text="")
+        col.prop(obj, '["Flush With Doors"]', text="Flush With Doors")
 
     def draw_voided_corner(self, layout, obj):
         box = layout.box()

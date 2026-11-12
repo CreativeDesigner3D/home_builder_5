@@ -69,7 +69,8 @@ def _wall_box(obj):
 def _is_cover(obj):
     if not any(obj.get(tag) for tag in COVER_TAGS):
         return False
-    if obj.get('IS_BASE_ASSEMBLY') or obj.get('IS_CAGE_GROUP'):
+    if (obj.get('IS_BASE_ASSEMBLY') or obj.get('IS_L_CROWN')
+            or obj.get('IS_CAGE_GROUP')):
         return False
     # A hood's cage runs to the ceiling; the hood itself hides nothing.
     if obj.get('IS_APPLIANCE') and obj.get('APPLIANCE_TYPE') == 'HOOD':

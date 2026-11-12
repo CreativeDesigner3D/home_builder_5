@@ -1050,7 +1050,7 @@ def product_front_setback(root):
     """How far behind the front of its cage a product's own front
     stands. A wall scribe filler's cage always reaches the door plane;
     flush with the carcass, its face is a front thickness behind that."""
-    if (root.get('PART_TYPE') == 'CORNER_FILLER'
+    if (root.get('PART_TYPE') in ('CORNER_FILLER', 'L_CROWN')
             and not root.get('Flush With Doors', True)):
         return FRONT_THICKNESS
     return 0.0
@@ -1530,8 +1530,93 @@ class BaseAssembly(Product):
         self.solve()
 
 
+# ---------------------------------------------------------------------------
+# L crown
+# ---------------------------------------------------------------------------
+
+L_CROWN_HEIGHT = inch(6.0)
+# Front to back, the face board's own thickness included.
+L_CROWN_RETURN_DEPTH = inch(4.0)
+RETURN_CLEAT_KEY = 'Return Cleat Depth'
+
+
+def _solve_l_crown(root, parts, dim_x, dim_y, dim_z):
+    """An L in section: a face board standing on the cabinet tops, with
+    a return cleat lying on the tops behind it to fix through. The face
+    is flush with the carcass front or out in the door plane (Dim Y
+    always reaches from the wall to the door plane, so the option can
+    be switched either way). In the door plane the bottom of the cleat
+    shows from below, so it is finished."""
+    mt = float(_prompt(root, 'Material Thickness', inch(0.75)))
+    ret = float(_prompt(root, RETURN_CLEAT_KEY, L_CROWN_RETURN_DEPTH))
+    on_doors = bool(root.get('Flush With Doors', False))
+    face_y = -dim_y + (0.0 if on_doors else FRONT_THICKNESS)
+
+    part = parts.get('CROWN_FRONT')
+    if part is not None:
+        _set_part(part, (0.0, face_y, 0.0),
+                  length=dim_x, width=dim_z, thickness=mt)
+
+    part = parts.get('CROWN_CLEAT')
+    if part is not None:
+        _finish_faces(part, (False, on_doors))
+        _set_part(part, (0.0, face_y + mt, 0.0),
+                  length=dim_x, width=ret - mt, thickness=mt,
+                  visible=ret - mt > 0.0)
+
+    # The cage is what gets clicked, so it is drawn back to the face
+    # when that stands behind the door plane.
+    try:
+        from . import solver_frameless as sf
+        sf.set_cage_clamp(root, sf.FRONT_CLEAR_MOD, sf.FRONT_CLEAR_GROUP,
+                          'Front', 'Y', face_y, not on_doors)
+    except Exception:
+        pass
+
+
+class LCrown(Product):
+    """The closure between the top of a run of cabinets and the ceiling.
+
+    A face board with a return cleat behind its bottom edge, standing
+    on the cabinet tops. It belongs to the run rather than to a cabinet,
+    so it is built from the room the way base assemblies are: Add L
+    Crowns measures the runs of upper and tall cabinets and stands
+    these over each.
+    Dim X = length along the run, Dim Y = wall to the door plane,
+    Dim Z = height above the cabinet tops.
+    """
+
+    def __init__(self):
+        super().__init__()
+        props = bpy.context.scene.hb_frameless
+        self.width = inch(36)
+        self.height = L_CROWN_HEIGHT
+        self.depth = props.upper_cabinet_depth + FRONT_THICKNESS
+        self.return_depth = L_CROWN_RETURN_DEPTH
+        self.flush_with_doors = scribe_filler_flush_with_doors()
+
+    def create(self, name="L Crown"):
+        self.create_product(name)
+        self.obj['PART_TYPE'] = 'L_CROWN'
+        self.obj['IS_L_CROWN'] = True
+
+        self.add_properties_common()
+        self.add_property(RETURN_CLEAT_KEY, 'DISTANCE', self.return_depth)
+        self.add_property('Flush With Doors', 'CHECKBOX', self.flush_with_doors)
+
+        # The face shows on its bottom surface; the cleat only from
+        # below, and only where it stands out past the carcass.
+        self.add_part('Front', 'CROWN_FRONT', rotation=(-90, 0, 0),
+                      mirror='Y', finish=(False, True))
+        self.add_part('Return Cleat', 'CROWN_CLEAT',
+                      finish=(False, self.flush_with_doors))
+
+        self.solve()
+
+
 _SOLVERS = {
     'BASE_ASSEMBLY': _solve_base_assembly,
+    'L_CROWN': _solve_l_crown,
     'FLOATING_SHELF': _solve_floating_shelf,
     'VALANCE': _solve_valance,
     'SUPPORT_FRAME': _solve_support_frame,

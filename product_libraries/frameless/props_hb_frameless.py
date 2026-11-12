@@ -2698,6 +2698,13 @@ class Frameless_Scene_Props(PropertyGroup):
         row.operator('hb_frameless.edit_base_assemblies',text="Edit Base Assemblies",icon='EDITMODE_HLT')
         size_box = layout.box()
         row = size_box.row()
+        row.label(text="L Crown:")
+        row = size_box.row(align=True)
+        row.operator('hb_frameless.add_l_crowns',text="Add L Crowns").selected_only = False
+        row.operator('hb_frameless.add_l_crowns',text="Selected").selected_only = True
+        row.operator('hb_frameless.remove_l_crowns',text="",icon='X')
+        size_box = layout.box()
+        row = size_box.row()
         row.label(text="Base Top Construction:")
         row.prop(self,'base_top_construction',text="")
         row.operator('hb_frameless.update_base_top_construction_prompts',text="",icon='FILE_REFRESH')

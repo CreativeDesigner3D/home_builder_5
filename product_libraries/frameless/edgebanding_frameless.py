@@ -56,6 +56,10 @@ BAND_EDGES = {
     # A sink sub front stands on edge under the countertop, between the
     # sides: only its bottom edge shows.
     'SINK_APRON': ('L2',),
+    # An L crown's face shows its bottom edge; the cleat behind it
+    # shows none.
+    'CROWN_FRONT': ('L1',),
+    'CROWN_CLEAT': (),
     'TOE_KICK': (),
     'LEFT_TOE_KICK': (),
     'RIGHT_TOE_KICK': (),
