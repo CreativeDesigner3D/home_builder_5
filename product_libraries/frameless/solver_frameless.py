@@ -2242,6 +2242,9 @@ def _paint_interior(root, part_obj):
         except Exception:
             pass
     from . import edgebanding_frameless
+    if edgebanding_frameless.is_loose_shelf(part_obj):
+        edge = style.get_shelf_edge_material(
+            bool(root.get('Finished Interior', False)))
     edgebanding_frameless.apply_edges(part_obj, edge)
 
 

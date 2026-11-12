@@ -69,6 +69,13 @@ MISC_TAG = 'IS_FRAMELESS_MISC_PART'
 MISC_FLAG = 'hb_band_'
 
 
+def is_loose_shelf(obj):
+    """An adjustable, pull-out or part-depth shelf: a shelf that sits
+    inside the box rather than being part of it (a fixed shelf is a
+    splitter)."""
+    return 'SHELF' in (obj.get(solver_frameless.PART_ROLE_KEY) or '')
+
+
 def is_bandable_misc_part(obj):
     return bool(obj.get(MISC_TAG))
 

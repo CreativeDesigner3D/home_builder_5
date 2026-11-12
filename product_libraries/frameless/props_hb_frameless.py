@@ -1184,6 +1184,17 @@ class Frameless_Cabinet_Style(PropertyGroup):
                 m.rotated_variant(self._sheet(self.front_edge_material,
                                               front)))
 
+    def get_shelf_edge_material(self, finished_interior=False):
+        """Banding for a loose shelf inside the box. It is read against
+        the interior it sits in, so with the cabinet edge on Match it
+        takes the interior material rather than the cabinet's; a picked
+        cabinet edge, or a Finished Interior, bands it like the box."""
+        m = _sheet_materials()
+        if finished_interior or self.edge_material not in ('', m.MATCH):
+            return self.get_edge_materials()[0]
+        interior, _ = self.get_interior_material()
+        return m.rotated_variant(interior)
+
     def apply_materials_to_cabinet(self, cabinet_obj):
         """Paint every cutpart under the cabinet. Carcass faces take the
         cabinet material where the part is flagged finished (Finish Top
@@ -1203,6 +1214,8 @@ class Frameless_Cabinet_Style(PropertyGroup):
         # and the in-plane turn is what runs a rail across.
         front_across = m.vertical_variant(front_mat)
         finished_interior = cabinet_obj.get('Finished Interior', False)
+        shelf_edge = self.get_shelf_edge_material(finished_interior)
+        from . import edgebanding_frameless
 
         parts = [child for child in cabinet_obj.children_recursive
                  if 'CABINET_PART' in child]
@@ -1224,11 +1237,12 @@ class Frameless_Cabinet_Style(PropertyGroup):
                 bottom_mat = (finish_mat if child.get('Finish Bottom', True)
                               else interior_mat)
                 edge = carcass_edge
+            if edgebanding_frameless.is_loose_shelf(child):
+                edge = shelf_edge
 
             part.set_input("Top Surface", top_mat)
             part.set_input("Bottom Surface", bottom_mat)
             # Carcass parts are banded only where an edge shows.
-            from . import edgebanding_frameless
             edgebanding_frameless.apply_edges(child, edge)
             # A turned leg is a static mesh carrying its own material, taken
             # from Top Surface when it was turned; give it the new one.
