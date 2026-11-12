@@ -324,11 +324,23 @@ def _items_or_none(items):
 
 
 # --- cabinet-style finish caches ---
-_FINISH_WOOD_ITEMS = [(i, lbl, lbl, n)
-                      for n, (i, lbl) in enumerate(style_options.woods_for_ui())]
-_FINISH_COLOR_ITEMS = {w: [(i, lbl, lbl, n)
-                           for n, (i, lbl) in enumerate(style_options.colors_for_wood_ui(w))]
-                       for w in style_options.WOOD_SPECIES}
+# Wood + color are numbered over the full list, retired entries included,
+# so a retired entry leaving the dropdown does not renumber the picks
+# stored in existing files. The *_ALL tables keep the retired rows; the
+# plain ones are what the dropdowns offer.
+_FINISH_WOOD_ITEMS_ALL = [
+    (i, lbl, lbl, n) for n, (i, lbl) in enumerate(
+        style_options.woods_for_ui(include_retired=True))]
+_FINISH_WOOD_ITEMS = [it for it in _FINISH_WOOD_ITEMS_ALL
+                      if not style_options.wood_retired(it[0])]
+_FINISH_COLOR_ITEMS_ALL = {
+    w: [(i, lbl, lbl, n) for n, (i, lbl) in enumerate(
+        style_options.colors_for_wood_ui(w, include_retired=True))]
+    for w in style_options.WOOD_SPECIES}
+_FINISH_COLOR_ITEMS = {
+    w: [it for it in rows if not style_options.color_retired(it[0])]
+    for w, rows in _FINISH_COLOR_ITEMS_ALL.items()}
+_FINISH_ITEMS_KEPT = {}
 _FINISH_VARNISH_ITEMS = {c: _enum_items(style_options.varnishes_for_color(c) or ["N/A"])
                          for c in style_options.COLORS}
 _FINISH_GLAZE_ITEMS = {c: _enum_items(style_options.glazes_for_color(c))
@@ -348,12 +360,78 @@ def _set_enum_safe(owner, prop, identifier):
         pass
 
 
+def _stored_enum_number(owner, prop):
+    """The number an enum holds on file, 0 when it was never set (a
+    never-touched dynamic enum reads as its number-0 item)."""
+    try:
+        store = owner.bl_system_properties_get()
+        value = store.get(prop) if store is not None else None
+    except Exception:
+        value = None
+    return value if isinstance(value, int) else 0
+
+
+def _items_keeping_current(offered, every, owner, prop):
+    """The offered items, plus the retired one this owner already holds
+    so an existing pick still reads and shows."""
+    number = _stored_enum_number(owner, prop)
+    if any(it[3] == number for it in offered):
+        return offered
+    held = next((it for it in every if it[3] == number), None)
+    if held is None:
+        return offered
+    # Item lists must outlive the callback, so each combination is built
+    # once and kept.
+    key = (id(offered), held[0])
+    rows = _FINISH_ITEMS_KEPT.get(key)
+    if rows is None:
+        rows = sorted(offered + [held], key=lambda it: it[3])
+        _FINISH_ITEMS_KEPT[key] = rows
+    return rows
+
+
+def first_offered_color(wood):
+    """Identifier of the first color still offered for a wood, or ''."""
+    rows = _FINISH_COLOR_ITEMS.get(wood, [])
+    return rows[0][0] if rows else ''
+
+
+def set_finish_pick(owner, prop, identifier):
+    """Assign a style's wood or color by identifier, retired entries
+    included, so a copy or a saved template can carry a pick the
+    dropdown no longer offers. A retired entry is written as its number,
+    which runs no update callback. True when the value landed."""
+    try:
+        setattr(owner, prop, identifier)
+        return True
+    except (TypeError, ValueError):
+        pass
+    if prop == "finish_wood":
+        every = _FINISH_WOOD_ITEMS_ALL
+    elif prop == "finish_color":
+        every = _FINISH_COLOR_ITEMS_ALL.get(owner.finish_wood, [])
+    else:
+        return False
+    held = next((it for it in every if it[0] == identifier), None)
+    if held is None:
+        return False
+    try:
+        owner.bl_system_properties_get(do_create=True)[prop] = held[3]
+    except Exception:
+        return False
+    return True
+
+
 def get_finish_wood_items(self, context):
-    return _items_or_none(_FINISH_WOOD_ITEMS)
+    return _items_or_none(_items_keeping_current(
+        _FINISH_WOOD_ITEMS, _FINISH_WOOD_ITEMS_ALL, self, "finish_wood"))
 
 
 def get_finish_color_items(self, context):
-    return _items_or_none(_FINISH_COLOR_ITEMS.get(self.finish_wood, []))
+    wood = self.finish_wood
+    return _items_or_none(_items_keeping_current(
+        _FINISH_COLOR_ITEMS.get(wood, []),
+        _FINISH_COLOR_ITEMS_ALL.get(wood, []), self, "finish_color"))
 
 
 def get_finish_varnish_items(self, context):
@@ -1055,6 +1133,11 @@ def ensure_default_styles(context):
         cs = ff.cabinet_styles.add()
         cs.name = "Default"
         ff.active_cabinet_style_index = 0
+        # A new style starts on a color that is still offered (the
+        # number-0 color it would otherwise read may be a retired one).
+        color = first_offered_color(cs.finish_wood)
+        if color:
+            _set_enum_safe(cs, "finish_color", color)
     # One-time hinge seeding: styles whose hinge was never explicitly set
     # otherwise read the number-0 catalog row (Compact) instead of the
     # overlay's default hinge (CLIPtop for the standard overlays).
@@ -2190,10 +2273,14 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
     interior_material_type: EnumProperty(
         name="Interior Material",
         description="Material for cabinet interior",
+        # Numbered so the list can read in a sensible order while the
+        # picks stored in existing files keep their value.
         items=[
-            ('MAPLE_PLY', "UV Plywood", "UV plywood"),
-            ('MATCHING', "Matching Exterior", "Use the same material as the exterior"),
-            ('CUSTOM', "Custom Material", "Use a custom material from the file"),
+            ('MAPLE_PLY', "UV Plywood", "UV plywood", 0),
+            ('PARTICLE_BOARD', "Particle Board", "Particle board", 3),
+            ('UNFINISHED_PLY', "Unfinished Plywood", "Unfinished plywood", 4),
+            ('MATCHING', "Matching Exterior", "Use the same material as the exterior", 1),
+            ('CUSTOM', "Custom Material", "Use a custom material from the file", 2),
         ],
         default='MAPLE_PLY',
         update=_propagate_cabinet_style,

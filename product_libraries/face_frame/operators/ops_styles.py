@@ -85,9 +85,16 @@ def _copy_cabinet_style(src, dst):
     land last and aren't clobbered. Collection props (e.g. millwork_items)
     are cleared and re-added entry by entry."""
     cascade = ('finish_color', 'finish_overlay', 'door_overlay_type')
+    # Wood and color go through set_finish_pick so a pick the dropdown
+    # no longer offers is still carried over.
+    finish_picks = ('finish_wood', 'finish_color')
     for pid in cascade:
         try:
-            setattr(dst, pid, getattr(src, pid))
+            if pid in finish_picks:
+                props_hb_face_frame.set_finish_pick(
+                    dst, pid, getattr(src, pid))
+            else:
+                setattr(dst, pid, getattr(src, pid))
         except Exception:
             pass
     # The per-style finish materials are lazily created and owned by each
@@ -117,9 +124,25 @@ def _copy_cabinet_style(src, dst):
         if prop.is_readonly:
             continue
         try:
-            setattr(dst, pid, getattr(src, pid))
+            if pid in finish_picks:
+                props_hb_face_frame.set_finish_pick(
+                    dst, pid, getattr(src, pid))
+            else:
+                setattr(dst, pid, getattr(src, pid))
         except Exception:
             pass
+    # Writing the wood re-picks the first color (and that the first
+    # varnish and glaze), so the source's own picks go back last. Both
+    # styles are on the same wood by now, so their numbers line up.
+    try:
+        src_store = src.bl_system_properties_get()
+        dst_store = dst.bl_system_properties_get(do_create=True)
+        for pid in ('finish_color', 'finish_varnish', 'finish_glaze'):
+            if getattr(dst, pid) != getattr(src, pid):
+                dst_store[pid] = (src_store.get(pid, 0)
+                                  if src_store is not None else 0)
+    except Exception:
+        pass
 
 
 def _give_section_own_fronts(ff, cs_index):
@@ -179,6 +202,9 @@ class hb_face_frame_OT_add_cabinet_style(Operator):
         new_style = ff.cabinet_styles.add()
         new_style.name = _next_unique_name(base, existing)
         if src is not None:
+            # Adding can move the collection's storage, so the source
+            # is looked up again rather than read through the old handle.
+            src = ff.cabinet_styles[idx]
             _copy_cabinet_style(src, new_style)
         # Anchor the copy to its OWN name so its first rename only
         # re-tags cabinets assigned to IT, never the style it came from.
