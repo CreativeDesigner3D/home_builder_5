@@ -558,12 +558,20 @@ def _fit_step(area, region, r3d):
                     more_w = (r - l) * px_per_m + (SIDE_GAP_PX + 70) * s
     except Exception as exc:
         print("Elevation fit side views:", exc)
-    k = min(avail_w / (cur_w + more_w), avail_h / (cur_h + more_h))
+    # Detail cards stand to the right, a share of the wall's height each.
+    cards_w = 0.0
+    try:
+        cards_w = _cards_width(bpy.data.scenes.get(_state['scene']), wall,
+                               cur_h, cur_h, s)
+    except Exception as exc:
+        print("Elevation fit detail cards:", exc)
+    k = min(avail_w / (cur_w + more_w + cards_w),
+            avail_h / (cur_h + more_h))
     # Centre the wall in the space left for it.
     want_x = (xmin + xmax) / 2.0
     want_y = ymin + bottom + avail_h / 2.0
     # The iso stands to the left of the elevation, the plan above it.
-    have_x = (p0.x + p1.x) / 2.0 - more_w / 2.0
+    have_x = (p0.x + p1.x) / 2.0 - more_w / 2.0 + cards_w / 2.0
     have_y = (p0.y + p1.y) / 2.0 + more_h / 2.0
     dx = (have_x - want_x) / px_per_m
     dz = (have_y - want_y) / px_per_m
@@ -1378,6 +1386,10 @@ SHOW_OPTIONS = (
     # right, beside it: the three views a sheet shows together.
     ('PLAN', "Plan View", False),
     ('ISO', "Iso View", False),
+    # The wall's detail cards (a moulding section, a drawer from above),
+    # stacked to the right of the elevation. Offered when an add-on
+    # supplies cards.
+    ('DETAILS', "Details", True),
 )
 
 
@@ -1415,6 +1427,8 @@ def unregister_annotation_source(fn):
 
 
 def _option_available(key):
+    if key == 'DETAILS':
+        return bool(_card_sources)
     return True
 
 
@@ -2747,8 +2761,12 @@ def _layout_wall(scene, wall, region, rv3d, selected=(), extra=None,
                         round(d['w0'], 4))
     extra = {'ext': dims_ext, 'floor': (sx(0.0), sx(length), floor_y),
              'items': items, 'sx': sx, 'sy': sy, 'ext_n': len(dims_ext),
-             'side': {}}
+             'side': {}, 'cards': []}
     if side_views:
+        try:
+            _layout_cards(scene, wall, region, dims, extra, s)
+        except Exception as exc:
+            print(f"Elevation detail cards: {exc}")
         try:
             _layout_side_views(scene, wall, region, dims, extra, s)
         except Exception as exc:
@@ -3667,6 +3685,250 @@ def _draw_side_views(context, area, region, dims, extra, s):
     gpu.state.blend_set('ALPHA')
 
 
+# ---- Detail cards --------------------------------------------------------------
+# Another add-on can hand the elevation detail cards to stand beside the
+# wall: small drawings of their own (a moulding section, a drawer seen
+# from above). A source is fn(scene, wall) returning a list of cards:
+#   {'id': str, 'title': str, 'size': (width, height), 'prims': [...],
+#    'scale': 1.0 (a card to show larger or smaller than the rest)}
+# with the primitives in the card's own flat units, origin bottom left:
+#   {'kind': 'LINES', 'points': [(x, y), ...] (pairs), 'width': weight}
+#   {'kind': 'TEXT', 'origin': (x, y), 'size': letter size, 'text': str
+#    (or 'value': a length, written the way the view writes lengths),
+#    'align': 'LEFT' | 'CENTER' | 'RIGHT',
+#    'valign': 'TOP' | 'CENTER' | 'BOTTOM', 'angle': radians,
+#    'mask': True to clear the card behind the text}
+# A card is scaled whole to its place, letters and line weights with it.
+
+_card_sources = []
+_card_cache = {}
+
+CARD_INK = (0.07, 0.07, 0.08, 1.0)
+CARD_GAP_PX = 14            # between cards
+CARD_ROWS = 3               # cards down the wall's height, on screen
+CARD_WIDE = 1.5             # a card is at most this wide, of its height
+CARD_PRINT_W = 2.6 * 72.0   # pt a card is wide on paper
+CARD_PRINT_TALL = 1.3       # and at most this tall, of that width
+CARD_MIN_LINE = 0.8         # px (pt) the lightest line is drawn
+CARD_CAP = 0.70             # a capital's height, of the letter size
+CARD_LEADING = 1.25
+
+
+def register_card_source(fn):
+    if fn not in _card_sources:
+        _card_sources.append(fn)
+    _bump_gen()
+
+
+def unregister_card_source(fn):
+    if fn in _card_sources:
+        _card_sources.remove(fn)
+    _bump_gen()
+
+
+def _cards(scene, wall):
+    """The wall's detail cards, from every source; none with the Details
+    toggle off."""
+    if not _card_sources or scene is None \
+            or not show_option(scene, 'DETAILS'):
+        return []
+    key = (_gen, scene.name, wall.name, len(_card_sources))
+    if _card_cache.get('key') == key:
+        return _card_cache['cards']
+    cards = []
+    for fn in list(_card_sources):
+        try:
+            for card in fn(scene, wall) or ():
+                w, h = card.get('size', (0.0, 0.0))
+                if w > 1e-6 and h > 1e-6:
+                    cards.append(card)
+        except Exception as exc:
+            print(f"Elevation detail cards: {exc}")
+    _card_cache['key'] = key
+    _card_cache['cards'] = cards
+    return cards
+
+
+def _cards_flow(cards, wall_px, limit, s):
+    """Cards flowed top to bottom into columns no taller than `limit`:
+    ([(card, x from the first column's left, y down from the top,
+    scale, w, h)], total width). On screen a card's height is a share of
+    the wall's (`wall_px`), so the cards zoom with the drawing; on paper
+    every card is the same width whatever the drawing's scale."""
+    gap = CARD_GAP_PX * s
+    out = []
+    x = y = col_w = 0.0
+    for card in cards:
+        cw, ch = card['size']
+        big = max(0.25, min(4.0, card.get('scale') or 1.0))
+        if _print_scale is not None:
+            wide = CARD_PRINT_W * big
+            k = min(wide / cw, wide * CARD_PRINT_TALL / ch)
+        else:
+            slot = max(24.0, (wall_px - (CARD_ROWS - 1) * gap) / CARD_ROWS)
+            slot *= big
+            k = min(slot / ch, slot * CARD_WIDE / cw)
+        w, h = cw * k, ch * k
+        if y > 0.0 and y + h > limit + 0.5:
+            x += col_w + gap
+            y = col_w = 0.0
+        out.append((card, x, y, k, w, h))
+        y += h + gap
+        col_w = max(col_w, w)
+    return out, (x + col_w if out else 0.0)
+
+
+def _card_text(scene, pr, ox, oy, k, wide):
+    """[(x, y, row, size, angle)] baselines of a card's text, and the
+    paper to clear behind it (or None). A level row too long for the
+    card (`wide`) in the face it is set in is set smaller to fit."""
+    if pr.get('value') is not None:
+        text = format_length(scene, pr['value'])
+    else:
+        # Sizes written into a note follow the view's units too.
+        text = _note_numbers(scene, str(pr.get('text') or ''))
+    rows = text.splitlines()
+    size = pr.get('size', 0.0) * k
+    if not rows or size <= 0.0:
+        return [], None
+    ang = pr.get('angle', 0.0)
+    ca, sa = math.cos(ang), math.sin(ang)
+    align = pr.get('align', 'LEFT')
+    px, py = ox + pr['origin'][0] * k, oy + pr['origin'][1] * k
+    if abs(sa) < 1e-3:
+        edge = size * 0.8
+        room = {'LEFT': ox + wide - px, 'RIGHT': px - ox}.get(
+            align, 2.0 * min(px - ox, ox + wide - px)) - edge
+        longest = max(_blf_measure(row, size) for row in rows)
+        if room > 0.0 and longest > room:
+            size *= max(0.35, room / longest)
+    cap = size * CARD_CAP
+    lead = size * CARD_LEADING
+    block = cap + lead * (len(rows) - 1)
+    # The first row's baseline, down from the anchor.
+    first = {'TOP': -cap, 'BOTTOM': block - cap}.get(
+        pr.get('valign', 'BOTTOM'), block / 2.0 - cap)
+    out = []
+    widest = 0.0
+    for i, row in enumerate(rows):
+        tw = _blf_measure(row, size)
+        widest = max(widest, tw)
+        dx = {'LEFT': 0.0, 'RIGHT': -tw}.get(align, -tw / 2.0)
+        dy = first - lead * i
+        out.append((px + dx * ca - dy * sa, py + dx * sa + dy * ca, row,
+                    size, ang))
+    mask = None
+    if pr.get('mask') and abs(sa) < 1e-3:
+        pad = size * 0.18
+        mx = px + {'LEFT': 0.0, 'RIGHT': -widest}.get(align, -widest / 2.0)
+        mask = (mx - pad, py + first - lead * (len(rows) - 1) - pad,
+                widest + 2 * pad, block + 2 * pad)
+    return out, mask
+
+
+def _layout_cards(scene, wall, region, dims, extra, s):
+    """Place the wall's cards (extra['cards']) to the right of the
+    elevation and everything that dimensions it, ready to draw:
+    {'id', 'title', 'rect', 'lines': {width: [points]}, 'texts',
+    'masks'} in the layout's own units."""
+    extra['cards'] = []
+    cards = _cards(scene, wall)
+    if not cards:
+        return
+    _F, _Fi, length, height = _frame(wall)
+    sx, sy = extra['sx'], extra['sy']
+    _x0, bx1, _y0, _y1 = _print_bounds(dims, extra, 1.0, length, height)
+    wall_px = abs(sy(height) - sy(0.0))
+    top = sy(height)
+    if _print_scale is not None:
+        limit = region.height - 2 * PRINT_MARGIN - PRINT_TITLE
+    else:
+        limit = wall_px
+    flow, _total = _cards_flow(cards, wall_px, limit, s)
+    if _print_scale is not None:
+        # On the page whatever the wall's place on it.
+        tall = max(y + h for _c, _x, y, _k, _w, h in flow)
+        top = max(top, PRINT_MARGIN + PRINT_TITLE + tall)
+        top = min(top, region.height - PRINT_MARGIN)
+    left = bx1 + SIDE_GAP_PX * s
+    for card, cx, cy, k, w, h in flow:
+        ox, oy = left + cx, top - cy - h
+        lines = {}
+        texts = []
+        masks = []
+        for pr in card.get('prims', ()):
+            kind = pr.get('kind')
+            if kind == 'LINES':
+                width = max(CARD_MIN_LINE * s, pr.get('width', 0.0) * k)
+                width = round(width * 4.0) / 4.0
+                out = lines.setdefault(width, [])
+                out += [(ox + p[0] * k, oy + p[1] * k)
+                        for p in pr.get('points', ())]
+            elif kind == 'TEXT':
+                rows, mask = _card_text(scene, pr, ox, oy, k, w)
+                texts += rows
+                if mask is not None:
+                    masks.append(mask)
+        extra['cards'].append({'id': card.get('id'),
+                               'title': card.get('title', ''),
+                               'rect': (ox, oy, w, h), 'lines': lines,
+                               'texts': texts, 'masks': masks})
+
+
+def _cards_width(scene, wall, wall_px, limit, s):
+    """Room the cards take to the right of the elevation, gap included."""
+    cards = _cards(scene, wall)
+    if not cards:
+        return 0.0
+    return _cards_flow(cards, wall_px, limit, s)[1] + SIDE_GAP_PX * s
+
+
+def _draw_cards(region, extra, s):
+    """The cards on screen: always ink on paper, whatever the shading."""
+    cards = (extra or {}).get('cards') or ()
+    if not cards:
+        return
+    gpu.state.blend_set('ALPHA')
+    shader = gpu.shader.from_builtin('UNIFORM_COLOR')
+    for card in cards:
+        x, y, w, h = card['rect']
+        shader.bind()
+        draw_round_rect(shader, x, y, w, h, 0.0, (*PAPER, 1.0))
+        for width, pts in card['lines'].items():
+            hb_dim_style.polyline(region, pts, width, CARD_INK)
+        for mx, my, mw, mh in card['masks']:
+            shader.bind()
+            draw_round_rect(shader, mx, my, mw, mh, 0.0, (*PAPER, 1.0))
+        blf.color(0, *CARD_INK)
+        blf.enable(0, blf.ROTATION)
+        for tx, ty, text, size, ang in card['texts']:
+            if size < 4.0:
+                continue                # too small to be letters yet
+            blf.size(0, size)
+            blf.rotation(0, ang)
+            blf.position(0, tx, ty, 0)
+            draw_glyphs(0, text)
+        blf.rotation(0, 0.0)
+        blf.disable(0, blf.ROTATION)
+
+
+def _print_cards(page, extra):
+    for card in (extra or {}).get('cards') or ():
+        x, y, w, h = card['rect']
+        page.fill_color(PAPER)
+        page.rect(x, y, w, h, fill=True, stroke=False)
+        page.stroke_color(CARD_INK[:3])
+        for width, pts in sorted(card['lines'].items()):
+            page.line_width(width)
+            page.lines(list(zip(pts[0::2], pts[1::2])))
+        page.fill_color(PAPER)
+        for mx, my, mw, mh in card['masks']:
+            page.rect(mx, my, mw, mh, fill=True, stroke=False)
+        page.fill_color(CARD_INK[:3])
+        for tx, ty, text, size, ang in card['texts']:
+            page.text(tx, ty, text, size, angle=ang)
+
+
 # ---- Legend ------------------------------------------------------------------
 
 LEGEND_TITLE = "LEGEND"
@@ -3905,12 +4167,13 @@ def _draw():
     # The side views are pictures: they go down first, and never over
     # the HUD's panels, palette and button rows.
     try:
-        if extra is not None and extra.get('side'):
+        if extra is not None and (extra.get('side') or extra.get('cards')):
             from ..hb_gpu_ui import paint_outside_rects
-            paint_outside_rects(
-                _chrome_rects(context, area),
-                lambda: _draw_side_views(context, area, region, dims,
-                                         extra, s))
+
+            def pictures():
+                _draw_side_views(context, area, region, dims, extra, s)
+                _draw_cards(region, extra, s)
+            paint_outside_rects(_chrome_rects(context, area), pictures)
             gpu.state.blend_set('NONE')
     except Exception as exc:
         print(f"Elevation side views: {exc}")
@@ -4076,7 +4339,8 @@ def _print_fit(scene, wall, W, H, extra=None):
     # The legend hangs under the lowest dimension, at a fixed size.
     legend_h = _legend_height(scene, wall, _s())
     pad_b = extra['sy'](0.0) - y0 + legend_h
-    extra_w = (x1 - x0) - k0 * L
+    extra_w = (x1 - x0) - k0 * L + _cards_width(scene, wall, 0.0, area_h,
+                                                 _s())
     extra_h = (y1 - y0) - k0 * Hw + legend_h
     # Side views scale with the wall; the gap to them does not.
     more_w = more_h = gap_w = gap_h = iso_h = 0.0
@@ -4888,6 +5152,10 @@ def print_wall(context, filepath, paper='TABLOID',
         except Exception as exc:
             print(f"Elevation print: side views: {exc}")
         _print_dims(page, scene, dims, extra, text_scale)
+        try:
+            _print_cards(page, extra)
+        except Exception as exc:
+            print(f"Elevation print: detail cards: {exc}")
         try:
             _print_legend(page, scene, wall, dims, extra, text_scale)
         except Exception as exc:
@@ -5850,6 +6118,21 @@ def _glyph_iso(shader, rect, color):
     draw_lines(shader, pts, color)
 
 
+def _glyph_details(shader, rect, color):
+    """A card with a moulding section on it."""
+    rx, ry, rw, rh = rect
+    w, h = rw * 0.50, rh * 0.50
+    x0 = rx + (rw - w) / 2.0
+    y0 = ry + (rh - h) / 2.0
+    x1, y1 = x0 + w, y0 + h
+    a, b = x0 + w * 0.28, x0 + w * 0.72
+    c, d = y0 + h * 0.28, y0 + h * 0.72
+    draw_lines(shader, [(x0, y0), (x1, y0), (x1, y0), (x1, y1),
+                        (x1, y1), (x0, y1), (x0, y1), (x0, y0),
+                        (a, d), (b, d), (a, d), (a, c),
+                        (a, c), (b, d)], color)
+
+
 def _glyph_decimal(shader, rect, color):
     """A decimal value, lettered."""
     rx, ry, rw, rh = rect
@@ -5886,6 +6169,7 @@ _SHOW_GLYPHS = {
     'DECIMAL': _glyph_decimal,
     'PLAN': _glyph_plan,
     'ISO': _glyph_iso,
+    'DETAILS': _glyph_details,
 }
 
 
