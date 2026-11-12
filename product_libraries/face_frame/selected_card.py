@@ -141,6 +141,19 @@ def _peers(owner):
         obj = owner.id_data
     except Exception:
         return ()
+    from ...operators import prop_proxy
+    if path == prop_proxy.PATH_PREFIX + OVERLAY_KEY:
+        # An opening's overlays are read through a schema, not straight
+        # off its properties; its peers are the other picked openings
+        # seen the same way.
+        try:
+            objs = _picked.get('face_frame_opening', ())
+            if obj not in objs:
+                return ()
+            return [prop_proxy.owner(o, OVERLAY_KEY) for o in objs
+                    if o != obj]
+        except ReferenceError:
+            return ()
     if path not in _PEER_PATHS:
         return ()
     objs = _picked.get(path, ())
@@ -439,7 +452,13 @@ def _overlay_owner(opening_obj):
 
         def setter(side):
             def set(obj, value):
-                setattr(obj.face_frame_opening, f'{side}_overlay', value)
+                op = obj.face_frame_opening
+                # A typed overlay is the opening's own. The picked field
+                # is unlocked already; another opening picked with it
+                # may not be, and would ignore the value.
+                if not getattr(op, f'unlock_{side}_overlay'):
+                    setattr(op, f'unlock_{side}_overlay', True)
+                setattr(op, f'{side}_overlay', value)
             return set
 
         def lock_get(side):
