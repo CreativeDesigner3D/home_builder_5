@@ -5114,7 +5114,11 @@ class ClosetStarter(GeoNodeCage):
         # The cage runs +X, -Y and +Z from its own origin, so its
         # corner is the model's low X, high Y, low Z.
         shift = Vector((lo_x, hi_y, lo_z))
-        cage.location = cage.location + shift
+        # The shift is measured in the cage's own frame; a cage that
+        # is turned (a corner unit's side wing) moves along its turned
+        # axes, not its parent's.
+        cage.location = cage.location + (
+            cage.rotation_euler.to_matrix() @ shift)
         model.location = model.location - shift
         geo = GeoNodeCage(cage)
         geo.set_input('Dim X', hi_x - lo_x)
