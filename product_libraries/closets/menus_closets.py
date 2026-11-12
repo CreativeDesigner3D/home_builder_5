@@ -100,6 +100,12 @@ class HOME_BUILDER_MT_closet_corner_opening_commands(bpy.types.Menu):
         # click to put it down.
         layout.operator("hb_closets.add_part", text="Add Fixed L Shelf",
                         icon='ADD').part_type = 'FIXED_SHELF'
+        # One adjustable L shelf at a time: the first replaces what the
+        # opening held, each further click adds another.
+        op = layout.operator("hb_closets.corner_opening_config",
+                             text="Add Adjustable L Shelf", icon='ADD')
+        op.interior = 'ADJ'
+        op.add_shelf = True
         from . import accessories_closets as acc
         if acc.catalog_items(family=acc.FAMILY_PANEL):
             layout.separator()
