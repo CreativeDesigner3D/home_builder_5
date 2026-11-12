@@ -1184,6 +1184,12 @@ class Frameless_Cabinet_Style(PropertyGroup):
                 m.rotated_variant(self._sheet(self.front_edge_material,
                                               front)))
 
+    def exterior_two_sided(self):
+        """True when the exterior is a board made the same both faces,
+        so a part is that or the interior material right through."""
+        from . import sheet_faces
+        return sheet_faces.is_two_sided(self.sheet_material)
+
     def get_shelf_edge_material(self, finished_interior=False):
         """Banding for a loose shelf inside the box. It is read against
         the interior it sits in, so with the cabinet edge on Match it
@@ -1199,7 +1205,9 @@ class Frameless_Cabinet_Style(PropertyGroup):
         """Paint every cutpart under the cabinet. Carcass faces take the
         cabinet material where the part is flagged finished (Finish Top
         / Finish Bottom) and the interior material elsewhere -- or the
-        cabinet material throughout on a Finished Interior cabinet.
+        cabinet material throughout on a Finished Interior cabinet. A
+        cabinet material made the same both faces finishes a part right
+        through or not at all (see sheet_faces).
         Fronts take the fronts material both sides. Edges take the
         matching banding. Five-piece fronts also get their stile / rail
         / panel materials, the rails turned so the grain runs across."""
@@ -1216,6 +1224,8 @@ class Frameless_Cabinet_Style(PropertyGroup):
         finished_interior = cabinet_obj.get('Finished Interior', False)
         shelf_edge = self.get_shelf_edge_material(finished_interior)
         from . import edgebanding_frameless
+        from . import sheet_faces
+        two_sided = self.exterior_two_sided()
 
         parts = [child for child in cabinet_obj.children_recursive
                  if 'CABINET_PART' in child]
@@ -1232,10 +1242,10 @@ class Frameless_Cabinet_Style(PropertyGroup):
                 top_mat = bottom_mat = finish_mat
                 edge = carcass_edge
             else:
-                top_mat = (finish_mat if child.get('Finish Top', False)
-                           else interior_mat)
-                bottom_mat = (finish_mat if child.get('Finish Bottom', True)
-                              else interior_mat)
+                fin_top, fin_bottom = sheet_faces.finished_faces(
+                    child, two_sided)
+                top_mat = finish_mat if fin_top else interior_mat
+                bottom_mat = finish_mat if fin_bottom else interior_mat
                 edge = carcass_edge
             if edgebanding_frameless.is_loose_shelf(child):
                 edge = shelf_edge

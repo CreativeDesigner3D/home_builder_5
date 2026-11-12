@@ -3,6 +3,7 @@ import math
 import os
 from .. import types_frameless
 from .. import solver_frameless
+from .. import sheet_faces
 from .... import hb_utils, hb_types, hb_project, units
 from ....units import inch
 
@@ -510,7 +511,10 @@ def finish_condition(cabinet_obj, side):
     if part is None:
         return None
     # Every carcass part faces out on its Bottom Surface.
-    return 'FINISHED' if part.get('Finish Bottom', True) else 'UNFINISHED'
+    style = _cabinet_style(cabinet_obj)
+    two_sided = style is not None and style.exterior_two_sided()
+    finished = sheet_faces.finished_faces(part, two_sided)[1]
+    return 'FINISHED' if finished else 'UNFINISHED'
 
 
 def set_finish_condition(context, cabinet_obj, side, condition):
@@ -539,13 +543,18 @@ def set_finish_condition(context, cabinet_obj, side, condition):
     return True
 
 
-def _paint(cabinet_obj):
+def _cabinet_style(cabinet_obj):
     styles = hb_project.get_main_scene().hb_frameless.cabinet_styles
     if not len(styles):
-        return
+        return None
     index = cabinet_obj.get('CABINET_STYLE_INDEX', 0)
-    style = styles[index] if 0 <= index < len(styles) else styles[0]
-    style.apply_materials_to_cabinet(cabinet_obj)
+    return styles[index] if 0 <= index < len(styles) else styles[0]
+
+
+def _paint(cabinet_obj):
+    style = _cabinet_style(cabinet_obj)
+    if style is not None:
+        style.apply_materials_to_cabinet(cabinet_obj)
 
 
 class hb_frameless_OT_set_finish_condition(bpy.types.Operator):
