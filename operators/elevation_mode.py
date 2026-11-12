@@ -1438,8 +1438,16 @@ SHOW_OPTIONS = (
 # list of primitives in world space:
 #   {'kind': 'TEXT', 'origin': Vector, 'x_axis': Vector (reading
 #    direction), 'text': str (may hold newlines),
-#    'align': 'LEFT' | 'CENTER' | 'RIGHT'}
-#   {'kind': 'LINES', 'points': [Vector, ...]} (pairs, like GPU LINES)
+#    'align': 'LEFT' | 'CENTER' | 'RIGHT', 'valign': 'CENTER' (the
+#    block is centred on the origin, the default) | 'BOTTOM' (it stands
+#    on it) | 'TOP' (it hangs from it)}
+#   {'kind': 'LINES', 'points': [Vector, ...]} (pairs, like GPU LINES;
+#    'heads': [(tip, from), ...] sets an arrowhead at each tip, pointing
+#    away from `from`, at a fixed size on screen)
+#   {'kind': 'DIM', 'a': Vector, 'b': Vector, 'at': Vector} (a
+#    dimension somebody placed by hand: measured from a to b, its line
+#    through `at`. It is drawn as one of the view's own, across or up
+#    the wall, whichever the two points are further apart in)
 #   {'kind': 'FILL', 'points': [Vector, ...]} (a flat polygon's corners
 #    in order, filled in 'color' under everything else: a return wall)
 #   {'kind': 'LEGEND', 'rows': [(mark, text), ...]} (what the circled
@@ -1787,8 +1795,41 @@ def _annotations(scene, wall):
     return prims
 
 
-ANNOTATION_FONT_SIZE = 11
+ANNOTATION_FONT_SIZE = 10
 ANNOTATION_LINE = (0.10, 0.10, 0.12, 0.9)
+ARROW_PX = 8.0              # an arrowhead's length on screen
+ARROW_HALF_PX = 2.4         # and half its width
+
+
+def _note_lift(pr, total):
+    """How far a note's block is moved up its own height axis so that
+    it stands on (BOTTOM) or hangs from (TOP) its origin."""
+    return {'BOTTOM': total / 2.0, 'TOP': -total / 2.0}.get(
+        pr.get('valign'), 0.0)
+
+
+def _arrow_heads(prims, P, s):
+    """[(colour, [tip, corner, corner])] on screen for the arrowheads
+    the LINES primitives ask for."""
+    out = []
+    for pr in prims:
+        if pr.get('kind') != 'LINES':
+            continue
+        for tip, tail in pr.get('heads', ()):
+            a, b = P(tip), P(tail)
+            if a is None or b is None:
+                continue
+            d = Vector((a.x - b.x, a.y - b.y))
+            if d.length < 1e-6:
+                continue
+            d.normalize()
+            n = Vector((-d.y, d.x))
+            base = Vector((a.x, a.y)) - d * ARROW_PX * s
+            out.append((tuple(pr.get('color', ANNOTATION_LINE)),
+                        [(a.x, a.y),
+                         tuple(base + n * ARROW_HALF_PX * s),
+                         tuple(base - n * ARROW_HALF_PX * s)]))
+    return out
 NOTE_FILL = (0.78, 0.78, 0.78, 1.0)
 BUBBLE_FONT_SIZE = 12
 BUBBLE_SEGMENTS = 32
@@ -1878,6 +1919,13 @@ def _draw_annotations(context, region, rv3d):
     for color, pts in lines.items():
         if pts:
             _stroke(region, pts, 1.0 * s, color)
+    heads = _arrow_heads(prims, P, s)
+    if heads:
+        shader = gpu.shader.from_builtin('UNIFORM_COLOR')
+        for color, tri in heads:
+            shader.bind()
+            shader.uniform_float("color", color)
+            batch_for_shader(shader, 'TRIS', {"pos": tri}).draw(shader)
     _draw_bubbles(region, prims, P, s)
     blf.size(0, ANNOTATION_FONT_SIZE * s)
     lh = blf.dimensions(0, "Ag")[1] * 1.35
@@ -1910,8 +1958,10 @@ def _draw_annotations(context, region, rv3d):
             tw, th = blf.dimensions(0, row)
             align = pr.get('align', 'CENTER')
             dx = {'LEFT': 0.0, 'RIGHT': -tw}.get(align, -tw / 2.0)
-            # Rows stack downward from a block centred on the origin.
-            dy = total / 2.0 - lh * (i + 1) + (lh - th) / 2.0
+            # Rows stack downward from a block centred on the origin
+            # (or stood on it, or hung from it).
+            dy = total / 2.0 - lh * (i + 1) + (lh - th) / 2.0 \
+                + _note_lift(pr, total)
             x = o.x + dx * ca - dy * sa
             y = o.y + dx * sa + dy * ca
             blf.position(0, x, y, 0)
@@ -2880,6 +2930,51 @@ def _layout_wall(scene, wall, region, rv3d, selected=(), extra=None,
                          'chain': ('USER', i),
                          'key': ('USER', i, round(a, 4))})
 
+    # Dimensions somebody placed by hand (a note source hands them
+    # over): each where it was put, drawn as one of the view's own.
+    if show_option(scene, 'ANNOTATIONS'):
+        for i, pr in enumerate(_annotations(scene, wall)):
+            if pr.get('kind') != 'DIM':
+                continue
+            try:
+                a, b, at = (fr[1] @ pr[k] for k in ('a', 'b', 'at'))
+            except Exception:
+                continue
+            if abs(b.x - a.x) >= abs(b.z - a.z):
+                lo, hi = sorted((a.x, b.x))
+                if hi - lo <= MERGE:
+                    continue
+                pos = sy(at.z)
+                for x, z in ((a.x, a.z), (b.x, b.z)):
+                    side = 1.0 if pos >= sy(z) else -1.0
+                    if abs(pos - sy(z)) > gap + over:
+                        dims_ext.append(((sx(x), sy(z) + side * gap),
+                                         (sx(x), pos + side * over)))
+                    else:
+                        dims_ext.append(((sx(x), pos - over),
+                                         (sx(x), pos + over)))
+                dims.append({'axis': 'H', 'a': sx(lo), 'b': sx(hi),
+                             'pos': pos, 'side': 1, 'value': hi - lo,
+                             'target': None, 'item': None, 'w0': lo,
+                             'key': ('NOTE_D', i)})
+            else:
+                lo, hi = sorted((a.z, b.z))
+                if hi - lo <= MERGE:
+                    continue
+                pos = sx(at.x)
+                for x, z in ((a.x, a.z), (b.x, b.z)):
+                    side = 1.0 if pos >= sx(x) else -1.0
+                    if abs(pos - sx(x)) > gap + over:
+                        dims_ext.append(((sx(x) + side * gap, sy(z)),
+                                         (pos + side * over, sy(z))))
+                    else:
+                        dims_ext.append(((pos - over, sy(z)),
+                                         (pos + over, sy(z))))
+                dims.append({'axis': 'V', 'a': sy(lo), 'b': sy(hi),
+                             'pos': pos, 'side': 1, 'value': hi - lo,
+                             'target': None, 'item': None, 'w0': lo,
+                             'horiz': True, 'key': ('NOTE_D', i)})
+
     if ff:
         try:
             keep_out = _note_rects(scene, wall, fr[1], sx, sy, s)
@@ -3056,13 +3151,19 @@ def _note_rects(scene, wall, Fi, sx, sy, s):
         tw = max(_blf_measure(row, size) for row in rows)
         tall = lh * len(rows)
         cx, cy = sx(o.x), sy(o.z)
-        if abs(ax.z) > abs(ax.x):
-            # Reads up the wall (a finished end): turned a quarter.
-            out.append((cx - tall / 2.0, cy - tw / 2.0, tall, tw))
-            continue
+        lift = _note_lift(pr, tall)
         align = pr.get('align', 'CENTER')
+        if abs(ax.z) > abs(ax.x):
+            # Turned a quarter (a finished end). Reading up the wall its
+            # height axis points left; reading down it, right.
+            up = (ax.z > 0) == (sy(1.0) > sy(0.0))
+            start = {'LEFT': 0.0, 'RIGHT': -tw}.get(align, -tw / 2.0)
+            y0 = cy + start if up else cy - start - tw
+            x0 = cx - lift if up else cx + lift
+            out.append((x0 - tall / 2.0, y0, tall, tw))
+            continue
         x0 = {'LEFT': cx, 'RIGHT': cx - tw}.get(align, cx - tw / 2.0)
-        out.append((x0, cy - tall / 2.0, tw, tall))
+        out.append((x0, cy + lift - tall / 2.0, tw, tall))
     return out
 
 
@@ -3085,6 +3186,7 @@ def _place_text(scene, dims, region, ext=(), keep_out=()):
         span = abs(d['b'] - d['a'])
         lo, hi = min(d['a'], d['b']), max(d['a'], d['b'])
         mid = (lo + hi) / 2.0
+        n_inline = 1
         if d['axis'] == 'H':
             base = d['pos'] + pad
             cands = []
@@ -3136,6 +3238,12 @@ def _place_text(scene, dims, region, ext=(), keep_out=()):
             # Tall enough: centred in a break in the line.
             inline = ([(d['pos'] - tw / 2.0, mid - th / 2.0)]
                       if th + clear + 2 * gap <= span else [])
+            # A long line whose middle is taken (a note lettered there)
+            # carries its value further along, still in the line.
+            if inline and (th + clear + 2 * gap) * 3.0 <= span:
+                inline += [(d['pos'] - tw / 2.0, lo + span * f - th / 2.0)
+                           for f in (0.3, 0.7, 0.15, 0.85)]
+            n_inline = len(inline)
             if d.get('outward'):
                 # Out past the wall: the value stays on the open side.
                 xo = x_r if d['side'] > 0 else x_l
@@ -3168,7 +3276,8 @@ def _place_text(scene, dims, region, ext=(), keep_out=()):
         fits = d.get('horiz') or tw + clear <= span
         need = tw if d['axis'] == 'H' else th
         inline = need + clear + 2 * gap <= span
-        pending.append((0 if fits else 1, len(pending), d, rects, inline))
+        pending.append((0 if fits else 1, len(pending), d, rects,
+                        n_inline if inline else 0))
     # A value that fits between its ticks has one good spot; it claims
     # it before a neighbour too narrow for its own value spills over.
     # Extension lines run out past every chain inside the one they
@@ -3197,7 +3306,7 @@ def _place_text(scene, dims, region, ext=(), keep_out=()):
         chosen = next((r for r in free if not struck(r)),
                       free[0] if free else rects[0])
         d['rect'] = chosen
-        d['inline'] = inline and chosen is rects[0]
+        d['inline'] = any(chosen is r for r in rects[:inline])
         placed.append(chosen)
         if d.get('tag'):
             # Under the value, clear of the line it sits in or on.
@@ -5513,6 +5622,9 @@ def _print_annotations(page, scene, wall, region, view, ps):
                 if a is not None and b is not None]
         page.stroke_color(pr.get('color', ANNOTATION_LINE))
         page.lines(segs)
+    for color, tri in _arrow_heads(prims, P, ps):
+        page.fill_color(color)
+        page.polygon(tri, fill=True, stroke=False)
     halo = _print_text_halo(ps)
     bfs = BUBBLE_FONT_SIZE * ps
     blf.size(0, bfs)
@@ -5557,7 +5669,8 @@ def _print_annotations(page, scene, wall, region, view, ps):
             th = blf.dimensions(0, row)[1]
             align = pr.get('align', 'CENTER')
             dx = {'LEFT': 0.0, 'RIGHT': -tw}.get(align, -tw / 2.0)
-            dy = total / 2.0 - lh * (i + 1) + (lh - th) / 2.0
+            dy = total / 2.0 - lh * (i + 1) + (lh - th) / 2.0 \
+                + _note_lift(pr, total)
             page.text(o.x + dx * ca - dy * sa, o.y + dx * sa + dy * ca, row,
                       afs, angle=ang, halo=halo)
 
