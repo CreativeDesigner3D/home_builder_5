@@ -137,7 +137,12 @@ FIRST_TIER_PX = 30      # geometry to the first dimension line
 TIER_PX = 30            # between stacked dimension lines
 EXT_GAP_PX = 5          # extension line stands off the geometry
 EXT_OVER_PX = 5         # and runs past the dimension line
-TICK_PX = 4.5           # half-length of the 45 degree tick, per axis
+TICK_PX = 3.5           # half-length of the tick, a bar across the line
+TICK_WIDTH = 1.5        # its weight (the line's is 1)
+# A word under a value saying what it measures (OA, OPEN, LEG, CL): set
+# small, centred under the value, below the line.
+TAG_SCALE = 0.72        # of the value's size
+TAG_GAP_PX = 2.5        # value to its tag
 TEXT_GAP_PX = 4         # value above its line
 BREAK_GAP_PX = 4        # line stops this short of a value set in it
 
@@ -1943,8 +1948,10 @@ def toggle_show_option(scene, key):
 def _height_levels(group, height):
     """The height chain for some products: floor, counter line (the base
     cabinets' top; a dishwasher or range a fraction under it is not a
-    level of its own), upper bottoms and tops, tall tops, wall height."""
-    levels = {0.0, height}
+    level of its own), upper bottoms and tops, tall tops. It stops at
+    the highest of them: the space left over it to the ceiling is the
+    overall height's to tell."""
+    levels = {0.0}
     # Floating shelves and range hoods carry their own dims.
     group = [it for it in group if not it.shelf and not _is_hood(it)]
     lows = [it for it in group if it.kind == 'LOWER' and not it.tall]
@@ -1957,11 +1964,15 @@ def _height_levels(group, height):
             levels.update((it.z0, it.z1))
         elif it.tall:
             levels.add(it.z1)
+    if len(levels) < 2:
+        return [0.0, height]
     return _chain(levels, 0.0, max(levels))
 
 
 # A face frame's own dims stand this far inside its edges, in pixels.
 FF_INSET_PX = 16
+# A stile starting within this of a row's band stands in that row.
+BAND_REACH = units.inch(1.0)
 
 # A recess under a floor-standing cabinet taller than this is not a kick.
 KICK_MAX = 0.3
@@ -2173,13 +2184,19 @@ def _face_frame_layout(items, Fi):
     across its stiles' outer edges, z its bottom}. A blind cabinet's
     hidden blind strip leads (or ends) its row's segments, so the chain
     reads blind, stile, opening ... to the cabinet's edge. A tall's
-    frame reads in both rows, over its top and under the floor. 'open':
+    frame reads in both rows, over its top and under the floor. Each
+    row reads the frame where it meets that row: under the floor the
+    stiles that stand in the frame's bottom band (a desk's two legs,
+    not the stile between the drawers over its knee space), over the
+    top the ones in its top band. 'open':
     {(item name, opening start)} the openings left open for a
-    refrigerator, which say so under the floor. 'drops':
+    refrigerator, which say so under the floor. 'legs': {(item name,
+    stile start)} a refrigerator cabinet's end stiles run down to the
+    floor as legs. 'drops':
     see _front_drops; a drop's filler stiles stand in the dropped band
     only, so they are not stiles of the frame."""
     out = {'lower': [], 'upper': [], 'columns': [], 'sections': [],
-           'drops': [], 'stiles': {}, 'open': set()}
+           'drops': [], 'stiles': {}, 'open': set(), 'legs': set()}
     for it in items:
         if it.preview or it.shelf \
                 or not it.obj.get('IS_FACE_FRAME_CABINET_CAGE'):
@@ -2198,13 +2215,29 @@ def _face_frame_layout(items, Fi):
         verticals = [b for b in boxes if (b[3] - b[2]) > (b[1] - b[0])]
         rails = [b for b in boxes if (b[3] - b[2]) <= (b[1] - b[0])]
         stiles = _merge([(b[0], b[1]) for b in verticals])
-        xs = _chain([v for a, b in stiles for v in (a, b)], fx0, fx1)
         row = 'upper' if (it.kind == 'UPPER' or it.tall) else 'lower'
-        segs = [(a, b, it) for a, b in zip(xs, xs[1:])]
+
+        def row_segs(top):
+            """The frame's stile / opening breaks where it meets a row:
+            its top band (between the top rail and the next rail down)
+            or its bottom band."""
+            if top:
+                edge = min([b[2] for b in rails if b[3] >= fz1 - MERGE]
+                           or [fz1])
+                mine = [b for b in verticals if b[3] >= edge - BAND_REACH]
+            else:
+                edge = max([b[3] for b in rails if b[2] <= fz0 + MERGE]
+                           or [fz0])
+                mine = [b for b in verticals if b[2] <= edge + BAND_REACH]
+            band = _merge([(b[0], b[1]) for b in mine]) or stiles
+            xs = _chain([v for a, b in band for v in (a, b)], fx0, fx1)
+            return [(a, b, it) for a, b in zip(xs, xs[1:])]
+
+        segs = row_segs(row == 'upper')
         # Which stile each stile segment is, for where its value sits:
         # the frame's left end, its right end, or one between.
         for a, b in stiles:
-            out['stiles'][(it.name, round(a, 4))] = (
+            out['stiles'][(it.name, round(a, 4), round(b, 4))] = (
                 'L' if abs(a - fx0) <= MERGE
                 else 'R' if abs(b - fx1) <= MERGE else 'M')
         ffc = getattr(it.obj, 'face_frame_cabinet', None)
@@ -2215,9 +2248,19 @@ def _face_frame_layout(items, Fi):
                 segs.insert(0, (it.x0, fx0, it))
             if it.x1 - fx1 > MERGE:
                 segs.append((fx1, it.x1, it))
+        blind = [g for g in segs if g[0] < fx0 - MERGE or g[1] > fx1 + MERGE]
         out[row] += segs
         if it.tall and it.kind == 'LOWER':
-            out['lower'] += segs
+            low = row_segs(False)
+            out['lower'] += ([g for g in blind if g[1] <= fx0 + MERGE] + low
+                             + [g for g in blind if g[0] >= fx1 - MERGE])
+            segs = segs + low
+        if ffc is not None and it.obj.get('CLASS_NAME') == 'RefrigeratorCabinet':
+            ends = sorted(stiles)
+            if ends and getattr(ffc, 'extend_left_stile_to_floor', False):
+                out['legs'].add((it.name, round(ends[0][0], 4)))
+            if ends and getattr(ffc, 'extend_right_stile_to_floor', False):
+                out['legs'].add((it.name, round(ends[-1][0], 4)))
         # An opening a refrigerator stands in is marked open.
         try:
             for child in it.obj.children_recursive:
@@ -2264,10 +2307,11 @@ def _face_frame_layout(items, Fi):
 def _upper_sections(it, cols, bottoms, stiles):
     """The two end sections of an upper whose openings step up (over an
     appliance) or down (to the counter): runs of neighbouring openings
-    sharing a bottom. Each spans the outer edges of the stiles either
-    side of it, a mid stile counting in both sections it bounds, the
-    way a field measurer reads each section. A middle section is left
-    out; the ends are what get checked against the cabinets below."""
+    sharing a bottom. Each spans the outer edges of its stiles; the
+    stile between two sections runs the height of the one that hangs
+    lower and counts in that one only, so the sections add up to the
+    cabinet. A middle section is left out; the ends are what get
+    checked against the cabinets below."""
     runs = []
     for i, z in enumerate(bottoms):
         if runs and abs(z - bottoms[runs[-1][0]]) <= MERGE:
@@ -2285,11 +2329,19 @@ def _upper_sections(it, cols, bottoms, stiles):
                 return b
         return x
 
+    def bottom(run):
+        return min(bottoms[run[0]:run[1] + 1])
+
     out = []
-    for first, last in (runs[0], runs[-1]):
-        x0 = outer(cols[first][0], True)
-        x1 = outer(cols[last][1], False)
-        out.append((it, x0, x1, min(bottoms[first:last + 1])))
+    for i in (0, len(runs) - 1):
+        first, last = runs[i]
+        z = bottom(runs[i])
+        x0, x1 = cols[first][0], cols[last][1]
+        if i == 0 or bottom(runs[i - 1]) > z - MERGE:
+            x0 = outer(x0, True)
+        if i == len(runs) - 1 or bottom(runs[i + 1]) > z - MERGE:
+            x1 = outer(x1, False)
+        out.append((it, x0, x1, z))
     return out
 
 
@@ -2567,12 +2619,15 @@ def _layout_wall(scene, wall, region, rv3d, selected=(), extra=None,
                          'side': side, 'value': b - a, 'target': None,
                          'item': it, 'w0': a,
                          'stile': ff_all['stiles'].get(
-                             (it.name, round(a, 4))),
+                             (it.name, round(a, 4), round(b, 4))),
                          'key': ('FF_W', it.name, round(a, 4), side)})
             # Under the floor, beside the opening it describes: over the
             # top it would read as a note on the cabinet above.
             if side < 0 and (it.name, round(a, 4)) in ff_all['open']:
-                dims[-1]['suffix'] = " OPEN"
+                dims[-1]['tag'] = "OPEN"
+            # A stile run down to the floor as a furniture leg.
+            if side < 0 and dims[-1]['stile']                     and (it.name, round(a, 4)) in ff_all['legs']:
+                dims[-1]['tag'] = "LEG"
 
     # Below the floor: the face frames' stiles and openings, the
     # floor-standing run, then the overall length.
@@ -2595,6 +2650,7 @@ def _layout_wall(scene, wall, region, rv3d, selected=(), extra=None,
         t += 1
     add_h([0.0, length], floor_y - first - t * tier, lambda x: floor_y, -1,
           [], read_only=True)
+    dims[-1]['tag'] = "OA"
 
     # Above the wall: uppers and talls, then windows and doors.
     top_z = max([height] + [it.z1 for it in items])
@@ -2773,7 +2829,10 @@ def _layout_wall(scene, wall, region, rv3d, selected=(), extra=None,
     shown = {1: set(), -1: set()}
     for side, group in ((1, right_group), (-1, left_group)):
         stack, at_end, whole = side_levels[side]
-        if len(at_end) > 2:
+        # A lone height (a tall, a run of bases) still reads, unless it
+        # is the wall's own.
+        if len(at_end) > 2 or (len(at_end) == 2
+                               and abs(at_end[-1] - height) > MERGE):
             chain = ('END', side)
             add_v(at_end, v_line(side, pairs(at_end), chain), side, stack,
                   chain=chain)
@@ -2915,7 +2974,7 @@ def _layout_wall(scene, wall, region, rv3d, selected=(), extra=None,
                          (sx(x_end), pos + over)))
         dims.append({'axis': 'H', 'a': sx(x_end), 'b': sx(x), 'pos': pos,
                      'side': 1, 'value': hi - lo, 'target': None,
-                     'item': it, 'w0': lo, 'suffix': " CL",
+                     'item': it, 'w0': lo, 'tag': "CL",
                      'key': ('CL', cl.get('obj'), round(x, 4))})
 
     # Floating shelves: per stack, floor to the lowest shelf, then each
@@ -3021,6 +3080,7 @@ def _place_text(scene, dims, region, ext=(), keep_out=()):
         if d['axis'] == 'V':
             d['horiz'] = True   # every value reads left to right
         d['text'] = format_length(scene, d['value']) + d.get('suffix', '')
+        d.pop('tag_rect', None)
         tw = value_runs(d['text'], FONT_SIZE * s, _blf_measure)[1]
         span = abs(d['b'] - d['a'])
         lo, hi = min(d['a'], d['b']), max(d['a'], d['b'])
@@ -3116,6 +3176,9 @@ def _place_text(scene, dims, region, ext=(), keep_out=()):
     lines = [(min(a[0], b[0]), min(a[1], b[1]),
               max(a[0], b[0]), max(a[1], b[1])) for a, b in ext]
     t = 1.5 * s
+    # Values keep this far apart; on paper, where everything is set
+    # smaller, so is this.
+    apart = 2.0 * min(1.0, s)
 
     def struck(r):
         x0, y0, x1, y1 = r[0] + t, r[1] + t, r[0] + r[2] - t, r[1] + r[3] - t
@@ -3125,17 +3188,27 @@ def _place_text(scene, dims, region, ext=(), keep_out=()):
     for _order, _i, d, rects, inline in sorted(pending,
                                                 key=lambda p: p[:2]):
         free = [r for r in rects
-                if not any(_rects_overlap(r, p) for p in placed)]
+                if not any(_rects_overlap(r, p, apart) for p in placed)]
         if not free:
             # Nowhere clear: on a note rather than on another value.
             free = [r for r in rects
-                    if not any(_rects_overlap(r, p)
+                    if not any(_rects_overlap(r, p, apart)
                                for p in placed[len(keep_out):])]
         chosen = next((r for r in free if not struck(r)),
                       free[0] if free else rects[0])
         d['rect'] = chosen
         d['inline'] = inline and chosen is rects[0]
         placed.append(chosen)
+        if d.get('tag'):
+            # Under the value, clear of the line it sits in or on.
+            size = FONT_SIZE * TAG_SCALE * s
+            gw = _blf_measure(d['tag'], size)
+            x, y, w, h = chosen
+            top = min(y, d['pos'] - 1.5 * s) if d['axis'] == 'H' else y
+            d['tag_rect'] = (x + w / 2.0 - gw / 2.0,
+                             top - TAG_GAP_PX * s - th * TAG_SCALE,
+                             gw, th * TAG_SCALE)
+            placed.append(d['tag_rect'])
 
 
 # ---- Drawing -----------------------------------------------------------------------
@@ -3145,9 +3218,12 @@ def _stroke(region, pts, width, color):
     hb_dim_style.stroke(region, pts, width, color, _s(), halo=HALO)
 
 
-def _tick(x, y, s):
+def _tick(x, y, s, axis='H'):
+    """A short bar across the dimension line at one of its ends."""
     t = TICK_PX * s
-    return [(x - t, y - t), (x + t, y + t)]
+    if axis == 'H':
+        return [(x, y - t), (x, y + t)]
+    return [(x - t, y), (x + t, y)]
 
 
 def _dim_lines(d, s):
@@ -3163,11 +3239,11 @@ def _dim_lines(d, s):
     if d['axis'] == 'H':
         y = d['pos']
         line = [p for a, b in spans for p in ((a, y), (b, y))]
-        ticks = _tick(d['a'], y, s) + _tick(d['b'], y, s)
+        ticks = _tick(d['a'], y, s, 'H') + _tick(d['b'], y, s, 'H')
     else:
         x = d['pos']
         line = [p for a, b in spans for p in ((x, a), (x, b))]
-        ticks = _tick(x, d['a'], s) + _tick(x, d['b'], s)
+        ticks = _tick(x, d['a'], s, 'V') + _tick(x, d['b'], s, 'V')
     return line, ticks
 
 
@@ -3197,6 +3273,10 @@ def _text(d, color, s, halo=None, plain=False):
             blf.size(0, size)
             blf.position(0, x + dx, y + dy, 0)
             draw_glyphs(0, text)
+        if d.get('tag_rect'):
+            blf.size(0, FONT_SIZE * TAG_SCALE * s)
+            blf.position(0, d['tag_rect'][0], d['tag_rect'][1], 0)
+            draw_glyphs(0, d['tag'])
     blf.disable(0, blf.ROTATION)
     blf.disable(0, blf.SHADOW)
 
@@ -4394,7 +4474,7 @@ def _draw_adding(region, extra, s):
     t = TICK_PX * s
     pts = []
     for z in levels:
-        pts += [(x - t, sy(z) - t), (x + t, sy(z) + t)]
+        pts += [(x - t, sy(z)), (x + t, sy(z))]
     if len(levels) > 1:
         pts += [(x, sy(levels[0])), (x, sy(levels[-1]))]
     _stroke(region, pts, 2.0 * s, HOVER)
@@ -4471,7 +4551,7 @@ def _draw():
                 normal_lines += line
                 normal_ticks += ticks
         _stroke(region, normal_lines, 1.0 * s, LINE)
-        _stroke(region, normal_ticks, 2.0 * s, LINE)
+        _stroke(region, normal_ticks, TICK_WIDTH * s, LINE)
         _stroke(region, hot_lines, 1.5 * s, HOVER)
         _stroke(region, hot_ticks, 2.5 * s, HOVER)
         shader = gpu.shader.from_builtin('UNIFORM_COLOR')
@@ -4550,7 +4630,7 @@ PRINT_PAPER = {'TABLOID': (17 * 72.0, 11 * 72.0),
                'LETTER': (11 * 72.0, 8.5 * 72.0)}
 PRINT_MARGIN = 36.0         # pt round the drawing
 PRINT_TITLE = 30.0          # pt strip along the bottom for the title
-PRINT_TEXT_SCALE = 0.75     # screen px -> pt for text, tiers and strokes
+PRINT_TEXT_SCALE = 0.58     # screen px -> pt for text, tiers and strokes
 # Drafting scales, 1:n, and how each is written (inches to the foot).
 PRINT_SCALES = ((8, '1 1/2"'), (12, '1"'), (16, '3/4"'), (24, '1/2"'),
                 (32, '3/8"'), (48, '1/4"'), (64, '3/16"'), (96, '1/8"'),
@@ -5342,7 +5422,7 @@ def dim_primitives(dims, extra, scale=1.0):
     prims.append({'kind': 'LINES', 'role': 'DIM', 'color': LINE,
                   'width': 1.0 * ps, 'segments': lines})
     prims.append({'kind': 'LINES', 'role': 'TICK', 'color': LINE,
-                  'width': 2.0 * ps, 'segments': ticks})
+                  'width': TICK_WIDTH * ps, 'segments': ticks})
     fs = FONT_SIZE * ps
     halo = _print_text_halo(ps)
     for d in dims:
@@ -5358,8 +5438,21 @@ def dim_primitives(dims, extra, scale=1.0):
             'kind': 'TEXT', 'text': d['text'], 'x': tx, 'y': ty,
             'size': fs, 'angle': angle, 'font': 'Helvetica',
             'runs': runs,
-            'color': TEXT if d['target'] is not None else TEXT_READONLY,
+            # One ink on paper: which values can be typed over is the
+            # screen's to show.
+            'color': TEXT,
             'halo': halo, 'rect': (x, y, w, h), 'key': d.get('key')})
+        if d.get('tag_rect'):
+            gx, gy, gw, gh = d['tag_rect']
+            size = fs * TAG_SCALE
+            gtw = hb_pdf.text_width(d['tag'], size)
+            gx += (gw - gtw) / 2.0
+            prims.append({
+                'kind': 'TEXT', 'role': 'TAG', 'text': d['tag'], 'x': gx,
+                'y': gy, 'size': size, 'angle': 0.0, 'font': 'Helvetica',
+                'runs': [(d['tag'], 0.0, 0.0, size)], 'color': TEXT,
+                'halo': halo, 'rect': (gx, gy, gtw, gh),
+                'key': d.get('key')})
     return prims
 
 
