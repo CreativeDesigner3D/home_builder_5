@@ -732,6 +732,16 @@ def update_include_drawer_boxes(self,context):
         for db in drawer_boxes:
             bpy.data.objects.remove(db, do_unlink=True)
 
+def _get_highlight_raw_edges(self):
+    from . import edgebanding_frameless
+    return edgebanding_frameless.raw_edges_highlighted()
+
+
+def _set_highlight_raw_edges(self, value):
+    from . import edgebanding_frameless
+    edgebanding_frameless.highlight_raw_edges(value)
+
+
 def update_auto_finished_ends(self, context):
     from . import exposure
     exposure.recalc_scene(context.scene, context)
@@ -2151,6 +2161,14 @@ class Frameless_Scene_Props(PropertyGroup):
     #CABINET GENERAL CONSTRUCTION OPTIONS
     show_machining: bpy.props.BoolProperty(name="Show Machining",default = True,update=update_show_machining)# type: ignore
 
+    highlight_raw_edges: BoolProperty(
+        name="Highlight Raw Edges",
+        description="Show the edges that get no edgebanding in a soft red "
+                    "instead of the board colour, so they stand out from "
+                    "the interior and exterior materials",
+        get=_get_highlight_raw_edges,
+        set=_set_highlight_raw_edges)# type: ignore
+
     auto_finished_ends: BoolProperty(
         name="Automatic Finished Ends",
         description="Finish the ends of cabinets that show, and leave the "
@@ -2453,6 +2471,7 @@ class Frameless_Scene_Props(PropertyGroup):
         if props.cabinet_styles and props.active_cabinet_style_index < len(props.cabinet_styles):
             style = props.cabinet_styles[props.active_cabinet_style_index]
             style.draw_cabinet_style_ui(layout, context)
+        layout.prop(props, 'highlight_raw_edges')
 
     def ensure_default_door_style(self):
         """Ensure at least one door style exists."""
