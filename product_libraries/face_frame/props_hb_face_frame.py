@@ -1639,10 +1639,57 @@ def _style_tint_for_cabinet(cabinet_obj, styles):
 PAINT_STYLE_KEY = 'hb_paint_style'
 
 
+_PAINT_FRONT_ROLES = frozenset((
+    'DOOR', 'DRAWER_FRONT', 'PULLOUT_FRONT', 'FALSE_FRONT', 'TILT_OUT'))
+_PAINT_SHELF_ROLES = frozenset((
+    'ADJUSTABLE_SHELF', 'INTERIOR_FIXED_SHELF', 'BAY_SHELF', 'VANITY_SHELF',
+    'CORNER_SHELF', 'CORNER_FIXED_SHELF', 'SHELF_NOSING'))
+
+
+def _part_paint_style_name(obj):
+    """The style whose FINISH Paint Part put on a cabinet part, or None.
+
+    The stamp sits where the material walk reads it: on the part, or for
+    the parts a rebuild replaces, on the opening cage (fronts) or the
+    opening / bay cage (shelves and their nosing). An Interior paint
+    changes no finish, so it changes no colour either.
+    """
+    role = obj.get('hb_part_role')
+    if not (obj.get('CABINET_PART') or role == 'SHELF_NOSING'):
+        return None
+    if role in _PAINT_FRONT_ROLES:
+        node = obj.parent
+        while node is not None:
+            if node.get('IS_FACE_FRAME_OPENING_CAGE'):
+                if node.get('hb_front_material_override') == 'FINISH':
+                    return node.get('hb_front_material_style')
+                return None
+            node = node.parent
+        return None
+    if role in _PAINT_SHELF_ROLES:
+        node = obj.parent
+        while node is not None:
+            if (node.get('IS_FACE_FRAME_OPENING_CAGE')
+                    or node.get('IS_FACE_FRAME_BAY_CAGE')):
+                over = node.get('hb_shelf_material_override')
+                if over == 'FINISH':
+                    return node.get('hb_shelf_material_style')
+                if over == 'INTERIOR':
+                    return None
+            node = node.parent
+    if obj.get('hb_part_material_override') == 'FINISH':
+        return obj.get('hb_part_material_style')
+    return None
+
+
 def _painted_style_tint(obj, styles):
-    """The viewport RGB for the style Paint Part stamped on ``obj``, or
-    None when it carries no stamp (or names a style since removed)."""
-    name = obj.get(PAINT_STYLE_KEY)
+    """The viewport RGB for the style Paint Part put on ``obj``, or None
+    when it carries no stamp (or names a style since removed). A cage is
+    never a painted piece: it is the selection highlight, and a stamp
+    left on one by an older build is ignored."""
+    if _is_cage(obj):
+        return None
+    name = obj.get(PAINT_STYLE_KEY) or _part_paint_style_name(obj)
     if not name:
         return None
     for index, style in enumerate(styles):

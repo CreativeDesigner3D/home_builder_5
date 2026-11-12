@@ -2240,12 +2240,21 @@ class hb_face_frame_OT_paint_part_material(bpy.types.Operator):
         origin = view3d_utils.region_2d_to_origin_3d(region, rv3d, coord)
         direction = view3d_utils.region_2d_to_vector_3d(region, rv3d, coord)
         depsgraph = context.evaluated_depsgraph_get()
-        hit, loc, nrm, fidx, obj, mat = context.scene.ray_cast(
-            depsgraph, origin, direction)
-        if not hit or obj is None:
-            return None
-        # ray_cast returns the evaluated object; resolve to the original.
-        return obj.original if hasattr(obj, 'original') else obj
+        # A selection mode's cage (cabinet, bay, opening) stands in front
+        # of the parts it wraps. The brush paints parts, so a cage is
+        # see-through: keep casting from just past it.
+        step = direction.normalized() * 1e-4
+        for _ in range(64):
+            hit, loc, nrm, fidx, obj, mat = context.scene.ray_cast(
+                depsgraph, origin, direction)
+            if not hit or obj is None:
+                return None
+            # ray_cast returns the evaluated object; resolve to the original.
+            obj = obj.original if hasattr(obj, 'original') else obj
+            if not props_hb_face_frame._is_cage(obj):
+                return obj
+            origin = loc + step
+        return None
 
     def _style_for(self, ff, obj):
         """A cabinet part follows its cabinet's STYLE_NAME so the immediate
@@ -2386,6 +2395,7 @@ class hb_face_frame_OT_paint_part_material(bpy.types.Operator):
                     host = self._style_for(ff, obj)
                     if host is not None:
                         host._apply_materials_to_cabinet(root)
+                self._recolor_part(context, obj)
             # Non-cabinet objects have no automatic material; leave as-is,
             # but drop the paint stamps so a regenerated object stops
             # re-applying them, and it takes its cabinet's colour again.
@@ -2466,6 +2476,9 @@ class hb_face_frame_OT_paint_part_material(bpy.types.Operator):
                 obj[props_hb_face_frame.PAINT_STYLE_KEY] = style.name
                 self._recolor(context, obj)
 
+            if is_part or is_nosing:
+                self._recolor_part(context, obj)
+
         if context.area is not None:
             context.area.tag_redraw()
         self._painted.add(obj.name)
@@ -2485,6 +2498,22 @@ class hb_face_frame_OT_paint_part_material(bpy.types.Operator):
             # No stamp, no cabinet style: what an untinted part shows.
             colour = (1.0, 1.0, 1.0, 1.0)
         obj.color = colour
+
+    def _recolor_part(self, context, obj):
+        """Show a cabinet part's new paint under style colours. A shelf
+        or nosing shares its stamp with the rest of its region, so the
+        whole region is recoloured with it."""
+        targets = [obj]
+        if (obj.get('hb_part_role') in self._SHELF_ROLES
+                or obj.get('hb_part_role') == 'SHELF_NOSING'):
+            cage = self._shelf_cage_for(obj)
+            if cage is not None:
+                targets += [
+                    c for c in cage.children_recursive
+                    if c.get('hb_part_role') in self._SHELF_ROLES
+                    or c.get('hb_part_role') == 'SHELF_NOSING']
+        for target in targets:
+            self._recolor(context, target)
 
     def _status(self, context, count=False):
         tail = (f" - {len(self._painted)} painted" if count else "")
