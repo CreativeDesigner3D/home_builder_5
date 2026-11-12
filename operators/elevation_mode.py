@@ -2070,8 +2070,21 @@ def _draw_annotations(context, region, rv3d, prims=None):
         blf.disable(0, blf.SHADOW)
 
 
+_show_defaults = {}
+
+
+def set_show_defaults(values):
+    """Another add-on's choice of what a wall shows before the user has
+    switched anything: {key: bool} over SHOW_OPTIONS' own defaults. A
+    scene's own choices are kept."""
+    _show_defaults.clear()
+    _show_defaults.update({k: bool(v) for k, v in (values or {}).items()})
+    _bump_gen()
+
+
 def show_option(scene, key):
     default = next((d for k, _l, d in SHOW_OPTIONS if k == key), False)
+    default = _show_defaults.get(key, default)
     try:
         group = scene.get(SHOW_PROP)
         if group is not None and key in group:
@@ -3686,6 +3699,16 @@ ISO_PITCH = math.radians(25.0)
 _side_cache = {}
 
 
+# Clicking the iso turns it to be seen from the other side; kept on the
+# wall (1 from the front left, 0 from the front right).
+ISO_LEFT_PROP = 'HB_ELEVATION_ISO_LEFT'
+
+
+def _iso_at(extra, mx, my):
+    rect = ((extra or {}).get('side') or {}).get('ISO')
+    return rect is not None and point_in_rect(mx, my, rect[:4])
+
+
 def _side_on(scene):
     return [k for k in ('PLAN', 'ISO') if show_option(scene, k)]
 
@@ -3721,6 +3744,10 @@ def _side_box(wall, items):
             box[5] = max(box[5], z1)
     except Exception as exc:
         print(f"Elevation return walls: {exc}")
+    # The side the iso is seen from, when the user turned it round.
+    turned = wall.get(ISO_LEFT_PROP)
+    if turned is not None:
+        from_left = bool(turned)
     return tuple(box) + (from_left,)
 
 
@@ -3855,6 +3882,20 @@ def _layout_side_views(scene, wall, region, dims, extra, s):
                     'side': side if outside else -side, 'value': -front,
                     'target': None, 'item': it, 'w0': front, 'horiz': True,
                     'outward': outside, 'key': ('PLAN_D', it.name)})
+    # The wall's overall length over the plan, and its name in it.
+    wd = _wall_dims(wall)
+    thick = wd[2] if wd and wd[2] else 0.15
+    pos = py(box[3]) + first
+    for xw in (0.0, length):
+        extra['ext'].append(((px(xw), py(thick) + gap),
+                             (px(xw), pos + over)))
+    new.append({'axis': 'H', 'a': px(0.0), 'b': px(length), 'pos': pos,
+                'side': 1, 'value': length, 'target': None, 'item': None,
+                'w0': 0.0, 'tag': "OA", 'key': ('PLAN_D', 'OA')})
+    walls = room_walls(scene)
+    if wall in walls:
+        extra['plan_notes'] = [((px(length / 2.0), py(thick / 2.0)),
+                                f"Wall {walls.index(wall) + 1}")]
     if new:
         _place_text(scene, new, region, ())
         dims.extend(new)
@@ -4217,6 +4258,12 @@ def _draw_side_views(context, area, region, dims, extra, s):
             "pos": ((x, y), (x + w, y), (x + w, y + h), (x, y + h)),
             "texCoord": ((0, 0), (1, 0), (1, 1), (0, 1))}).draw(shader)
     gpu.state.blend_set('ALPHA')
+    blf.size(0, ANNOTATION_FONT_SIZE * s)
+    blf.color(0, *TEXT)
+    for (tx, ty), text in extra.get('plan_notes', ()):
+        tw, th = blf.dimensions(0, text)
+        blf.position(0, tx - tw / 2.0, ty - th / 2.0, 0)
+        draw_glyphs(0, text)
 
 
 # ---- Detail cards --------------------------------------------------------------
@@ -5044,7 +5091,26 @@ def _print_fit(scene, wall, W, H, extra=None):
 # panel's edge, a profile's break) inked over it.
 PRINT_FEATURE_ANGLE = math.radians(20.0)
 PRINT_EDGE = (0.0, 0.0, 0.0)
-PRINT_EDGE_WIDTH = 0.45
+# A part's outline (where it ends against what is behind it) is inked
+# heavier than the breaks within its face (a panel's bevel, a profile).
+PRINT_EDGE_WIDTH = 0.7
+PRINT_DETAIL_WIDTH = 0.3
+
+
+class _Edges(list):
+    """A face's edges, the outlines first: the first `heavy` of them."""
+    heavy = 0
+
+
+def _ink_edges(page, edges):
+    """Stroke a face's edges at their weights."""
+    n = getattr(edges, 'heavy', len(edges))
+    if n:
+        page.line_width(PRINT_EDGE_WIDTH)
+        page.lines(edges[:n])
+    if n < len(edges):
+        page.line_width(PRINT_DETAIL_WIDTH)
+        page.lines(edges[n:])
 
 
 def _print_owners(items, scene, molding=False):
@@ -5181,6 +5247,8 @@ def _print_faces_now(context, owners, Fi, view, deep=False):
         fold = (nrm[a] * nrm[b]).sum(axis=1) < cos_feature
         sil = facing[a] != facing[b]
         feature[two] = fold | sil
+        detail = np.zeros(ne, dtype=bool)
+        detail[two] = fold & ~sil
         px = co[:, 0] * k + ox
         py = co[:, 2] * k + oy
         for f in np.nonzero(facing)[0]:
@@ -5191,15 +5259,18 @@ def _print_faces_now(context, owners, Fi, view, deep=False):
                 # With each corner's depth, for a depth-tested drawing.
                 poly = [(x, y, d) for (x, y), d
                         in zip(poly, co[vs, 1].tolist())]
-            edges = []
+            edges, light = _Edges(), []
             for e in le[s0:s0 + n]:
                 if feature[e]:
                     i, j = ev[e]
                     if deep:
-                        edges.append(((px[i], py[i], co[i, 1]),
-                                      (px[j], py[j], co[j, 1])))
+                        seg = ((px[i], py[i], co[i, 1]),
+                               (px[j], py[j], co[j, 1]))
                     else:
-                        edges.append(((px[i], py[i]), (px[j], py[j])))
+                        seg = ((px[i], py[i]), (px[j], py[j]))
+                    (light if detail[e] else edges).append(seg)
+            edges.heavy = len(edges)
+            edges += light
             faces.append((float(co[vs, 1].mean()), poly, edges))
     return faces
 
@@ -5378,11 +5449,10 @@ def _print_linework(page, context, extra, Fi, view, L, H):
     faces.sort(key=lambda f: -f[0])        # far first
     page.fill_color(PAPER)
     page.stroke_color(PRINT_EDGE)
-    page.line_width(PRINT_EDGE_WIDTH)
     for _depth, poly, edges in faces:
         page.polygon(poly, fill=True, stroke=False)
         if edges:
-            page.lines(edges)
+            _ink_edges(page, edges)
     return True
 
 
@@ -5591,7 +5661,13 @@ def _print_side_views(page, context, wall, extra):
             for _depth, poly, edges in faces:
                 page.polygon(poly, fill=True, stroke=False)
                 if edges:
-                    page.lines(edges)
+                    _ink_edges(page, edges)
+    # The plan names its wall, in the wall.
+    size = ANNOTATION_FONT_SIZE * _s()
+    page.fill_color(TEXT)
+    for (tx, ty), text in extra.get('plan_notes', ()):
+        tw = hb_pdf.text_width(text, size)
+        page.text(tx - tw / 2.0, ty - size * 0.35, text, size)
 
 
 def _print_outlines(page, extra, Fi, L, H):
@@ -6457,6 +6533,18 @@ class home_builder_OT_elevation_click(bpy.types.Operator):
                 card = _card_at(extra, mx, my)
             except Exception:
                 card = None
+            wall = active_wall(context)
+            if card is None and wall is not None and _iso_at(extra, mx, my):
+                # The iso, seen from the other side.
+                wall[ISO_LEFT_PROP] = 0 if _side_box(
+                    wall, extra['items'])[6] else 1
+                _bump_gen()
+                try:
+                    bpy.ops.ed.undo_push(message="Turn Iso View")
+                except Exception:
+                    pass
+                context.area.tag_redraw()
+                return {'FINISHED'}
             if card is not None:
                 _card_drag = {'id': card['id'], 'mx': mx, 'my': my,
                               'x': mx, 'y': my, 'moved': False,
