@@ -819,6 +819,10 @@ def _isolate(context, wall):
         pass
     names = [o.name for o in extra]
     try:
+        _apply_molding(scene)
+    except Exception as exc:
+        print(f"Elevation mouldings: {exc}")
+    try:
         _make_stubs(scene, wall, _items(scene, wall, names, ()))
     except Exception as exc:
         print(f"Elevation return walls: {exc}")
@@ -837,12 +841,13 @@ def _unisolate(scene):
             except Exception:
                 pass
             del obj[WALL_COLOR_TAG]
-        if obj.get(HIDE_TAG):
-            try:
-                obj.hide_set(False)
-            except Exception:
-                pass
-            del obj[HIDE_TAG]
+        for tag in (HIDE_TAG, MOLDING_HIDE_TAG):
+            if obj.get(tag):
+                try:
+                    obj.hide_set(False)
+                except Exception:
+                    pass
+                del obj[tag]
 
 
 # ---- Enter / exit ------------------------------------------------------------
@@ -1409,6 +1414,10 @@ SHOW_OPTIONS = (
     # right, beside it: the three views a sheet shows together.
     ('PLAN', "Plan View", False),
     ('ISO', "Iso View", False),
+    # Crown, base, light rail and the other moulding runs. Off, they are
+    # left out of the elevation, the plan, the iso and the print, so the
+    # cabinets read on their own.
+    ('MOLDING', "Molding", True),
     # The wall's detail cards (a moulding section, a drawer from above),
     # stacked to the right of the elevation. Offered when an add-on
     # supplies cards.
@@ -1453,6 +1462,130 @@ def _option_available(key):
     if key == 'DETAILS':
         return bool(_card_sources)
     return True
+
+
+# ---- Mouldings ---------------------------------------------------------------------
+# The Molding toggle takes the moulding runs out of every picture of the
+# wall. On screen they are hidden for as long as the view is up (and
+# shown again when it closes or the toggle goes back on); the side views
+# and the print leave them out of what they read.
+
+MOLDING_HIDE_TAG = 'HB_ELEVATION_MOLDING_HIDDEN'
+MOLDING_MARKS = ('IS_HB_MOLDING_SWEEP', 'IS_CROWN_MOLDING',
+                 'IS_TOE_KICK_MOLDING', 'IS_UPPER_BOTTOM_MOLDING',
+                 'IS_FRAMELESS_MOLDING', 'IS_CLOSET_MOLDING')
+_molding_tests = []
+_molding_cache = {}
+
+
+def register_molding_test(fn):
+    """Another add-on's own mouldings: fn(obj) is True for one."""
+    if fn not in _molding_tests:
+        _molding_tests.append(fn)
+    _bump_gen()
+
+
+def unregister_molding_test(fn):
+    if fn in _molding_tests:
+        _molding_tests.remove(fn)
+    _bump_gen()
+
+
+def is_molding(obj):
+    if any(obj.get(mark) for mark in MOLDING_MARKS):
+        return True
+    for fn in _molding_tests:
+        try:
+            if fn(obj):
+                return True
+        except Exception:
+            continue
+    return False
+
+
+def _molding_names(scene):
+    """Names of the scene's mouldings and of everything under them (a
+    run's profile), read once per change of the model."""
+    key = (_gen, scene.name)
+    if _molding_cache.get('key') == key:
+        return _molding_cache['names']
+    verdict = {}
+
+    def under(obj, depth=0):
+        got = verdict.get(obj.name)
+        if got is None:
+            got = is_molding(obj) or (
+                obj.parent is not None and depth < 64
+                and under(obj.parent, depth + 1))
+            verdict[obj.name] = got
+        return got
+
+    names = frozenset(o.name for o in scene.objects if under(o))
+    _molding_cache.update(key=key, names=names)
+    return names
+
+
+def _molding_left_out(scene):
+    """The names the pictures leave out: the mouldings when the toggle
+    is off, nothing when it is on."""
+    if show_option(scene, 'MOLDING'):
+        return frozenset()
+    return _molding_names(scene)
+
+
+def _apply_molding(scene):
+    """Hide the mouldings in the viewport, or show the ones this hid
+    again, to match the toggle. Returns how many changed."""
+    names = _molding_left_out(scene)
+    changed = 0
+    for obj in scene.objects:
+        try:
+            if obj.name in names:
+                if obj.hide_get() or obj.hide_viewport:
+                    continue
+                obj.hide_set(True)
+                obj[MOLDING_HIDE_TAG] = True
+                changed += 1
+            elif obj.get(MOLDING_HIDE_TAG):
+                obj.hide_set(False)
+                del obj[MOLDING_HIDE_TAG]
+                changed += 1
+        except Exception:
+            continue                    # not in this view layer
+    return changed
+
+
+def _watch_molding(scene):
+    """A moulding made again while the toggle is off (a cabinet moved,
+    the run rebuilt) comes back shown: hide it, off the draw."""
+    if _molding_cache.get('queued'):
+        return
+    names = _molding_left_out(scene)
+    if not names:
+        return
+    for name in names:
+        obj = scene.objects.get(name)
+        try:
+            loose = obj is not None and not (obj.hide_get()
+                                             or obj.hide_viewport)
+        except Exception:
+            continue
+        if loose:
+            break
+    else:
+        return
+    _molding_cache['queued'] = True
+    scene_name = scene.name
+
+    def settle():
+        _molding_cache.pop('queued', None)
+        sc = bpy.data.scenes.get(scene_name)
+        if sc is not None and _state is not None \
+                and _state.get('scene') == scene_name:
+            _apply_molding(sc)
+        return None
+
+    bpy.app.timers.register(settle, first_interval=0.0)
 
 
 def _note_world(obj, depth=0):
@@ -1765,6 +1898,9 @@ def toggle_show_option(scene, key):
         group = scene[SHOW_PROP]
     group[key] = value
     _bump_gen()
+    if key == 'MOLDING' and _state is not None \
+            and _state.get('scene') == scene.name:
+        _apply_molding(scene)
     return value
 
 
@@ -2254,6 +2390,7 @@ def _layout(context, region, rv3d):
            _cards_stamp(scene, wall), wall.get(CARDS_PROP))
     if _layout_cache.get('key') == key:
         return _layout_cache['result']
+    _watch_molding(scene)
     result = _layout_wall(scene, wall, region, rv3d, selected=selected,
                           side_views=True)
     _layout_cache['key'] = key
@@ -3439,7 +3576,7 @@ def _side_geometry(scene, wall, items):
     key = (_gen, scene.name, wall.name)
     if _side_geo.get('key') == key:
         return _side_geo
-    names = _print_owners(items) | {wall.name}
+    names = _print_owners(items, scene) | {wall.name}
     names |= {o.name for o in scene.objects if o.get(STUB_TAG)}
     Fi = _frame(wall)[1]
     cos_feature = math.cos(PRINT_FEATURE_ANGLE)
@@ -4536,16 +4673,17 @@ PRINT_EDGE = (0.0, 0.0, 0.0)
 PRINT_EDGE_WIDTH = 0.45
 
 
-def _print_owners(items):
+def _print_owners(items, scene):
     """Names of the objects whose geometry the drawing shows: the
-    products and openings on the wall, and everything under them."""
+    products and openings on the wall, and everything under them, less
+    the mouldings when those are switched off."""
     names = set()
     for it in items:
         if it.preview:
             continue
         for obj in [it.obj] + list(it.obj.children_recursive):
             names.add(obj.name)
-    return names
+    return names - _molding_left_out(scene)
 
 
 def _print_skip(obj):
@@ -4562,7 +4700,8 @@ def _print_faces(context, items, Fi, view, only=None, deep=False):
     Parts hidden in the viewport (a cutaway, a part toggled off on
     screen) still print, as they do on the sheets: they are shown just
     long enough to be read. `only` narrows it to those object names."""
-    owners = _print_owners(items) if only is None else set(only)
+    owners = _print_owners(items, context.scene) if only is None \
+        else set(only) - _molding_left_out(context.scene)
     if not owners:
         return []
     shown = []
@@ -5020,7 +5159,7 @@ def _print_side_views(page, context, wall, extra):
     rects = extra.get('side') or {}
     if not rects:
         return
-    names = _print_owners(extra['items'])
+    names = _print_owners(extra['items'], context.scene)
     F = _frame(wall)[0]
     returns, _from_left = _return_boxes(wall, extra['items'])
     sx = extra['sx']
@@ -6379,6 +6518,26 @@ def _glyph_details(shader, rect, color):
                         (a, c), (b, d)], color)
 
 
+def _glyph_molding(shader, rect, color):
+    """A crown's section: flat top and back, a cove between."""
+    rx, ry, rw, rh = rect
+    a = min(rw, rh) * 0.46
+    x0 = rx + (rw - a) / 2.0
+    y0 = ry + (rh - a) / 2.0
+    x1, y1 = x0 + a, y0 + a
+    lip = a * 0.2
+    r = a - lip
+    pts = [(x1, y1 - lip)]
+    for i in range(1, 7):
+        t = math.radians(90.0 * i / 6.0)
+        pts.append((x1 - r * math.sin(t), y1 - lip - r + r * math.cos(t)))
+    pts += [(x0, y0), (x0, y1), (x1, y1), (x1, y1 - lip)]
+    lines = []
+    for p, q in zip(pts, pts[1:]):
+        lines += [p, q]
+    draw_lines(shader, lines, color)
+
+
 def _glyph_decimal(shader, rect, color):
     """A decimal value, lettered."""
     rx, ry, rw, rh = rect
@@ -6415,6 +6574,7 @@ _SHOW_GLYPHS = {
     'DECIMAL': _glyph_decimal,
     'PLAN': _glyph_plan,
     'ISO': _glyph_iso,
+    'MOLDING': _glyph_molding,
     'DETAILS': _glyph_details,
 }
 
