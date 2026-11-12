@@ -283,7 +283,7 @@ OPTION_PAGES = {
         'remove_op': 'hb_frameless.remove_cabinet_style',
         'duplicate_op': 'hb_frameless.duplicate_cabinet_style',
         'fields': (
-            ('enum', 'sheet_material', "Material"),
+            ('enum', 'sheet_material', "Exterior"),
             ('enum', 'front_material', "Fronts"),
             ('enum', 'interior_sheet_material', "Interior"),
             ('enum', 'edge_material', "Cabinet Edge"),

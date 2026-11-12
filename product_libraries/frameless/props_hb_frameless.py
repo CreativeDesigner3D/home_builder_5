@@ -1051,8 +1051,8 @@ class Frameless_Cabinet_Style(PropertyGroup):
     # wood species / stain / paint selection below, which stays declared
     # so older files still load but is no longer drawn.
     sheet_material: EnumProperty(
-        name="Cabinet Material",
-        description="Sheet material for the carcass and, unless Fronts "
+        name="Exterior Material",
+        description="Sheet material for the cabinet exterior and, unless Fronts "
                     "says otherwise, the doors and drawer fronts",
         items=get_sheet_material_enum_items,
         update=update_style_materials,
@@ -1334,7 +1334,7 @@ class Frameless_Cabinet_Style(PropertyGroup):
         box.prop(self, "name", text="Style Name")
 
         col = box.column(align=True)
-        col.prop(self, "sheet_material", text="Material")
+        col.prop(self, "sheet_material", text="Exterior")
         col.prop(self, "front_material", text="Fronts")
         col.prop(self, "interior_sheet_material", text="Interior")
 
