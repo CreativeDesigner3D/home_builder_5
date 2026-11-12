@@ -41,6 +41,7 @@ class hb_frameless_OT_product_prompts(bpy.types.Operator):
 
     product = None
     part_type = ""
+    _front_setback = 0.0
     # Support frame: the Leg Style seen at the last check(), so a style
     # CHANGE (vs a size edit) can size the legs to the style's blank.
     _leg_style_seen = None
@@ -69,7 +70,10 @@ class hb_frameless_OT_product_prompts(bpy.types.Operator):
             self.product = hb_types.GeoNodeCage(product_bp)
             self.width = self.product.get_input('Dim X')
             self.height = self.product.get_input('Dim Z')
-            self.depth = self.product.get_input('Dim Y')
+            # As built: a filler flush with the carcass reads the depth
+            # to its own face, not to the door plane its cage reaches.
+            self._front_setback = types_products.product_front_setback(product_bp)
+            self.depth = self.product.get_input('Dim Y') - self._front_setback
         self.height_off_floor = product_bp.matrix_world.translation.z
 
         wm = context.window_manager
@@ -90,7 +94,13 @@ class hb_frameless_OT_product_prompts(bpy.types.Operator):
         else:
             self.product.set_input('Dim X', self.width)
             self.product.set_input('Dim Z', self.height)
-            self.product.set_input('Dim Y', self.depth)
+            # Flush With Doors switched in the dialog moves the face, not
+            # the cage: the depth shown follows it.
+            setback = types_products.product_front_setback(self.product.obj)
+            if abs(setback - self._front_setback) > 1e-9:
+                self.depth += self._front_setback - setback
+                self._front_setback = setback
+            self.product.set_input('Dim Y', self.depth + setback)
         # Moved up or down by the difference, so it keeps its place on a
         # wall whatever the wall's own height off the floor.
         obj = self.product.obj

@@ -325,6 +325,25 @@ def _top_off_floor():
     return prop_proxy.computed(get, set, unit='LENGTH', precision=4)
 
 
+def _product_depth():
+    """A product's depth as built (a wall scribe filler flush with the
+    carcass reads to its own face, not the door plane)."""
+    from ...operators import prop_proxy
+
+    def get(obj):
+        from . import types_products
+        try:
+            return float(types_products.product_depth(obj))
+        except Exception:
+            return 0.0
+
+    def set(obj, value):
+        from . import types_products
+        types_products.set_product_depth(obj, float(value))
+    return prop_proxy.computed(get, set, unit='LENGTH', precision=4,
+                               hard_min=0.0)
+
+
 def _cage(obj):
     from ...hb_types import GeoNodeCage
     return GeoNodeCage(obj)
@@ -360,7 +379,7 @@ def _register_schemas():
     }, after=_solve)
     P.register(PRODUCT_SCHEMA, {
         'width': P.node_input('Dim X'),
-        'depth': P.node_input('Dim Y'),
+        'depth': _product_depth(),
         'height': P.node_input('Dim Z'),
         'height_off_floor': P.height_off_floor(),
     }, after=_solve_product)

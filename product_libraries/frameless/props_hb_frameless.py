@@ -1960,6 +1960,12 @@ class Frameless_Scene_Props(PropertyGroup):
         description=("New wall scribe fillers stand out in the plane of the "
                      "doors. Off, their face is flush with the carcass front"),
         default=False)  # type: ignore
+    scribe_filler_toe_kick_piece: BoolProperty(
+        name="Toe Kick Piece",
+        description=("New wall scribe fillers on a base or tall cabinet come "
+                     "in with a kick piece under the face. Off, the filler "
+                     "stops at the toe kick"),
+        default=False)  # type: ignore
 
     base_exterior: EnumProperty(name="Base Exterior",
                                items=[('Doors',"Doors","Doors"),
@@ -2543,6 +2549,7 @@ class Frameless_Scene_Props(PropertyGroup):
         row.prop(self,'corner_filler_width',text="Width")
         row.prop(self,'corner_filler_return',text="Return")
         row.prop(self,'scribe_filler_flush_with_doors',text="Flush With Doors")
+        row.prop(self,'scribe_filler_toe_kick_piece',text="Toe Kick Piece")
 
     def draw_user_library_ui(self,layout,context):
         from .operators import ops_library

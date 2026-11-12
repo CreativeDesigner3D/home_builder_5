@@ -1032,9 +1032,37 @@ def scribe_filler_flush_with_doors():
     carcass front."""
     props = getattr(bpy.context.scene, 'hb_frameless', None)
     return bool(getattr(props, 'scribe_filler_flush_with_doors', False))
+
+
+def scribe_filler_toe_kick_piece():
+    """Whether the room's new wall scribe fillers on a base or tall
+    come in with a kick piece under the face (Cabinet Sizes)."""
+    props = getattr(bpy.context.scene, 'hb_frameless', None)
+    return bool(getattr(props, 'scribe_filler_toe_kick_piece', False))
+
+
 # How far the door fronts stand off the carcass; the filler's face is
 # set to line up with them.
 FRONT_THICKNESS = inch(0.75)
+
+
+def product_front_setback(root):
+    """How far behind the front of its cage a product's own front
+    stands. A wall scribe filler's cage always reaches the door plane;
+    flush with the carcass, its face is a front thickness behind that."""
+    if (root.get('PART_TYPE') == 'CORNER_FILLER'
+            and not root.get('Flush With Doors', True)):
+        return FRONT_THICKNESS
+    return 0.0
+
+
+def product_depth(root):
+    """The product's depth as built: wall to its own front."""
+    return GeoNodeCage(root).get_input('Dim Y') - product_front_setback(root)
+
+
+def set_product_depth(root, depth):
+    GeoNodeCage(root).set_input('Dim Y', depth + product_front_setback(root))
 
 
 def _solve_corner_filler(root, parts, dim_x, dim_y, dim_z):
@@ -1117,7 +1145,7 @@ class CornerFiller(Product):
         self.toe_kick_setback = props.default_toe_kick_setback
         self.cabinet_on_right = True
         self.flush_with_doors = scribe_filler_flush_with_doors()
-        self.kick_piece = True
+        self.kick_piece = scribe_filler_toe_kick_piece()
 
     def add_properties(self):
         self.add_property('Toe Kick Height', 'DISTANCE', self.toe_kick_height)
