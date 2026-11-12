@@ -732,6 +732,11 @@ def update_include_drawer_boxes(self,context):
         for db in drawer_boxes:
             bpy.data.objects.remove(db, do_unlink=True)
 
+def update_auto_finished_ends(self, context):
+    from . import exposure
+    exposure.recalc_scene(context.scene, context)
+
+
 def update_show_machining(self,context):
     print('UPDATE SHOW MACHINING',self.show_machining)
 
@@ -2105,6 +2110,23 @@ class Frameless_Scene_Props(PropertyGroup):
     #CABINET GENERAL CONSTRUCTION OPTIONS
     show_machining: bpy.props.BoolProperty(name="Show Machining",default = True,update=update_show_machining)# type: ignore
 
+    auto_finished_ends: BoolProperty(
+        name="Automatic Finished Ends",
+        description="Finish the ends of cabinets that show, and leave the "
+                    "ends a wall, an appliance or other cabinets cover "
+                    "unfinished. An end set by hand stays as it was set",
+        default=True,
+        update=update_auto_finished_ends)# type: ignore
+
+    default_finished_end: EnumProperty(
+        name="Default Finished End",
+        description="What an end that shows is given",
+        items=[('FINISHED', "Finished Side", "The cabinet side itself in the finish material"),
+               ('SLAB', "Applied Slab Panel", "A finished slab panel applied over the side"),
+               ('5PIECE', "Applied 5-Piece Panel", "A five-piece panel matching the doors")],
+        default='FINISHED',
+        update=update_auto_finished_ends)# type: ignore
+
     default_carcass_part_thickness: FloatProperty(name="Default Carcass Part Thickness",
                                                  description="",
                                                  default=units.inch(.75),
@@ -2603,6 +2625,13 @@ class Frameless_Scene_Props(PropertyGroup):
         row.prop(self,'default_carcass_part_thickness',text="Material Thickness")
         row = size_box.row()
         row.prop(self,'back_tongue_length',text="Back Tongue")
+        size_box = layout.box()
+        row = size_box.row()
+        row.label(text="Finished Ends:")
+        row = size_box.row()
+        row.prop(self,'auto_finished_ends',text="Automatic on Ends That Show")
+        row = size_box.row()
+        row.prop(self,'default_finished_end',text="Default")
         size_box = layout.box()
         row = size_box.row()
         row.label(text="Toe Kick:")

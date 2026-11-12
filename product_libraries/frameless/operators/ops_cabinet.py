@@ -712,6 +712,9 @@ class hb_frameless_OT_delete_cabinet(bpy.types.Operator):
                 cabinet_bps.add(cabinet_bp)
         for cabinet_bp in cabinet_bps:
             hb_utils.delete_obj_and_children(cabinet_bp)
+        # The ends this cabinet covered show again.
+        from .. import exposure
+        exposure.request(context.scene)
         return {'FINISHED'}
 
 

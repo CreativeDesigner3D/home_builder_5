@@ -318,6 +318,10 @@ class hb_frameless_OT_update_finished_end(bpy.types.Operator):
         
         # Remove existing applied end
         self.remove_applied_end(cabinet_bp, self.side)
+        from .. import exposure
+        if not exposure._running and self.side in exposure.SIDES:
+            # Chosen by hand: it stays until handed back to automatic.
+            exposure.set_manual(cabinet_bp, self.side)
         
         # Create new panel based on type
         if self.finished_end_type == 'NONE':
@@ -590,9 +594,12 @@ class hb_frameless_OT_set_finish_condition(bpy.types.Operator):
     def execute(self, context):
         pairs = self.targets(context)
         done = set()
+        from .. import exposure
         for cabinet, side in pairs:
             if set_finish_condition(context, cabinet, side, self.condition):
                 done.add(cabinet)
+                if side in exposure.SIDES:
+                    exposure.set_manual(cabinet, side)
         for cabinet in done:
             _paint(cabinet)
             hb_utils.run_calc_fix(context, cabinet)
@@ -602,10 +609,56 @@ class hb_frameless_OT_set_finish_condition(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class hb_frameless_OT_auto_finish_condition(bpy.types.Operator):
+    """Hand an end set by hand back to automatic: finished while it
+    shows, unfinished once it is covered"""
+    bl_idname = "hb_frameless.auto_finish_condition"
+    bl_label = "Automatic Finished End"
+    bl_description = ("Let this end follow what is beside it: finished "
+                      "while it shows, unfinished once it is covered")
+    bl_options = {'UNDO'}
+
+    side: bpy.props.EnumProperty(
+        name="Side",
+        items=[('PART', "Selected Parts", "The cabinet sides selected"),
+               ('LEFT', "Left", ""), ('RIGHT', "Right", "")],
+        default='PART') # type: ignore
+
+    @classmethod
+    def poll(cls, context):
+        return context.object is not None and hb_utils.get_cabinet_bp(context.object) is not None
+
+    def execute(self, context):
+        from .. import exposure
+        objs = list(context.selected_objects)
+        if context.object is not None and context.object not in objs:
+            objs.append(context.object)
+        done = False
+        for obj in objs:
+            if self.side == 'PART':
+                side = FINISH_ROLE_SIDES.get(obj.get(solver_frameless.PART_ROLE_KEY))
+                cabinet = obj.parent
+            else:
+                side = self.side
+                cabinet = hb_utils.get_cabinet_bp(obj)
+            if (side not in exposure.SIDES or cabinet is None
+                    or not cabinet.get('IS_FRAMELESS_CABINET_CAGE')):
+                continue
+            exposure.hand_back(cabinet, side)
+            done = True
+        if not done:
+            self.report({'WARNING'}, "Nothing to set here")
+            return {'CANCELLED'}
+        for cabinet in exposure.recalc_scene(context.scene, context):
+            hb_utils.run_calc_fix(context, cabinet)
+        return {'FINISHED'}
+
+
 classes = (
     hb_frameless_OT_update_finished_end,
     hb_frameless_OT_applied_panel_prompts,
     hb_frameless_OT_set_finish_condition,
+    hb_frameless_OT_auto_finish_condition,
 )
 
 

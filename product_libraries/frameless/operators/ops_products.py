@@ -423,6 +423,8 @@ class hb_frameless_OT_delete_product(bpy.types.Operator):
             objs_to_delete = [product_bp] + list(product_bp.children_recursive)
             for obj in objs_to_delete:
                 bpy.data.objects.remove(obj, do_unlink=True)
+            from .. import exposure
+            exposure.request(context.scene)
         return {'FINISHED'}
 
 
