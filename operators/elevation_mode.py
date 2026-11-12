@@ -434,6 +434,27 @@ def _paper_off(space, saved, scene=None):
         del scene[PAPER_PROP]
 
 
+def keep_paper():
+    """Put the elevation's view back on paper after something else
+    restyled the viewport (a scene switched away and back resets a
+    room's background and floor). True when an elevation was up."""
+    if _state is None:
+        return False
+    area, _r3d = _find_r3d(_state['r3d'])
+    if area is None:
+        return False
+    space = area.spaces.active
+    try:
+        space.shading.background_type = 'VIEWPORT'
+        space.shading.background_color = PAPER
+        for k in PAPER_OVERLAYS:
+            setattr(space.overlay, k, False)
+    except Exception:
+        return False
+    area.tag_redraw()
+    return True
+
+
 def _paper_restore_on_load():
     """Views left on paper by a save mid-elevation get their own
     background back."""
