@@ -11,11 +11,16 @@ A stretch is cabinets that share a parent (a wall, a cabinet group, or
 the floor) and a facing, touch end to end, and agree on their back line,
 depth, floor height and toe kick. Anything else between two cabinets --
 a range, a dishwasher, a change of depth -- ends one stretch and starts
-the next, and a stretch longer than MAX_LENGTH is cut at a cabinet joint.
+the next. A stretch longer than MAX_LENGTH gets several bases butted
+end to end: the joints fall where the stock runs out, not at the
+cabinet joints.
 An end that nothing stands against is an exposed end: the base is held
 in from it by END_INSET, or by the cabinet's own Hold In From Ends when
 that is set. That is less than the step back from the front: the end
-only has to clear the finished side standing over it.
+only has to clear the finished side standing over it. The same goes for
+the end of a deeper run standing beside a shallower one: its side shows
+past the shallower cabinet, so its base is held in there and the
+shallower run's base carries on under it to meet it.
 """
 import bpy
 import math
@@ -28,7 +33,8 @@ from ...common import countertop_common
 from .... import hb_types, hb_utils, units
 
 LADDER_STYLE = 1                    # index in the Toe Kick Type prompt
-MAX_LENGTH = units.inch(96.0)       # longest single base
+MAX_LENGTH = units.inch(95.0)       # longest single base
+MIN_PIECE = units.inch(12.0)        # shortest piece a long run is cut into
 JOIN_GAP = units.inch(0.25)         # cabinets this close are end to end
 ALIGN_TOL = units.inch(0.0625)      # same back line / depth / floor
 WALL_END_REACH = units.inch(2.0)    # a corner filler's worth of wall end
@@ -118,18 +124,22 @@ class _Member:
                 and abs(other.kick_setback - self.kick_setback) <= ALIGN_TOL)
 
 
-def _cut_to_length(members):
-    """Split one stretch at cabinet joints so no base passes MAX_LENGTH.
-    A single cabinet longer than that keeps a base of its own."""
-    pieces, current = [], []
-    for member in members:
-        if current and member.x1 - current[0].x0 > MAX_LENGTH:
-            pieces.append(current)
-            current = []
-        current.append(member)
-    if current:
-        pieces.append(current)
-    return pieces
+def piece_spans(x0, x1):
+    """[(start, end)]: a run cut into bases no longer than MAX_LENGTH.
+    Full lengths first and what is left last; a last piece too short to
+    be worth building takes the difference off the one before it."""
+    if x1 - x0 <= MAX_LENGTH + ALIGN_TOL:
+        return [(x0, x1)]
+    spans = []
+    start = x0
+    while x1 - start > MAX_LENGTH + ALIGN_TOL:
+        spans.append((start, start + MAX_LENGTH))
+        start += MAX_LENGTH
+    if x1 - start < MIN_PIECE:
+        start = x1 - MIN_PIECE
+        spans[-1] = (spans[-1][0], start)
+    spans.append((start, x1))
+    return spans
 
 
 def build_stretches(cabinets):
@@ -149,11 +159,11 @@ def build_stretches(cabinets):
         current = []
         for member in members:
             if current and not current[-1].continues(member):
-                stretches.extend((frame, p) for p in _cut_to_length(current))
+                stretches.append((frame, current))
                 current = []
             current.append(member)
         if current:
-            stretches.extend((frame, p) for p in _cut_to_length(current))
+            stretches.append((frame, current))
     return stretches
 
 
@@ -229,6 +239,43 @@ def exposed_ends(context, frame, members):
     return not closed(first.x0, 'left'), not closed(last.x1, 'right')
 
 
+def depth_steps(context, frame, members):
+    """(left, right): how the run standing against each end of the
+    stretch compares. 1 when a deeper Ladder Style run stands there, -1
+    for a shallower one, 0 for anything else. Only a step of END_INSET
+    or more counts: less than that leaves no side showing."""
+    first, last = members[0], members[-1]
+    own = {m.obj for m in members}
+    to_frame = frame.inverted()
+    y_back, y_front = first.y, first.y - first.depth
+    steps = [0, 0]
+    for obj in context.scene.objects:
+        if obj in own or not wants_base_assembly(obj):
+            continue
+        try:
+            points = [to_frame @ p for p in countertop_common.footprint(obj)]
+        except Exception:
+            continue
+        if abs(points[0].z - first.z) > ALIGN_TOL:
+            continue
+        xs = [p.x for p in points]
+        ys = [p.y for p in points]
+        if max(ys) <= y_front + ALIGN_TOL or min(ys) >= y_back - ALIGN_TOL:
+            continue
+        if abs(max(xs) - first.x0) <= JOIN_GAP:
+            index = 0
+        elif abs(min(xs) - last.x1) <= JOIN_GAP:
+            index = 1
+        else:
+            continue
+        step = y_front - min(ys)
+        if step >= END_INSET - ALIGN_TOL:
+            steps[index] = 1
+        elif step <= -(END_INSET - ALIGN_TOL):
+            steps[index] = -1
+    return tuple(steps)
+
+
 def end_fillers(context, frame, members):
     """(left, right): the wall scribe filler standing against each end
     of the stretch, on the same floor and in line with it, or None."""
@@ -260,9 +307,12 @@ def end_fillers(context, frame, members):
 # Building
 # ---------------------------------------------------------------------------
 
-def create_base_assembly(context, frame, members):
+def create_base_assemblies(context, frame, members):
+    """The bases under one stretch, left to right: one, or several butted
+    end to end when the stretch is longer than MAX_LENGTH."""
     first, last = members[0], members[-1]
     open_left, open_right = exposed_ends(context, frame, members)
+    step_left, step_right = depth_steps(context, frame, members)
     setback = first.kick_setback
 
     def end_inset(member):
@@ -271,46 +321,71 @@ def create_base_assembly(context, frame, members):
             return 0.0
         own = float(member.obj.get(END_INSET_KEY, 0.0) or 0.0)
         return own if own > 0.0 else END_INSET
-    x0 = first.x0 + (end_inset(first) if open_left else 0.0)
-    x1 = last.x1 - (end_inset(last) if open_right else 0.0)
-    if x1 - x0 <= 0.0 or first.kick_height <= 0.0:
-        return None
 
-    base = types_products.BaseAssembly()
-    base.width = x1 - x0
-    base.depth = first.depth - setback
-    base.height = first.kick_height
-    base.create('Base Assembly')
-    obj = base.obj
-    obj[MEMBERS_KEY] = [m.obj.name for m in members]
-    # The cabinets' cages clear the base so it can be clicked.
-    from .. import solver_frameless
-    for m in members:
-        solver_frameless.sync_cage_kick_clear(m.obj, on_base=True)
+    def end_shift(member, is_open, step):
+        """How far the base stops short of the end (negative: runs past)."""
+        if is_open or step < 0:
+            return end_inset(member)
+        if step > 0 and setback > 0.0:
+            return -END_INSET
+        return 0.0
+    x0 = first.x0 + end_shift(first, open_left, step_left)
+    x1 = last.x1 - end_shift(last, open_right, step_right)
+    if x1 - x0 <= 0.0 or first.kick_height <= 0.0:
+        return []
+
+    # Under a wall scribe filler the kick face runs on to the wall by the
+    # filler's width, and the filler leaves out its own kick piece. That
+    # length comes out of the same stock, so it counts towards the cut.
+    fillers = end_fillers(context, frame, members)
+    reach = [hb_types.GeoNodeCage(f).get_input('Dim X') if f is not None
+             else 0.0 for f in fillers]
+    spans = piece_spans(x0 - reach[0], x1 + reach[1])
+    spans[0] = (x0, spans[0][1])
+    spans[-1] = (spans[-1][0], x1)
 
     # On a wall or in a cabinet group the base belongs to that; a lone
     # island's base goes with its first cabinet.
     parent = first.obj.parent or first.obj
-    world = frame @ Matrix.Translation(Vector((x0, first.y, first.z)))
-    local = parent.matrix_world.inverted() @ world
-    obj.parent = parent
-    obj.matrix_parent_inverse.identity()
-    obj.location = local.to_translation()
-    obj.rotation_euler = local.to_euler()
+    from .. import solver_frameless
+    created = []
+    for index, (start, end) in enumerate(spans):
+        base = types_products.BaseAssembly()
+        base.width = end - start
+        base.depth = first.depth - setback
+        base.height = first.kick_height
+        base.create('Base Assembly')
+        obj = base.obj
+        over = [m for m in members
+                if m.x1 > start + ALIGN_TOL and m.x0 < end - ALIGN_TOL]
+        obj[MEMBERS_KEY] = [m.obj.name for m in (over or members)]
 
-    # Under a wall scribe filler the kick face runs on to the wall by the
-    # filler's width, and the filler leaves out its own kick piece.
-    fillers = end_fillers(context, frame, members)
-    for filler, key in zip(fillers, ('Left Front Extension',
-                                     'Right Front Extension')):
-        if filler is None:
-            continue
-        obj[key] = hb_types.GeoNodeCage(filler).get_input('Dim X')
-        filler['Toe Kick Piece'] = False
-        types_products.recalculate_product(filler)
-    if any(fillers):
-        types_products.recalculate_product(obj)
-    return obj
+        world = frame @ Matrix.Translation(Vector((start, first.y, first.z)))
+        local = parent.matrix_world.inverted() @ world
+        obj.parent = parent
+        obj.matrix_parent_inverse.identity()
+        obj.location = local.to_translation()
+        obj.rotation_euler = local.to_euler()
+
+        extended = False
+        for filler, key, at_end in (
+                (fillers[0], 'Left Front Extension', index == 0),
+                (fillers[1], 'Right Front Extension',
+                 index == len(spans) - 1)):
+            if filler is None or not at_end:
+                continue
+            obj[key] = hb_types.GeoNodeCage(filler).get_input('Dim X')
+            filler['Toe Kick Piece'] = False
+            types_products.recalculate_product(filler)
+            extended = True
+        if extended:
+            types_products.recalculate_product(obj)
+        created.append(obj)
+
+    # The cabinets' cages clear the base so it can be clicked.
+    for m in members:
+        solver_frameless.sync_cage_kick_clear(m.obj, on_base=True)
+    return created
 
 
 def stands_on(cabinet, base):
@@ -428,9 +503,7 @@ class hb_frameless_OT_add_base_assemblies(bpy.types.Operator):
 
         created = []
         for frame, members in build_stretches(cabinets):
-            obj = create_base_assembly(context, frame, members)
-            if obj is not None:
-                created.append(obj)
+            created.extend(create_base_assemblies(context, frame, members))
 
         for obj in created:
             bpy.ops.hb_frameless.assign_cabinet_style(cabinet_name=obj.name)
