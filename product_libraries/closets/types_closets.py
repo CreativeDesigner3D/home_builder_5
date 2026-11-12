@@ -1255,8 +1255,8 @@ def contour_tray_size(bay_width, box_depth):
     when no kit fits. The kit width follows the bay: 24" kits for bays
     24" wide or narrower, 36" kits for wider bays. The kit depth
     follows the drawer box length: 16" kits for 270mm and 350mm boxes,
-    20" kits for 400mm and 450mm boxes, and nothing for a shorter or
-    longer box (or no box at all)."""
+    20" kits for 400mm, 450mm and 500mm boxes, and nothing for a
+    shorter or longer box (or no box at all)."""
     depth_mm = round(box_depth / millimeter(1)) if box_depth > 0.0 else 0
     if depth_mm <= 0:
         return '', "Contour jewelry tray needs a drawer box"
@@ -1265,11 +1265,11 @@ def contour_tray_size(bay_width, box_depth):
                     % depth_mm)
     if depth_mm <= 350:
         kit_d = '16'
-    elif depth_mm <= 450:
+    elif depth_mm <= 500:
         kit_d = '20'
     else:
         return '', ("No contour jewelry tray fits a %dmm drawer box "
-                    "(450mm deepest)" % depth_mm)
+                    "(500mm deepest)" % depth_mm)
     kit_w = '24' if bay_width <= inch(24.0) + inch(0.001) else '36'
     return "%s x %s" % (kit_w, kit_d), ''
 
