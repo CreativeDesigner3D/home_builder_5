@@ -397,6 +397,13 @@ def flush_pending():
         if scene is None:
             continue
         try:
+            # Fillers first, so the ends are read against where they
+            # finish up.
+            from . import scribe_fit
+            scribe_fit.refit_scene(scene)
+        except Exception:
+            traceback.print_exc()
+        try:
             auto, default = _settings(scene)
             if not auto:
                 continue
