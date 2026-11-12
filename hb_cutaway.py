@@ -26,7 +26,7 @@ FACING = 0.15           # how square a wall must face the view to hide
 INTERVAL = 0.1
 
 _gen = 0                # bumped when the scene's objects move or change
-_walls = {}             # scene name -> (gen, [(wall, mid, outward, level uid)])
+_walls = {}             # scene name -> (gen, the walls: see _wall_info)
 _last = {}              # scene name -> the view and gen last applied
 
 
@@ -81,12 +81,134 @@ def _floor_points(poly, z):
     return out
 
 
+SIDE_REACH = 0.3        # how far off a wall's middle its two sides are tried
+JOINED = 0.35           # walls whose ends come this near belong together
+
+
+def _near(p, a, b):
+    """How far plan point p is from segment a-b."""
+    ax, ay = b[0] - a[0], b[1] - a[1]
+    d = ax * ax + ay * ay
+    t = 0.0 if d < 1e-12 else max(0.0, min(1.0, (
+        (p[0] - a[0]) * ax + (p[1] - a[1]) * ay) / d))
+    return ((p[0] - a[0] - ax * t) ** 2 + (p[1] - a[1] - ay * t) ** 2) ** 0.5
+
+
+def _groups(frames):
+    """The walls that touch, end to end or end to side, as lists: each
+    is one room's walls where the walls do not close a room."""
+    objs = list(frames)
+    group = list(range(len(objs)))
+
+    def find(i):
+        while group[i] != i:
+            group[i] = group[group[i]]
+            i = group[i]
+        return i
+
+    for i, oi in enumerate(objs):
+        ai, bi = frames[oi][2], frames[oi][3]
+        for j in range(i + 1, len(objs)):
+            aj, bj = frames[objs[j]][2], frames[objs[j]][3]
+            if (min(_near(ai, aj, bj), _near(bi, aj, bj),
+                    _near(aj, ai, bi), _near(bj, ai, bi)) < JOINED):
+                group[find(i)] = find(j)
+    # A room's walls stop at its doorways, so runs that do not touch can
+    # still be one room: runs whose plan extents overlap are taken
+    # together. Rooms standing clear of each other stay apart.
+    def extent(members):
+        pts = [p for i in members for p in (frames[objs[i]][2], frames[objs[i]][3])]
+        return (min(p[0] for p in pts), min(p[1] for p in pts),
+                max(p[0] for p in pts), max(p[1] for p in pts))
+
+    merged = True
+    while merged:
+        merged = False
+        runs = {}
+        for i in range(len(objs)):
+            runs.setdefault(find(i), []).append(i)
+        boxes = [(root, extent(members)) for root, members in runs.items()]
+        for n, (ra, ea) in enumerate(boxes):
+            for rb, eb in boxes[n + 1:]:
+                if (ea[0] < eb[2] and eb[0] < ea[2]
+                        and ea[1] < eb[3] and eb[1] < ea[3]):
+                    group[find(ra)] = find(rb)
+                    merged = True
+            if merged:
+                break
+    out = {}
+    for i, obj in enumerate(objs):
+        out.setdefault(find(i), []).append(obj)
+    return list(out.values())
+
+
+def _room_polygons(scene):
+    """The outlines of the rooms the scene's walls close."""
+    try:
+        from . import hb_wall_graph
+        from .operators import walls
+        _objs, segs = walls.level_wall_segs(scene, None)
+        return [a.polygon for a in hb_wall_graph.find_rooms(segs)]
+    except Exception:
+        return []
+
+
+def _room_walls(scene, frames, floors):
+    """The walls of a scene that is not a house, each with its outside
+    and the floor it is looked across to. A wall with a room on one side
+    faces out the other; a wall between two rooms stays. Walls that do
+    not close a room (an L, a galley, one run) take the side away from
+    the middle of the walls they touch -- not of every wall in the
+    scene, which sits between two rooms and turned their near walls
+    inside out."""
+    from . import hb_wall_graph
+    polys = _room_polygons(scene)
+    floor_points = {}
+
+    def inside(point):
+        return [i for i, poly in enumerate(polys)
+                if hb_wall_graph.point_in_polygon((point.x, point.y), poly)]
+
+    out, loose = [], []
+    for obj, (mid, y, a, b, top, _foot) in frames.items():
+        uid = obj.get(hb_house.LEVEL_KEY, '')
+        flat = Vector((y.x, y.y, 0.0))
+        if flat.length < 1e-6:
+            continue
+        flat.normalize()
+        plus = inside(mid + flat * SIDE_REACH)
+        minus = inside(mid - flat * SIDE_REACH)
+        if plus and minus:
+            continue            # between two rooms: an inside wall
+        if not plus and not minus:
+            loose.append(obj)
+            continue
+        points = []
+        for i in plus or minus:
+            if i not in floor_points:
+                floor_points[i] = _floor_points(polys[i], floors[uid] + EYE_LINE)
+            points.extend(floor_points[i])
+        out.append((obj, mid, -y if plus else y, uid, a, b, top, points))
+    for members in _groups({obj: frames[obj] for obj in loose}):
+        centre = sum((frames[o][0] for o in members), Vector()) / len(members)
+        for obj in members:
+            mid, y, a, b, top, _foot = frames[obj]
+            uid = obj.get(hb_house.LEVEL_KEY, '')
+            away = Vector((mid.x - centre.x, mid.y - centre.y, 0.0))
+            s = away.dot(y)
+            if abs(s) < 1e-4:
+                continue        # a lone wall: no inside to look into
+            points = [Vector((centre.x, centre.y, floors[uid] + EYE_LINE))]
+            out.append((obj, mid, y if s > 0 else -y, uid, a, b, top, points))
+    return out
+
+
 def _wall_info(scene):
-    """([(wall, middle, outward normal, level uid, plan end, plan end,
-    top)], {level uid: [points on its rooms' floors]}) for the walls
+    """[(wall, middle, outward normal, level uid, plan end, plan end,
+    top, [points on the floor it is looked across to])] for the walls
     that can be cut. In a house, its outside walls (inside walls stay)
-    and points over each room; elsewhere every wall, its outside the side
-    away from the middle of them all, and that middle."""
+    and points over each of the level's rooms; elsewhere see
+    _room_walls."""
     walls = [o for o in scene.objects if o.get('IS_WALL_BP') and o.type in ('MESH', 'EMPTY')]
     frames = {}
     for obj in walls:
@@ -95,7 +217,7 @@ def _wall_info(scene):
             frames[obj] = f
     out, middles = [], {}
     if not frames:
-        return out, middles
+        return out
     floors = {}
     for obj, f in frames.items():
         uid = obj.get(hb_house.LEVEL_KEY, '')
@@ -115,25 +237,16 @@ def _wall_info(scene):
                 z = floors[uid] + EYE_LINE
                 for poly in polys:
                     middles.setdefault(uid, []).extend(_floor_points(poly, z))
-        return out, middles
-    centre = sum((f[0] for f in frames.values()), Vector()) / len(frames)
-    for obj, (mid, y, a, b, top, _foot) in frames.items():
-        away = Vector((mid.x - centre.x, mid.y - centre.y, 0.0))
-        s = away.dot(y)
-        if abs(s) < 1e-4:
-            continue        # a lone wall: no inside to look into
-        out.append((obj, mid, y if s > 0 else -y, obj.get(hb_house.LEVEL_KEY, ''), a, b, top))
-    for uid, z in floors.items():
-        middles[uid] = [Vector((centre.x, centre.y, z + EYE_LINE))]
-    return out, middles
+        return [w + (middles.get(w[3], ()),) for w in out]
+    return _room_walls(scene, frames, floors)
 
 
 def _walls_of(scene):
     cached = _walls.get(scene.name)
     if cached is None or cached[0] != _gen:
-        cached = (_gen,) + _wall_info(scene)
+        cached = (_gen, _wall_info(scene))
         _walls[scene.name] = cached
-    return cached[1], cached[2]
+    return cached[1]
 
 
 # ---- What the view hides -----------------------------------------------------------
@@ -193,14 +306,13 @@ def wanted(scene, view):
     walls is cut."""
     hide = set()
     cut_levels = set()
-    walls, middles = _walls_of(scene)
-    for obj, mid, outward, uid, a, b, top in walls:
+    for obj, mid, outward, uid, a, b, top, points in _walls_of(scene):
         try:
             if obj.name not in scene.objects:
                 continue
         except ReferenceError:
             continue
-        if _facing(view, mid, outward) > FACING or _blocks(view, middles.get(uid, ()), a, b, top):
+        if _facing(view, mid, outward) > FACING or _blocks(view, points, a, b, top):
             hide.add(obj)
             hide.update(obj.children_recursive)
             cut_levels.add(uid)
