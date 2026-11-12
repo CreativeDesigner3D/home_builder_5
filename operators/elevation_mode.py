@@ -191,6 +191,8 @@ _drag = None            # a height string being dragged sideways
 _card_pick = None       # the detail card clicked on (its id)
 _card_drag = None       # a detail card being dragged to a new place
 _adding = None          # a height string being clicked in
+_noting = None          # a note being placed or typed
+_note_drag = None       # a note (or its leader's tip) being dragged
 _gen = 0
 _print_scale = None    # set while printing: px -> pt
 _print_measure = None  # (text, size) -> width in the face a sheet is set in
@@ -259,6 +261,79 @@ def _set_heights(wall, data):
     elif HEIGHTS_PROP in wall:
         del wall[HEIGHTS_PROP]
     _bump_gen()
+
+
+# ---- Notes typed on the wall ------------------------------------------------
+#
+# Kept on the wall like the height strings, so the view, its print and
+# any sheet read the same: [{'x', 'z': where the note stands (m along
+# the wall, m off the floor), 'text': str (may hold newlines), 'turn':
+# 0 level | 1 reading up the wall | -1 reading down it, 'tip': [x, z]
+# what its leader points at, or None}].
+
+NOTES_PROP = 'HB_ELEVATION_NOTES'
+
+
+def _user_notes(wall):
+    try:
+        raw = wall.get(NOTES_PROP)
+        data = json.loads(raw) if raw else []
+    except Exception:
+        data = []
+    out = []
+    for u in data if isinstance(data, list) else ():
+        try:
+            tip = u.get('tip')
+            out.append({
+                'x': float(u['x']), 'z': float(u['z']),
+                'text': str(u.get('text', '')),
+                'turn': max(-1, min(1, int(u.get('turn', 0)))),
+                'tip': [float(tip[0]), float(tip[1])] if tip else None})
+        except Exception:
+            continue
+    return out
+
+
+def _set_user_notes(wall, notes):
+    if notes:
+        wall[NOTES_PROP] = json.dumps(notes)
+    elif NOTES_PROP in wall:
+        del wall[NOTES_PROP]
+    _bump_gen()
+
+
+def _user_note_prims(wall, note, index):
+    """A typed note as annotation primitives: its text, and its leader
+    with an arrowhead at the tip. A level note with a leader is set
+    beside the leader's end, running away from what it points at."""
+    fr = _frame(wall)
+    if fr is None:
+        return []
+    F = fr[0]
+    R = F.to_3x3()
+
+    def W(x, z):
+        return F @ Vector((x, 0.0, z))
+
+    turn = note.get('turn', 0)
+    x_axis = R @ (Vector((1.0, 0.0, 0.0)) if turn == 0
+                  else Vector((0.0, 0.0, float(turn))))
+    text, align = note.get('text', ''), 'CENTER'
+    at = W(note['x'], note['z'])
+    prims = []
+    tip = note.get('tip')
+    if tip:
+        if turn == 0 and text:
+            right = tip[0] <= note['x']
+            align = 'LEFT' if right else 'RIGHT'
+            text = '\n'.join((' ' + row) if right else (row + ' ')
+                             for row in text.splitlines())
+        end = W(tip[0], tip[1])
+        prims.append({'kind': 'LINES', 'points': [at, end],
+                      'heads': [(end, at)], 'user': index})
+    prims.append({'kind': 'TEXT', 'origin': at, 'x_axis': x_axis,
+                  'text': text, 'align': align, 'user': index})
+    return prims
 
 
 # ---- Wall frame ------------------------------------------------------------
@@ -923,10 +998,11 @@ def enter(context, wall, keep_view=None):
 
 
 def leave(context=None, restore_view=True):
-    global _state, _edit
+    global _state, _edit, _noting, _note_drag
     if _state is None:
         return
     st, _state, _edit = _state, None, None
+    _noting = _note_drag = None
     _side_free()
     scene = bpy.data.scenes.get(st['scene'])
     if scene is not None:
@@ -1782,6 +1858,8 @@ def _annotations(scene, wall):
                 prims.append(pr)
     except Exception as exc:
         print(f"Elevation annotations: {exc}")
+    for i, note in enumerate(_user_notes(wall)):
+        prims += _user_note_prims(wall, note, i)
     out = []
     for pr in prims:
         if pr.get('kind') == 'TEXT' and pr.get('text'):
@@ -1835,6 +1913,20 @@ BUBBLE_FONT_SIZE = 12
 BUBBLE_SEGMENTS = 32
 
 
+def _draw_noting(context, region, rv3d):
+    """The note being placed or typed: its leader while it is dragged
+    out, its text with a caret while it is typed."""
+    n = _noting
+    wall = active_wall(context)
+    if n is None or wall is None or n.get('x') is None:
+        return
+    note = {'x': n['x'], 'z': n['z'], 'tip': n.get('tip'),
+            'turn': n.get('turn', 0),
+            'text': (n['typed'] + '|') if n['stage'] == 'TYPE' else ''}
+    prims = [dict(p, color=HOVER) for p in _user_note_prims(wall, note, None)]
+    _draw_annotations(context, region, rv3d, prims)
+
+
 def _bubble_rings(prims, P, s):
     """[(centre, radius, text, color)] on screen for the BUBBLE marks."""
     blf.size(0, BUBBLE_FONT_SIZE * s)
@@ -1881,11 +1973,18 @@ def _draw_bubbles(region, prims, P, s):
         draw_glyphs(0, text)
 
 
-def _draw_annotations(context, region, rv3d):
+def _draw_annotations(context, region, rv3d, prims=None):
+    """The wall's notes; or just `prims` (a note being typed)."""
     wall = active_wall(context)
-    if wall is None or not show_option(context.scene, 'ANNOTATIONS'):
+    if wall is None:
         return
-    prims = _annotations(context.scene, wall)
+    if prims is None:
+        if not show_option(context.scene, 'ANNOTATIONS'):
+            return
+        prims = _annotations(context.scene, wall)
+        if _noting is not None and _noting.get('index') is not None:
+            # The note being retyped shows as it is typed, not as it was.
+            prims = [p for p in prims if p.get('user') != _noting['index']]
     if not prims:
         return
     s = _s()
@@ -1948,7 +2047,8 @@ def _draw_annotations(context, region, rv3d):
         rows = pr['text'].splitlines()
         ca, sa = math.cos(ang), math.sin(ang)
         total = lh * len(rows)
-        blf.color(0, *pr.get('color', TEXT))
+        hot = pr.get('user') is not None and _hover == ('NOTE', pr['user'])
+        blf.color(0, *(HOVER_TEXT if hot else pr.get('color', TEXT)))
         blf.enable(0, blf.SHADOW)
         blf.shadow(0, TEXT_HALO_BLUR, *TEXT_HALO)
         blf.shadow_offset(0, 0, 0)
@@ -3112,7 +3212,20 @@ def _layout_wall(scene, wall, region, rv3d, selected=(), extra=None,
                         round(d['w0'], 4))
     extra = {'ext': dims_ext, 'floor': (sx(0.0), sx(length), floor_y),
              'items': items, 'sx': sx, 'sy': sy, 'ext_n': len(dims_ext),
-             'side': {}, 'cards': []}
+             'side': {}, 'cards': [], 'notes': [], 'note_tips': []}
+    # The typed notes, where a click finds them: each one's text, and
+    # the tip of its leader.
+    try:
+        extra['notes'] = [
+            (pr['user'], rect)
+            for pr, rect in _note_boxes(scene, wall, fr[1], sx, sy, s)
+            if pr.get('user') is not None]
+        if show_option(scene, 'ANNOTATIONS'):
+            extra['note_tips'] = [
+                (i, (sx(u['tip'][0]), sy(u['tip'][1])))
+                for i, u in enumerate(_user_notes(wall)) if u['tip']]
+    except Exception as exc:
+        print(f"Elevation notes: {exc}")
     if side_views:
         try:
             _layout_cards(scene, wall, region, dims, extra, s)
@@ -3134,6 +3247,11 @@ def _note_rects(scene, wall, Fi, sx, sy, s):
     """(x, y, w, h) on the sheet of each note lettered on the wall (a
     depth, a finished end, an appliance's name): the values are kept
     off them."""
+    return [rect for _pr, rect in _note_boxes(scene, wall, Fi, sx, sy, s)]
+
+
+def _note_boxes(scene, wall, Fi, sx, sy, s):
+    """[(primitive, (x, y, w, h))] for the notes lettered on the wall."""
     if not show_option(scene, 'ANNOTATIONS'):
         return []
     size = ANNOTATION_FONT_SIZE * s
@@ -3160,10 +3278,10 @@ def _note_rects(scene, wall, Fi, sx, sy, s):
             start = {'LEFT': 0.0, 'RIGHT': -tw}.get(align, -tw / 2.0)
             y0 = cy + start if up else cy - start - tw
             x0 = cx - lift if up else cx + lift
-            out.append((x0 - tall / 2.0, y0, tall, tw))
+            out.append((pr, (x0 - tall / 2.0, y0, tall, tw)))
             continue
         x0 = {'LEFT': cx, 'RIGHT': cx - tw}.get(align, cx - tw / 2.0)
-        out.append((x0, cy + lift - tall / 2.0, tw, tall))
+        out.append((pr, (x0, cy + lift - tall / 2.0, tw, tall)))
     return out
 
 
@@ -3415,13 +3533,16 @@ def _bar_layout(context, area):
              if _option_available(key)]
     add_label = "+ Height"
     add_w = blf.dimensions(0, add_label)[0] + 24 * s
+    note_label = "+ Note"
+    note_w = blf.dimensions(0, note_label)[0] + 24 * s
     store = _heights(wall)
     changed = len(store['moved']) + len(store['hidden'])
     reset_label = "Reset Heights"
     reset_w = (blf.dimensions(0, reset_label)[0] + 24 * s) if changed else 0
     total = (title_w + exit_w + gap + (2 * (arrow_w + gap) if many else 0)
              + sum(w + gap for _p, _l, w in chips) + print_w + gap
-             + add_w + gap + ((reset_w + gap) if changed else 0))
+             + add_w + gap + note_w + gap
+             + ((reset_w + gap) if changed else 0))
     xmin, xmax, ymin, _ymax = get_visible_window_bounds(area)
     x = (xmin + xmax) / 2.0 - total / 2.0
     y = ymin + 18 * s
@@ -3439,6 +3560,8 @@ def _bar_layout(context, area):
         x += w + gap
     parts.append(('ADD_V', (x, y, add_w, h), add_label))
     x += add_w + gap
+    parts.append(('ADD_N', (x, y, note_w, h), note_label))
+    x += note_w + gap
     if changed:
         parts.append(('RESET_V', (x, y, reset_w, h), reset_label))
         x += reset_w + gap
@@ -3473,6 +3596,7 @@ def _draw_bar(context, area):
         on = part.startswith('SHOW:') and show_option(context.scene,
                                                       part[5:])
         on = on or (part == 'ADD_V' and _adding is not None)
+        on = on or (part == 'ADD_N' and _noting is not None)
         if part == 'TITLE':
             bg = Theme.ACCENT_BG
         elif on:
@@ -4691,6 +4815,7 @@ def _draw():
             _text(d, color, s)
         try:
             _draw_annotations(context, region, rv3d)
+            _draw_noting(context, region, rv3d)
         except Exception as exc:
             print(f"Elevation annotations: {exc}")
         if _adding is not None and extra is not None:
@@ -5829,13 +5954,41 @@ def _hit(context, mx, my):
     for part, rect, _label in _bar_layout(context, context.area):
         if part != 'TITLE' and point_in_rect(mx, my, rect):
             return ('BAR', part)
-    dims, _extra = _layout(context, context.region, context.region_data)
+    dims, extra = _layout(context, context.region, context.region_data)
     p = 4 * _s()
     for d in dims:
         x, y, w, h = d['rect']
         if x - p <= mx <= x + w + p and y - p <= my <= y + h + p:
             return ('DIM', d)
+    for index, (x, y, w, h) in (extra or {}).get('notes', ()):
+        if x - p <= mx <= x + w + p and y - p <= my <= y + h + p:
+            return ('NOTE', index)
     return None
+
+
+NOTE_TIP_PX = 8
+
+
+def _note_tip_at(context, mx, my):
+    """Index of the typed note whose leader's tip is at a region point."""
+    _dims, extra = _layout(context, context.region, context.region_data)
+    r = NOTE_TIP_PX * _s()
+    for index, (x, y) in (extra or {}).get('note_tips', ()):
+        if abs(mx - x) <= r and abs(my - y) <= r:
+            return index
+    return None
+
+
+def _wall_point(context, mx, my):
+    """(m along the wall, m off the floor) under a region point."""
+    _dims, extra = _layout(context, context.region, context.region_data)
+    if extra is None:
+        return None
+    sx, sy = extra['sx'], extra['sy']
+    px, pz = sx(1.0) - sx(0.0), sy(1.0) - sy(0.0)
+    if abs(px) < 1e-9 or abs(pz) < 1e-9:
+        return None
+    return (mx - sx(0.0)) / px, (my - sy(0.0)) / pz
 
 
 REMOVE_CHIP_PX = 18
@@ -6205,11 +6358,12 @@ class home_builder_OT_elevation_hover(bpy.types.Operator):
         got = _hit(context, *_mouse)
         key = None
         if got is not None:
-            key = (got[0], got[1]) if got[0] == 'BAR' else (
+            key = (got[0], got[1]) if got[0] in ('BAR', 'NOTE') else (
                 ('DIM', got[1]['key']) if got[1]['target'] is not None
                 else None)
         chain = None
-        if _drag is None and _adding is None and _edit is None:
+        if _drag is None and _adding is None and _edit is None \
+                and _noting is None and _note_drag is None:
             chain = _hit_chain(context, *_mouse, got=got)
         if chain != _hover_chain:
             # A string that can be dragged shows the sideways cursor.
@@ -6248,10 +6402,24 @@ class home_builder_OT_elevation_click(bpy.types.Operator):
                 return {'PASS_THROUGH'}
         except Exception:
             pass
-        global _drag, _hover_chain
-        if _drag is not None or _adding is not None:
+        global _drag, _hover_chain, _note_drag
+        if _drag is not None or _adding is not None \
+                or _noting is not None or _note_drag is not None:
             return {'PASS_THROUGH'}
         got = _hit(context, mx, my)
+        if got is None or got[0] == 'NOTE':
+            # A typed note: drag it (or its leader's tip) to move it, a
+            # plain click retypes it.
+            wall = active_wall(context)
+            tip = _note_tip_at(context, mx, my)
+            index = tip if tip is not None else (got[1] if got else None)
+            notes = _user_notes(wall) if wall is not None else []
+            if index is not None and 0 <= index < len(notes):
+                _note_drag = {'index': index, 'mx': mx, 'my': my,
+                              'part': 'TIP' if tip is not None else 'TEXT',
+                              'was': dict(notes[index]), 'moved': False}
+                bpy.ops.home_builder.elevation_drag_note('INVOKE_DEFAULT')
+                return {'FINISHED'}
         if _on_remove_chip(context, mx, my):
             wall = active_wall(context)
             if wall is not None and _remove_chain(wall, _hover_chain):
@@ -6304,6 +6472,8 @@ class home_builder_OT_elevation_click(bpy.types.Operator):
                 leave(context)
             elif got[1] == 'ADD_V':
                 bpy.ops.home_builder.elevation_add_height('INVOKE_DEFAULT')
+            elif got[1] == 'ADD_N':
+                bpy.ops.home_builder.elevation_add_note('INVOKE_DEFAULT')
             elif got[1] == 'RESET_V':
                 wall = active_wall(context)
                 if wall is not None:
@@ -6476,12 +6646,25 @@ class home_builder_OT_elevation_reset_height(bpy.types.Operator):
 
     @classmethod
     def poll(cls, context):
-        return (is_active(context) and _hover_chain is not None
-                and _edit is None and _drag is None and _adding is None)
+        return (is_active(context)
+                and (_hover_chain is not None
+                     or (_hover is not None and _hover[0] == 'NOTE'))
+                and _edit is None and _drag is None and _adding is None
+                and _noting is None and _note_drag is None)
 
     def execute(self, context):
-        global _hover_chain
+        global _hover_chain, _hover
         wall = active_wall(context)
+        if wall is not None and _hover is not None and _hover[0] == 'NOTE':
+            # The typed note under the cursor.
+            notes = _user_notes(wall)
+            if not 0 <= _hover[1] < len(notes):
+                return {'CANCELLED'}
+            del notes[_hover[1]]
+            _set_user_notes(wall, notes)
+            _hover = None
+            context.area.tag_redraw()
+            return {'FINISHED'}
         chain = _hover_chain
         if wall is None or chain is None:
             return {'CANCELLED'}
@@ -6599,6 +6782,242 @@ class home_builder_OT_elevation_add_height(bpy.types.Operator):
             _set_heights(wall, data)
             return {'FINISHED'}
         if event.type == 'ESC':
+            self._end(context)
+            return {'CANCELLED'}
+        return {'RUNNING_MODAL'}
+
+
+NOTE_DRAG_PX = 6
+
+
+class home_builder_OT_elevation_add_note(bpy.types.Operator):
+    """Click where a note goes, or drag from what it points at to set it
+    with a leader. Type it, then Enter. Tab turns it up the wall,
+    Shift+Enter starts a new line, Esc cancels"""
+    bl_idname = "home_builder.elevation_add_note"
+    bl_label = "Add Note"
+    bl_options = {'INTERNAL', 'UNDO'}
+
+    index: bpy.props.IntProperty(default=-1, options={'SKIP_SAVE'})  # type: ignore
+
+    @classmethod
+    def poll(cls, context):
+        return (is_active(context) and _edit is None and _adding is None
+                and _noting is None)
+
+    def invoke(self, context, event):
+        global _noting
+        wall = active_wall(context)
+        if wall is None:
+            return {'CANCELLED'}
+        if not show_option(context.scene, 'ANNOTATIONS'):
+            toggle_show_option(context.scene, 'ANNOTATIONS')
+        notes = _user_notes(wall)
+        if 0 <= self.index < len(notes):
+            u = notes[self.index]
+            _noting = {'stage': 'TYPE', 'index': self.index, 'x': u['x'],
+                       'z': u['z'], 'tip': u['tip'], 'turn': u['turn'],
+                       'typed': u['text'], 'press': None, 'owner': id(self)}
+        else:
+            _noting = {'stage': 'PLACE', 'index': None, 'x': None, 'z': None,
+                       'tip': None, 'turn': 0, 'typed': "", 'press': None,
+                       'owner': id(self)}
+        context.window_manager.modal_handler_add(self)
+        self._prompt(context)
+        context.area.tag_redraw()
+        return {'RUNNING_MODAL'}
+
+    def _prompt(self, context):
+        try:
+            if _noting['stage'] == 'PLACE':
+                context.window.cursor_set('CROSSHAIR')
+                context.workspace.status_text_set(
+                    "Add note: click where it goes, or drag from what it "
+                    "points at for a leader  |  Esc to cancel")
+            else:
+                context.window.cursor_set('TEXT')
+                context.workspace.status_text_set(
+                    "Type the note  |  Enter to finish  |  Shift+Enter new "
+                    "line  |  Tab turns it  |  Del removes it  |  Esc to "
+                    "cancel")
+        except Exception:
+            pass
+
+    def _end(self, context):
+        global _noting
+        _noting = None
+        try:
+            context.window.cursor_set('DEFAULT')
+            context.workspace.status_text_set(None)
+        except Exception:
+            pass
+        if context.area:
+            context.area.tag_redraw()
+
+    def _commit(self, context, wall, remove=False):
+        n = _noting
+        text = "" if remove else n['typed'].strip()
+        index = n['index']
+        note = {'x': round(n['x'], 5), 'z': round(n['z'], 5), 'text': text,
+                'turn': n['turn'],
+                'tip': [round(v, 5) for v in n['tip']] if n['tip'] else None}
+        self._end(context)
+        notes = _user_notes(wall)
+        if index is not None and 0 <= index < len(notes):
+            if text:
+                notes[index] = note
+            else:
+                del notes[index]        # typed away to nothing
+        elif text:
+            notes.append(note)
+        else:
+            return {'CANCELLED'}
+        _set_user_notes(wall, notes)
+        return {'FINISHED'}
+
+    def modal(self, context, event):
+        n = _noting
+        if n is None or n.get('owner') != id(self):
+            return {'CANCELLED'}
+        wall = active_wall(context)
+        if wall is None or context.region is None \
+                or context.region_data is None:
+            self._end(context)
+            return {'CANCELLED'}
+        if event.type in {'MIDDLEMOUSE', 'WHEELUPMOUSE', 'WHEELDOWNMOUSE',
+                          'TRACKPADPAN', 'TRACKPADZOOM', 'TIMER'}:
+            return {'PASS_THROUGH'}
+        mx, my = event.mouse_region_x, event.mouse_region_y
+        if n['stage'] == 'PLACE':
+            if event.type in {'MOUSEMOVE', 'INBETWEEN_MOUSEMOVE'}:
+                press = n['press']
+                if press is not None:
+                    far = max(abs(mx - press[0]), abs(my - press[1]))
+                    if far >= NOTE_DRAG_PX * _s():
+                        # Dragged out: the press is the leader's tip.
+                        at = _wall_point(context, mx, my)
+                        if at is not None:
+                            n['tip'] = list(press[2])
+                            n['x'], n['z'] = at
+                            context.area.tag_redraw()
+                return {'RUNNING_MODAL'}
+            if event.type == 'LEFTMOUSE' and event.value == 'PRESS':
+                at = _wall_point(context, mx, my)
+                if at is not None:
+                    n['press'] = (mx, my, at)
+                    n['x'], n['z'] = at
+                return {'RUNNING_MODAL'}
+            if event.type == 'LEFTMOUSE' and event.value == 'RELEASE' \
+                    and n['press'] is not None:
+                n['stage'], n['press'] = 'TYPE', None
+                self._prompt(context)
+                context.area.tag_redraw()
+                return {'RUNNING_MODAL'}
+            if event.type in {'ESC', 'RIGHTMOUSE'} and event.value == 'PRESS':
+                self._end(context)
+                return {'CANCELLED'}
+            return {'RUNNING_MODAL'}
+        # Typing.
+        if event.type in {'MOUSEMOVE', 'INBETWEEN_MOUSEMOVE'}:
+            return {'RUNNING_MODAL'}
+        if event.value != 'PRESS':
+            return {'RUNNING_MODAL'}
+        if event.type in {'RET', 'NUMPAD_ENTER'}:
+            if event.shift or event.ctrl:
+                n['typed'] += "\n"
+                context.area.tag_redraw()
+                return {'RUNNING_MODAL'}
+            return self._commit(context, wall)
+        if event.type == 'LEFTMOUSE':
+            return self._commit(context, wall)      # a click away keeps it
+        if event.type in {'ESC', 'RIGHTMOUSE'}:
+            self._end(context)
+            return {'CANCELLED'}
+        if event.type == 'DEL':
+            return self._commit(context, wall, remove=True)
+        if event.type == 'BACK_SPACE':
+            n['typed'] = n['typed'][:-1]
+        elif event.type == 'TAB':
+            n['turn'] = {0: 1, 1: -1}.get(n['turn'], 0)
+        elif event.type == 'V' and (event.ctrl or event.oskey):
+            try:
+                n['typed'] += context.window_manager.clipboard or ""
+            except Exception:
+                pass
+        else:
+            ch = event.unicode
+            if ch and ch.isprintable() and not (event.ctrl or event.oskey):
+                n['typed'] += ch
+        context.area.tag_redraw()
+        return {'RUNNING_MODAL'}
+
+
+class home_builder_OT_elevation_drag_note(bpy.types.Operator):
+    """Drag a typed note, or the tip of its leader, to a new place. A
+    plain click retypes it. Esc or right-click puts it back"""
+    bl_idname = "home_builder.elevation_drag_note"
+    bl_label = "Move Note"
+    bl_options = {'INTERNAL', 'UNDO'}
+
+    def invoke(self, context, event):
+        if _note_drag is None:
+            return {'CANCELLED'}
+        _note_drag['owner'] = id(self)
+        context.window_manager.modal_handler_add(self)
+        return {'RUNNING_MODAL'}
+
+    def _end(self, context):
+        global _note_drag
+        _note_drag = None
+        if context.area:
+            context.area.tag_redraw()
+
+    def _put(self, wall, note):
+        notes = _user_notes(wall)
+        if 0 <= _note_drag['index'] < len(notes):
+            notes[_note_drag['index']] = note
+            _set_user_notes(wall, notes)
+
+    def modal(self, context, event):
+        drag = _note_drag
+        if drag is None or drag.get('owner') != id(self):
+            return {'CANCELLED'}
+        wall = active_wall(context)
+        if wall is None:
+            self._end(context)
+            return {'CANCELLED'}
+        if event.type in {'MOUSEMOVE', 'INBETWEEN_MOUSEMOVE'}:
+            mx, my = event.mouse_region_x, event.mouse_region_y
+            far = max(abs(mx - drag['mx']), abs(my - drag['my']))
+            if not drag['moved'] and far < NOTE_DRAG_PX * _s():
+                return {'RUNNING_MODAL'}
+            drag['moved'] = True
+            a = _wall_point(context, drag['mx'], drag['my'])
+            b = _wall_point(context, mx, my)
+            if a is None or b is None:
+                return {'RUNNING_MODAL'}
+            dx, dz = b[0] - a[0], b[1] - a[1]
+            note = dict(drag['was'])
+            if drag['part'] == 'TIP' and note.get('tip'):
+                note['tip'] = [round(note['tip'][0] + dx, 5),
+                               round(note['tip'][1] + dz, 5)]
+            else:
+                note['x'] = round(note['x'] + dx, 5)
+                note['z'] = round(note['z'] + dz, 5)
+            self._put(wall, note)
+            context.area.tag_redraw()
+            return {'RUNNING_MODAL'}
+        if event.type == 'LEFTMOUSE' and event.value == 'RELEASE':
+            moved, index = drag['moved'], drag['index']
+            self._end(context)
+            if moved:
+                return {'FINISHED'}
+            bpy.ops.home_builder.elevation_add_note('INVOKE_DEFAULT',
+                                                    index=index)
+            return {'CANCELLED'}
+        if event.type in {'ESC', 'RIGHTMOUSE'} and event.value == 'PRESS':
+            if drag['moved']:
+                self._put(wall, dict(drag['was']))
             self._end(context)
             return {'CANCELLED'}
         return {'RUNNING_MODAL'}
@@ -6923,6 +7342,8 @@ classes = (
     home_builder_OT_elevation_drag_card,
     home_builder_OT_elevation_reset_height,
     home_builder_OT_elevation_add_height,
+    home_builder_OT_elevation_add_note,
+    home_builder_OT_elevation_drag_note,
     home_builder_OT_elevation_print,
 )
 
