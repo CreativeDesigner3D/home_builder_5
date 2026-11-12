@@ -55,6 +55,7 @@ an id-prop tag, so a save made mid-elevation is cleaned up on load) and
 the view the room had before.
 """
 
+import contextlib
 import json
 import math
 import re
@@ -1415,8 +1416,9 @@ SHOW_OPTIONS = (
     ('PLAN', "Plan View", False),
     ('ISO', "Iso View", False),
     # Crown, base, light rail and the other moulding runs. Off, they are
-    # left out of the elevation, the plan, the iso and the print, so the
-    # cabinets read on their own.
+    # left out of the elevation and the plan, on screen and in print, so
+    # the cabinets read on their own. The iso keeps them: it is the
+    # picture of the finished wall.
     ('MOLDING', "Molding", True),
     # The wall's detail cards (a moulding section, a drawer from above),
     # stacked to the right of the elevation. Offered when an add-on
@@ -1465,10 +1467,11 @@ def _option_available(key):
 
 
 # ---- Mouldings ---------------------------------------------------------------------
-# The Molding toggle takes the moulding runs out of every picture of the
-# wall. On screen they are hidden for as long as the view is up (and
-# shown again when it closes or the toggle goes back on); the side views
-# and the print leave them out of what they read.
+# The Molding toggle takes the moulding runs out of the elevation and
+# the plan. On screen they are hidden for as long as the view is up (and
+# shown again when it closes or the toggle goes back on); the plan and
+# the print leave them out of what they read. The iso still shows them,
+# reading them while they are hidden (_molding_shown).
 
 MOLDING_HIDE_TAG = 'HB_ELEVATION_MOLDING_HIDDEN'
 MOLDING_MARKS = ('IS_HB_MOLDING_SWEEP', 'IS_CROWN_MOLDING',
@@ -1553,6 +1556,39 @@ def _apply_molding(scene):
         except Exception:
             continue                    # not in this view layer
     return changed
+
+
+@contextlib.contextmanager
+def _molding_shown(scene, layer):
+    """Show the mouldings the toggle hid for as long as it takes to
+    read them, then hide them again. Nothing is drawn in between, and
+    the model has not changed, so the change count is put back."""
+    global _gen
+    hid = []
+    for obj in scene.objects:
+        if not obj.get(MOLDING_HIDE_TAG):
+            continue
+        try:
+            if obj.hide_get(view_layer=layer):
+                obj.hide_set(False, view_layer=layer)
+                hid.append(obj)
+        except Exception:
+            continue
+    if not hid:
+        yield
+        return
+    gen = _gen
+    try:
+        layer.update()
+        yield
+    finally:
+        for obj in hid:
+            try:
+                obj.hide_set(True, view_layer=layer)
+            except Exception:
+                pass
+        layer.update()
+        _gen = gen
 
 
 def _watch_molding(scene):
@@ -3576,12 +3612,60 @@ def _side_geometry(scene, wall, items):
     key = (_gen, scene.name, wall.name)
     if _side_geo.get('key') == key:
         return _side_geo
-    names = _print_owners(items, scene) | {wall.name}
+    names = _print_owners(items, scene, molding=True) | {wall.name}
     names |= {o.name for o in scene.objects if o.get(STUB_TAG)}
+    # Mouldings switched off are read apart: the iso alone draws them.
+    left_out = _molding_left_out(scene)
     Fi = _frame(wall)[1]
     cos_feature = math.cos(PRINT_FEATURE_ANGLE)
-    dg = bpy.context.evaluated_depsgraph_get()
     tris, wall_tris, lines = [], [], []
+    more_tris, more_lines = [], []
+    with _molding_shown(scene, bpy.context.view_layer):
+        _side_read(bpy.context.evaluated_depsgraph_get(), wall, names,
+                   left_out, Fi, cos_feature, tris, wall_tris, lines,
+                   more_tris, more_lines)
+    empty = np.zeros((0, 3), np.float32)
+    lines = np.concatenate(lines) if lines else empty
+    # The mitre where a return meets the wall is not a line of the room.
+    try:
+        seams = _return_seams(_return_boxes(wall, items)[0])
+    except Exception:
+        seams = []
+    if seams and len(lines):
+        a, b = lines[0::2], lines[1::2]
+        keep = np.ones(len(a), dtype=bool)
+        level = np.abs(a[:, 2] - b[:, 2]) < 0.002
+        for (px0, py0), (px1, py1) in seams:
+            dx, dy = px1 - px0, py1 - py0
+            ln = math.hypot(dx, dy)
+            if ln < 1e-6:
+                continue
+            on = np.ones(len(a), dtype=bool)
+            for q in (a, b):
+                t = ((q[:, 0] - px0) * dx + (q[:, 1] - py0) * dy) / ln
+                off = np.abs((q[:, 0] - px0) * dy
+                             - (q[:, 1] - py0) * dx) / ln
+                on &= (off < 0.002) & (t > -0.002) & (t < ln + 0.002)
+            keep &= ~(on & level)
+        lines = np.stack((a[keep], b[keep]), axis=1).reshape(-1, 3)
+    tris = np.concatenate(tris).astype(np.float32) if tris else empty
+    lines = lines.astype(np.float32)
+    all_tris, all_lines = tris, lines
+    if more_tris:
+        all_tris = np.concatenate([tris] + more_tris).astype(np.float32)
+        all_lines = np.concatenate([lines] + more_lines).astype(np.float32)
+    _side_geo.clear()
+    _side_geo.update(
+        key=key, tris=tris, all_tris=all_tris,
+        wall_tris=(np.concatenate(wall_tris).astype(np.float32)
+                   if wall_tris else empty),
+        lines=lines, all_lines=all_lines, dropped=0)
+    return _side_geo
+
+
+def _side_read(dg, wall, names, left_out, Fi, cos_feature, tris, wall_tris,
+               lines, more_tris, more_lines):
+    import numpy as np
     for inst in dg.object_instances:
         owner = inst.parent if inst.is_instance else inst.object
         if owner is None or owner.original.name not in names:
@@ -3621,7 +3705,9 @@ def _side_geometry(scene, wall, items):
             mesh.loop_triangles.foreach_get('vertices', tv)
         finally:
             ob.to_mesh_clear()
-        (wall_tris if is_wall else tris).append(co[tv])
+        more = owner.original.name in left_out
+        (wall_tris if is_wall else more_tris if more
+         else tris).append(co[tv])
         # An edge is drawn where the surface folds past the feature
         # angle or stops (an open border, a seam).
         loop_poly = np.repeat(np.arange(npoly), total)
@@ -3633,44 +3719,17 @@ def _side_geometry(scene, wall, items):
         f0 = loop_poly[order[first_at[two]]]
         f1 = loop_poly[order[first_at[two] + 1]]
         feature[two] = (nrm[f0] * nrm[f1]).sum(axis=1) < cos_feature
-        lines.append(co[ev[feature]].reshape(-1, 3))
-    empty = np.zeros((0, 3), np.float32)
-    lines = np.concatenate(lines) if lines else empty
-    # The mitre where a return meets the wall is not a line of the room.
-    try:
-        seams = _return_seams(_return_boxes(wall, items)[0])
-    except Exception:
-        seams = []
-    if seams and len(lines):
-        a, b = lines[0::2], lines[1::2]
-        keep = np.ones(len(a), dtype=bool)
-        level = np.abs(a[:, 2] - b[:, 2]) < 0.002
-        for (px0, py0), (px1, py1) in seams:
-            dx, dy = px1 - px0, py1 - py0
-            ln = math.hypot(dx, dy)
-            if ln < 1e-6:
-                continue
-            on = np.ones(len(a), dtype=bool)
-            for q in (a, b):
-                t = ((q[:, 0] - px0) * dx + (q[:, 1] - py0) * dy) / ln
-                off = np.abs((q[:, 0] - px0) * dy
-                             - (q[:, 1] - py0) * dx) / ln
-                on &= (off < 0.002) & (t > -0.002) & (t < ln + 0.002)
-            keep &= ~(on & level)
-        lines = np.stack((a[keep], b[keep]), axis=1).reshape(-1, 3)
-    _side_geo.clear()
-    _side_geo.update(
-        key=key,
-        tris=(np.concatenate(tris).astype(np.float32) if tris else empty),
-        wall_tris=(np.concatenate(wall_tris).astype(np.float32)
-                   if wall_tris else empty),
-        lines=lines.astype(np.float32), dropped=0)
-    return _side_geo
+        (more_lines if more else lines).append(
+            co[ev[feature]].reshape(-1, 3))
 
 
-def _side_draw(off, geo, F, C, span, size, line_px, wall_color=None):
+def _side_draw(off, geo, F, C, span, size, line_px, wall_color=None,
+               whole=False):
     """Draw the geometry into the offscreen from the camera C: paper
-    faces and inked lines, depth tested."""
+    faces and inked lines, depth tested. `whole` adds what the plan
+    leaves out (mouldings switched off)."""
+    geo_tris = geo['all_tris'] if whole else geo['tris']
+    geo_lines = geo['all_lines'] if whole else geo['lines']
     l, r, b, t = span
     near, far = SIDE_DIST - SIDE_DEPTH, SIDE_DIST + SIDE_DEPTH
     proj = _ortho(l, r, b, t, near, far)
@@ -3689,7 +3748,7 @@ def _side_draw(off, geo, F, C, span, size, line_px, wall_color=None):
                 gpu.matrix.load_projection_matrix(proj)
                 for tris, color in ((geo['wall_tris'],
                                      wall_color or (*PAPER, 1.0)),
-                                    (geo['tris'], (*PAPER, 1.0))):
+                                    (geo_tris, (*PAPER, 1.0))):
                     if not len(tris):
                         continue
                     shader = gpu.shader.from_builtin('UNIFORM_COLOR')
@@ -3697,7 +3756,7 @@ def _side_draw(off, geo, F, C, span, size, line_px, wall_color=None):
                     shader.uniform_float("color", color)
                     batch_for_shader(shader, 'TRIS',
                                      {"pos": tris}).draw(shader)
-                if len(geo['lines']):
+                if len(geo_lines):
                     gpu.matrix.load_projection_matrix(lift @ proj)
                     shader = gpu.shader.from_builtin(
                         'POLYLINE_UNIFORM_COLOR')
@@ -3706,7 +3765,7 @@ def _side_draw(off, geo, F, C, span, size, line_px, wall_color=None):
                     shader.uniform_float("lineWidth", line_px)
                     shader.uniform_float("color", (*PRINT_EDGE, 1.0))
                     batch_for_shader(shader, 'LINES',
-                                     {"pos": geo['lines']}).draw(shader)
+                                     {"pos": geo_lines}).draw(shader)
         finally:
             gpu.state.depth_test_set('NONE')
             gpu.state.depth_mask_set(False)
@@ -3746,7 +3805,8 @@ def _side_render():
             # The plan cuts the walls: they read light grey.
             _side_draw(off, geo, F, req['C'], req['span'], size,
                        max(1.0, SIDE_LINE_PX * _s() * ss),
-                       WALL_GRAY if kind == 'PLAN' else None)
+                       WALL_GRAY if kind == 'PLAN' else None,
+                       whole=(kind == 'ISO'))
             _side_cache[kind] = {'off': off, 'key': req['key'],
                                  'size': req['size'], 'tex': size,
                                  'at': time.monotonic()}
@@ -4673,16 +4733,19 @@ PRINT_EDGE = (0.0, 0.0, 0.0)
 PRINT_EDGE_WIDTH = 0.45
 
 
-def _print_owners(items, scene):
+def _print_owners(items, scene, molding=False):
     """Names of the objects whose geometry the drawing shows: the
     products and openings on the wall, and everything under them, less
-    the mouldings when those are switched off."""
+    the mouldings when those are switched off (`molding` keeps them:
+    the iso)."""
     names = set()
     for it in items:
         if it.preview:
             continue
         for obj in [it.obj] + list(it.obj.children_recursive):
             names.add(obj.name)
+    if molding:
+        return names
     return names - _molding_left_out(scene)
 
 
@@ -4694,21 +4757,28 @@ def _print_skip(obj):
             or obj.display_type in ('WIRE', 'BOUNDS'))
 
 
-def _print_faces(context, items, Fi, view, only=None, deep=False):
+def _print_faces(context, items, Fi, view, only=None, deep=False,
+                 molding=False):
     """[(depth, polygon, edges)] in page points for every face of the
     wall's products that faces the viewer; depth grows into the wall.
     Parts hidden in the viewport (a cutaway, a part toggled off on
     screen) still print, as they do on the sheets: they are shown just
     long enough to be read. `only` narrows it to those object names."""
-    owners = _print_owners(items, context.scene) if only is None \
-        else set(only) - _molding_left_out(context.scene)
+    if only is None:
+        owners = _print_owners(items, context.scene, molding)
+    else:
+        owners = set(only)
+        if not molding:
+            owners -= _molding_left_out(context.scene)
     if not owners:
         return []
     shown = []
     layer = context.view_layer
     for name in owners:
         obj = bpy.data.objects.get(name)
-        if obj is None or obj.type != 'MESH' or _print_skip(obj):
+        # A moulding run is a curve; one this view hid is read too.
+        if obj is None or _print_skip(obj) or not (
+                obj.type == 'MESH' or obj.get(MOLDING_HIDE_TAG)):
             continue
         try:
             hidden = obj.hide_get(view_layer=layer)
@@ -5159,7 +5229,8 @@ def _print_side_views(page, context, wall, extra):
     rects = extra.get('side') or {}
     if not rects:
         return
-    names = _print_owners(extra['items'], context.scene)
+    plan_names = _print_owners(extra['items'], context.scene)
+    iso_names = _print_owners(extra['items'], context.scene, molding=True)
     F = _frame(wall)[0]
     returns, _from_left = _return_boxes(wall, extra['items'])
     sx = extra['sx']
@@ -5168,10 +5239,13 @@ def _print_side_views(page, context, wall, extra):
         Fi = _CAMERA_TO_PRINT @ C.inverted_safe()
         view = _SidePrintView(k, x - l * k, y - b * k)
         M = Fi @ F
-        if kind == 'ISO':
+        iso = kind == 'ISO'
+        names = iso_names if iso else plan_names
+        if iso:
             try:
                 faces = _print_faces(context, extra['items'], Fi, view,
-                                     only=names | {wall.name}, deep=True)
+                                     only=names | {wall.name}, deep=True,
+                                     molding=True)
                 faces = _drop_seam_edges(faces, M, view, returns)
                 for rb in returns:
                     faces += _box_faces(M, rb, view, deep=True)
@@ -5194,7 +5268,7 @@ def _print_side_views(page, context, wall, extra):
         for rb in returns:
             back += _box_faces(M, rb, view)
         front = _print_faces(context, extra['items'], Fi, view,
-                             only=names) if names else []
+                             only=names, molding=iso) if names else []
         for faces in (back, front):
             # The plan cuts the walls: they read light grey.
             page.fill_color(WALL_GRAY if faces is back and kind == 'PLAN'
