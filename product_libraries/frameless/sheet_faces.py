@@ -21,6 +21,11 @@ TWO_SIDED_MATERIALS = frozenset(name.lower() for name in (
 # the outside of a top, bottom or back until someone says they will.
 _MARKED_ONLY_ROLES = ('TOP', 'BOTTOM', 'BACK')
 
+# The frame of a base assembly is structure under the cabinets, never a
+# show face: it stays in the interior material whatever the cabinet wears.
+_NEVER_FINISHED_ROLES = ('BASE_FRONT', 'BASE_BACK', 'BASE_LEFT_END',
+                         'BASE_RIGHT_END', 'BASE_SUPPORT')
+
 
 def is_two_sided(material_name):
     return (material_name or '').strip().lower() in TWO_SIDED_MATERIALS
@@ -28,6 +33,8 @@ def is_two_sided(material_name):
 
 def finished_faces(part, two_sided=False):
     """(top finished, bottom finished) for one carcass part."""
+    if part.get(PART_ROLE_KEY) in _NEVER_FINISHED_ROLES:
+        return False, False
     top = bool(part.get('Finish Top', False))
     if 'Finish Bottom' in part:
         bottom = bool(part['Finish Bottom'])

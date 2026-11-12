@@ -864,6 +864,7 @@ def _cabinets_wearing_style(style):
     for scene in bpy.data.scenes:
         for obj in scene.objects:
             if not (obj.get('IS_FRAMELESS_CABINET_CAGE')
+                    or obj.get('IS_FRAMELESS_PRODUCT_CAGE')
                     or obj.get('IS_FRAMELESS_MISC_PART')):
                 continue
             if obj.get('CABINET_STYLE_INDEX', 0) == index:
