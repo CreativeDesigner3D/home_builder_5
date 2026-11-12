@@ -1287,6 +1287,109 @@ class hb_frameless_OT_adjust_multiple_cabinet_widths(bpy.types.Operator):
                 row.prop(cabinet, 'cabinet_width', text="Width:")
 
 
+class hb_frameless_OT_equalize_cabinet_widths(bpy.types.Operator):
+    """Give the selected cabinets one width, in the room they take now"""
+    bl_idname = "hb_frameless.equalize_cabinet_widths"
+    bl_label = "Equal Widths"
+    bl_description = (
+        "Set the selected cabinets to the same width. Together they keep "
+        "the width they have now, so the run's ends stay where they are; "
+        "cabinets standing between them slide along")
+    bl_options = {'REGISTER', 'UNDO'}
+
+    # How far off the run's line a cabinet that was not picked may sit
+    # and still be carried along with it.
+    LINE_TOLERANCE = units.inch(1.0)
+
+    @staticmethod
+    def _cabinets(context):
+        found = []
+        for obj in context.selected_objects:
+            root = hb_utils.get_cabinet_bp(obj)
+            if (root is None or root in found
+                    or not root.get('IS_FRAMELESS_CABINET_CAGE')
+                    or 'CORNER_TYPE' in root
+                    or not hb_types.GeoNodeCage(root).has_modifier()):
+                continue
+            found.append(root)
+        return found
+
+    @staticmethod
+    def _row_key(obj):
+        """Cabinets that can share a run: one parent, one facing, and
+        uppers apart from what stands on the floor."""
+        turn = round(math.degrees(obj.rotation_euler.z)) % 360
+        return (obj.parent, turn,
+                solver_frameless.carcass_kind(obj) == 'UPPER')
+
+    @classmethod
+    def poll(cls, context):
+        return len(cls._cabinets(context)) > 1
+
+    def execute(self, context):
+        rows = {}
+        for obj in self._cabinets(context):
+            rows.setdefault(self._row_key(obj), []).append(obj)
+
+        changed = 0
+        widths = []
+        for key, picked in rows.items():
+            if len(picked) < 2:
+                continue
+            turn = picked[0].rotation_euler.z
+            along = Vector((math.cos(turn), math.sin(turn), 0.0))
+            across = Vector((-along.y, along.x, 0.0))
+
+            def place(obj):
+                return Vector((obj.location.x, obj.location.y, 0.0)).dot(along)
+
+            picked.sort(key=place)
+            first, last = place(picked[0]), place(picked[-1])
+            line = Vector((picked[0].location.x, picked[0].location.y,
+                           0.0)).dot(across)
+            width = sum(hb_types.GeoNodeCage(o).get_input('Dim X')
+                        for o in picked) / len(picked)
+
+            # Everything on the run between the first and last pick, in
+            # order: each one moves by what the picks before it gained.
+            carried = []
+            for obj in (key[0].children if key[0] is not None
+                        else context.scene.objects):
+                if (obj in picked or obj.parent is not key[0]
+                        or not obj.get('IS_FRAMELESS_CABINET_CAGE')
+                        or self._row_key(obj) != key
+                        or not first < place(obj) < last):
+                    continue
+                off_line = Vector((obj.location.x, obj.location.y,
+                                   0.0)).dot(across) - line
+                if abs(off_line) <= self.LINE_TOLERANCE:
+                    carried.append(obj)
+
+            shift = 0.0
+            for obj in sorted(picked + carried, key=place):
+                if shift:
+                    obj.location.x += along.x * shift
+                    obj.location.y += along.y * shift
+                if obj in carried:
+                    continue
+                cage = hb_types.GeoNodeCage(obj)
+                shift += width - cage.get_input('Dim X')
+                cage.set_input('Dim X', width)
+                hb_utils.run_calc_fix(context, obj)
+                changed += 1
+            widths.append(width)
+
+        if not changed:
+            self.report({'WARNING'},
+                        "Select two or more cabinets in one run")
+            return {'CANCELLED'}
+        self.report({'INFO'}, "%d cabinets set to %s" % (
+            changed, ", ".join(
+                units.unit_to_string(context.scene.unit_settings, w)
+                for w in widths)))
+        return {'FINISHED'}
+
+
 class hb_frameless_OT_finish_interior(bpy.types.Operator):
     bl_idname = "hb_frameless.finish_interior"
     bl_label = "Finish Interior"
@@ -1358,6 +1461,7 @@ class hb_frameless_OT_finish_interior(bpy.types.Operator):
 
 classes = (
     hb_frameless_OT_adjust_multiple_cabinet_widths,
+    hb_frameless_OT_equalize_cabinet_widths,
     hb_frameless_OT_cabinet_prompts,
     hb_frameless_OT_drop_cabinet_to_countertop,
     hb_frameless_OT_add_applied_end,
