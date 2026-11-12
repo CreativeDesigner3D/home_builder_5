@@ -192,6 +192,7 @@ _card_pick = None       # the detail card clicked on (its id)
 _card_drag = None       # a detail card being dragged to a new place
 _adding = None          # a height string being clicked in
 _noting = None          # a note being placed or typed
+_picture = None         # the picture page showing in place of a wall
 _note_drag = None       # a note (or its leader's tip) being dragged
 _gen = 0
 _print_scale = None    # set while printing: px -> pt
@@ -261,6 +262,359 @@ def _set_heights(wall, data):
     elif HEIGHTS_PROP in wall:
         del wall[HEIGHTS_PROP]
     _bump_gen()
+
+
+# ---- The drawings: every page the project prints ---------------------------
+#
+# Show Drawings lists the pages as tabs along the top of the view, in
+# print order. A page is {'key': str, 'title': str, 'kind': 'WALL' |
+# 'PICTURE', 'room': scene name}: a WALL page also names its 'wall' and
+# is shown live, dimensioned; a PICTURE page carries 'picture', a
+# callable(context) returning the path of an image of the page, shown
+# as it is (a page some other add-on draws). A page that can be shown
+# either way carries 'swap' (a callable(context) that flips it),
+# 'swap_label' for the bar's button and 'slot', the id both forms share.
+#
+# With no page source the pages are every wall, of every room, that has
+# something on it. An add-on that keeps a sheet set registers a source
+# and returns its own list.
+#
+# A room is drawn Full (its walls each on their own page; the plan and
+# the iso are pages of their own, where a source supplies them) or
+# Compact (each wall with its plan over it and its iso beside it).
+
+MODE_PROP = 'HB_DRAWINGS_MODE'
+MODES = ('FULL', 'COMPACT')
+MODE_LABELS = {'FULL': "Full", 'COMPACT': "Compact"}
+MODE_OPTIONS = ('PLAN', 'ISO')
+PICTURE_IMAGE = "HB Drawings Page"
+_page_sources = []
+_mode_default = [None]
+_page_cache = {}
+
+
+def register_page_source(fn):
+    if fn not in _page_sources:
+        _page_sources.append(fn)
+    _page_cache.clear()
+
+
+def unregister_page_source(fn):
+    if fn in _page_sources:
+        _page_sources.remove(fn)
+    _page_cache.clear()
+
+
+def set_mode_default(fn):
+    """fn(scene) -> 'FULL' | 'COMPACT' | None: how a room is drawn until
+    the user chooses. None clears it."""
+    _mode_default[0] = fn
+    _page_cache.clear()
+
+
+def room_mode(scene):
+    value = scene.get(MODE_PROP)
+    if value in MODES:
+        return value
+    fn = _mode_default[0]
+    if fn is not None:
+        try:
+            got = fn(scene)
+            if got in MODES:
+                return got
+        except Exception as exc:
+            print(f"Drawings mode: {exc}")
+    return 'FULL'
+
+
+def set_room_mode(scene, mode):
+    """Draw a room Full or Compact. The plan and iso follow the mode
+    again (a wall's own switches for them are dropped)."""
+    scene[MODE_PROP] = mode
+    group = scene.get(SHOW_PROP)
+    if group is not None:
+        for key in MODE_OPTIONS:
+            if key in group:
+                del group[key]
+    _page_cache.clear()
+    _bump_gen()
+
+
+def wall_has_products(wall):
+    """Something stands on the wall. Read from what hangs under it, so
+    it holds for a room that is not on screen."""
+    for child in wall.children:
+        if _is_product(child) or _is_opening(child):
+            return True
+        if child.get('IS_CAGE_GROUP') and any(_is_product(c)
+                                              for c in child.children):
+            return True
+    return False
+
+
+def _room_scenes():
+    rooms = [sc for sc in bpy.data.scenes
+             if hb_utils.is_room_scene(sc)
+             and any(o.get('IS_WALL_BP') for o in sc.objects)]
+    rooms.sort(key=lambda sc: (getattr(getattr(sc, 'home_builder', None),
+                                       'sort_order', 0), sc.name))
+    return rooms
+
+
+def wall_page(scene, wall, title=None):
+    walls = room_walls(scene)
+    name = (f"Wall {walls.index(wall) + 1}" if wall in walls else wall.name)
+    return {'key': f"WALL:{scene.name}:{wall.name}", 'kind': 'WALL',
+            'room': scene.name, 'wall': wall.name,
+            'title': title or f"{scene.name} - {name}"}
+
+
+def _default_pages():
+    out = []
+    for scene in _room_scenes():
+        for wall in room_walls(scene):
+            if wall_has_products(wall):
+                out.append(wall_page(scene, wall))
+    return out
+
+
+def pages(context=None):
+    """The project's pages, in print order."""
+    import time
+    context = context or bpy.context
+    key = (_gen, len(bpy.data.scenes), len(_page_sources),
+           int(time.monotonic() / 2.0))
+    if _page_cache.get('key') == key:
+        return _page_cache['pages']
+    found = None
+    for fn in list(_page_sources):
+        try:
+            found = fn(context)
+        except Exception as exc:
+            print(f"Drawings pages: {exc}")
+            found = None
+        if found is not None:
+            break
+    if found is None:
+        found = _default_pages()
+    found = [p for p in found if p.get('key') and p.get('kind') in (
+        'WALL', 'PICTURE')]
+    _page_cache.update(key=key, pages=found)
+    return found
+
+
+def current_page_key(context=None):
+    if _picture is not None:
+        return _picture['key']
+    wall = active_wall(context)
+    if wall is None:
+        return None
+    return f"WALL:{(context or bpy.context).scene.name}:{wall.name}"
+
+
+def current_page(context=None):
+    key = current_page_key(context)
+    for page in pages(context):
+        if page['key'] == key:
+            return page
+    return None
+
+
+def swap_page(context):
+    """Flip the page on screen to its other form (live wall / picture)."""
+    page = current_page(context)
+    if page is None or page.get('swap') is None:
+        return False
+    slot = page.get('slot')
+    page['swap'](context)
+    _page_cache.clear()
+    other = next((p for p in pages(context)
+                  if slot is not None and p.get('slot') == slot), None)
+    return other is not None and show_page(context, other)
+
+
+def _page_title(context):
+    key = current_page_key(context)
+    for page in pages(context):
+        if page['key'] == key:
+            return page.get('title') or ""
+    if _picture is not None:
+        return _picture.get('title') or ""
+    wall = active_wall(context)
+    return wall_page(context.scene, wall)['title'] if wall else ""
+
+
+def _picture_clear():
+    global _picture
+    _picture = None
+    img = bpy.data.images.get(PICTURE_IMAGE)
+    if img is not None:
+        try:
+            bpy.data.images.remove(img)
+        except Exception:
+            pass
+
+
+def show_page(context, page):
+    """Bring a page up in the view: a wall of this room or another, or
+    a picture page. False when it could not be shown."""
+    global _picture
+    if page.get('kind') == 'PICTURE':
+        if _state is None:
+            return False
+        fn = page.get('picture')
+        try:
+            context.window.cursor_set('WAIT')
+        except Exception:
+            pass
+        try:
+            path = fn(context) if fn is not None else None
+        except Exception as exc:
+            print(f"Drawings page '{page.get('title')}': {exc}")
+            path = None
+        finally:
+            try:
+                context.window.cursor_set('DEFAULT')
+            except Exception:
+                pass
+        if not path:
+            return False
+        _picture_clear()
+        try:
+            img = bpy.data.images.load(path, check_existing=False)
+        except Exception as exc:
+            print(f"Drawings page '{page.get('title')}': {exc}")
+            return False
+        img.name = PICTURE_IMAGE
+        _picture = {'key': page['key'], 'title': page.get('title') or "",
+                    'image': img.name}
+        if context.area is not None:
+            context.area.tag_redraw()
+        return True
+    room = bpy.data.scenes.get(page.get('room') or "")
+    wall = bpy.data.objects.get(page.get('wall') or "")
+    if room is None or wall is None or _frame(wall) is None:
+        return False
+    _picture_clear()
+    keep = _state['view'] if _state is not None else None
+    if context.scene != room:
+        # Another room: this one goes back the way it was first.
+        if _state is not None:
+            leave(context)
+        try:
+            if hb_utils.is_room_scene(context.scene):
+                hb_utils.save_view_state(context.scene)
+        except Exception:
+            pass
+        context.window.scene = room
+        try:
+            if hb_utils.is_room_scene(room):
+                hb_utils.restore_view_state(room)
+            context.view_layer.update()
+        except Exception:
+            pass
+        keep = None
+    return enter(context, wall, keep_view=keep)
+
+
+TAB_CHARS = 26              # a tab's title is cut to this
+TAB_MIN_CHARS = 6
+
+
+def _tabs_layout(context, area):
+    """[(page, rect, label)] of the page tabs along the top."""
+    if _state is None:
+        return []
+    listed = pages(context)
+    if len(listed) < 2:
+        return []
+    s = _s()
+    blf.size(0, 11 * s)
+    h = 24 * s
+    gap = 2 * s
+    xmin, xmax, _ymin, ymax = get_visible_window_bounds(area)
+    room = max(60.0, xmax - xmin - 24 * s)
+
+    def cut(text, n):
+        return text if len(text) <= n else text[:max(1, n - 1)] + "\u2026"
+
+    chars = TAB_CHARS
+    while True:
+        labels = [cut(p.get('title') or "", chars) for p in listed]
+        widths = [blf.dimensions(0, lb)[0] + 16 * s for lb in labels]
+        total = sum(widths) + gap * (len(widths) - 1)
+        if total <= room or chars <= TAB_MIN_CHARS:
+            break
+        chars -= 2
+    x = (xmin + xmax) / 2.0 - min(total, room) / 2.0
+    y = ymax - 14 * s - h
+    out = []
+    for page, label, w in zip(listed, labels, widths):
+        out.append((page, (x, y, w, h), label))
+        x += w + gap
+    return out
+
+
+def _draw_tabs(context, area):
+    tabs = _tabs_layout(context, area)
+    if not tabs:
+        return
+    s = _s()
+    shader = gpu.shader.from_builtin('UNIFORM_COLOR')
+    shader.bind()
+    current = current_page_key(context)
+    for page, (x, y, w, h), label in tabs:
+        on = page['key'] == current
+        hovered = _hover == ('TAB', page['key'])
+        bg = (Theme.ACCENT_BG if on else Theme.BTN_HOVER_BG if hovered
+              else Theme.BTN_BG)
+        draw_round_rect(shader, x, y, w, h, 4 * s, bg)
+        blf.size(0, 11 * s)
+        tw = blf.dimensions(0, label)[0]
+        blf.color(0, *(Theme.TEXT_PRIMARY if on or hovered
+                       else Theme.TEXT_NORMAL))
+        blf.position(0, x + (w - tw) / 2.0,
+                     y + (h - blf.dimensions(0, "Ag")[1]) / 2.0 + 1, 0)
+        draw_glyphs(0, label)
+        shader.bind()
+
+
+def _draw_picture(context, area, region):
+    """A picture page: the page on white, with the tabs and the bar."""
+    s = _s()
+    gpu.state.blend_set('ALPHA')
+    shader = gpu.shader.from_builtin('UNIFORM_COLOR')
+    shader.bind()
+    shader.uniform_float("color", (*PAPER, 1.0))
+    batch_for_shader(shader, 'TRI_FAN', {"pos": (
+        (0, 0), (region.width, 0), (region.width, region.height),
+        (0, region.height))}).draw(shader)
+    img = bpy.data.images.get(_picture['image']) if _picture else None
+    if img is not None and img.size[0] > 0 and img.size[1] > 0:
+        xmin, xmax, ymin, ymax = get_visible_window_bounds(area)
+        pad = 58 * s
+        aw = max(40.0, xmax - xmin - 24 * s)
+        ah = max(40.0, ymax - ymin - 2 * pad)
+        k = min(aw / img.size[0], ah / img.size[1])
+        w, h = img.size[0] * k, img.size[1] * k
+        x = (xmin + xmax) / 2.0 - w / 2.0
+        y = (ymin + ymax) / 2.0 - h / 2.0
+        try:
+            tex = gpu.texture.from_image(img)
+            ish = gpu.shader.from_builtin('IMAGE')
+            ish.bind()
+            ish.uniform_sampler("image", tex)
+            batch_for_shader(ish, 'TRI_FAN', {
+                "pos": ((x, y), (x + w, y), (x + w, y + h), (x, y + h)),
+                "texCoord": ((0, 0), (1, 0), (1, 1), (0, 1))}).draw(ish)
+        except Exception as exc:
+            print(f"Drawings page picture: {exc}")
+        _stroke(region, [(x, y), (x + w, y), (x + w, y), (x + w, y + h),
+                         (x + w, y + h), (x, y + h), (x, y + h), (x, y)],
+                1.0 * s, ANNOTATION_LINE)
+    _draw_bar(context, area)
+    _draw_tabs(context, area)
+    gpu.state.blend_set('NONE')
 
 
 # ---- Notes typed on the wall ------------------------------------------------
@@ -1003,6 +1357,7 @@ def leave(context=None, restore_view=True):
         return
     st, _state, _edit = _state, None, None
     _noting = _note_drag = None
+    _picture_clear()
     _side_free()
     scene = bpy.data.scenes.get(st['scene'])
     if scene is not None:
@@ -1019,14 +1374,17 @@ def leave(context=None, restore_view=True):
 
 
 def step(context, direction):
-    wall = active_wall(context)
-    if wall is None:
+    """The next (or last) page of the drawings."""
+    if _state is None:
         return False
-    walls = room_walls(context.scene)
-    if len(walls) < 2 or wall not in walls:
+    listed = pages(context)
+    if len(listed) < 2:
         return False
-    i = (walls.index(wall) + direction) % len(walls)
-    return enter(context, walls[i], keep_view=_state['view'])
+    current = current_page_key(context)
+    i = next((n for n, p in enumerate(listed) if p['key'] == current), None)
+    if i is None:
+        i = -1 if direction > 0 else 0
+    return show_page(context, listed[(i + direction) % len(listed)])
 
 
 # ---- Placement lock ------------------------------------------------------------
@@ -2085,6 +2443,10 @@ def set_show_defaults(values):
 def show_option(scene, key):
     default = next((d for k, _l, d in SHOW_OPTIONS if k == key), False)
     default = _show_defaults.get(key, default)
+    if key in MODE_OPTIONS:
+        # The plan and iso ride with the wall in a Compact room and
+        # have pages of their own in a Full one.
+        default = room_mode(scene) == 'COMPACT'
     try:
         group = scene.get(SHOW_PROP)
         if group is not None and key in group:
@@ -3522,65 +3884,53 @@ def _text(d, color, s, halo=None, plain=False):
 
 
 def _bar_layout(context, area):
-    """[(part, rect, label)] of the elevation bar at the bottom centre."""
+    """[(part, rect, label)] of the drawings bar at the bottom centre.
+    A picture page keeps the parts that are not about a wall."""
     wall = active_wall(context)
     if wall is None:
         return []
     s = _s()
-    walls = room_walls(context.scene)
-    idx = walls.index(wall) + 1 if wall in walls else 0
-    title = f"Elevation  ·  Wall {idx} of {len(walls)}" if idx \
-        else f"Elevation  ·  {wall.name}"
+    on_wall = _picture is None
+    title = _page_title(context) or "Drawings"
     blf.size(0, 12 * s)
     h = 28 * s
-    arrow_w = 28 * s
-    title_w = blf.dimensions(0, title)[0] + 28 * s
-    exit_label = "Exit  Esc"
-    exit_w = blf.dimensions(0, exit_label)[0] + 24 * s
-    print_label = "Print PDF"
-    print_w = blf.dimensions(0, print_label)[0] + 24 * s
     gap = 3 * s
-    many = len(walls) > 1
-    chips = [('SHOW:' + key, label, h)
-             for key, label, _default in SHOW_OPTIONS
-             if _option_available(key)]
-    add_label = "+ Height"
-    add_w = blf.dimensions(0, add_label)[0] + 24 * s
-    note_label = "+ Note"
-    note_w = blf.dimensions(0, note_label)[0] + 24 * s
-    store = _heights(wall)
-    changed = len(store['moved']) + len(store['hidden'])
-    reset_label = "Reset Heights"
-    reset_w = (blf.dimensions(0, reset_label)[0] + 24 * s) if changed else 0
-    total = (title_w + exit_w + gap + (2 * (arrow_w + gap) if many else 0)
-             + sum(w + gap for _p, _l, w in chips) + print_w + gap
-             + add_w + gap + note_w + gap
-             + ((reset_w + gap) if changed else 0))
+
+    def wide(label):
+        return blf.dimensions(0, label)[0] + 24 * s
+
+    many = len(pages(context)) > 1
+    row = []
+    if many:
+        row.append(('PREV', None, 28 * s))
+    row.append(('TITLE', title, blf.dimensions(0, title)[0] + 28 * s))
+    if many:
+        row.append(('NEXT', None, 28 * s))
+    if on_wall:
+        row += [('SHOW:' + key, label, h)
+                for key, label, _default in SHOW_OPTIONS
+                if _option_available(key)]
+        row.append(('ADD_V', "+ Height", wide("+ Height")))
+        row.append(('ADD_N', "+ Note", wide("+ Note")))
+        store = _heights(wall)
+        if store['moved'] or store['hidden']:
+            row.append(('RESET_V', "Reset Heights", wide("Reset Heights")))
+        mode = MODE_LABELS[room_mode(context.scene)]
+        row.append(('MODE', mode, wide(mode)))
+    shown = current_page(context)
+    if shown is not None and shown.get('swap') is not None:
+        label = shown.get('swap_label') or "Other View"
+        row.append(('SWAP', label, wide(label)))
+    row.append(('PRINT', "Print PDF", wide("Print PDF")))
+    row.append(('EXIT', "Exit  Esc", wide("Exit  Esc")))
+    total = sum(w for _p, _l, w in row) + gap * (len(row) - 1)
     xmin, xmax, ymin, _ymax = get_visible_window_bounds(area)
     x = (xmin + xmax) / 2.0 - total / 2.0
     y = ymin + 18 * s
     parts = []
-    if many:
-        parts.append(('PREV', (x, y, arrow_w, h), None))
-        x += arrow_w + gap
-    parts.append(('TITLE', (x, y, title_w, h), title))
-    x += title_w + gap
-    if many:
-        parts.append(('NEXT', (x, y, arrow_w, h), None))
-        x += arrow_w + gap
-    for part, label, w in chips:
+    for part, label, w in row:
         parts.append((part, (x, y, w, h), label))
         x += w + gap
-    parts.append(('ADD_V', (x, y, add_w, h), add_label))
-    x += add_w + gap
-    parts.append(('ADD_N', (x, y, note_w, h), note_label))
-    x += note_w + gap
-    if changed:
-        parts.append(('RESET_V', (x, y, reset_w, h), reset_label))
-        x += reset_w + gap
-    parts.append(('PRINT', (x, y, print_w, h), print_label))
-    x += print_w + gap
-    parts.append(('EXIT', (x, y, exit_w, h), exit_label))
     return parts
 
 
@@ -3635,6 +3985,10 @@ def _draw_bar(context, area):
                                 (cx + d * a * 0.6, cy), (cx - d * a * 0.6, cy - a)],
                        Theme.GLYPH_HOVER if hovered else Theme.GLYPH)
         else:
+            if part == 'MODE' and hovered:
+                _draw_chip_hint(shader, rect, "Full: each wall on its own "
+                                "page.  Compact: plan and iso with the wall")
+                shader.bind()
             blf.size(0, 12 * s)
             tw, th = blf.dimensions(0, label)
             blf.color(0, *(Theme.TEXT_PRIMARY if part == 'TITLE' or hovered
@@ -4777,6 +5131,15 @@ def _draw():
         bpy.app.timers.register(lambda: leave(restore_view=False),
                                 first_interval=0.0)
         return
+    if _picture is not None:
+        def page_paint():
+            _draw_picture(context, area, region)
+        try:
+            from . import viewport_hud
+            viewport_hud.paint_clear_of_panel(context, area, page_paint)
+        except Exception:
+            page_paint()
+        return
     if _state.get('fit', 0) > 0 and not _state.get('fit_queued'):
         _state['fit_queued'] = True
 
@@ -4874,6 +5237,7 @@ def _draw():
         except Exception as exc:
             print(f"Elevation legend: {exc}")
         _draw_bar(context, area)
+        _draw_tabs(context, area)
         gpu.state.blend_set('NONE')
 
     ink = None
@@ -6065,6 +6429,11 @@ def _hit(context, mx, my):
     for part, rect, _label in _bar_layout(context, context.area):
         if part != 'TITLE' and point_in_rect(mx, my, rect):
             return ('BAR', part)
+    for page, rect, _label in _tabs_layout(context, context.area):
+        if point_in_rect(mx, my, rect):
+            return ('TAB', page)
+    if _picture is not None:
+        return None                     # a picture: nothing under it
     dims, extra = _layout(context, context.region, context.region_data)
     p = 4 * _s()
     for d in dims:
@@ -6345,11 +6714,11 @@ def _room_scene(context):
 
 
 class home_builder_OT_show_elevation(bpy.types.Operator):
-    """Look at a wall face-on, dimensioned like an elevation drawing.
-    Everything else is hidden and products you place land on this wall
-    until you exit (Esc)"""
+    """Show the project's drawings: a tab for every page that prints,
+    starting on a wall seen face-on and dimensioned. Products you place
+    land on the wall shown, until you exit (Esc)"""
     bl_idname = "home_builder.show_elevation"
-    bl_label = "Show Elevation"
+    bl_label = "Show Drawings"
     bl_options = {'REGISTER'}
 
     wall_name: bpy.props.StringProperty(options={'HIDDEN', 'SKIP_SAVE'})  # type: ignore
@@ -6376,9 +6745,9 @@ class home_builder_OT_show_elevation(bpy.types.Operator):
 
 
 class home_builder_OT_exit_elevation(bpy.types.Operator):
-    """Leave the elevation and go back to the room view"""
+    """Leave the drawings and go back to the room view"""
     bl_idname = "home_builder.exit_elevation"
-    bl_label = "Exit Elevation"
+    bl_label = "Exit Drawings"
     bl_options = {'REGISTER'}
 
     @classmethod
@@ -6468,13 +6837,16 @@ class home_builder_OT_elevation_hover(bpy.types.Operator):
         global _hover_chain
         got = _hit(context, *_mouse)
         key = None
-        if got is not None:
+        if got is not None and got[0] == 'TAB':
+            key = ('TAB', got[1]['key'])
+        elif got is not None:
             key = (got[0], got[1]) if got[0] in ('BAR', 'NOTE') else (
                 ('DIM', got[1]['key']) if got[1]['target'] is not None
                 else None)
         chain = None
         if _drag is None and _adding is None and _edit is None \
-                and _noting is None and _note_drag is None:
+                and _noting is None and _note_drag is None \
+                and _picture is None:
             chain = _hit_chain(context, *_mouse, got=got)
         if chain != _hover_chain:
             # A string that can be dragged shows the sideways cursor.
@@ -6518,6 +6890,16 @@ class home_builder_OT_elevation_click(bpy.types.Operator):
                 or _noting is not None or _note_drag is not None:
             return {'PASS_THROUGH'}
         got = _hit(context, mx, my)
+        if got is not None and got[0] == 'TAB':
+            if got[1]['key'] != current_page_key(context) \
+                    or got[1].get('kind') == 'PICTURE':
+                if not show_page(context, got[1]):
+                    self.report({'WARNING'}, "That page could not be shown")
+            if context.area is not None:
+                context.area.tag_redraw()
+            return {'FINISHED'}
+        if _picture is not None and got is None:
+            return {'FINISHED'}         # a picture page takes the click
         if got is None or got[0] == 'NOTE':
             # A typed note: drag it (or its leader's tip) to move it, a
             # plain click retypes it.
@@ -6612,6 +6994,19 @@ class home_builder_OT_elevation_click(bpy.types.Operator):
                 if got[1][5:] in ('PLAN', 'ISO', 'DETAILS') \
                         and _state is not None:
                     _state['fit'] = 3       # make room for it, or close up
+            elif got[1] == 'MODE':
+                scene = context.scene
+                set_room_mode(scene, 'FULL' if room_mode(scene) == 'COMPACT'
+                              else 'COMPACT')
+                if _state is not None:
+                    _state['fit'] = 3
+                try:
+                    bpy.ops.ed.undo_push(message="Drawings Mode")
+                except Exception:
+                    pass
+            elif got[1] == 'SWAP':
+                if not swap_page(context):
+                    self.report({'WARNING'}, "That page could not be shown")
             elif got[1] == 'PRINT':
                 bpy.ops.home_builder.elevation_print()
             else:
@@ -7411,8 +7806,8 @@ def _register_hud():
     try:
         from . import viewport_hud
         viewport_hud.register_mode_glyph_toggle(
-            'hb_elevation', 'hb_elevation_mode', "Show Elevation",
-            "Exit Elevation", glyph=icon_glyph('elevation', _glyph_elevation),
+            'hb_elevation', 'hb_elevation_mode', "Show Drawings",
+            "Exit Drawings", glyph=icon_glyph('elevation', _glyph_elevation),
             ui_visible=_hud_visible, order=40)
     except Exception as exc:
         print("Elevation HUD toggle skipped:", exc)
