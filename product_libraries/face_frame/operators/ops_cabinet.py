@@ -3391,6 +3391,56 @@ class hb_face_frame_OT_add_interior_item(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class hb_face_frame_OT_set_picked_interiors(bpy.types.Operator):
+    """Give every picked opening the same interior in one step: what
+    was inside each is replaced by one item of the chosen kind. An
+    opening whose interior is split into regions is left as it is.
+    """
+    bl_idname = "hb_face_frame.set_picked_interiors"
+    bl_label = "Set Interior of Picked Openings"
+    bl_description = (
+        "Replace the interior of every selected opening with this item"
+    )
+    bl_options = {'UNDO'}
+
+    kind: bpy.props.EnumProperty(
+        name="Kind",
+        items=props_hb_face_frame.Face_Frame_Interior_Item.INTERIOR_KIND_ITEMS,
+        default='ROLLOUT',
+    )  # type: ignore
+
+    def execute(self, context):
+        openings = [o for o in context.selected_objects
+                    if o.get(types_face_frame.TAG_OPENING_CAGE)]
+        roots, done, skipped = [], 0, 0
+        for opening in openings:
+            target_props = _interior_items_target(opening)
+            if target_props is None:
+                skipped += 1
+                continue
+            target_props.interior_items.clear()
+            item = target_props.interior_items.add()
+            item.kind = self.kind
+            if self.kind == 'ROLLOUT':
+                types_face_frame.seed_rollout_boxes(
+                    item, _read_cage_dims(opening)['cage_dim_z'])
+            target_props.interior_items_index = 0
+            done += 1
+            root = types_face_frame.find_cabinet_root(opening)
+            if root is not None and root not in roots:
+                roots.append(root)
+        if not done:
+            self.report({'WARNING'}, "Select the openings to change first")
+            return {'CANCELLED'}
+        for root in roots:
+            types_face_frame.recalculate_face_frame_cabinet(root)
+        if skipped:
+            self.report({'INFO'},
+                        "%d changed; %d with a split interior left as is"
+                        % (done, skipped))
+        return {'FINISHED'}
+
+
 class hb_face_frame_OT_remove_interior_item(bpy.types.Operator):
     """Remove an interior item from the active opening. Targets the
     item at `index` when set explicitly (per-row remove buttons), or
@@ -8148,6 +8198,7 @@ classes = (
     hb_face_frame_OT_split_opening,
     hb_face_frame_OT_mid_stile_prompts,
     hb_face_frame_OT_add_interior_item,
+    hb_face_frame_OT_set_picked_interiors,
     hb_face_frame_OT_remove_interior_item,
     hb_face_frame_OT_apply_shelf_nosing_to_room,
     hb_face_frame_OT_add_rollout_box,

@@ -1449,6 +1449,15 @@ def blocks(context, item):
         out.append(('actions', (
             _act("Edit Interior", 'hb_face_frame.show_interior_page',
                  {'opening_name': opening_obj.name}, 'cab_interior'),)))
+        if several:
+            # The Interior page is one opening's; these change what is
+            # inside every picked opening at once.
+            out.append(('label', f"Set all {n_part} to"))
+            out.append(('actions', (
+                _act("Shelves", 'hb_face_frame.set_picked_interiors',
+                     {'kind': 'ADJUSTABLE_SHELF'}),
+                _act("Roll-outs", 'hb_face_frame.set_picked_interiors',
+                     {'kind': 'ROLLOUT'}))))
         out.extend(opening_group_blocks(context, opening_obj))
         out.extend(opening_overlay_blocks(context, opening_obj))
         _footer(out, 'hb_face_frame.opening_prompts')
