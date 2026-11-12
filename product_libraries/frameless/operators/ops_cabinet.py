@@ -26,6 +26,11 @@ class hb_frameless_OT_cabinet_prompts(bpy.types.Operator):
         name="Height Off Floor",
         description="How high the bottom of the cabinet is hung",
         unit='LENGTH', precision=5)  # type: ignore
+    top_off_floor: bpy.props.FloatProperty(
+        name="Top Off Floor",
+        description="How high the top of the cabinet is hung; the "
+                    "cabinet moves up or down to it",
+        unit='LENGTH', precision=5)  # type: ignore
     toe_kick_height: bpy.props.FloatProperty(name="Toe Kick Height", unit='LENGTH', precision=5) # type: ignore
     toe_kick_setback: bpy.props.FloatProperty(name="Toe Kick Setback", unit='LENGTH', precision=5) # type: ignore
     toe_kick_type: bpy.props.EnumProperty(
@@ -135,6 +140,7 @@ class hb_frameless_OT_cabinet_prompts(bpy.types.Operator):
         self.cabinet_height = self.cabinet.get_input('Dim Z')
         self.cabinet_depth = self.cabinet.get_input('Dim Y')
         self.height_off_floor = cabinet_bp.matrix_world.translation.z
+        self.top_off_floor = self.height_off_floor + self.cabinet_height
 
         # Get toe kick properties if they exist (BASE and TALL cabinets)
         if 'Toe Kick Height' in cabinet_bp:
@@ -179,6 +185,18 @@ class hb_frameless_OT_cabinet_prompts(bpy.types.Operator):
                 obj.pop(solver_frameless.FRONT_LEFT_DEPTH_KEY, None)
                 obj.pop(solver_frameless.FRONT_RIGHT_DEPTH_KEY, None)
                 self.front_left_depth = self.front_right_depth = self.cabinet_depth
+        if self._is_hung():
+            # One field is typed at a time. A new top moves the cabinet;
+            # a new height keeps the top or the bottom, by the room's
+            # setting. The other fields then follow.
+            old_height = self.cabinet.get_input('Dim Z')
+            old_top = obj.matrix_world.translation.z + old_height
+            if abs(self.top_off_floor - old_top) > 1e-6:
+                self.height_off_floor = self.top_off_floor - self.cabinet_height
+            elif (abs(self.cabinet_height - old_height) > 1e-6
+                    and types_frameless.upper_height_keeps_top(obj)):
+                self.height_off_floor -= self.cabinet_height - old_height
+            self.top_off_floor = self.height_off_floor + self.cabinet_height
         self.cabinet.set_input('Dim X', self.cabinet_width)
         self.cabinet.set_input('Dim Z', self.cabinet_height)
         self.cabinet.set_input('Dim Y', self.cabinet_depth)
@@ -270,6 +288,13 @@ class hb_frameless_OT_cabinet_prompts(bpy.types.Operator):
             row = col.row(align=True)
             row.label(text="Height Off Floor:")
             row.prop(self, 'height_off_floor', text="")
+            row = col.row(align=True)
+            row.label(text="Top Off Floor:")
+            row.prop(self, 'top_off_floor', text="")
+            props = hb_project.get_settings_scene(context).hb_frameless
+            row = col.row(align=True)
+            row.label(text="Height Keeps:")
+            row.prop(props, 'upper_height_anchor', expand=True)
 
         if self._show_angle_front():
             box = layout.box()

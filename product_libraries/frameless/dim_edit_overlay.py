@@ -687,7 +687,11 @@ def _commit(context, obj, kind, value):
         if not cage.has_modifier():
             return False
         name = {'CAB_W': 'Dim X', 'CAB_H': 'Dim Z', 'CAB_D': 'Dim Y'}[kind]
-        cage.set_input(name, value)
+        if kind == 'CAB_H':
+            from . import types_frameless
+            types_frameless.set_cabinet_height(obj, value)
+        else:
+            cage.set_input(name, value)
         hb_utils.run_calc_fix(context, obj)
         return True
     if kind in ('OPENING_H', 'OPENING_W'):

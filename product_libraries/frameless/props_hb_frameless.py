@@ -2031,8 +2031,18 @@ class Frameless_Scene_Props(PropertyGroup):
                                                  default=units.inch(54.0),
                                                  unit='LENGTH',
                                                  precision=4,
-                                                 update=update_top_cabinet_clearance)# type: ignore  
-    
+                                                 update=update_top_cabinet_clearance)# type: ignore
+
+    upper_height_anchor: EnumProperty(
+        name="Upper Height Keeps",
+        description="Which edge of an upper cabinet stays where it is "
+                    "when its height is changed",
+        items=[('TOP', "Top", "The top stays; the cabinet grows or "
+                              "shrinks along its bottom"),
+               ('BOTTOM', "Bottom", "The bottom stays; the cabinet grows "
+                                    "or shrinks along its top")],
+        default='TOP')# type: ignore
+
     default_cabinet_width: FloatProperty(name="Default Cabinet Width",
                                                  description="Default width for cabinets",
                                                  default=units.inch(36.0),
@@ -2495,6 +2505,10 @@ class Frameless_Scene_Props(PropertyGroup):
         row = layout.row()
         row.label(text="Upper Cabinet Dim to Floor:")
         row.prop(self,'default_wall_cabinet_location',text="")  
+        row.label(text="",icon='BLANK1')
+        row = layout.row()
+        row.label(text="Upper Height Change Keeps:")
+        row.prop(self,'upper_height_anchor',expand=True)
         row.label(text="",icon='BLANK1')
         row = layout.row()
         row.label(text="Sizes")

@@ -1407,6 +1407,41 @@ def _set_side_notch(side_obj, notched):
         side_obj.modifiers.remove(mod)
 
 
+def upper_height_keeps_top(cabinet_obj):
+    """Whether a new height on this cabinet leaves its top where it is.
+    Only uppers: everything else stands on the floor."""
+    if cabinet_obj.get('CABINET_TYPE') != 'UPPER':
+        return False
+    scene = hb_project.get_settings_scene()
+    props = getattr(scene, 'hb_frameless', None)
+    return getattr(props, 'upper_height_anchor', 'TOP') == 'TOP'
+
+
+def set_cabinet_height(cabinet_obj, height):
+    """Give a cabinet a new height. An upper keeps its top or its bottom
+    in place, by the room's Upper Height Keeps setting."""
+    cage = GeoNodeCage(cabinet_obj)
+    old = cage.get_input('Dim Z')
+    cage.set_input('Dim Z', height)
+    if abs(height - old) > 1e-7 and upper_height_keeps_top(cabinet_obj):
+        cabinet_obj.location.z -= height - old
+        bpy.context.view_layer.update()
+
+
+def cabinet_top_off_floor(cabinet_obj):
+    """How high the top of a cabinet is above the floor."""
+    return (cabinet_obj.matrix_world.translation.z
+            + GeoNodeCage(cabinet_obj).get_input('Dim Z'))
+
+
+def set_cabinet_top_off_floor(cabinet_obj, value):
+    """Move a cabinet up or down so its top sits at this height."""
+    dz = float(value) - cabinet_top_off_floor(cabinet_obj)
+    if abs(dz) > 1e-7:
+        cabinet_obj.location.z += dz
+        bpy.context.view_layer.update()
+
+
 def set_toe_kick_type(cabinet_obj, toe_kick_type):
     """Switch a base, tall or corner base cabinet to another toe kick
     type in place: the toe kick parts of the old type come off, the new

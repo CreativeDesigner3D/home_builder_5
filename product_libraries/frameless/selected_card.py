@@ -291,13 +291,53 @@ def _toe_kick_type():
         items=[(str(i), label) for i, label in enumerate(TOE_KICK_TYPES)])
 
 
+def _cabinet_height():
+    """The cabinet's height; an upper keeps its top or bottom in place
+    by the room's setting."""
+    from ...operators import prop_proxy
+
+    def get(obj):
+        try:
+            return float(_cage(obj).get_input('Dim Z'))
+        except Exception:
+            return 0.0
+
+    def set(obj, value):
+        from . import types_frameless
+        types_frameless.set_cabinet_height(obj, float(value))
+    return prop_proxy.computed(get, set, unit='LENGTH', precision=4,
+                               hard_min=0.0)
+
+
+def _top_off_floor():
+    from ...operators import prop_proxy
+
+    def get(obj):
+        from . import types_frameless
+        try:
+            return float(types_frameless.cabinet_top_off_floor(obj))
+        except Exception:
+            return 0.0
+
+    def set(obj, value):
+        from . import types_frameless
+        types_frameless.set_cabinet_top_off_floor(obj, value)
+    return prop_proxy.computed(get, set, unit='LENGTH', precision=4)
+
+
+def _cage(obj):
+    from ...hb_types import GeoNodeCage
+    return GeoNodeCage(obj)
+
+
 def _register_schemas():
     from ...operators import prop_proxy as P
     P.register(CABINET_SCHEMA, {
         'width': P.node_input('Dim X'),
         'depth': P.node_input('Dim Y'),
-        'height': P.node_input('Dim Z'),
+        'height': _cabinet_height(),
         'height_off_floor': P.height_off_floor(),
+        'top_off_floor': _top_off_floor(),
         'toe_kick_type': _toe_kick_type(),
         'toe_kick_height': P.length('Toe Kick Height'),
         'toe_kick_setback': P.length('Toe Kick Setback'),
@@ -346,6 +386,7 @@ CABINET_FIELDS = (
     ('distance', 'height', "Height"),
     ('distance', 'depth', "Depth"),
     ('distance', 'height_off_floor', "Above Floor", {'when': _hung}),
+    ('distance', 'top_off_floor', "Top Above Floor", {'when': _hung}),
     ('group', 'fl_cab_kick', "Toe Kick", {'icon': 'cab_construction', 'when': _kicked, 'fields': (
         ('enum', 'toe_kick_type', "Type"),
         ('distance', 'toe_kick_height', "Height"),
