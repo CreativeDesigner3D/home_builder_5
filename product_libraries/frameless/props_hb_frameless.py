@@ -1745,7 +1745,7 @@ class CalculatorCabinet(PropertyGroup):
     """Property group for calculator cabinet data used in Adjust Cabinet Sizes."""
     cabinet_obj: PointerProperty(name="Cabinet Object", type=bpy.types.Object) # type: ignore
     is_equal: BoolProperty(name="Equal Width", default=True) # type: ignore
-    cabinet_width: FloatProperty(name="Width", subtype='DISTANCE', unit='LENGTH') # type: ignore
+    cabinet_width: FloatProperty(name="Width", subtype='DISTANCE', unit='LENGTH', precision=5) # type: ignore
 
 
 class Crown_Detail(PropertyGroup):
