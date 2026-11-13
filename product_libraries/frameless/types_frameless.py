@@ -1442,6 +1442,90 @@ def set_cabinet_top_off_floor(cabinet_obj, value):
         bpy.context.view_layer.update()
 
 
+# The least an opening that houses an appliance leaves for the doors over
+# it, and the smallest it can be typed down to.
+APPLIANCE_OPENING_MIN_OVER = inch(3.0)
+APPLIANCE_OPENING_MIN = inch(6.0)
+
+
+def appliance_opening(cabinet_obj):
+    """The opening of a refrigerator, column or laundry cabinet that
+    houses the appliance, or None."""
+    for child in cabinet_obj.children_recursive:
+        if child.get('APPLIANCE_OPENING'):
+            return child
+    return None
+
+
+def appliance_opening_size(cabinet_obj):
+    """(width, height) of the cabinet's appliance opening, or None."""
+    opening = appliance_opening(cabinet_obj)
+    if opening is None:
+        return None
+    try:
+        cage = GeoNodeCage(opening)
+        return float(cage.get_input('Dim X')), float(cage.get_input('Dim Z'))
+    except Exception:
+        return None
+
+
+def _appliance_opening_prompt(opening):
+    """(calculator, prompt) holding the appliance opening's height."""
+    splitter = opening.parent
+    index = opening.get(solver_frameless.SPLIT_INDEX_KEY)
+    if splitter is None or index is None:
+        return None, None
+    calc = solver_frameless.splitter_calculator(splitter)
+    if calc is None:
+        return None, None
+    return calc, calc.get_calculator_prompt('Opening %d Height' % int(index))
+
+
+def set_appliance_opening_width(cabinet_obj, width):
+    """Make the appliance opening this wide: the cabinet takes up the
+    difference, so its sides stay as they are."""
+    size = appliance_opening_size(cabinet_obj)
+    if size is None:
+        return False
+    delta = max(float(width), APPLIANCE_OPENING_MIN) - size[0]
+    if abs(delta) < 1e-7:
+        return False
+    cage = GeoNodeCage(cabinet_obj)
+    cage.set_input('Dim X', cage.get_input('Dim X') + delta)
+    return True
+
+
+def set_appliance_opening_height(cabinet_obj, height):
+    """Make the appliance opening this high. The cabinet keeps its
+    height: the opening over it gives up or takes the difference, down to
+    a small minimum."""
+    opening = appliance_opening(cabinet_obj)
+    if opening is None:
+        return False
+    calc, prompt = _appliance_opening_prompt(opening)
+    if prompt is None:
+        return False
+    splitter = opening.parent
+    try:
+        total = float(GeoNodeCage(splitter).get_input('Dim Z'))
+    except Exception:
+        return False
+    boards = sum(1 for (role, _i) in solver_frameless.split_parts(splitter)
+                 if role == 'SPLITTER')
+    thickness = float(splitter.get('Material Thickness', inch(0.75)))
+    others = [p for p in calc.prompts if p.name != prompt.name and p.include]
+    taken = sum(p.distance_value for p in others if not p.equal)
+    shared = sum(1 for p in others if p.equal)
+    limit = (total - boards * thickness - taken
+             - shared * APPLIANCE_OPENING_MIN_OVER)
+    height = max(APPLIANCE_OPENING_MIN, min(float(height), limit))
+    if not prompt.equal and abs(prompt.distance_value - height) < 1e-7:
+        return False
+    prompt.equal = False
+    prompt.distance_value = height
+    return True
+
+
 def set_toe_kick_type(cabinet_obj, toe_kick_type):
     """Switch a base, tall or corner base cabinet to another toe kick
     type in place: the toe kick parts of the old type come off, the new

@@ -232,6 +232,11 @@ def _hung(owner):
     return owner.id_data.get('CABINET_TYPE') == 'UPPER'
 
 
+def _houses_appliance(owner):
+    from . import types_frameless
+    return types_frameless.appliance_opening(owner.id_data) is not None
+
+
 def _kicked(owner):
     return 'Toe Kick Height' in owner.id_data
 
@@ -344,6 +349,26 @@ def _product_depth():
                                hard_min=0.0)
 
 
+def _appliance_opening(axis):
+    """Width (0) or height (1) of the opening that houses a refrigerator,
+    column or laundry unit; the cabinet or the doors over it follow."""
+    from ...operators import prop_proxy
+
+    def get(obj):
+        from . import types_frameless
+        size = types_frameless.appliance_opening_size(obj)
+        return float(size[axis]) if size else 0.0
+
+    def set(obj, value):
+        from . import types_frameless
+        if axis == 0:
+            types_frameless.set_appliance_opening_width(obj, value)
+        else:
+            types_frameless.set_appliance_opening_height(obj, value)
+    return prop_proxy.computed(get, set, unit='LENGTH', precision=4,
+                               hard_min=0.0)
+
+
 def _cage(obj):
     from ...hb_types import GeoNodeCage
     return GeoNodeCage(obj)
@@ -357,6 +382,8 @@ def _register_schemas():
         'height': _cabinet_height(),
         'height_off_floor': P.height_off_floor(),
         'top_off_floor': _top_off_floor(),
+        'appliance_opening_width': _appliance_opening(0),
+        'appliance_opening_height': _appliance_opening(1),
         'toe_kick_type': _toe_kick_type(),
         'toe_kick_height': P.length('Toe Kick Height'),
         'toe_kick_setback': P.length('Toe Kick Setback'),
@@ -406,6 +433,10 @@ CABINET_FIELDS = (
     ('distance', 'depth', "Depth"),
     ('distance', 'height_off_floor', "Above Floor", {'when': _hung}),
     ('distance', 'top_off_floor', "Top Above Floor", {'when': _hung}),
+    ('distance', 'appliance_opening_width', "Appliance Opening Width",
+     {'when': _houses_appliance}),
+    ('distance', 'appliance_opening_height', "Appliance Opening Height",
+     {'when': _houses_appliance}),
     ('group', 'fl_cab_kick', "Toe Kick", {'icon': 'cab_construction', 'when': _kicked, 'fields': (
         ('enum', 'toe_kick_type', "Type"),
         ('distance', 'toe_kick_height', "Height"),

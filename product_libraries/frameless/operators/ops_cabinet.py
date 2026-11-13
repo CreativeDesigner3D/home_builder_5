@@ -31,6 +31,16 @@ class hb_frameless_OT_cabinet_prompts(bpy.types.Operator):
         description="How high the top of the cabinet is hung; the "
                     "cabinet moves up or down to it",
         unit='LENGTH', precision=5)  # type: ignore
+    appliance_opening_width: bpy.props.FloatProperty(
+        name="Appliance Opening Width",
+        description="Clear width between the sides for the appliance; "
+                    "the cabinet width follows",
+        unit='LENGTH', precision=5, min=0.0)  # type: ignore
+    appliance_opening_height: bpy.props.FloatProperty(
+        name="Appliance Opening Height",
+        description="Clear height for the appliance; the opening over "
+                    "it takes what is left",
+        unit='LENGTH', precision=5, min=0.0)  # type: ignore
     toe_kick_height: bpy.props.FloatProperty(name="Toe Kick Height", unit='LENGTH', precision=5) # type: ignore
     toe_kick_setback: bpy.props.FloatProperty(name="Toe Kick Setback", unit='LENGTH', precision=5) # type: ignore
     toe_kick_type: bpy.props.EnumProperty(
@@ -103,6 +113,9 @@ class hb_frameless_OT_cabinet_prompts(bpy.types.Operator):
         return (not obj.get('IS_CORNER_CABINET')
                 and solver_frameless.carcass_kind(obj) == 'UPPER')
 
+    def _appliance_opening_size(self):
+        return types_frameless.appliance_opening_size(self.cabinet.obj)
+
     def _is_hung(self):
         """Uppers are hung at a height of their own; everything else
         stands on the floor or its toe kick."""
@@ -141,6 +154,9 @@ class hb_frameless_OT_cabinet_prompts(bpy.types.Operator):
         self.cabinet_depth = self.cabinet.get_input('Dim Y')
         self.height_off_floor = cabinet_bp.matrix_world.translation.z
         self.top_off_floor = self.height_off_floor + self.cabinet_height
+        size = self._appliance_opening_size()
+        if size is not None:
+            self.appliance_opening_width, self.appliance_opening_height = size
 
         # Get toe kick properties if they exist (BASE and TALL cabinets)
         if 'Toe Kick Height' in cabinet_bp:
@@ -197,6 +213,17 @@ class hb_frameless_OT_cabinet_prompts(bpy.types.Operator):
                     and types_frameless.upper_height_keeps_top(obj)):
                 self.height_off_floor -= self.cabinet_height - old_height
             self.top_off_floor = self.height_off_floor + self.cabinet_height
+        size = self._appliance_opening_size()
+        if size is not None:
+            # A typed opening width moves the cabinet width; a typed
+            # cabinet width is read back onto the opening below.
+            if (abs(self.appliance_opening_width - size[0]) > 1e-6
+                    and abs(self.cabinet_width
+                            - self.cabinet.get_input('Dim X')) < 1e-6):
+                self.cabinet_width += self.appliance_opening_width - size[0]
+            if abs(self.appliance_opening_height - size[1]) > 1e-6:
+                types_frameless.set_appliance_opening_height(
+                    obj, self.appliance_opening_height)
         self.cabinet.set_input('Dim X', self.cabinet_width)
         self.cabinet.set_input('Dim Z', self.cabinet_height)
         self.cabinet.set_input('Dim Y', self.cabinet_depth)
@@ -260,6 +287,9 @@ class hb_frameless_OT_cabinet_prompts(bpy.types.Operator):
                 style.assign_style_to_cabinet(self.cabinet.obj)
 
         hb_utils.run_calc_fix(context, self.cabinet.obj)
+        size = self._appliance_opening_size()
+        if size is not None:
+            self.appliance_opening_width, self.appliance_opening_height = size
         return True
 
     def execute(self, context):
@@ -295,6 +325,17 @@ class hb_frameless_OT_cabinet_prompts(bpy.types.Operator):
             row = col.row(align=True)
             row.label(text="Height Keeps:")
             row.prop(props, 'upper_height_anchor', expand=True)
+
+        if self._appliance_opening_size() is not None:
+            box = layout.box()
+            box.label(text="Appliance Opening")
+            col = box.column(align=True)
+            row = col.row(align=True)
+            row.label(text="Width:")
+            row.prop(self, 'appliance_opening_width', text="")
+            row = col.row(align=True)
+            row.label(text="Height:")
+            row.prop(self, 'appliance_opening_height', text="")
 
         if self._show_angle_front():
             box = layout.box()
