@@ -713,9 +713,12 @@ def set_countertop_thickness(self, new_value, curr_value, is_set):
                 continue
             if props != self:
                 props.countertop_thickness = new_value
-            base_height = props.base_cabinet_height + delta
+            old_height = props.base_cabinet_height
+            base_height = old_height + delta
             if abs(delta) > 1e-7 and base_height > 0.0:
                 props.base_cabinet_height = base_height
+                _follow_base_height(scene, old_height, base_height,
+                                    curr_value, new_value)
     finally:
         _syncing_countertop_thickness = False
     return new_value
@@ -730,9 +733,73 @@ def get_counter_height(self):
 
 
 def set_counter_height(self, value):
-    base_height = value - _project_countertop_thickness()
+    thickness = _project_countertop_thickness()
+    base_height = value - thickness
     if base_height > 0.0:
+        old_height = self.base_cabinet_height
         self.base_cabinet_height = base_height
+        if abs(base_height - old_height) > 1e-7:
+            _follow_base_height(self.id_data, old_height, base_height,
+                                thickness, thickness)
+
+
+_BASE_HEIGHT_TOLERANCE = 1e-4
+
+
+def _follow_base_height(scene, old_height, new_height,
+                        old_thickness, new_thickness):
+    """Carry a room's new base cabinet height to what is already drawn.
+
+    Base cabinets, and the floor-standing products beside them (fillers),
+    that stand at the old height take the new one; anything sized by hand
+    is left alone. A countertop resting on the old height moves with them
+    and takes the new thickness, so its top stays at the counter height.
+    """
+    from . import solver_frameless
+    tol = _BASE_HEIGHT_TOLERANCE
+    changed = []
+    for obj in scene.objects:
+        if obj.get('IS_FRAMELESS_CABINET_CAGE'):
+            if obj.get('CABINET_TYPE') != 'BASE':
+                continue
+            if obj.parent and obj.parent.get('IS_FRAMELESS_CABINET_CAGE'):
+                continue
+        elif obj.get('IS_FRAMELESS_PRODUCT_CAGE'):
+            if abs(obj.location.z) > tol:
+                continue
+        else:
+            continue
+        try:
+            cage = hb_types.GeoNodeObject(obj)
+            if abs(cage.get_input('Dim Z') - old_height) > tol:
+                continue
+            cage.set_input('Dim Z', new_height)
+        except Exception:
+            continue
+        changed.append(obj)
+    if changed:
+        solver_frameless.solve_roots(changed)
+
+    for obj in scene.objects:
+        if (not obj.get('IS_COUNTERTOP')
+                or obj.get('HB_COUNTERTOP_LIB') != 'FRAMELESS'
+                or obj.type != 'MESH' or not obj.data.vertices):
+            continue
+        verts = obj.data.vertices
+        z_bot = min(v.co.z for v in verts)
+        z_top = max(v.co.z for v in verts)
+        # A plain slab only: two levels, resting on the old base height.
+        if (abs(z_bot - old_height) > tol
+                or abs((z_top - z_bot) - old_thickness) > tol
+                or any(abs(v.co.z - z_bot) > tol and abs(v.co.z - z_top) > tol
+                       for v in verts)):
+            continue
+        for v in verts:
+            if abs(v.co.z - z_bot) <= tol:
+                v.co.z = new_height
+            else:
+                v.co.z = new_height + new_thickness
+        obj.data.update()
 
 
 def update_material_thickness_default(self, context):
