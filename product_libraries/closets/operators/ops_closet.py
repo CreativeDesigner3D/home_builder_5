@@ -6962,6 +6962,9 @@ class hb_closets_OT_accessory_prompts(bpy.types.Operator):
             box.label(text="It keeps the space it was given until it "
                            "is deleted.")
             return
+        if not acc_def.custom and acc_def.label:
+            # Which accessory this is: the fields alone do not say.
+            layout.label(text=acc_def.label)
         col = layout.column(align=True)
         if acc_def.custom:
             col.prop(self, 'custom_name')
