@@ -295,6 +295,11 @@ OPTION_PAGES = {
               'hb_frameless.assign_cabinet_style_to_selected_cabinets'),
              ("Update Cabinets", 'hb_frameless.update_cabinets_from_style')),
         ),
+        # One setting for the whole file, not per style: unbanded edges
+        # in a soft red. Drawn under the style's commands.
+        'scene_fields': (
+            ('bool', 'highlight_raw_edges', "Highlight Raw Edges"),
+        ),
     },
     'draw_door_styles_ui': {
         'kind': 'pool',
