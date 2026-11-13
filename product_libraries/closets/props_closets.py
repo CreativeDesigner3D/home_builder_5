@@ -1955,6 +1955,17 @@ class Closet_Opening_Props(PropertyGroup):
         items=materials_closets.GRAIN_OVERRIDE_ITEMS,
         default='DEFAULT')  # type: ignore
 
+    # A color of this opening's own: its shelves and fronts are cut in
+    # it instead of the room's, for an accent section in a run. Blank
+    # follows the room. Held as the material's name, so a list that
+    # grows never renumbers a saved choice. A finish rather than
+    # contents, so it stays out of the list below like the grain.
+    accent_material: bpy.props.StringProperty(
+        name="Color",
+        description="Color for this opening's shelves and fronts, "
+                    "instead of the room's",
+        default='')  # type: ignore
+
     # ----- Captured back -----
     # A back that closes this opening on its own, held between the
     # panels and shelves around it. Independent of the interior: an

@@ -10700,6 +10700,8 @@ def serialize_opening(opening):
         # Which way the grain runs on the drawer fronts here, so a
         # copy reads the way the original did.
         'drawer_grain': opening.hb_closet_opening.drawer_grain,
+        # A colour of the opening's own goes with it.
+        'accent_material': opening.hb_closet_opening.accent_material,
         # How the shelves here are cut, so a copy drops into its
         # clips the way the original did.
         'shelf_gaps': [
@@ -10831,6 +10833,8 @@ def apply_opening_data(opening, data, recalc=True):
     dgrain = data.get('drawer_grain')
     if dgrain:
         opening.hb_closet_opening.drawer_grain = dgrain
+    if data.get('accent_material'):
+        opening.hb_closet_opening.accent_material = data['accent_material']
     gaps = data.get('shelf_gaps')
     if gaps:
         _gp = opening.hb_closet_opening

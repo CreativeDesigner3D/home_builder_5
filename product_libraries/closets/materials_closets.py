@@ -59,6 +59,9 @@ NEGATIVE_MATERIAL = 'Negative'
 NEGATIVE_MATERIAL_KEY = 'hb_negative_material'
 NEGATIVE_MATERIAL_COLOR = (0.05, 0.05, 0.06, 1.0)
 
+# Sentinel for an opening's own colour: follow the room.
+ROOM_COLOR = 'ROOM'
+
 # Door panel types: Vertical Grain = the front material (doors always
 # run vertical grain); the rest are glass materials that live in
 # the library blend (not asset-marked - they only make sense as door
@@ -854,6 +857,50 @@ def _resolve_edge_base(prop_name, fallback):
     return load_material(selection) or fallback
 
 
+def opening_color(saved):
+    """A saved opening colour resolved to a current choice: a material
+    in the library, or ROOM_COLOR for blank or anything no longer
+    offered."""
+    return saved if saved and saved in get_material_names() else ROOM_COLOR
+
+
+def opening_color_items():
+    """Choices for an opening's own colour: the room's first, then the
+    library materials."""
+    return ([(ROOM_COLOR, "Room Color")]
+            + [(name, name) for name in get_material_names()])
+
+
+def _opening_accent(obj, is_front, cache):
+    """The material an opening of its own colour gives one of its
+    parts, or None when the part follows the room. A shelf or divider
+    counts only when it stands inside the opening; a front belongs to
+    the opening it closes wherever it hangs."""
+    from . import types_closets
+    opening = None
+    if is_front:
+        try:
+            opening = types_closets.find_opening_cage(obj)
+        except Exception:
+            opening = None
+    else:
+        current = obj.parent
+        while current is not None:
+            if current.get(types_closets.TAG_OPENING_CAGE):
+                opening = current
+                break
+            current = current.parent
+    if opening is None:
+        return None
+    key = opening.name
+    if key not in cache:
+        name = opening_color(getattr(
+            getattr(opening, 'hb_closet_opening', None),
+            'accent_material', ''))
+        cache[key] = (None if name == ROOM_COLOR else load_material(name))
+    return cache[key]
+
+
 def _fence_finish(fence_obj, cache):
     """Metal finish for one shoe fence, looked up through the opening
     that owns its shelf stack and cached per opening."""
@@ -927,6 +974,7 @@ def _finish(objs, carcass_name=None, front_name=None):
     ctop = resolve_countertop_material(carcass)
     ctop_edge = rotated_variant(ctop)
     fence_cache = {}
+    accent_cache = {}
     for child in objs:
         if child.get('IS_CLOSET_MOLDING') and child.type == 'CURVE':
             # Molding is cut in the closet colour and follows it when the
@@ -941,6 +989,7 @@ def _finish(objs, carcass_name=None, front_name=None):
         if child.type != 'MESH':
             continue
         role = child.get('hb_part_role')
+        part_front = front
         if child.get('hb_drawer_box_type'):
             # A box's finish is its system's, whatever the room's
             # colour (a Metabox's bottom and back are White board).
@@ -962,6 +1011,9 @@ def _finish(objs, carcass_name=None, front_name=None):
             # An ironing board front is a closet part, not one of the
             # fronts: the reference painted it in the closet colour and band.
             mat, edge = carcass, carcass_edge
+            accent = _opening_accent(child, True, accent_cache)
+            if accent is not None:
+                mat, edge = accent, rotated_variant(accent)
         elif role in (role_door, role_drawer):
             # Grain is worked out per front rather than once for the
             # run, so a drawer turned the other way gets the rotated
@@ -972,11 +1024,20 @@ def _finish(objs, carcass_name=None, front_name=None):
             # it, so vertical grain is the plain material there and
             # the rotated one is what turns it sideways.
             want = front_grain(child, role == role_drawer)
-            if child.get('hb_front_length_up'):
-                mat = front if want == 'VERTICAL' else front_v
+            # An opening of its own colour takes its fronts with it,
+            # banded in the same.
+            accent = _opening_accent(child, True, accent_cache)
+            if accent is not None:
+                part_front = accent
+                plain, turned = accent, vertical_variant(accent)
+                edge = rotated_variant(accent)
             else:
-                mat = front_v if want == 'VERTICAL' else front
-            edge = front_edge
+                plain, turned = front, front_v
+                edge = front_edge
+            if child.get('hb_front_length_up'):
+                mat = plain if want == 'VERTICAL' else turned
+            else:
+                mat = turned if want == 'VERTICAL' else plain
         elif role in ctop_roles:
             mat, edge = ctop, ctop_edge
         elif role == role_fence:
@@ -1003,6 +1064,11 @@ def _finish(objs, carcass_name=None, front_name=None):
             mat, edge = carcass, rotated_variant(carcass)
         else:
             mat, edge = carcass, carcass_edge
+            # The shelves and dividers standing in an opening of its
+            # own colour are cut and banded in it.
+            accent = _opening_accent(child, False, accent_cache)
+            if accent is not None:
+                mat, edge = accent, rotated_variant(accent)
         if mat is None:
             continue
         part = hb_types.GeoNodeCutpart(child)
@@ -1015,7 +1081,7 @@ def _finish(objs, carcass_name=None, front_name=None):
             continue
         if role in (role_door, role_drawer):
             apply_front_member_materials(child, role == role_drawer,
-                                         front_mat=front,
+                                         front_mat=part_front,
                                          carcass_mat=carcass)
     return True
 
