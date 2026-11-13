@@ -696,54 +696,107 @@ def update_top_cabinet_clearance(self, context):
 
 _syncing_countertop_thickness = False
 
+_BASE_HEIGHT_TOLERANCE = 1e-4
+
+
+def _counter_height_rooms(counter_height, thickness):
+    """(scene, props) for every room whose base cabinets stand at the
+    counter height less the countertop thickness. A room kept at another
+    height (a vanity, a desk) is not driven by the counter height."""
+    out = []
+    for scene in bpy.data.scenes:
+        props = getattr(scene, 'hb_frameless', None)
+        if props is None:
+            continue
+        if abs(props.base_cabinet_height
+               - (counter_height - thickness)) <= _BASE_HEIGHT_TOLERANCE:
+            out.append((scene, props))
+    return out
+
+
+def _drive_base_height(rooms, base_height, old_thickness, new_thickness):
+    for scene, props in rooms:
+        old_height = props.base_cabinet_height
+        if base_height <= 0.0 or abs(base_height - old_height) <= 1e-7:
+            continue
+        props.base_cabinet_height = base_height
+        _follow_base_height(scene, old_height, base_height,
+                            old_thickness, new_thickness)
+
 
 def set_countertop_thickness(self, new_value, curr_value, is_set):
-    """The countertop thickness is one value for the project, and a room
-    keeps its counter height when it changes: every room's base cabinet
-    height gives up (or takes back) the difference."""
+    """The countertop thickness is one value for the project. With the
+    counter height in use, a room standing at it keeps it when the
+    thickness changes: its base cabinet height gives up (or takes back)
+    the difference. Otherwise the base cabinet height is left alone."""
     global _syncing_countertop_thickness
     if _syncing_countertop_thickness:
         return new_value
     _syncing_countertop_thickness = True
     try:
-        delta = curr_value - new_value
+        main = hb_project.get_main_scene().hb_frameless
+        rooms = []
+        if main.use_counter_height and abs(curr_value - new_value) > 1e-7:
+            rooms = _counter_height_rooms(main.counter_height, curr_value)
         for scene in bpy.data.scenes:
             props = getattr(scene, 'hb_frameless', None)
-            if props is None:
-                continue
-            if props != self:
+            if props is not None and props != self:
                 props.countertop_thickness = new_value
-            old_height = props.base_cabinet_height
-            base_height = old_height + delta
-            if abs(delta) > 1e-7 and base_height > 0.0:
-                props.base_cabinet_height = base_height
-                _follow_base_height(scene, old_height, base_height,
-                                    curr_value, new_value)
+        _drive_base_height(rooms, main.counter_height - new_value,
+                           curr_value, new_value)
     finally:
         _syncing_countertop_thickness = False
     return new_value
 
 
-def _project_countertop_thickness():
-    return hb_project.get_main_scene().hb_frameless.countertop_thickness
+def set_counter_height(self, new_value, curr_value, is_set):
+    """With the counter height in use, the rooms standing at the old one
+    take the new one: base cabinets, fillers and countertops follow."""
+    main = hb_project.get_main_scene().hb_frameless
+    if (self == main and main.use_counter_height
+            and abs(curr_value - new_value) > 1e-7):
+        thickness = main.countertop_thickness
+        _drive_base_height(_counter_height_rooms(curr_value, thickness),
+                           new_value - thickness, thickness, thickness)
+    return new_value
 
 
-def get_counter_height(self):
-    return self.base_cabinet_height + _project_countertop_thickness()
+def apply_counter_height(scene, cabinets, force=False):
+    """Stand a room's base cabinets at the counter height less the
+    countertop thickness, ahead of countertops being built on them.
 
-
-def set_counter_height(self, value):
-    thickness = _project_countertop_thickness()
-    base_height = value - thickness
-    if base_height > 0.0:
-        old_height = self.base_cabinet_height
-        self.base_cabinet_height = base_height
-        if abs(base_height - old_height) > 1e-7:
-            _follow_base_height(self.id_data, old_height, base_height,
-                                thickness, thickness)
-
-
-_BASE_HEIGHT_TOLERANCE = 1e-4
+    Nothing happens unless the counter height is in use. The room's base
+    cabinet height takes the new value, and what stands at the old one
+    follows; with ``force`` the cabinets in ``cabinets`` are resized
+    instead, whatever height they were at. Returns the base height, or
+    None."""
+    main = hb_project.get_main_scene().hb_frameless
+    if not main.use_counter_height:
+        return None
+    thickness = main.countertop_thickness
+    target = main.counter_height - thickness
+    if target <= 0.0:
+        return None
+    if force:
+        from . import solver_frameless
+        changed = []
+        for obj in cabinets:
+            if not obj.get('IS_FRAMELESS_CABINET_CAGE'):
+                continue
+            try:
+                cage = hb_types.GeoNodeObject(obj)
+                if abs(cage.get_input('Dim Z') - target) <= 1e-7:
+                    continue
+                cage.set_input('Dim Z', target)
+            except Exception:
+                continue
+            changed.append(obj)
+        if changed:
+            solver_frameless.solve_roots(changed)
+    else:
+        _drive_base_height([(scene, scene.hb_frameless)], target,
+                           thickness, thickness)
+    return target
 
 
 def _follow_base_height(scene, old_height, new_height,
@@ -2186,13 +2239,6 @@ class Frameless_Scene_Props(PropertyGroup):
                                                   unit='LENGTH',
                                                   precision=4)# type: ignore
     
-    counter_height: FloatProperty(name="Counter Height",
-                                  description="Floor to the top of the countertop. The base cabinet height is this less the countertop thickness",
-                                  unit='LENGTH',
-                                  precision=4,
-                                  get=get_counter_height,
-                                  set=set_counter_height)# type: ignore
-
     base_inside_corner_size: FloatProperty(name="Base Inside Corner Size",
                                            description="Default width and depth for the inside base corner cabinets",
                                            default=units.inch(36.0),
@@ -2511,10 +2557,21 @@ class Frameless_Scene_Props(PropertyGroup):
 
     # COUNTERTOP OPTIONS
     countertop_thickness: FloatProperty(name="Countertop Thickness",
-                                        description="Thickness of the countertop slab. Changing it keeps the counter height and resizes the base cabinet height",
+                                        description="Thickness of the countertop slab. With the counter height in use, changing it keeps the counter height and resizes the base cabinets",
                                         default=units.inch(1.5),
                                         unit='LENGTH',
                                         set_transform=set_countertop_thickness)# type: ignore
+
+    use_counter_height: BoolProperty(name="Use Counter Height",
+                                     description="Build countertops to a set counter height. Adding countertops stands the base cabinets under them at the counter height less the countertop thickness. Off, base cabinets keep the base cabinet height from the cabinet sizes",
+                                     default=False)# type: ignore
+
+    counter_height: FloatProperty(name="Counter Height",
+                                  description="Floor to the top of the countertop",
+                                  default=units.inch(36.0),
+                                  unit='LENGTH',
+                                  precision=4,
+                                  set_transform=set_counter_height)# type: ignore
 
     countertop_overhang_front: FloatProperty(name="Countertop Front Overhang",
                                               description="Overhang past the front of cabinets",
@@ -2682,11 +2739,6 @@ class Frameless_Scene_Props(PropertyGroup):
         else:
             row.label(text=units.unit_to_string(unit_settings,self.tall_cabinet_height))
             row.label(text=units.unit_to_string(unit_settings,self.upper_cabinet_height))
-        row = layout.row()
-        row.label(text="Counter Height:")
-        row.prop(self,'counter_height',text="")
-        row.label(text="Top Thickness:")
-        row.prop(hb_project.get_main_scene().hb_frameless,'countertop_thickness',text="")
         row = layout.row()
         row.prop(self,'override_tall_upper_heights')
         row = layout.row()
@@ -3137,6 +3189,11 @@ class Frameless_Scene_Props(PropertyGroup):
 
         col = layout.column(align=True)
         col.prop(props, 'countertop_thickness', text="Thickness")
+        row = col.row(align=True)
+        row.prop(props, 'use_counter_height', text="Counter Height")
+        sub = row.row(align=True)
+        sub.enabled = props.use_counter_height
+        sub.prop(props, 'counter_height', text="")
         col.prop(props, 'countertop_overhang_front', text="Front Overhang")
         col.prop(props, 'countertop_overhang_sides', text="Side Overhang")
         col.prop(props, 'countertop_overhang_back', text="Back Overhang")

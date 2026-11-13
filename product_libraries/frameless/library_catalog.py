@@ -480,6 +480,12 @@ OPTION_PAGES = {
         'fields': (
             ('label', None, "Countertops"),
             ('distance', 'countertop_thickness', "Thickness"),
+            # Off: base cabinets keep the height from the cabinet sizes.
+            # On: Add Countertops stands them at this height less the
+            # thickness, and they follow either value afterwards.
+            ('bool', 'use_counter_height', "Set Counter Height"),
+            ('distance', 'counter_height', "Counter Height",
+             {'when': lambda p: p.use_counter_height}),
             ('distance', 'countertop_overhang_front', "Front Overhang"),
             ('distance', 'countertop_overhang_sides', "Side Overhang"),
             ('distance', 'countertop_overhang_back', "Back Overhang"),
