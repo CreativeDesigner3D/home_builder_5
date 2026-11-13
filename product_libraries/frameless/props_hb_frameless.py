@@ -3169,6 +3169,10 @@ class Frameless_Scene_Props(PropertyGroup):
         sub = col.row(align=True)
         sub.enabled = hb_scene.molding_light_rail_package != 'NONE'
         sub.prop(hb_scene, 'molding_light_rail_profile', text="Profile")
+        col.prop(hb_scene, 'molding_light_rail_height', text="Rail Height")
+        sub = col.row(align=True)
+        sub.enabled = hb_scene.molding_light_rail_height > 0.0
+        sub.prop(hb_scene, 'molding_light_rail_doors_cover')
         row = col.row(align=True)
         row.scale_y = 1.3
         row.operator('home_builder.refresh_room_molding', text="Refresh Molding",

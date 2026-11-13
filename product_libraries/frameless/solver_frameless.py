@@ -2005,13 +2005,79 @@ TYPED_OVERLAY_KEYS = ('Typed Overlay Top', 'Typed Overlay Bottom',
                       'Typed Overlay Left', 'Typed Overlay Right')
 
 
+# An upper whose bottom sits below this rests on the countertop (a hutch
+# or appliance garage); nothing hangs under it for its doors to cover.
+LIGHT_RAIL_MIN_MOUNT = inch(42.0)
+LIGHT_RAIL_STAMP = 'HB_LIGHT_RAIL_DOORS'
+
+
+def _room_light_rail(scene):
+    """The room's light rail height while its doors are set to cover it,
+    else 0."""
+    hb = getattr(scene, 'home_builder', None)
+    if hb is None or not getattr(hb, 'molding_light_rail_doors_cover', False):
+        return 0.0
+    return max(float(getattr(hb, 'molding_light_rail_height', 0.0) or 0.0),
+               0.0)
+
+
+def light_rail_door_drop(insert_obj):
+    """How far a front reaches below its opening's bottom board to cover
+    the room's light rail: the rail height on the bottom row of a hung
+    upper cabinet, 0 everywhere else."""
+    root = cabinet_root(insert_obj)
+    if root is None or root.get('CABINET_TYPE') != 'UPPER':
+        return 0.0
+    scenes = root.users_scene
+    drop = _room_light_rail(scenes[0]) if scenes else 0.0
+    if drop <= 0.0:
+        return 0.0
+    # Height of the opening over the bottom of the outermost cabinet (a
+    # stacked upper nests one cabinet in another), and that cabinet's
+    # height off the floor.
+    z = 0.0
+    obj = insert_obj
+    outer = root
+    while obj is not None:
+        if obj.get('IS_FRAMELESS_CABINET_CAGE'):
+            outer = obj
+            if not (obj.parent is not None
+                    and cabinet_root(obj.parent) is not None):
+                break
+        z += obj.location.z
+        obj = obj.parent
+    if outer.location.z < LIGHT_RAIL_MIN_MOUNT:
+        return 0.0
+    bottom = float(prompt(insert_obj, 'Bottom Thickness', inch(0.75)))
+    if z > bottom + inch(0.0625):
+        return 0.0                  # an opening further up the cabinet
+    return drop
+
+
+def apply_room_light_rail(scene):
+    """Re-solve the room's upper cabinets when its light rail door cover
+    has changed since they were last solved for it. Returns how many."""
+    drop = _room_light_rail(scene)
+    if abs(float(scene.get(LIGHT_RAIL_STAMP, 0.0)) - drop) < 1e-7:
+        return 0
+    scene[LIGHT_RAIL_STAMP] = drop
+    uppers = [obj for obj in scene.objects
+              if obj.get('IS_FRAMELESS_CABINET_CAGE')
+              and obj.get('CABINET_TYPE') == 'UPPER']
+    if uppers:
+        solve_roots(uppers)
+    return len(uppers)
+
+
 def front_overlays(insert_obj):
     """(top, bottom, left, right) overlay of a front on its opening.
 
     Inset fronts sit inside the opening by the inset reveal; a half
     overlay splits the neighbouring board with the front next door; a
     full overlay covers the board less the reveal. A side with a typed
-    overlay takes that value instead (not on an inset front).
+    overlay takes that value instead (not on an inset front). The bottom
+    of a hung upper's lowest fronts also takes the room's light rail,
+    where its doors are set to cover it.
     """
     inset = bool(insert_obj.get('Inset Front', False))
     inset_reveal = float(prompt(insert_obj, 'Inset Reveal', inch(0.125)))
@@ -2028,8 +2094,12 @@ def front_overlays(insert_obj):
             return (thickness - gap) / 2.0
         return thickness - float(prompt(insert_obj, reveal_key, reveal_default))
 
+    bottom = overlay('Half Overlay Bottom', 'Bottom Thickness',
+                     'Bottom Reveal', 0.0)
+    if not inset and insert_obj.get('Typed Overlay Bottom') is None:
+        bottom += light_rail_door_drop(insert_obj)
     return (overlay('Half Overlay Top', 'Top Thickness', 'Top Reveal', inch(0.0625)),
-            overlay('Half Overlay Bottom', 'Bottom Thickness', 'Bottom Reveal', 0.0),
+            bottom,
             overlay('Half Overlay Left', 'Left Thickness', 'Left Reveal', inch(0.0625)),
             overlay('Half Overlay Right', 'Right Thickness', 'Right Reveal', inch(0.0625)))
 

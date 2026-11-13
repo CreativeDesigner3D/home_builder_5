@@ -464,6 +464,11 @@ OPTION_PAGES = {
             ('enum', 'molding_light_rail_profile', "Profile",
              {'when': lambda p: (_has_molding_pack()
                                  and p.molding_light_rail_package != 'NONE')}),
+            # The hung uppers' bottom doors reach this far below the
+            # cabinet when they are set to cover the rail.
+            ('distance', 'molding_light_rail_height', "Rail Height"),
+            ('bool', 'molding_light_rail_doors_cover', "Doors to Cover",
+             {'when': lambda p: p.molding_light_rail_height > 0.0}),
         ),
         'actions': (
             (("Refresh Molding", 'home_builder.refresh_room_molding'),),

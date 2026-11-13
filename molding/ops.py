@@ -511,6 +511,12 @@ def apply_scene_packages(scene):
         light_rail.apply_room_light_rail(scene)
     except Exception as ex:  # pragma: no cover - defensive
         print(f"Home Builder molding: light rail apply failed: {ex}")
+    # Frameless uppers: their bottom doors drop to cover the rail.
+    try:
+        from ..product_libraries.frameless import solver_frameless
+        solver_frameless.apply_room_light_rail(scene)
+    except Exception as ex:  # pragma: no cover - defensive
+        print(f"Home Builder molding: frameless light rail failed: {ex}")
     clear_scene_molding(scene)
 
     def _override(prop_name):
