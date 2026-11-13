@@ -260,12 +260,20 @@ def _bay_count(root):
 class hb_face_frame_OT_break_cabinet_left(bpy.types.Operator):
     """Break the cabinet at the gap to the left of the active bay.
     The active bay becomes the leftmost bay of the new right-side
-    cabinet; its width is locked so it holds through the recalc.
+    cabinet. The two new stiles take their room from every unlocked
+    bay alike, or from the others only when the bay's width is kept.
     """
     bl_idname = "hb_face_frame.break_cabinet_left"
     bl_label = "Break Left"
     bl_description = "Split the cabinet at the gap left of the active bay"
     bl_options = {'REGISTER', 'UNDO'}
+
+    keep_width: bpy.props.BoolProperty(
+        name="Keep This Bay's Width",
+        description="Hold the picked bay at its width and take the room "
+                    "for the two new stiles from the other bays. Off, "
+                    "every bay gives up the same amount",
+        default=False)  # type: ignore
 
     @classmethod
     def poll(cls, context):
@@ -283,7 +291,8 @@ class hb_face_frame_OT_break_cabinet_left(bpy.types.Operator):
         if bay_index <= 0:
             self.report({'WARNING'}, "Active bay is the first bay")
             return {'CANCELLED'}
-        bay.face_frame_bay.unlock_width = True
+        if self.keep_width:
+            bay.face_frame_bay.unlock_width = True
         new_root = types_face_frame.break_cabinet_at_gap(root, bay_index - 1)
         if new_root is None:
             self.report({'ERROR'}, "Break failed")
@@ -294,13 +303,21 @@ class hb_face_frame_OT_break_cabinet_left(bpy.types.Operator):
 class hb_face_frame_OT_break_cabinet_right(bpy.types.Operator):
     """Break the cabinet at the gap to the right of the active bay.
     The active bay stays as the rightmost bay of the (modified)
-    original cabinet; its width is locked so it holds through the
-    recalc.
+    original cabinet. The two new stiles take their room from every
+    unlocked bay alike, or from the others only when the bay's width
+    is kept.
     """
     bl_idname = "hb_face_frame.break_cabinet_right"
     bl_label = "Break Right"
     bl_description = "Split the cabinet at the gap right of the active bay"
     bl_options = {'REGISTER', 'UNDO'}
+
+    keep_width: bpy.props.BoolProperty(
+        name="Keep This Bay's Width",
+        description="Hold the picked bay at its width and take the room "
+                    "for the two new stiles from the other bays. Off, "
+                    "every bay gives up the same amount",
+        default=False)  # type: ignore
 
     @classmethod
     def poll(cls, context):
@@ -318,7 +335,8 @@ class hb_face_frame_OT_break_cabinet_right(bpy.types.Operator):
         if bay_index >= _bay_count(root) - 1:
             self.report({'WARNING'}, "Active bay is the last bay")
             return {'CANCELLED'}
-        bay.face_frame_bay.unlock_width = True
+        if self.keep_width:
+            bay.face_frame_bay.unlock_width = True
         new_root = types_face_frame.break_cabinet_at_gap(root, bay_index)
         if new_root is None:
             self.report({'ERROR'}, "Break failed")
@@ -329,8 +347,9 @@ class hb_face_frame_OT_break_cabinet_right(bpy.types.Operator):
 class hb_face_frame_OT_break_cabinet_both(bpy.types.Operator):
     """Break the cabinet on both sides of the active bay so the
     active bay becomes its own single-bay cabinet. On a first or
-    last bay, only the applicable side breaks. The active bay's
-    width is locked so it holds through the recalcs.
+    last bay, only the applicable side breaks. The new stiles take
+    their room from every unlocked bay alike, or from the others only
+    when the bay's width is kept.
     """
     bl_idname = "hb_face_frame.break_cabinet_both"
     bl_label = "Break Both"
@@ -339,6 +358,13 @@ class hb_face_frame_OT_break_cabinet_both(bpy.types.Operator):
         "becomes its own single-bay cabinet"
     )
     bl_options = {'REGISTER', 'UNDO'}
+
+    keep_width: bpy.props.BoolProperty(
+        name="Keep This Bay's Width",
+        description="Hold the picked bay at its width and take the room "
+                    "for the two new stiles from the other bays. Off, "
+                    "every bay gives up the same amount",
+        default=False)  # type: ignore
 
     @classmethod
     def poll(cls, context):
@@ -357,23 +383,42 @@ class hb_face_frame_OT_break_cabinet_both(bpy.types.Operator):
             self.report({'WARNING'}, "Cabinet has only one bay")
             return {'CANCELLED'}
         bay_index = bay.face_frame_bay.bay_index
-        bay.face_frame_bay.unlock_width = True
+        if self.keep_width:
+            bay.face_frame_bay.unlock_width = True
         # Break right first so the original keeps the active bay; the
         # subsequent break-left then operates on the modified original.
-        # Each break sends its extra width AWAY from the active bay so
-        # both outer cabinets absorb exactly one boundary's worth and
-        # come out the same size (a balanced split would double up on
-        # the left: the right break's left-half share can't land on
-        # the locked active bay, and the left break's right half IS
-        # the locked bay, pushing its whole share left).
+        # With the bay's width kept, each break sends its extra width
+        # AWAY from the active bay so both outer cabinets absorb exactly
+        # one boundary's worth and come out the same size (a balanced
+        # split would double up on the left: the right break's left-half
+        # share can't land on the locked active bay, and the left
+        # break's right half IS the locked bay, pushing its whole share
+        # left).
+        both = 0 < bay_index < count - 1
+        right_side = 'RIGHT' if self.keep_width else 'AUTO'
+        left_side = 'LEFT' if self.keep_width else 'AUTO'
+        right_share = None
+        if both and not self.keep_width:
+            # Two breaks, two boundaries' worth, shared by every
+            # unlocked bay alike: the right cabinet is not touched by
+            # the second break, so the first hands it its whole part.
+            ordered = sorted(
+                (c for c in root.children
+                 if c.get(types_face_frame.TAG_BAY_CAGE)),
+                key=lambda c: c.face_frame_bay.bay_index)
+            free = [not b.face_frame_bay.unlock_width for b in ordered]
+            if any(free):
+                right_share = (2.0 * sum(free[bay_index + 1:])
+                               / sum(free))
         if bay_index < count - 1:
             if types_face_frame.break_cabinet_at_gap(
-                    root, bay_index, shrink_side='RIGHT') is None:
+                    root, bay_index, shrink_side=right_side,
+                    right_share=right_share) is None:
                 self.report({'ERROR'}, "Break (right) failed")
                 return {'CANCELLED'}
         if bay_index > 0:
             if types_face_frame.break_cabinet_at_gap(
-                    root, bay_index - 1, shrink_side='LEFT') is None:
+                    root, bay_index - 1, shrink_side=left_side) is None:
                 self.report({'ERROR'}, "Break (left) failed")
                 return {'CANCELLED'}
         return {'FINISHED'}

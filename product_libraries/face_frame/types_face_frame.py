@@ -23621,18 +23621,23 @@ def _resolve_style_stile_width(root, cab_props, row):
         return None
 
 
-def break_cabinet_at_gap(cabinet, gap_index, shrink_side='AUTO'):
+def break_cabinet_at_gap(cabinet, gap_index, shrink_side='AUTO',
+                         right_share=None):
     """Break `cabinet` into two cabinets at the gap between bays
     `gap_index` and `gap_index+1`. Returns the new (right-half)
     cabinet root, or None on invalid input.
 
     `shrink_side` directs which half absorbs the extra width the break
     creates (replacing the boundary mid stile with two butt end stiles
-    widens the pair; see the width math below): 'AUTO' splits it between
-    halves that have unlocked bays; 'LEFT' / 'RIGHT' force it onto one
-    half (Break Both uses this so each outer cabinet absorbs exactly one
-    boundary's worth and the outer halves come out equal). A forced side
-    with no unlocked bays falls back to AUTO.
+    widens the pair; see the width math below): 'AUTO' shares it between
+    the halves by how many unlocked bays each has, so every unlocked bay
+    of the run gives up the same amount and bays that were equal stay
+    equal; 'LEFT' / 'RIGHT' force it onto one half (Break Both uses this
+    around a bay whose width is kept, so each outer cabinet absorbs
+    exactly one boundary's worth). A forced side with no unlocked bays
+    falls back to AUTO. `right_share` (0..1), when given, is the part of
+    the extra the right half takes instead; it may pass 1 or go below 0
+    when a second break is to come and even the two out.
 
     The original keeps bays [0..gap_index]; the new cabinet receives
     bays [gap_index+1..end] reindexed from 0. The boundary mid stile
@@ -23805,16 +23810,24 @@ def break_cabinet_at_gap(cabinet, gap_index, shrink_side='AUTO'):
         boundary_actual = mids_data[gap_index][0]
         extra = 2 * boundary_default - boundary_actual
 
-        left_has_unlocked = any(not b.face_frame_bay.unlock_width
-                                for b in bays[:gap_index + 1])
-        right_has_unlocked = any(not b.face_frame_bay.unlock_width
-                                 for b in right_bays)
-        if shrink_side == 'LEFT' and left_has_unlocked:
+        left_free = sum(1 for b in bays[:gap_index + 1]
+                        if not b.face_frame_bay.unlock_width)
+        right_free = sum(1 for b in right_bays
+                         if not b.face_frame_bay.unlock_width)
+        left_has_unlocked = left_free > 0
+        right_has_unlocked = right_free > 0
+        if (right_share is not None and left_has_unlocked
+                and right_has_unlocked):
+            right_shrink = extra * float(right_share)
+            left_shrink = extra - right_shrink
+        elif shrink_side == 'LEFT' and left_has_unlocked:
             left_shrink, right_shrink = extra, 0.0
         elif shrink_side == 'RIGHT' and right_has_unlocked:
             left_shrink, right_shrink = 0.0, extra
         elif left_has_unlocked and right_has_unlocked:
-            left_shrink, right_shrink = extra / 2.0, extra / 2.0
+            # By bay count: each unlocked bay gives up the same amount.
+            right_shrink = extra * right_free / (left_free + right_free)
+            left_shrink = extra - right_shrink
         elif left_has_unlocked:
             left_shrink, right_shrink = extra, 0.0
         elif right_has_unlocked:
