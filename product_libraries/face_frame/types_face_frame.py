@@ -1853,6 +1853,13 @@ def _overstool_profile_poly():
 # curves in face_frame_assets/profiles. See _apply_bottom_rail_profile.
 # ---------------------------------------------------------------------------
 PART_ROLE_BOTTOM_RAIL_PROFILE_CUTTER = 'BOTTOM_RAIL_PROFILE_CUTTER'
+# Valance across a cabinet's toe space: a board in the face frame's plane
+# from the floor to the bottom rail, between any end stiles that run to
+# the floor. Takes the same profiles as a bottom rail. SENT_LOOSE marks
+# one that ships loose to be fit on site instead of being attached.
+PART_ROLE_TOE_KICK_VALANCE = 'TOE_KICK_VALANCE'
+TOE_KICK_VALANCE_SEG = 'TOE_KICK_VALANCE'
+TOE_KICK_VALANCE_LOOSE_KEY = 'SENT_LOOSE'
 BOTTOM_RAIL_PROFILE_CUT_MOD_NAME = 'Bottom Rail Profile Cut'
 BOTTOM_RAIL_PROFILE_END_MARGIN = inch(2.0)  # flat, uncut rail left at each end
 _BOTTOM_RAIL_PROFILE_ARCH = 'ARCH'          # procedural smooth-arch option (no blend)
@@ -4263,6 +4270,10 @@ class FaceFrameCabinet(GeoNodeCage):
         # Bottom-rail decorative profile (valance): cut the chosen profile
         # into the bottom rail(s). No-op + cleanup when off.
         self._apply_bottom_rail_profile(layout)
+
+        # Toe kick valance: the board across the toe space, attached or
+        # sent loose. No-op + cleanup when off.
+        self._apply_toe_kick_valance(layout)
 
         # Angled corners: end stiles stay square; a mitre between two
         # of them is the user's pick (Miter Joint). Clears the automatic
@@ -7912,6 +7923,7 @@ class FaceFrameCabinet(GeoNodeCage):
             if mod.object is not cutter:
                 mod.object = cutter
         # Drop cutters whose rail segment no longer exists.
+        live_keys.add(TOE_KICK_VALANCE_SEG)   # kept by its own pass
         for child in list(self.obj.children):
             if (child.get('hb_part_role') == PART_ROLE_BOTTOM_RAIL_PROFILE_CUTTER
                     and child.get('hb_profile_seg') not in live_keys):
@@ -7919,6 +7931,129 @@ class FaceFrameCabinet(GeoNodeCage):
                 bpy.data.objects.remove(child, do_unlink=True)
                 if mesh is not None and mesh.users == 0:
                     bpy.data.meshes.remove(mesh)
+
+    # =====================================================================
+    # Toe kick valance
+    # =====================================================================
+    def _toe_kick_valance_part(self):
+        for child in self.obj.children:
+            if child.get('hb_part_role') == PART_ROLE_TOE_KICK_VALANCE:
+                return child
+        return None
+
+    def _cleanup_toe_kick_valance(self):
+        """Reverse of _apply_toe_kick_valance. No-op when nothing to undo."""
+        for child in list(self.obj.children):
+            role = child.get('hb_part_role')
+            if role == PART_ROLE_TOE_KICK_VALANCE or (
+                    role == PART_ROLE_BOTTOM_RAIL_PROFILE_CUTTER
+                    and child.get('hb_profile_seg') == TOE_KICK_VALANCE_SEG):
+                mesh = child.data if role != PART_ROLE_TOE_KICK_VALANCE else None
+                bpy.data.objects.remove(child, do_unlink=True)
+                if mesh is not None and mesh.users == 0:
+                    bpy.data.meshes.remove(mesh)
+
+    def _end_stile_floor_width(self, role, to_floor):
+        """Width of an end stile where it stands on the floor, else 0."""
+        if not to_floor:
+            return 0.0
+        for child in self.obj.children_recursive:
+            if child.get('hb_part_role') == role and not child.hide_viewport:
+                try:
+                    return GeoNodeCutpart(child).get_input('Width')
+                except Exception:
+                    return 0.0
+        return 0.0
+
+    def _apply_toe_kick_valance(self, layout):
+        """Build the valance across the toe space when the option is on:
+        a face-frame-thick board in the frame's plane, floor to the bottom
+        rail, between the end stiles that run to the floor (cabinet edge
+        to cabinet edge where they do not). Its bottom edge takes the
+        chosen profile exactly as a bottom rail does. A no-op + cleanup
+        when off, or on a cabinet with no toe space."""
+        cab = self.obj.face_frame_cabinet
+        height = layout.tkh
+        if (not getattr(cab, 'toe_kick_valance', False)
+                or layout.cabinet_type not in ('BASE', 'TALL')
+                or not layout.has_toe_kick
+                or layout.toe_kick_type == 'FLOATING'
+                or height <= 0.0):
+            self._cleanup_toe_kick_valance()
+            return
+        left = self._end_stile_floor_width(
+            PART_ROLE_LEFT_STILE, solver.left_stile_to_floor(layout))
+        right = self._end_stile_floor_width(
+            PART_ROLE_RIGHT_STILE, solver.right_stile_to_floor(layout))
+        length = cab.width - left - right
+        if length <= 0.0:
+            self._cleanup_toe_kick_valance()
+            return
+        board = self._toe_kick_valance_part()
+        if board is None:
+            part = CabinetPart()
+            part.create('Toe Kick Valance')
+            board = part.obj
+            board.parent = self.obj
+            board['hb_part_role'] = PART_ROLE_TOE_KICK_VALANCE
+            board['CABINET_PART'] = True
+            board['MENU_ID'] = 'HOME_BUILDER_MT_face_frame_part_commands'
+        board['IS_FINISHED'] = True
+        loose = bool(getattr(cab, 'toe_kick_valance_loose', False))
+        if loose:
+            board[TOE_KICK_VALANCE_LOOSE_KEY] = True
+        elif TOE_KICK_VALANCE_LOOSE_KEY in board:
+            del board[TOE_KICK_VALANCE_LOOSE_KEY]
+        if board.get('IS_MANUAL_PART'):
+            return
+        # Same transform convention as a bottom rail (+90 X, Mirror Z),
+        # so the profile cutter works in the board's local space.
+        gn = GeoNodeCutpart(board)
+        gn.set_input('Length', length)
+        gn.set_input('Width', height)
+        gn.set_input('Thickness', layout.fft)
+        gn.set_input('Mirror Y', False)
+        gn.set_input('Mirror Z', True)
+        loc = (left, -cab.depth, 0.0)
+        rot = (math.radians(90), 0.0, 0.0)
+        if (tuple(board.location) != loc
+                or tuple(board.rotation_euler) != rot):
+            board.location = loc
+            board.rotation_euler = rot
+            # The cutter is built through the board's matrix.
+            bpy.context.view_layer.update()
+
+        profile_id = getattr(cab, 'toe_kick_valance_profile', 'NONE')
+        procedural = profile_id in _BOTTOM_RAIL_PROCEDURAL_PROFILES
+        poly = (None if (procedural or profile_id in ('NONE', ''))
+                else _bottom_rail_profile_poly(profile_id))
+        mod = board.modifiers.get(BOTTOM_RAIL_PROFILE_CUT_MOD_NAME)
+        cutter = None
+        if profile_id not in ('NONE', '') and (procedural or poly):
+            cutter = self._ensure_bottom_rail_profile_cutter(
+                TOE_KICK_VALANCE_SEG)
+            if not self._position_bottom_rail_profile_cutter(
+                    cutter, board, profile_id, poly):
+                cutter = None
+        if cutter is None:
+            if mod is not None:
+                board.modifiers.remove(mod)
+            for child in list(self.obj.children):
+                if (child.get('hb_part_role') == PART_ROLE_BOTTOM_RAIL_PROFILE_CUTTER
+                        and child.get('hb_profile_seg') == TOE_KICK_VALANCE_SEG):
+                    mesh = child.data
+                    bpy.data.objects.remove(child, do_unlink=True)
+                    if mesh is not None and mesh.users == 0:
+                        bpy.data.meshes.remove(mesh)
+            return
+        if mod is None:
+            mod = board.modifiers.new(
+                name=BOTTOM_RAIL_PROFILE_CUT_MOD_NAME, type='BOOLEAN')
+            mod.operation = 'DIFFERENCE'
+            mod.solver = 'EXACT'
+        mod.material_mode = 'TRANSFER'
+        if mod.object is not cutter:
+            mod.object = cutter
 
     # =====================================================================
     # Corner treatment (face-frame arris detail)

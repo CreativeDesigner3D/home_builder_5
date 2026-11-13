@@ -536,6 +536,14 @@ def draw_construction(layout, cab_props):
                    else 'TRIA_RIGHT', emboss=False)
         if cab_props.show_bottom_rail_profile:
             rpbox.prop(cab_props, 'bottom_rail_profile', text="Profile")
+            if cab_props.cabinet_type in ('BASE', 'TALL'):
+                col = rpbox.column(align=True)
+                col.prop(cab_props, 'toe_kick_valance')
+                sub = col.column(align=True)
+                sub.active = cab_props.toe_kick_valance
+                sub.prop(cab_props, 'toe_kick_valance_profile',
+                         text="Profile")
+                sub.prop(cab_props, 'toe_kick_valance_loose')
 
 
 def draw_ada_sink_options(layout, root):

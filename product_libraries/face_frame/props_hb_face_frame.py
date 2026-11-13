@@ -3256,6 +3256,8 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
         # Drawer-look appliance panels (flat slabs mimicking a drawer
         # stack, plus the inset look's mid rails)
         'DRAWER_LOOK_FRONT', 'DRAWER_LOOK_RAIL', 'DOOR_LOOK_FRONT',
+        # Valance across a cabinet's toe space
+        'TOE_KICK_VALANCE',
         # Valance product boards
         'VALANCE_BOARD', 'VALANCE_COVER',
         'VALANCE_PANEL_LEFT', 'VALANCE_PANEL_RIGHT',
@@ -10388,6 +10390,26 @@ class Face_Frame_Cabinet_Props(PropertyGroup):
                     "face_frame_assets/profiles; the end details stay fixed "
                     "while the middle stretches to the rail length",
         items=_bottom_rail_profile_items,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    toe_kick_valance: BoolProperty(
+        name="Toe Kick Valance",
+        description="A valance board across the toe space, in the plane "
+                    "of the face frame, from the floor to the bottom rail",
+        default=False,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    toe_kick_valance_profile: EnumProperty(
+        name="Valance Profile",
+        description="Decorative profile cut into the valance's bottom edge",
+        items=_bottom_rail_profile_items,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    toe_kick_valance_loose: BoolProperty(
+        name="Sent Loose",
+        description="The valance is sent loose and fit on site rather "
+                    "than attached to the cabinet",
+        default=False,
         update=_update_cabinet_dim,
     )  # type: ignore
     overstool_accessory: EnumProperty(
