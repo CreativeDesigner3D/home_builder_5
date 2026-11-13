@@ -1147,6 +1147,20 @@ def register():
     _register_keymaps()
 
 
+def raise_draw():
+    """Re-add the draw handler so the palette draws after handlers
+    added since (see viewport_hud.raise_panels)."""
+    global _draw_handle
+    if _shutdown or _draw_handle is None:
+        return
+    try:
+        bpy.types.SpaceView3D.draw_handler_remove(_draw_handle, 'WINDOW')
+    except Exception:
+        pass
+    _draw_handle = bpy.types.SpaceView3D.draw_handler_add(
+        _draw, (), 'WINDOW', 'POST_PIXEL')
+
+
 def unregister():
     global _draw_handle, _shutdown, _hover, _hover_caret
     _shutdown = True

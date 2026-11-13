@@ -568,9 +568,10 @@ def register():
     cabinet_groups.register()
     molding.register()
     # catalog.register()
-    # Last of the viewport drawing: the HUD's hover chip goes over the
+    # Last of the viewport drawing: the panels go over the on-model
+    # annotations registered above, and the HUD's hover chip over the
     # tool strip and panels drawn after the HUD itself.
-    viewport_hud.register_tip()
+    viewport_hud.raise_panels()
 
     hb_assets.ensure_asset_libraries()
 

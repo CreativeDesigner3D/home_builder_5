@@ -2410,6 +2410,29 @@ def register_tip():
         _draw_tip, (), 'WINDOW', 'POST_PIXEL')
 
 
+def raise_panels():
+    """Re-add the panels' draw handlers so they draw last.
+
+    Handlers draw in the order they were added, and on-model
+    annotations (dimensions, centerlines, labels) add theirs after the
+    panels, some from other add-ons. Left alone they draw across the
+    HUD, the tool strip and the palette. Anything that adds a permanent
+    annotation handler after this add-on registered calls this once it
+    is done."""
+    global _draw_handle
+    if _hud_shutdown or _draw_handle is None:
+        return
+    try:
+        bpy.types.SpaceView3D.draw_handler_remove(_draw_handle, 'WINDOW')
+    except Exception:
+        pass
+    _draw_handle = bpy.types.SpaceView3D.draw_handler_add(
+        _draw_hud, (), 'WINDOW', 'POST_PIXEL')
+    from . import room_palette
+    room_palette.raise_draw()
+    register_tip()
+
+
 def unregister_tip():
     global _tip_handle
     if _tip_handle is not None:
