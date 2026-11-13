@@ -59,6 +59,10 @@ class hb_frameless_OT_product_prompts(bpy.types.Operator):
                 and types_products.BOTTOM_RETURN_KEY not in product_bp):
             # Fillers built before the option.
             product_bp[types_products.BOTTOM_RETURN_KEY] = False
+        if (self.part_type == 'BASE_ASSEMBLY'
+                and types_products.BACK_GAP_KEY in product_bp):
+            # Bases built before the finish options.
+            types_products.add_base_assembly_options(product_bp)
         self._leg_style_seen = product_bp.get(_turned_leg().LEG_STYLE_PROP)
 
         if product_bp.get('IS_FRAMELESS_MISC_PART'):
@@ -189,6 +193,27 @@ class hb_frameless_OT_product_prompts(bpy.types.Operator):
             self.draw_corner_filler(layout, obj)
         elif self.part_type == 'L_CROWN':
             self.draw_l_crown(layout, obj)
+        elif self.part_type == 'BASE_ASSEMBLY':
+            self.draw_base_assembly(layout, obj)
+
+    def draw_base_assembly(self, layout, obj):
+        tp = types_products
+        if tp.FINISH_REAR_KEY not in obj:
+            return      # a base that keeps the frame it was first cut to
+        box = layout.box()
+        box.label(text="Finish")
+        col = box.column(align=True)
+        col.prop(obj, '["%s"]' % tp.FINISH_REAR_KEY, text="Finish Rear")
+        by_others = bool(obj.get(tp.BASE_BY_OTHERS_KEY, False))
+        # Base by Others takes the place of the loose skin.
+        row = col.row(align=True)
+        row.enabled = not by_others
+        row.prop(obj, '["%s"]' % tp.LOOSE_SKIN_KEY, text="Loose Finished Skin")
+        col.prop(obj, '["%s"]' % tp.BASE_BY_OTHERS_KEY, text="Base by Others")
+        row = col.row(align=True)
+        row.enabled = by_others
+        row.label(text="Thickness:")
+        row.prop(obj, '["%s"]' % tp.BASE_BY_OTHERS_THICKNESS_KEY, text="")
 
     def draw_floating_shelf(self, layout, obj):
         box = layout.box()

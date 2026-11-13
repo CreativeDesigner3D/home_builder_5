@@ -238,20 +238,27 @@ class Product(GeoNodeCage):
                  part_cls=CabinetPart, finish=None):
         """One product part, parented and tagged. Size and position are
         the solver's to write, so only the fixed orientation is set here."""
-        part = part_cls()
-        part.create(name)
-        part.obj.parent = self.obj
-        part.obj[PART_ROLE_KEY] = role
-        part.obj.rotation_euler = tuple(math.radians(a) for a in rotation)
-        for axis in mirror:
-            part.set_input('Mirror ' + axis, True)
-        if finish is not None:
-            part.obj['Finish Top'] = finish[0]
-            part.obj['Finish Bottom'] = finish[1]
-        return part
+        return _add_part(self.obj, name, role, rotation, mirror, part_cls,
+                         finish)
 
     def solve(self):
         recalculate_product(self.obj)
+
+
+def _add_part(root, name, role, rotation=(0, 0, 0), mirror=(),
+              part_cls=CabinetPart, finish=None):
+    """One part under the product ``root``, parented and tagged."""
+    part = part_cls()
+    part.create(name)
+    part.obj.parent = root
+    part.obj[PART_ROLE_KEY] = role
+    part.obj.rotation_euler = tuple(math.radians(a) for a in rotation)
+    for axis in mirror:
+        part.set_input('Mirror ' + axis, True)
+    if finish is not None:
+        part.obj['Finish Top'] = finish[0]
+        part.obj['Finish Bottom'] = finish[1]
+    return part
 
 
 # A left end panel built mirrored in Z as well faces out on its top
@@ -1432,6 +1439,95 @@ BASE_ASSEMBLY_FINISH = {
     'BASE_RIGHT_END': (False, True),
 }
 
+# Finish options, all off on a new base.
+# Finish Rear: an island's base is held in at the back as it is at the
+# front, so the rear shows a toe space of its own.
+# Loose Finished Skin: finished toe skins, sent loose and fit on site,
+# cover the faces of the base that show; the frame is held back by their
+# thickness so the skin's face lands where the frame's would have.
+# Base by Others: the base finish (a rubber or vinyl base, say) is
+# applied on site by someone else; the frame is held back by the typed
+# thickness on the same faces and no skins are made. It wins over the
+# loose skin: the two are never both on.
+FINISH_REAR_KEY = 'Finish Rear'
+LOOSE_SKIN_KEY = 'Loose Finished Skin'
+BASE_BY_OTHERS_KEY = 'Base by Others'
+BASE_BY_OTHERS_THICKNESS_KEY = 'Base by Others Thickness'
+BASE_ASSEMBLY_OPTION_KEYS = (FINISH_REAR_KEY, LOOSE_SKIN_KEY,
+                             BASE_BY_OTHERS_KEY, BASE_BY_OTHERS_THICKNESS_KEY)
+BASE_ASSEMBLY_SKIN_THICKNESS = inch(0.75)
+BASE_BY_OTHERS_THICKNESS = inch(0.125)
+
+# What the base was built from, written by whatever stands it under a
+# run: which ends show, and how far the kick face stands back from the
+# cabinet fronts (the rear is held in by the same when it is finished).
+LEFT_END_EXPOSED_KEY = 'Left End Exposed'
+RIGHT_END_EXPOSED_KEY = 'Right End Exposed'
+REAR_SETBACK_KEY = 'Rear Setback'
+
+# Marks a part that ships loose to be fit on site.
+SENT_LOOSE_KEY = 'SENT_LOOSE'
+
+# role: (name, rotation, mirror, finish) -- each skin stands like the
+# frame part it covers.
+BASE_ASSEMBLY_SKINS = {
+    'LOOSE_KICK_FRONT': ("Loose Toe Skin Front", (90, 0, 0), 'Z',
+                         (False, True)),
+    'LOOSE_KICK_REAR': ("Loose Toe Skin Rear", (90, 0, 0), '',
+                        (False, True)),
+    'LOOSE_KICK_END_LEFT': ("Loose Toe Skin Left End", (-90, 0, 90), 'XYZ',
+                            (True, False)),
+    'LOOSE_KICK_END_RIGHT': ("Loose Toe Skin Right End", (-90, 0, 90), 'XY',
+                             (False, True)),
+}
+
+
+def _default_rear_setback():
+    try:
+        from ... import hb_project
+        props = hb_project.get_main_scene().hb_frameless
+        return max(float(props.default_toe_kick_setback), 0.0)
+    except Exception:
+        return inch(2.5)
+
+
+def add_base_assembly_options(root):
+    """Give a base the finish options it does not carry yet (one built
+    before they existed), all off."""
+    for key, kind, value in (
+            (FINISH_REAR_KEY, 'CHECKBOX', False),
+            (LOOSE_SKIN_KEY, 'CHECKBOX', False),
+            (BASE_BY_OTHERS_KEY, 'CHECKBOX', False),
+            (BASE_BY_OTHERS_THICKNESS_KEY, 'DISTANCE',
+             BASE_BY_OTHERS_THICKNESS)):
+        if key not in root:
+            root.home_builder.add_property(key, kind, value)
+    if REAR_SETBACK_KEY not in root:
+        root[REAR_SETBACK_KEY] = _default_rear_setback()
+
+
+def _skin_part(root, parts, role, wanted):
+    """The loose toe skin ``role``, made when it is wanted and taken
+    away when it is not."""
+    part = parts.get(role)
+    if not wanted:
+        if part is not None:
+            bpy.data.objects.remove(part, do_unlink=True)
+            parts.pop(role, None)
+        return None
+    if part is None:
+        name, rotation, mirror, finish = BASE_ASSEMBLY_SKINS[role]
+        part = _add_part(root, name, role, rotation=rotation, mirror=mirror,
+                         finish=finish).obj
+        part[SENT_LOOSE_KEY] = True
+        parts[role] = part
+        try:
+            from .solver_frameless import _paint_like_cabinet
+            _paint_like_cabinet(root, part)
+        except Exception:
+            pass
+    return part
+
 
 def _solve_base_assembly(root, parts, dim_x, dim_y, dim_z):
     """A ladder in plan: the kick face and a back rail run the length,
@@ -1493,46 +1589,108 @@ def _solve_base_assembly_capped(root, parts, dim_x, dim_y, dim_z, mt,
     next base is a full-depth piece with the kick face and the back rail
     between the two ends. An end at a wall, where the kick face runs on
     to the wall, is a cross piece between the face and the rail instead.
-    The rail stands off the wall by the back gap."""
+    The rail stands off the wall by the back gap.
+
+    The cage is the finished size of the base. With a loose skin, or a
+    base finish applied by others, the frame is held back from each face
+    that shows -- the front, an exposed end, a finished rear -- by that
+    finish's thickness, so the finished face stays where it was."""
+    if FINISH_REAR_KEY not in root:
+        add_base_assembly_options(root)
     gap = max(float(_prompt(root, BACK_GAP_KEY, 0.0)), 0.0)
     cap_l = 0.0 if ext_l > 0.0 else mt
     cap_r = 0.0 if ext_r > 0.0 else mt
-    inner = max(dim_y - mt * 2.0 - gap, 0.0)
+
+    finish_rear = bool(_prompt(root, FINISH_REAR_KEY, False))
+    by_others = bool(_prompt(root, BASE_BY_OTHERS_KEY, False))
+    skinned = bool(_prompt(root, LOOSE_SKIN_KEY, False))
+    if by_others and skinned:
+        root[LOOSE_SKIN_KEY] = False
+        skinned = False
+    skin_t = BASE_ASSEMBLY_SKIN_THICKNESS
+    if by_others:
+        hold = max(float(_prompt(root, BASE_BY_OTHERS_THICKNESS_KEY, 0.0)),
+                   0.0)
+    else:
+        hold = skin_t if skinned else 0.0
+
+    # An end under a wall scribe filler is at the wall: it never shows.
+    shows_l = bool(root.get(LEFT_END_EXPOSED_KEY, False)) and ext_l <= 0.0
+    shows_r = bool(root.get(RIGHT_END_EXPOSED_KEY, False)) and ext_r <= 0.0
+    x_l = hold if shows_l else 0.0
+    x_r = dim_x - (hold if shows_r else 0.0)
+    y_front = -dim_y + hold
+    if finish_rear:
+        # The finished rear stands in from the cabinet backs by the
+        # front's setback; nothing is left to scribe, so no back gap.
+        rear_face = -min(max(float(_prompt(root, REAR_SETBACK_KEY, 0.0)),
+                             0.0), dim_y)
+        y_back = rear_face - hold
+        y_cap = y_back
+    else:
+        rear_face = 0.0
+        y_back = -gap
+        y_cap = 0.0
+    inner = max(y_back - y_front - mt * 2.0, 0.0)
+    cap_len = max(y_cap - y_front, 0.0)
 
     part = parts.get('BASE_FRONT')
     if part is not None:
-        _set_part(part, (cap_l - ext_l, -dim_y, 0.0),
-                  length=dim_x + ext_l + ext_r - cap_l - cap_r,
+        _set_part(part, (x_l + cap_l - ext_l, y_front, 0.0),
+                  length=x_r - x_l + ext_l + ext_r - cap_l - cap_r,
                   width=dim_z, thickness=mt)
 
     part = parts.get('BASE_BACK')
     if part is not None:
-        _set_part(part, (cap_l, -gap, 0.0),
-                  length=dim_x - cap_l - cap_r, width=dim_z, thickness=mt)
+        _set_part(part, (x_l + cap_l, y_back, 0.0),
+                  length=x_r - x_l - cap_l - cap_r, width=dim_z,
+                  thickness=mt)
 
-    for role, x, cap in (('BASE_LEFT_END', 0.0, cap_l),
-                         ('BASE_RIGHT_END', dim_x, cap_r)):
+    for role, x, cap in (('BASE_LEFT_END', x_l, cap_l),
+                         ('BASE_RIGHT_END', x_r, cap_r)):
         part = parts.get(role)
         if part is None:
             continue
         if cap > 0.0:
-            _set_part(part, (x, 0.0, 0.0),
-                      length=dim_y, width=dim_z, thickness=mt)
+            _set_part(part, (x, y_cap, 0.0),
+                      length=cap_len, width=dim_z, thickness=mt)
         else:
-            _set_part(part, (x, -(gap + mt), 0.0),
+            _set_part(part, (x, y_back - mt, 0.0),
                       length=inner, width=dim_z, thickness=mt)
 
     part = parts.get('BASE_SUPPORT')
     if part is not None:
+        span = x_r - x_l
         bays = 1
         if spacing > 0.0:
-            bays = max(int(math.ceil((dim_x - mt) / spacing - 1e-6)), 1)
-        pitch = (dim_x - mt) / bays
+            bays = max(int(math.ceil((span - mt) / spacing - 1e-6)), 1)
+        pitch = (span - mt) / bays
         count = bays - 1
-        _set_part(part, (pitch, -(gap + mt), 0.0),
+        _set_part(part, (x_l + pitch, y_back - mt, 0.0),
                   length=inner, width=dim_z, thickness=mt,
                   visible=count > 0)
         _set_array(part, count, -pitch)
+
+    # Loose skins: the front and the rear run the full length, the kick
+    # face's run under a wall filler included; an end skin stands
+    # between them.
+    part = _skin_part(root, parts, 'LOOSE_KICK_FRONT', skinned)
+    if part is not None:
+        _set_part(part, (-ext_l, -dim_y, 0.0),
+                  length=dim_x + ext_l + ext_r, width=dim_z,
+                  thickness=skin_t)
+
+    part = _skin_part(root, parts, 'LOOSE_KICK_REAR', skinned and finish_rear)
+    if part is not None:
+        _set_part(part, (0.0, rear_face, 0.0),
+                  length=dim_x, width=dim_z, thickness=skin_t)
+
+    for role, x, shows in (('LOOSE_KICK_END_LEFT', 0.0, shows_l),
+                           ('LOOSE_KICK_END_RIGHT', dim_x, shows_r)):
+        part = _skin_part(root, parts, role, skinned and shows)
+        if part is not None:
+            _set_part(part, (x, y_cap, 0.0),
+                      length=cap_len, width=dim_z, thickness=skin_t)
 
 
 class BaseAssembly(Product):
@@ -1564,6 +1722,7 @@ class BaseAssembly(Product):
         self.add_property('Left Front Extension', 'DISTANCE', 0.0)
         self.add_property('Right Front Extension', 'DISTANCE', 0.0)
         self.add_property(BACK_GAP_KEY, 'DISTANCE', BASE_ASSEMBLY_BACK_GAP)
+        add_base_assembly_options(self.obj)
 
         self.add_part('Front', 'BASE_FRONT', rotation=(90, 0, 0), mirror='Z',
                       finish=BASE_ASSEMBLY_FINISH['BASE_FRONT'])

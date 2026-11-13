@@ -367,6 +367,14 @@ def create_base_assemblies(context, frame, members):
         obj.location = local.to_translation()
         obj.rotation_euler = local.to_euler()
 
+        # What the finish options size the frame from: the ends that
+        # show, and the front's setback for a rear finished the same way.
+        obj[types_products.REAR_SETBACK_KEY] = max(setback, 0.0)
+        obj[types_products.LEFT_END_EXPOSED_KEY] = bool(
+            index == 0 and (open_left or step_left < 0))
+        obj[types_products.RIGHT_END_EXPOSED_KEY] = bool(
+            index == len(spans) - 1 and (open_right or step_right < 0))
+
         extended = False
         for filler, key, at_end in (
                 (fillers[0], 'Left Front Extension', index == 0),
@@ -460,6 +468,53 @@ def _all_base_assemblies(scene):
     return [o for o in scene.objects if o.get('IS_BASE_ASSEMBLY')]
 
 
+def remember_finish_options(bases):
+    """[(member names, {option: value})] for bases about to be rebuilt,
+    so the finish options chosen on them outlive the rebuild."""
+    remembered = []
+    for obj in bases:
+        options = {key: obj[key]
+                   for key in types_products.BASE_ASSEMBLY_OPTION_KEYS
+                   if key in obj}
+        names = set(obj.get(MEMBERS_KEY) or ())
+        if options and names:
+            remembered.append((names, options))
+    return remembered
+
+
+def restore_finish_options(bases, remembered):
+    """Give each new base the options of the old base that carried the
+    most of its cabinets. Returns how many came out different from a
+    new base's own."""
+    restored = 0
+    for obj in bases:
+        names = set(obj.get(MEMBERS_KEY) or ())
+        best, shared = None, 0
+        for old_names, options in remembered:
+            count = len(names & old_names)
+            if count > shared:
+                best, shared = options, count
+        if best is None:
+            continue
+        changed = False
+        for key, value in best.items():
+            if key not in obj:
+                continue
+            if isinstance(value, bool) or isinstance(obj[key], bool):
+                value = bool(value)
+                differs = bool(obj[key]) != value
+            else:
+                value = float(value)
+                differs = abs(float(obj[key]) - value) > 1e-9
+            if differs:
+                obj[key] = value
+                changed = True
+        if changed:
+            types_products.recalculate_product(obj)
+            restored += 1
+    return restored
+
+
 # ---------------------------------------------------------------------------
 # Operators
 # ---------------------------------------------------------------------------
@@ -499,11 +554,14 @@ class hb_frameless_OT_add_base_assemblies(bpy.types.Operator):
             stale = [o for o in existing if not o.get(EDITED_KEY)]
         cabinets = [c for c in cabinets
                     if not any(stands_on(c, base) for base in kept)]
+        # The finish options set on a base go to the one that replaces it.
+        remembered = remember_finish_options(stale)
         remove_base_assemblies(stale)
 
         created = []
         for frame, members in build_stretches(cabinets):
             created.extend(create_base_assemblies(context, frame, members))
+        restore_finish_options(created, remembered)
 
         for obj in created:
             bpy.ops.hb_frameless.assign_cabinet_style(cabinet_name=obj.name)
