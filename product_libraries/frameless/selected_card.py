@@ -237,6 +237,10 @@ def _houses_appliance(owner):
     return types_frameless.appliance_opening(owner.id_data) is not None
 
 
+def _blind_corner(owner):
+    return bool(owner.id_data.get('IS_BLIND_CORNER'))
+
+
 def _kicked(owner):
     return 'Toe Kick Height' in owner.id_data
 
@@ -441,6 +445,22 @@ def _overlaid(owner):
     return 'Half Overlay Top' in obj and not obj.get('Inset Front')
 
 
+def _blind_opening_width():
+    """Width of a blind corner's door opening; the blind panel takes up
+    the difference, the cabinet keeps its width."""
+    from ...operators import prop_proxy
+
+    def get(obj):
+        from . import types_frameless
+        return float(types_frameless.blind_opening_width(obj) or 0.0)
+
+    def set(obj, value):
+        from . import types_frameless
+        types_frameless.set_blind_opening_width(obj, value)
+    return prop_proxy.computed(get, set, unit='LENGTH', precision=4,
+                               hard_min=0.0)
+
+
 def _cage(obj):
     from ...hb_types import GeoNodeCage
     return GeoNodeCage(obj)
@@ -456,6 +476,7 @@ def _register_schemas():
         'top_off_floor': _top_off_floor(),
         'appliance_opening_width': _appliance_opening(0),
         'appliance_opening_height': _appliance_opening(1),
+        'blind_opening_width': _blind_opening_width(),
         'toe_kick_type': _toe_kick_type(),
         'toe_kick_height': P.length('Toe Kick Height'),
         'toe_kick_setback': P.length('Toe Kick Setback'),
@@ -515,6 +536,8 @@ CABINET_FIELDS = (
      {'when': _houses_appliance}),
     ('distance', 'appliance_opening_height', "Appliance Opening Height",
      {'when': _houses_appliance}),
+    ('distance', 'blind_opening_width', "Door Opening Width",
+     {'when': _blind_corner}),
     ('group', 'fl_cab_kick', "Toe Kick", {'icon': 'cab_construction', 'when': _kicked, 'fields': (
         ('enum', 'toe_kick_type', "Type"),
         ('distance', 'toe_kick_height', "Height"),
@@ -843,6 +866,15 @@ def _bay_page(context, out, bay_obj, title):
     out.extend(options_panel.field_blocks(context, (
         ('value', lambda _o, b=bay_obj: _bay_size(b), "Size"),
     ), bay_obj))
+    from . import solver_frameless
+    root = solver_frameless.cabinet_root(bay_obj)
+    if root is not None and root.get('IS_BLIND_CORNER'):
+        # A blind corner's bay is its door opening: the one bay width
+        # that is typed rather than read.
+        from ...operators import prop_proxy
+        out.extend(options_panel.field_blocks(context, (
+            ('distance', 'blind_opening_width', "Opening Width"),
+        ), prop_proxy.owner(root, CABINET_SCHEMA)))
     out.extend(generic_page.prompt_blocks(
         context, bay_obj, 'fl_bay_prompts', "Bay Prompts", open_first=False))
     _quick(out, _menu_actions(context, bay_obj))

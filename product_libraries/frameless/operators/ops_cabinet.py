@@ -41,6 +41,11 @@ class hb_frameless_OT_cabinet_prompts(bpy.types.Operator):
         description="Clear height for the appliance; the opening over "
                     "it takes what is left",
         unit='LENGTH', precision=5, min=0.0)  # type: ignore
+    blind_opening_width: bpy.props.FloatProperty(
+        name="Door Opening Width",
+        description="Width of the door opening beside the blind panel; "
+                    "the panel takes up the difference",
+        unit='LENGTH', precision=5, min=0.0)  # type: ignore
     toe_kick_height: bpy.props.FloatProperty(name="Toe Kick Height", unit='LENGTH', precision=5) # type: ignore
     toe_kick_setback: bpy.props.FloatProperty(name="Toe Kick Setback", unit='LENGTH', precision=5) # type: ignore
     toe_kick_type: bpy.props.EnumProperty(
@@ -157,6 +162,9 @@ class hb_frameless_OT_cabinet_prompts(bpy.types.Operator):
         size = self._appliance_opening_size()
         if size is not None:
             self.appliance_opening_width, self.appliance_opening_height = size
+        blind = types_frameless.blind_opening_width(cabinet_bp)
+        if blind is not None:
+            self.blind_opening_width = blind
 
         # Get toe kick properties if they exist (BASE and TALL cabinets)
         if 'Toe Kick Height' in cabinet_bp:
@@ -224,6 +232,11 @@ class hb_frameless_OT_cabinet_prompts(bpy.types.Operator):
             if abs(self.appliance_opening_height - size[1]) > 1e-6:
                 types_frameless.set_appliance_opening_height(
                     obj, self.appliance_opening_height)
+        blind = types_frameless.blind_opening_width(obj)
+        if (blind is not None
+                and abs(self.blind_opening_width - blind) > 1e-6):
+            types_frameless.set_blind_opening_width(
+                obj, self.blind_opening_width)
         self.cabinet.set_input('Dim X', self.cabinet_width)
         self.cabinet.set_input('Dim Z', self.cabinet_height)
         self.cabinet.set_input('Dim Y', self.cabinet_depth)
@@ -290,6 +303,9 @@ class hb_frameless_OT_cabinet_prompts(bpy.types.Operator):
         size = self._appliance_opening_size()
         if size is not None:
             self.appliance_opening_width, self.appliance_opening_height = size
+        blind = types_frameless.blind_opening_width(self.cabinet.obj)
+        if blind is not None:
+            self.blind_opening_width = blind
         return True
 
     def execute(self, context):
@@ -336,6 +352,13 @@ class hb_frameless_OT_cabinet_prompts(bpy.types.Operator):
             row = col.row(align=True)
             row.label(text="Height:")
             row.prop(self, 'appliance_opening_height', text="")
+
+        if types_frameless.blind_opening_width(self.cabinet.obj) is not None:
+            box = layout.box()
+            box.label(text="Blind Corner")
+            row = box.row(align=True)
+            row.label(text="Door Opening Width:")
+            row.prop(self, 'blind_opening_width', text="")
 
         if self._show_angle_front():
             box = layout.box()

@@ -1448,6 +1448,47 @@ APPLIANCE_OPENING_MIN_OVER = inch(3.0)
 APPLIANCE_OPENING_MIN = inch(6.0)
 
 
+def _blind_bay(cabinet_obj):
+    """The bay of a blind corner cabinet (its door opening), or None."""
+    if not cabinet_obj.get('IS_BLIND_CORNER'):
+        return None
+    for child in cabinet_obj.children:
+        if (child.get('IS_FRAMELESS_BAY_CAGE')
+                and solver_frameless.BLIND_SPAN_KEY in child):
+            return child
+    return None
+
+
+def blind_opening_width(cabinet_obj):
+    """Width of the door opening a blind corner keeps beside its blind
+    panel, or None for any other cabinet."""
+    bay = _blind_bay(cabinet_obj)
+    if bay is None:
+        return None
+    try:
+        return float(GeoNodeCage(bay).get_input('Dim X'))
+    except Exception:
+        return None
+
+
+def set_blind_opening_width(cabinet_obj, width):
+    """Make a blind corner's door opening this wide. The cabinet keeps
+    its width: the blind panel gives up or takes the difference, the
+    opening held between the solver's minimum and the full inside."""
+    bay = _blind_bay(cabinet_obj)
+    current = blind_opening_width(cabinet_obj)
+    if bay is None or current is None:
+        return False
+    span = float(bay[solver_frameless.BLIND_SPAN_KEY])
+    inner = current + span
+    width = min(max(float(width), solver_frameless.BLIND_MIN_DOOR_OPENING),
+                inner)
+    if abs(width - current) < 1e-7:
+        return False
+    cabinet_obj['Blind Width'] = max(inner - width, 0.0)
+    return True
+
+
 def appliance_opening(cabinet_obj):
     """The opening of a refrigerator, column or laundry cabinet that
     houses the appliance, or None."""

@@ -526,11 +526,15 @@ def compute_labels(context, region, rv3d, lines_out=None):
                 targets += _run_targets(cabinet, seen_spans, editable)
         elif mode == 'Bays':
             # Bay size is the solver's (carcass minus sides / bottom /
-            # top), so these are readouts, not inputs.
+            # top), so these are readouts, not inputs -- but for a blind
+            # corner's width, which is its door opening: typing it moves
+            # the blind panel.
+            blind = (bool(cabinet.get('IS_BLIND_CORNER'))
+                     and _cabinet_editable(cabinet))
             for bay in _iter_bay_cages(cabinet):
                 dim_x, _dim_y, dim_z = _cage_dims(bay)
                 fx = _height_dim_fx(bay)
-                targets.append((bay, 'BAY_W', False, False, dim_x, "W ",
+                targets.append((bay, 'BAY_W', blind, False, dim_x, "W ",
                                 _anchor_world(bay, 0.5, 0.5),
                                 _pair(_anchor_world(bay, 0.0, 0.5),
                                       _anchor_world(bay, 1.0, 0.5))))
@@ -750,6 +754,15 @@ def _commit(context, obj, kind, value):
             cage.set_input(name, value)
         hb_utils.run_calc_fix(context, obj)
         return True
+    if kind == 'BAY_W':
+        # A blind corner's door opening; the blind panel follows.
+        from . import solver_frameless, types_frameless
+        root = solver_frameless.cabinet_root(obj)
+        if root is None or not types_frameless.set_blind_opening_width(
+                root, value):
+            return False
+        hb_utils.run_calc_fix(context, root)
+        return True
     if kind in ('OPENING_H', 'OPENING_W'):
         cabinet_bp, calc, prompt = _resolve_split(obj, kind)
         if prompt is None:
@@ -792,7 +805,8 @@ class hb_frameless_OT_edit_dim_label(bpy.types.Operator):
                ('CAB_H', "Cabinet Height", ""),
                ('CAB_D', "Cabinet Depth", ""),
                ('OPENING_H', "Opening Height", ""),
-               ('OPENING_W', "Opening Width", "")]
+               ('OPENING_W', "Opening Width", ""),
+               ('BAY_W', "Bay Width", "")]
         + wall_run_dims.enum_items(),
         options={'HIDDEN'})  # type: ignore
 
