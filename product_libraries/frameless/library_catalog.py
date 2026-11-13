@@ -386,6 +386,10 @@ OPTION_PAGES = {
              {'when': lambda p: p.auto_finished_ends}),
             ('enum', 'default_finished_back', "Finished Back",
              {'when': lambda p: p.auto_finished_ends}),
+            ('bool', 'applied_back_to_floor', "Applied Back To Floor",
+             {'when': lambda p: (p.auto_finished_ends
+                                 and p.default_finished_back
+                                 in ('SLAB', '5PIECE'))}),
             ('gap', None, None),
             ('distance', 'default_toe_kick_height', "Toe Kick Height"),
             ('distance', 'default_toe_kick_setback', "Toe Kick Setback"),

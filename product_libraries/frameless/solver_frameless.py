@@ -286,10 +286,32 @@ def carcass_parts(root):
 
 def _solve_applied_ends(root, parts, p, dim_x, dim_y, dim_z):
     """Applied end panels on the cabinet's outside faces."""
+    # An applied back stands behind the cabinet, so an applied end runs
+    # back over its edge, and the back meets that end instead of
+    # stopping short of it.
+    back_part = parts.get('APPLIED_END_BACK')
+    wrap = 0.0
+    if back_part is not None and not back_part.hide_viewport:
+        wrap = max(float(GeoNodeCutpart(back_part).get_input('Thickness')), 0.0)
+
+    def wrapped(role):
+        end = parts.get(role)
+        return wrap > 0.0 and end is not None and not end.hide_viewport
+
     for role, side in (('APPLIED_END_LEFT', 'LEFT'), ('APPLIED_END_RIGHT', 'RIGHT'),
                        ('APPLIED_END_BACK', 'BACK')):
         part = parts.get(role)
         if part is None:
+            continue
+        if side == 'BACK':
+            # To the floor unless it is told to stop at the toe kick.
+            to_floor = bool(part.get(PANEL_TO_FLOOR_KEY, True))
+            z = 0.0 if to_floor else p.tkh
+            x0 = 0.0 if wrapped('APPLIED_END_LEFT') else APPLIED_BACK_REVEAL
+            x1 = dim_x - (0.0 if wrapped('APPLIED_END_RIGHT')
+                          else APPLIED_BACK_REVEAL)
+            set_part(part, (x0, 0.0, z), length=x1 - x0, width=dim_z - z,
+                     visible=not part.hide_viewport)
             continue
         if part.get('IS_APPLIED_PANEL_5PIECE'):
             if PANEL_TO_FLOOR_KEY not in part:
@@ -299,28 +321,22 @@ def _solve_applied_ends(root, parts, p, dim_x, dim_y, dim_z):
             to_floor = bool(part.get(PANEL_TO_FLOOR_KEY))
             z = 0.0 if to_floor else p.tkh
             length = dim_z if to_floor else dim_z - p.tkh
-            width = dim_y - inch(0.75)
+            # Runs back from the cabinet's back face over an applied back.
+            y = wrap
+            width = dim_y - inch(0.75) + wrap
         else:
             z = 0.0
             height = float(part.get(END_HEIGHT_KEY, 0.0) or 0.0)
             length = height if height > 0.0 else dim_z
             front = float(part.get(END_FRONT_EXTENSION_KEY,
                                    APPLIED_END_EXTENSION))
-            back = float(part.get(END_BACK_EXTENSION_KEY, 0.0))
-            width = dim_y + front + back
+            # Runs back past the cabinet from its back face: as far as
+            # it is set to, and at least over an applied back.
+            y = max(float(part.get(END_BACK_EXTENSION_KEY, 0.0)), wrap)
+            width = dim_y + front + y
         visible = not part.hide_viewport
-        y = 0.0
-        if not part.get('IS_APPLIED_PANEL_5PIECE'):
-            # Runs back past the cabinet from its back face.
-            y = float(part.get(END_BACK_EXTENSION_KEY, 0.0))
-        if side == 'LEFT':
-            set_part(part, (0.0, y, z), length=length, width=width, visible=visible)
-        elif side == 'RIGHT':
-            set_part(part, (dim_x, y, z), length=length, width=width, visible=visible)
-        else:
-            set_part(part, (APPLIED_BACK_REVEAL, 0.0, 0.0),
-                     length=dim_x - APPLIED_BACK_REVEAL * 2.0, width=dim_z,
-                     visible=visible)
+        x = 0.0 if side == 'LEFT' else dim_x
+        set_part(part, (x, y, z), length=length, width=width, visible=visible)
 
 
 # ---------------------------------------------------------------------------
