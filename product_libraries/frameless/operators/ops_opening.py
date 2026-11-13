@@ -1081,7 +1081,37 @@ class hb_frameless_OT_change_opening_type(bpy.types.Operator):
             opening_obj = bpy.data.objects.get(name)
             if opening_obj is not None:
                 self._change_opening(context, opening_obj)
+        if self.opening_type == 'PULLOUT' and len(names) == 1:
+            self._pick_pullout_model(context, names[0])
         return {'FINISHED'}
+
+    def _pick_pullout_model(self, context, opening_name):
+        """A new pullout goes straight on to choosing what is in it: the
+        product list with the opening's size beside what each one takes.
+        Skipped when no product list is registered, and for several
+        openings at once (each can be picked from its own menu)."""
+        if bpy.app.background:
+            return
+        from .... import accessory_registry
+        from .. import pullout_models
+        from .. import interior_items
+        opening_obj = bpy.data.objects.get(opening_name)
+        if opening_obj is None or not accessory_registry.categories(
+                pullout_models.PULLOUT_HOST):
+            return
+        # The pullout is the insert just built inside the opening.
+        pullout = next(
+            (interior_items.drawer_opening_for(c)
+             for c in opening_obj.children_recursive
+             if c.get('IS_PULLOUT_FRONT')), None)
+        if pullout is None:
+            return
+        try:
+            context.view_layer.objects.active = pullout
+            bpy.ops.hb_frameless.pullout_model(
+                'INVOKE_DEFAULT', opening_name=pullout.name)
+        except Exception as ex:
+            print('Home Builder: pullout model dialog failed: %s' % ex)
 
     def _change_opening(self, context, opening_obj):
         opening = types_frameless.CabinetOpening(opening_obj)
