@@ -55,6 +55,10 @@ class hb_frameless_OT_product_prompts(bpy.types.Operator):
     def invoke(self, context, event):
         product_bp = get_product_bp(context.object)
         self.part_type = product_bp.get('PART_TYPE', '')
+        if (self.part_type == 'CORNER_FILLER'
+                and types_products.BOTTOM_RETURN_KEY not in product_bp):
+            # Fillers built before the option.
+            product_bp[types_products.BOTTOM_RETURN_KEY] = False
         self._leg_style_seen = product_bp.get(_turned_leg().LEG_STYLE_PROP)
 
         if product_bp.get('IS_FRAMELESS_MISC_PART'):
@@ -287,6 +291,9 @@ class hb_frameless_OT_product_prompts(bpy.types.Operator):
         if 'Flush With Doors' in obj:   # fillers built before the option
             row.prop(obj, '["Flush With Doors"]', text="Flush With Doors")
         row.prop(obj, '["Cabinet On Right"]', text="Cabinet On Right")
+        key = types_products.BOTTOM_RETURN_KEY
+        if key in obj and float(obj.get('Toe Kick Height', 0.0)) <= 0.0:
+            col.prop(obj, '["%s"]' % key, text="Bottom Return")
         if float(obj.get('Toe Kick Height', 0.0)) > 0.0:
             box = layout.box()
             box.label(text="Toe Kick")

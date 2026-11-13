@@ -1065,6 +1065,55 @@ def set_product_depth(root, depth):
     GeoNodeCage(root).set_input('Dim Y', depth + product_front_setback(root))
 
 
+# A panel closing the gap under an upper's wall scribe filler.
+BOTTOM_RETURN_KEY = 'Bottom Return'
+
+
+def _paint_product(root):
+    """Paint a product's parts from its style, by their finish flags."""
+    from ... import hb_project
+    styles = hb_project.get_main_scene().hb_frameless.cabinet_styles
+    if not len(styles):
+        return
+    index = root.get('CABINET_STYLE_INDEX', 0)
+    style = styles[index] if 0 <= index < len(styles) else styles[0]
+    style.apply_materials_to_cabinet(root)
+
+
+def _solve_filler_bottom_return(root, parts, dim_x, depth, mt, on):
+    """The bottom return of a filler with no kick under it: a panel
+    lying behind the face's bottom edge, from the face back to the wall,
+    made when the option is switched on and removed when it is off. Its
+    underside is finished when the bottom of the cabinet beside the
+    filler is."""
+    part = parts.get('FILLER_BOTTOM_RETURN')
+    if not on:
+        if part is not None:
+            parts.pop('FILLER_BOTTOM_RETURN')
+            bpy.data.objects.remove(part, do_unlink=True)
+        return
+    made = part is None
+    if made:
+        new = CabinetPart()
+        new.create('Bottom Return')
+        part = new.obj
+        part.parent = root
+        part[PART_ROLE_KEY] = 'FILLER_BOTTOM_RETURN'
+        new.set_input('Mirror Y', True)
+        parts['FILLER_BOTTOM_RETURN'] = part
+    from . import scribe_fit
+    finished = scribe_fit.bottom_return_finished(root)
+    repaint = made or bool(part.get('Finish Bottom')) != finished
+    part['Finish Top'] = False
+    part['Finish Bottom'] = finished
+    _set_part(part, (0.0, 0.0, 0.0), length=dim_x, width=depth, thickness=mt)
+    if repaint:
+        try:
+            _paint_product(root)
+        except Exception:
+            pass
+
+
 def _solve_corner_filler(root, parts, dim_x, dim_y, dim_z):
     """An L in plan. The face runs across the front, in the door plane
     or flush with the carcass front (Dim Y always reaches from the wall
@@ -1082,6 +1131,12 @@ def _solve_corner_filler(root, parts, dim_x, dim_y, dim_z):
     # Off over a separate toe kick platform, which runs on under it.
     kick_on = bool(root.get('Toe Kick Piece', True))
     face_y = -dim_y + (0.0 if on_doors else FRONT_THICKNESS)
+    # Under an upper only: a base or tall stands on its kick or the floor.
+    bottom_on = bool(root.get(BOTTOM_RETURN_KEY, False)) and tkh <= 0.0
+    _solve_filler_bottom_return(root, parts, dim_x, -(face_y + mt), mt,
+                                bottom_on)
+    # The return leg stands on the bottom return.
+    leg_z = tkh + (mt if bottom_on else 0.0)
 
     part = parts.get('FILLER_FACE')
     if part is not None:
@@ -1103,8 +1158,8 @@ def _solve_corner_filler(root, parts, dim_x, dim_y, dim_z):
             # A side panel's width runs toward -Y from where it is set,
             # so it is set at its back edge to run from the face's back
             # toward the wall.
-            _set_part(part, (x, face_y + mt + ret, tkh),
-                      length=dim_z - tkh, width=ret, thickness=mt,
+            _set_part(part, (x, face_y + mt + ret, leg_z),
+                      length=dim_z - leg_z, width=ret, thickness=mt,
                       visible=on)
 
     # The cage is what gets clicked, so it is drawn back to the filler
@@ -1154,6 +1209,7 @@ class CornerFiller(Product):
         self.add_property('Cabinet On Right', 'CHECKBOX', self.cabinet_on_right)
         self.add_property('Flush With Doors', 'CHECKBOX', self.flush_with_doors)
         self.add_property('Toe Kick Piece', 'CHECKBOX', self.kick_piece)
+        self.add_property(BOTTOM_RETURN_KEY, 'CHECKBOX', False)
 
     def create(self, name="Wall Scribe Filler"):
         self.create_product(name)

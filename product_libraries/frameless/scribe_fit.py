@@ -85,14 +85,79 @@ def refit(filler):
     return False
 
 
+def _wall_span(obj, width):
+    """(x0, x1) along the wall, or None when turned some other way."""
+    on_front = _side(obj)
+    if on_front is None:
+        return None
+    if on_front:
+        return obj.location.x, obj.location.x + width
+    return obj.location.x - width, obj.location.x
+
+
+def neighbour_cabinet(filler):
+    """The cabinet a wall scribe filler stands against: the one on the
+    same side of the wall whose end meets the filler's cabinet edge at
+    the filler's height."""
+    if not is_wall_scribe_filler(filler):
+        return None
+    on_front = _side(filler)
+    span = _wall_span(filler, hb_types.GeoNodeCage(filler).get_input('Dim X'))
+    if span is None:
+        return None
+    cab_right = bool(filler.get('Cabinet On Right', True))
+    # A back-side filler is turned 180, which swaps its sides.
+    high = cab_right if on_front else not cab_right
+    edge = span[1] if high else span[0]
+    for obj in filler.parent.children:
+        if not obj.get('IS_FRAMELESS_CABINET_CAGE') or _side(obj) != on_front:
+            continue
+        if abs(obj.location.z - filler.location.z) > TOL:
+            continue
+        other = _wall_span(obj, hb_types.GeoNodeCage(obj).get_input('Dim X'))
+        if other is not None and abs((other[0] if high else other[1]) - edge) <= TOL:
+            return obj
+    return None
+
+
+def bottom_return_finished(filler):
+    """Whether a filler's bottom return shows a finished underside: it
+    does when the bottom of the cabinet beside it is finished, or has a
+    finished panel applied under it."""
+    cabinet = neighbour_cabinet(filler)
+    if cabinet is None:
+        return False
+    from . import solver_frameless
+    from .operators import ops_finished_ends
+    if int(cabinet.get(solver_frameless.FINISHED_BOTTOM_KEY, 0) or 0):
+        return True
+    return ops_finished_ends.finish_condition(cabinet, 'BOTTOM') == 'FINISHED'
+
+
+def sync_bottom_return(filler):
+    """Re-solve a filler whose bottom return's finish no longer matches
+    the cabinet beside it. True when it changed."""
+    if not filler.get(types_products.BOTTOM_RETURN_KEY):
+        return False
+    part = types_products.product_parts(filler).get('FILLER_BOTTOM_RETURN')
+    if part is None:
+        return False
+    if bool(part.get('Finish Bottom')) == bottom_return_finished(filler):
+        return False
+    types_products.recalculate_product(filler)
+    return True
+
+
 def refit_scene(scene):
-    """Refit every wall scribe filler in ``scene``. Returns those changed."""
+    """Refit every wall scribe filler in ``scene``, and put its bottom
+    return's finish right. Returns those changed."""
     changed = []
     for obj in scene.objects:
         if not is_wall_scribe_filler(obj):
             continue
         try:
-            if refit(obj):
+            moved = refit(obj)
+            if sync_bottom_return(obj) or moved:
                 changed.append(obj)
         except Exception:
             traceback.print_exc()
