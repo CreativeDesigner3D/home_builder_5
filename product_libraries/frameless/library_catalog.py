@@ -380,6 +380,13 @@ OPTION_PAGES = {
         'fields': (
             ('distance', 'default_carcass_part_thickness', "Material Thickness"),
             ('gap', None, None),
+            # Ends and backs that show finish themselves.
+            ('bool', 'auto_finished_ends', "Automatic Finished Ends"),
+            ('enum', 'default_finished_end', "Finished End",
+             {'when': lambda p: p.auto_finished_ends}),
+            ('enum', 'default_finished_back', "Finished Back",
+             {'when': lambda p: p.auto_finished_ends}),
+            ('gap', None, None),
             ('distance', 'default_toe_kick_height', "Toe Kick Height"),
             ('distance', 'default_toe_kick_setback', "Toe Kick Setback"),
             ('enum', 'default_toe_kick_type', "Toe Kick Type"),

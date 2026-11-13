@@ -320,7 +320,7 @@ class hb_frameless_OT_update_finished_end(bpy.types.Operator):
         # Remove existing applied end
         self.remove_applied_end(cabinet_bp, self.side)
         from .. import exposure
-        if not exposure._running and self.side in exposure.SIDES:
+        if not exposure._running and self.side in exposure.AUTO_SIDES:
             # Chosen by hand: it stays until handed back to automatic.
             exposure.set_manual(cabinet_bp, self.side)
         
@@ -639,7 +639,7 @@ class hb_frameless_OT_set_finish_condition(bpy.types.Operator):
         for cabinet, side in pairs:
             if set_finish_condition(context, cabinet, side, self.condition):
                 done.add(cabinet)
-                if side in exposure.SIDES:
+                if side in exposure.AUTO_SIDES:
                     exposure.set_manual(cabinet, side)
         for cabinet in done:
             _paint(cabinet)
@@ -662,7 +662,8 @@ class hb_frameless_OT_auto_finish_condition(bpy.types.Operator):
     side: bpy.props.EnumProperty(
         name="Side",
         items=[('PART', "Selected Parts", "The cabinet sides selected"),
-               ('LEFT', "Left", ""), ('RIGHT', "Right", "")],
+               ('LEFT', "Left", ""), ('RIGHT', "Right", ""),
+               ('BACK', "Back", "")],
         default='PART') # type: ignore
 
     @classmethod
@@ -682,7 +683,7 @@ class hb_frameless_OT_auto_finish_condition(bpy.types.Operator):
             else:
                 side = self.side
                 cabinet = hb_utils.get_cabinet_bp(obj)
-            if (side not in exposure.SIDES or cabinet is None
+            if (side not in exposure.AUTO_SIDES or cabinet is None
                     or not cabinet.get('IS_FRAMELESS_CABINET_CAGE')):
                 continue
             exposure.hand_back(cabinet, side)

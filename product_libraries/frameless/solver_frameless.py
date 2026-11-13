@@ -91,6 +91,10 @@ PANEL_TO_FLOOR_KEY = 'Panel To Floor'
 END_FRONT_EXTENSION_KEY = 'End Front Extension'
 END_BACK_EXTENSION_KEY = 'End Back Extension'
 END_HEIGHT_KEY = 'End Height'
+# An applied back stands behind the cabinet's own back and stops this
+# far short of each side, the way the fronts do, so a run of backs
+# reads as a run of fronts.
+APPLIED_BACK_REVEAL = inch(0.0625)
 
 # Base Top Construction prompt: index into ["Full Top", "Stretchers", "Sink"].
 TOP_FULL, TOP_STRETCHERS, TOP_SINK = 0, 1, 2
@@ -314,7 +318,9 @@ def _solve_applied_ends(root, parts, p, dim_x, dim_y, dim_z):
         elif side == 'RIGHT':
             set_part(part, (dim_x, y, z), length=length, width=width, visible=visible)
         else:
-            set_part(part, (0.0, 0.0, 0.0), length=dim_x, width=dim_z, visible=visible)
+            set_part(part, (APPLIED_BACK_REVEAL, 0.0, 0.0),
+                     length=dim_x - APPLIED_BACK_REVEAL * 2.0, width=dim_z,
+                     visible=visible)
 
 
 # ---------------------------------------------------------------------------

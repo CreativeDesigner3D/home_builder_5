@@ -98,8 +98,7 @@ class HOME_BUILDER_MT_finish_condition(bpy.types.Menu):
         layout = self.layout
         for side, label in (('LEFT', "Left End:"), ('RIGHT', "Right End:"),
                             ('BACK', "Back:")):
-            _draw_finish_conditions(layout, side, label,
-                                    auto=side in ('LEFT', 'RIGHT'))
+            _draw_finish_conditions(layout, side, label, auto=True)
             layout.separator()
         _draw_finish_conditions(layout, 'TOP', "Top:", panels=False)
         from .operators import ops_finished_ends
@@ -126,7 +125,7 @@ class HOME_BUILDER_MT_carcass_part_commands(bpy.types.Menu):
         elif side is not None:
             _draw_finish_conditions(layout, 'PART', side.title() + " Finish:",
                                     panels=side in ops_finished_ends.PANEL_SIDES,
-                                    auto=side in ('LEFT', 'RIGHT'))
+                                    auto=side in ('LEFT', 'RIGHT', 'BACK'))
             layout.separator()
         layout.operator("hb_frameless.cabinet_prompts", text="Cabinet Prompts")
         layout.operator("hb_frameless.finish_interior", text="Finish Interior")

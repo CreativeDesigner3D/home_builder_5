@@ -2301,6 +2301,17 @@ class Frameless_Scene_Props(PropertyGroup):
         default='FINISHED',
         update=update_auto_finished_ends)# type: ignore
 
+    default_finished_back: EnumProperty(
+        name="Default Finished Back",
+        description="What a back that shows is given: one no wall and no "
+                    "other cabinet stands behind, as on an island",
+        items=[('UNFINISHED', "Unfinished", "Backs are left unfinished"),
+               ('FINISHED', "Finished Back", "The cabinet back itself in the finish material"),
+               ('SLAB', "Applied Slab Panel", "A finished slab panel applied behind the cabinet's own back"),
+               ('5PIECE', "Applied 5-Piece Panel", "A five-piece panel matching the doors")],
+        default='FINISHED',
+        update=update_auto_finished_ends)# type: ignore
+
     default_carcass_part_thickness: FloatProperty(name="Default Carcass Part Thickness",
                                                  description="",
                                                  default=units.inch(.75),
@@ -2818,6 +2829,8 @@ class Frameless_Scene_Props(PropertyGroup):
         row.prop(self,'auto_finished_ends',text="Automatic on Ends That Show")
         row = size_box.row()
         row.prop(self,'default_finished_end',text="Default")
+        row = size_box.row()
+        row.prop(self,'default_finished_back',text="Backs That Show")
         size_box = layout.box()
         row = size_box.row()
         row.label(text="Toe Kick:")

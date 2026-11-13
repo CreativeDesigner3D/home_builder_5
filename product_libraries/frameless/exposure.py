@@ -12,6 +12,12 @@ whatever box has a face lying on it, over the part of the end that face
 overlaps. That reads the same for a neighbour on the same wall, a run
 turning the corner on the next wall, an island and a peninsula.
 
+The back is read the same way, across the cabinet's width: one a wall
+or other cabinets stand behind stays unfinished, one that shows (an
+island, a peninsula) takes the room's default finished back. A room
+with no walls drawn says nothing about what is behind a cabinet, so
+backs are left alone there.
+
 An end set by hand is left alone until it is handed back to automatic.
 """
 import bpy
@@ -33,6 +39,11 @@ SLACK = units.inch(0.25)
 WALL_JOIN = units.inch(6.0)
 
 SIDES = ('LEFT', 'RIGHT')
+# Every face this module settles: the ends, then the back.
+AUTO_SIDES = SIDES + ('BACK',)
+# What a face is in before it is first settled here: every carcass part
+# is built finished on its outside face.
+BUILT_AS = {'LEFT': 'FINISHED', 'RIGHT': 'FINISHED', 'BACK': 'FINISHED'}
 AUTO_KEY = 'hb_end_auto_'      # + side.lower(): the condition set here last
 MANUAL_KEY = 'hb_end_manual_'  # + side.lower(): set by hand, leave alone
 
@@ -183,24 +194,33 @@ def _wall_end_closed(cab_obj, side, box, scan):
 
 
 def side_exposure(cab_obj, side, scan):
-    """'EXPOSED', 'PARTIAL' or 'UNEXPOSED' for one end of a cabinet."""
+    """'EXPOSED', 'PARTIAL' or 'UNEXPOSED' for one end of a cabinet, or
+    for its back."""
     entry = next((e for e in scan.cabinets if e[0] is cab_obj), None)
     if entry is None:
         entry = (cab_obj, hb_utils.world_matrix(cab_obj), _cage_box(cab_obj))
     _obj, mw, box = entry
     inv = mw.inverted_safe()
     (x0, x1), (y0, y1), (z0, z1) = box
-    plane = x0 if side == 'LEFT' else x1
-    out = -1.0 if side == 'LEFT' else 1.0
-    full = (y1 - y0) * (z1 - z0)
+    if side == 'BACK':
+        # The back face, seen across the width.
+        axis, across = 1, 0
+        plane, out = y1, 1.0
+        a_lo, a_hi = x0, x1
+    else:
+        axis, across = 0, 1
+        plane = x0 if side == 'LEFT' else x1
+        out = -1.0 if side == 'LEFT' else 1.0
+        a_lo, a_hi = y0, y1
+    full = (a_hi - a_lo) * (z1 - z0)
     if full <= 0.0:
         return 'EXPOSED'
 
     rects = []
 
     def cover(spans, gap):
-        near = spans[0][1] if side == 'LEFT' else spans[0][0]
-        far = spans[0][0] if side == 'LEFT' else spans[0][1]
+        near = spans[axis][1] if out < 0.0 else spans[axis][0]
+        far = spans[axis][0] if out < 0.0 else spans[axis][1]
         # The face toward this end lies on it (or within the gap, for a
         # wall), and the box stands outside the cabinet.
         dist = (near - plane) * out
@@ -208,7 +228,8 @@ def side_exposure(cab_obj, side, scan):
             return
         if (far - plane) * out <= dist:
             return
-        a0, a1 = max(spans[1][0] - SLACK, y0), min(spans[1][1] + SLACK, y1)
+        a0 = max(spans[across][0] - SLACK, a_lo)
+        a1 = min(spans[across][1] + SLACK, a_hi)
         b0, b1 = max(spans[2][0] - SLACK, z0), min(spans[2][1] + SLACK, z1)
         if a1 - a0 > SLACK * 2 and b1 - b0 > SLACK * 2:
             rects.append((a0, a1, b0, b1))
@@ -227,7 +248,7 @@ def side_exposure(cab_obj, side, scan):
     covered = _union_area(rects)
     if covered >= full - 1e-7:
         return 'UNEXPOSED'
-    if _wall_end_closed(cab_obj, side, box, scan):
+    if side != 'BACK' and _wall_end_closed(cab_obj, side, box, scan):
         return 'UNEXPOSED'
     if covered > 1e-7:
         return 'PARTIAL'
@@ -240,12 +261,14 @@ def side_exposure(cab_obj, side, scan):
 
 def _settings(scene):
     props = scene.hb_frameless
+    end = getattr(props, 'default_finished_end', 'FINISHED')
     return (bool(getattr(props, 'auto_finished_ends', True)),
-            getattr(props, 'default_finished_end', 'FINISHED'))
+            {'LEFT': end, 'RIGHT': end,
+             'BACK': getattr(props, 'default_finished_back', 'FINISHED')})
 
 
 def target_condition(state, default):
-    if state == 'UNEXPOSED':
+    if state == 'UNEXPOSED' or default == 'UNFINISHED':
         return 'UNFINISHED'
     if state == 'PARTIAL':
         # A panel would run into the neighbour that covers part of it.
@@ -274,7 +297,7 @@ def _apply(context, cab_obj, side, target):
     key = AUTO_KEY + side.lower()
     # An end that is not the way this left it was set by hand, here or
     # before ends looked after themselves: it stays as it is.
-    last = cab_obj.get(key, 'FINISHED')
+    last = cab_obj.get(key, BUILT_AS[side])
     if current != last:
         set_manual(cab_obj, side)
         return False
@@ -301,19 +324,21 @@ def recalc_scene(scene=None, context=None):
     global _running
     context = context or bpy.context
     scene = scene or context.scene
-    auto, default = _settings(scene)
+    auto, defaults = _settings(scene)
     if not auto:
         return []
     from .operators import ops_finished_ends
     scan = Scan(scene)
+    # With no walls drawn there is no telling what a back faces.
+    sides = AUTO_SIDES if scan.walls else SIDES
     wanted = []
     for cab_obj, _mw, _box in scan.cabinets:
-        for side in SIDES:
+        for side in sides:
             if is_manual(cab_obj, side):
                 continue
             wanted.append((cab_obj, side,
                            target_condition(side_exposure(cab_obj, side, scan),
-                                            default)))
+                                            defaults[side])))
     changed = []
     was_running = _running
     _running = True
@@ -332,7 +357,8 @@ def recalc_scene(scene=None, context=None):
     finally:
         _running = was_running
     _signatures[scene.name] = (Scan(scene).signature() if changed
-                               else scan.signature(), auto, default)
+                               else scan.signature(), auto,
+                               tuple(sorted(defaults.items())))
     return changed
 
 
@@ -404,11 +430,12 @@ def flush_pending():
         except Exception:
             traceback.print_exc()
         try:
-            auto, default = _settings(scene)
+            auto, defaults = _settings(scene)
             if not auto:
                 continue
             last = _signatures.get(name)
-            if last is not None and last == (Scan(scene).signature(), auto, default):
+            if last is not None and last == (Scan(scene).signature(), auto,
+                                             tuple(sorted(defaults.items()))):
                 continue
             changed.extend(recalc_scene(scene))
         except Exception:
