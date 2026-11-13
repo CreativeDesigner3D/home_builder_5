@@ -333,7 +333,7 @@ class hb_frameless_OT_product_prompts(bpy.types.Operator):
 
     def draw_l_crown(self, layout, obj):
         box = layout.box()
-        box.label(text="L Crown")
+        box.label(text="Ceiling Closure")
         col = box.column(align=True)
         row = col.row(align=True)
         row.label(text="Return Cleat Depth:")

@@ -193,7 +193,7 @@ def create_l_crowns(context, frame, members):
         crown.width = end - start
         crown.depth = first.depth + types_products.FRONT_THICKNESS
         crown.height = height
-        crown.create('L Crown')
+        crown.create('Ceiling Closure')
         obj = crown.obj
         over = [m for m in members
                 if m.x1 > start + ALIGN_TOL and m.x0 < end - ALIGN_TOL]
@@ -229,9 +229,9 @@ def remove_l_crowns(objs):
 
 class hb_frameless_OT_add_l_crowns(bpy.types.Operator):
     bl_idname = "hb_frameless.add_l_crowns"
-    bl_label = "Add L Crowns"
+    bl_label = "Add Ceiling Closures"
     bl_description = ("Close the gap between the ceiling and each run of "
-                      "upper and tall cabinets with an L crown")
+                      "upper and tall cabinets with a ceiling closure")
     bl_options = {'REGISTER', 'UNDO'}
 
     selected_only: bpy.props.BoolProperty(
@@ -271,19 +271,19 @@ class hb_frameless_OT_add_l_crowns(bpy.types.Operator):
             self.report({'WARNING'},
                         "The cabinets already reach the ceiling")
             return {'FINISHED'}
-        self.report({'INFO'}, f"Created {len(created)} L crown piece(s)")
+        self.report({'INFO'}, f"Created {len(created)} ceiling closure piece(s)")
         return {'FINISHED'}
 
 
 class hb_frameless_OT_remove_l_crowns(bpy.types.Operator):
     bl_idname = "hb_frameless.remove_l_crowns"
-    bl_label = "Remove L Crowns"
-    bl_description = "Remove every L crown from the room"
+    bl_label = "Remove Ceiling Closures"
+    bl_description = "Remove every ceiling closure from the room"
     bl_options = {'REGISTER', 'UNDO'}
 
     def execute(self, context):
         removed = remove_l_crowns(all_l_crowns(context.scene))
-        self.report({'INFO'}, f"Removed {removed} L crown piece(s)")
+        self.report({'INFO'}, f"Removed {removed} ceiling closure piece(s)")
         return {'FINISHED'}
 
 

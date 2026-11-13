@@ -1810,7 +1810,7 @@ class LCrown(Product):
         self.return_depth = L_CROWN_RETURN_DEPTH
         self.flush_with_doors = scribe_filler_flush_with_doors()
 
-    def create(self, name="L Crown"):
+    def create(self, name="Ceiling Closure"):
         self.create_product(name)
         self.obj['PART_TYPE'] = 'L_CROWN'
         self.obj['IS_L_CROWN'] = True
