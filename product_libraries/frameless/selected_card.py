@@ -369,6 +369,56 @@ def _appliance_opening(axis):
                                hard_min=0.0)
 
 
+_OVERLAY_SIDES = ('Top', 'Bottom', 'Left', 'Right')
+
+
+def _half_overlay(side):
+    """The half overlay switch for one side. Using it hands the side
+    back to the switch: a typed overlay there is dropped."""
+    from ...operators import prop_proxy
+    key = 'Half Overlay ' + side
+
+    def get(obj):
+        return bool(obj.get(key, False))
+
+    def set(obj, value):
+        obj[key] = bool(value)
+        if 'Typed Overlay ' + side in obj:
+            del obj['Typed Overlay ' + side]
+    return prop_proxy.computed(get, set, type='BOOLEAN')
+
+
+def _overlay_amount(side):
+    """How far the front laps the opening on one side. Reads what the
+    cabinet builds; typing a value overrides that side."""
+    from ...operators import prop_proxy
+    index = _OVERLAY_SIDES.index(side)
+
+    def get(obj):
+        from . import solver_frameless
+        return float(solver_frameless.front_overlays(obj)[index])
+
+    def set(obj, value):
+        obj['Typed Overlay ' + side] = float(value)
+    return prop_proxy.computed(get, set, unit='LENGTH', precision=4)
+
+
+def _overlay_summary(owner):
+    obj = owner.id_data
+    parts = []
+    for side in _OVERLAY_SIDES:
+        if 'Typed Overlay ' + side in obj:
+            parts.append(side + " typed")
+        elif obj.get('Half Overlay ' + side):
+            parts.append(side + " half")
+    return ", ".join(parts) or "Full"
+
+
+def _overlaid(owner):
+    obj = owner.id_data
+    return 'Half Overlay Top' in obj and not obj.get('Inset Front')
+
+
 def _cage(obj):
     from ...hb_types import GeoNodeCage
     return GeoNodeCage(obj)
@@ -399,10 +449,14 @@ def _register_schemas():
         'lift_mechanism': P.index_enum('Lift Mechanism', (
             "Stay Lift", "Bi-Fold Lift", "Up and Over", "Vertical Lift")),
         'inset_front': P.flag('Inset Front'),
-        'half_overlay_top': P.flag('Half Overlay Top'),
-        'half_overlay_bottom': P.flag('Half Overlay Bottom'),
-        'half_overlay_left': P.flag('Half Overlay Left'),
-        'half_overlay_right': P.flag('Half Overlay Right'),
+        'half_overlay_top': _half_overlay('Top'),
+        'half_overlay_bottom': _half_overlay('Bottom'),
+        'half_overlay_left': _half_overlay('Left'),
+        'half_overlay_right': _half_overlay('Right'),
+        'overlay_top': _overlay_amount('Top'),
+        'overlay_bottom': _overlay_amount('Bottom'),
+        'overlay_left': _overlay_amount('Left'),
+        'overlay_right': _overlay_amount('Right'),
     }, after=_solve)
     P.register(PRODUCT_SCHEMA, {
         'width': P.node_input('Dim X'),
@@ -454,17 +508,18 @@ OPENING_FIELDS = (
     ('enum', 'door_mechanism', "Mechanism", {'when': _door}),
     ('enum', 'lift_mechanism', "Lift", {'when': _flip_up}),
     ('bool', 'inset_front', "Inset Front", {'when': _has('Inset Front')}),
-    ('group', 'fl_opening_overlays', "Half Overlays", {
+    ('group', 'fl_opening_overlays', "Overlays", {
         'when': _has('Half Overlay Top'),
-        'summary': lambda o: ", ".join(
-            n for n, p in (("Top", 'half_overlay_top'), ("Bottom", 'half_overlay_bottom'),
-                           ("Left", 'half_overlay_left'), ("Right", 'half_overlay_right'))
-            if getattr(o, p)) or "None",
+        'summary': _overlay_summary,
         'fields': (
-            ('bool', 'half_overlay_top', "Top"),
-            ('bool', 'half_overlay_bottom', "Bottom"),
-            ('bool', 'half_overlay_left', "Left"),
-            ('bool', 'half_overlay_right', "Right"),
+            ('bool', 'half_overlay_top', "Half Top"),
+            ('bool', 'half_overlay_bottom', "Half Bottom"),
+            ('bool', 'half_overlay_left', "Half Left"),
+            ('bool', 'half_overlay_right', "Half Right"),
+            ('distance', 'overlay_top', "Top", {'when': _overlaid}),
+            ('distance', 'overlay_bottom', "Bottom", {'when': _overlaid}),
+            ('distance', 'overlay_left', "Left", {'when': _overlaid}),
+            ('distance', 'overlay_right', "Right", {'when': _overlaid}),
         )}),
 )
 

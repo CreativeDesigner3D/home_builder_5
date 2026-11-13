@@ -1993,12 +1993,19 @@ PULL_BASE, PULL_TALL, PULL_UPPER = 0, 1, 2
 _DOOR_ROLE_BY_NAME = {'Left Door': 'LEFT_DOOR', 'Right Door': 'RIGHT_DOOR'}
 
 
+# A typed overlay on one side of one opening: present only while the
+# side is overridden, and it wins over the half / full overlay there.
+TYPED_OVERLAY_KEYS = ('Typed Overlay Top', 'Typed Overlay Bottom',
+                      'Typed Overlay Left', 'Typed Overlay Right')
+
+
 def front_overlays(insert_obj):
     """(top, bottom, left, right) overlay of a front on its opening.
 
     Inset fronts sit inside the opening by the inset reveal; a half
     overlay splits the neighbouring board with the front next door; a
-    full overlay covers the board less the reveal.
+    full overlay covers the board less the reveal. A side with a typed
+    overlay takes that value instead (not on an inset front).
     """
     inset = bool(insert_obj.get('Inset Front', False))
     inset_reveal = float(prompt(insert_obj, 'Inset Reveal', inch(0.125)))
@@ -2007,6 +2014,9 @@ def front_overlays(insert_obj):
     def overlay(half_key, thickness_key, reveal_key, reveal_default):
         if inset:
             return -inset_reveal
+        typed = insert_obj.get(half_key.replace('Half', 'Typed'))
+        if typed is not None:
+            return float(typed)
         thickness = float(prompt(insert_obj, thickness_key, inch(0.75)))
         if insert_obj.get(half_key, False):
             return (thickness - gap) / 2.0
