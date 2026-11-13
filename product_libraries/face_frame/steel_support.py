@@ -19,13 +19,18 @@ A support is added from the cabinet's own menu, or placed from the part
 library: pick a shape, then click cabinets. Each click puts a support
 where it lands, out of the nearest face, or out of the corner when the
 click is close to one.
+
+What a new support starts as is kept on the scene (Placement Options in
+the shape menu): its bar, how far it runs, and whether it stops a set
+distance short of the edge of the countertop over the cabinet.
 """
 
 import math
 
 import bpy
 import bmesh
-from bpy.props import EnumProperty, FloatProperty, PointerProperty
+from bpy.props import (BoolProperty, EnumProperty, FloatProperty,
+                       PointerProperty)
 from bpy.types import Operator, PropertyGroup, Menu
 from mathutils import Vector
 
@@ -224,15 +229,29 @@ def _update_shape(self, context):
     _update(self, context)
 
 
+def defaults(scene=None):
+    """The scene's settings for a new support, or None before the
+    property is registered."""
+    scene = scene or bpy.context.scene
+    return getattr(scene, 'hb_steel_bracket_defaults', None)
+
+
+def _default(name, fallback, scene=None):
+    d = defaults(scene)
+    return float(getattr(d, name, fallback)) if d is not None else fallback
+
+
 def seed_values(shape, exits, width, depth):
     """Starting position and runs for a shape leaving a cabinet of this
     size through ``exits``."""
     along = face_length(exits, width, depth)
     out = {'x_position': along / 2.0}
+    run_out = _default('run_out', inch(12.0))
     if shape == 'FLAT':
-        out.update(run_in=inch(12.0), run_out=inch(12.0))
+        out.update(run_in=_default('run_in', inch(12.0)), run_out=run_out)
     elif shape == 'L':
-        out.update(run_in=0.0, run_out=inch(12.0), drop=inch(8.0))
+        out.update(run_in=0.0, run_out=run_out,
+                   drop=_default('drop', inch(8.0)))
     else:
         out.update(
             span=min(inch(20.5), max((along or inch(22.0)) - inch(1.5),
@@ -271,13 +290,103 @@ def placement_at(cab, point):
     return f0, (back if f0 in SIDE_EXITS else x)
 
 
+# ---- The countertop over the cabinet --------------------------------------------
+
+TOP_TAGS = ('IS_COUNTERTOP', 'IS_WOOD_TOP')
+# A top this far above or below the cabinet's own top still sits on it.
+TOP_Z_TOL = inch(3.0)
+
+
+def _top_edges(cab):
+    """Every edge of the tops lying on ``cab``, flattened to the
+    cabinet's XY: [((x, y), (x, y))]."""
+    height = cab.face_frame_cabinet.height
+    inv = cab.matrix_world.inverted()
+    scene = cab.users_scene[0] if cab.users_scene else bpy.context.scene
+    out = []
+    for obj in scene.objects:
+        if obj.type != 'MESH' or not any(obj.get(t) for t in TOP_TAGS):
+            continue
+        try:
+            if obj.hide_viewport or not obj.data.vertices:
+                continue
+            m = inv @ obj.matrix_world
+            co = [m @ v.co for v in obj.data.vertices]
+        except Exception:
+            continue
+        low = min(c.z for c in co)
+        if abs(low - height) > TOP_Z_TOL:
+            continue
+        for e in obj.data.edges:
+            a, b = co[e.vertices[0]], co[e.vertices[1]]
+            if abs(a.x - b.x) > 1e-7 or abs(a.y - b.y) > 1e-7:
+                out.append(((a.x, a.y), (b.x, b.y)))
+    return out
+
+
+def countertop_reach(cab, exits, position):
+    """How far the countertop over ``cab`` runs past the face a support
+    exits, measured along the support, or None with no top there."""
+    cp = cab.face_frame_cabinet
+    (ox, oy), (ux, uy), _along = exit_frame(exits, position, cp.width,
+                                            cp.depth)
+    # Start a little inside the cabinet so a top flush with the face
+    # still reads as over it.
+    back = inch(0.5)
+    px, py = ox - ux * back, oy - uy * back
+    best = None
+    for (ax, ay), (bx, by) in _top_edges(cab):
+        ex, ey = bx - ax, by - ay
+        den = ux * ey - uy * ex
+        if abs(den) < 1e-12:
+            continue
+        t = ((ax - px) * ey - (ay - py) * ex) / den
+        w = ((ax - px) * uy - (ay - py) * ux) / den
+        if t >= 0.0 and -1e-9 <= w <= 1.0 + 1e-9:
+            best = t if best is None else max(best, t)
+    return None if best is None else best - back
+
+
+def fitted_run_out(cab, exits, position, setback=None):
+    """The run past the cabinet that stops ``setback`` short of the
+    countertop's edge, or None when there is no top over the face. A
+    top that overhangs less than the setback gives 0: the support stays
+    inside the cabinet rather than showing past the counter."""
+    over = countertop_reach(cab, exits, position)
+    if over is None:
+        return None
+    if setback is None:
+        setback = _default('edge_setback', inch(3.0))
+    return max(over - setback, 0.0)
+
+
+def planned(cab, shape, point):
+    """(exits, values) for the support a click at ``point`` adds: where
+    it leaves the cabinet and what it starts as."""
+    cp = cab.face_frame_cabinet
+    exits, position = placement_at(cab, point)
+    values = seed_values(shape, exits, cp.width, cp.depth)
+    if exits not in CORNER_EXITS:
+        values['x_position'] = position
+    values['fitted'] = False
+    d = defaults()
+    if shape != 'U' and (d is None or d.fit_to_countertop):
+        run = fitted_run_out(cab, exits, values['x_position'])
+        if run is not None:
+            values['run_out'] = run
+            values['fitted'] = True
+    return exits, values
+
+
 def add_support_at(cab, shape, point):
     """Add a support to ``cab`` where ``point`` asks for it (see
     placement_at). Returns the object."""
-    exits, position = placement_at(cab, point)
+    exits, values = planned(cab, shape, point)
     obj = add_support(cab, shape, exits=exits)
-    if exits not in CORNER_EXITS:
-        obj.hb_steel_support['x_position'] = position
+    sp = obj.hb_steel_support
+    for key in ('x_position', 'run_in', 'run_out', 'drop', 'span'):
+        if key in values:
+            sp[key] = values[key]
     build(obj)
     return obj
 
@@ -367,6 +476,8 @@ def add_support(cab, shape='FLAT', exits='BACK'):
     sp = obj.hb_steel_support
     sp['shape'] = [i[0] for i in SHAPE_ITEMS].index(shape)
     sp['exits'] = [i[0] for i in EXIT_ITEMS].index(exits)
+    sp['bar_width'] = _default('bar_width', inch(4.0))
+    sp['thickness'] = _default('thickness', inch(0.375))
     seed(sp, cab.face_frame_cabinet)
     build(obj)
     return obj
@@ -410,13 +521,11 @@ def footprint(cab, shape, point):
     """World-space outline (line pairs) of the support a click at
     ``point`` would add, on the cabinet top."""
     cp = cab.face_frame_cabinet
-    exits, position = placement_at(cab, point)
-    v = seed_values(shape, exits, cp.width, cp.depth)
-    if exits not in CORNER_EXITS:
-        v['x_position'] = position
+    exits, v = planned(cab, shape, point)
     (ox, oy), (ux, uy), (ax, ay) = exit_frame(exits, v['x_position'],
                                               cp.width, cp.depth)
-    half = (v.get('span', inch(4.0)) if shape == 'U' else inch(4.0)) / 2.0
+    bar = _default('bar_width', inch(4.0))
+    half = (v.get('span', bar) if shape == 'U' else bar) / 2.0
     lo, hi = -v['run_in'], max(v['run_out'], inch(0.375))
     mw = cab.matrix_world
     corners = [mw @ Vector((ox + ux * u + ax * a, oy + uy * u + ay * a,
@@ -425,7 +534,7 @@ def footprint(cab, shape, point):
     lines = []
     for i in range(4):
         lines += [tuple(corners[i]), tuple(corners[(i + 1) % 4])]
-    return lines, exits
+    return lines, exits, v
 
 
 def _view_region(context, event):
@@ -528,6 +637,9 @@ class HOME_BUILDER_MT_face_frame_steel_support_shapes(Menu):
         for key, label, _desc in SHAPE_ITEMS:
             layout.operator("hb_face_frame.place_steel_support",
                             text=label).shape = key
+        layout.separator()
+        layout.operator("hb_face_frame.steel_bracket_options",
+                        text="Placement Options...", icon='PREFERENCES')
 
 
 class HB_FACE_FRAME_OT_place_steel_support(Operator):
@@ -587,10 +699,18 @@ class HB_FACE_FRAME_OT_place_steel_support(Operator):
         if cab is None:
             _place['lines'], _place['text'] = [], ""
         else:
-            lines, exits = footprint(cab, self.shape, point)
+            lines, exits, values = footprint(cab, self.shape, point)
             _place['lines'] = lines
-            _place['text'] = "Click to add: %s" % dict(
+            text = "Click to add: %s" % dict(
                 (i[0], i[1]) for i in EXIT_ITEMS)[exits]
+            if values.get('fitted'):
+                from ...units import unit_to_string
+                units_ = context.scene.unit_settings
+                text += ", %s past the cabinet (%s from the counter edge)" % (
+                    unit_to_string(units_, values['run_out']),
+                    unit_to_string(units_, _default('edge_setback',
+                                                    inch(3.0))))
+            _place['text'] = text
         _redraw_views(context)
         return cab, point
 
@@ -630,6 +750,109 @@ class HB_FACE_FRAME_OT_place_steel_support(Operator):
         return {'PASS_THROUGH'}
 
 
+class Face_Frame_Steel_Bracket_Defaults(PropertyGroup):
+    """What a newly placed support starts as, kept on the scene."""
+    fit_to_countertop: BoolProperty(
+        name="Stop Short Of The Counter Edge",
+        description="Where a countertop lies over the cabinet, a flat or "
+                    "L-shaped support runs out to the set distance from "
+                    "its edge. Off, or with no countertop, it runs Past "
+                    "Cabinet",
+        default=True)  # type: ignore
+    edge_setback: FloatProperty(
+        name="From Counter Edge",
+        description="How far short of the countertop's edge a support "
+                    "stops",
+        default=inch(3.0), min=0.0, unit='LENGTH',
+        precision=4)  # type: ignore
+    run_in: FloatProperty(
+        name="Into Cabinet",
+        description="How far a flat bar runs into the cabinet",
+        default=inch(12.0), min=0.0, unit='LENGTH',
+        precision=4)  # type: ignore
+    run_out: FloatProperty(
+        name="Past Cabinet",
+        description="How far a support runs past the cabinet when it is "
+                    "not stopped short of a counter edge",
+        default=inch(12.0), min=0.0, unit='LENGTH',
+        precision=4)  # type: ignore
+    drop: FloatProperty(
+        name="Drop Leg",
+        description="L-shaped: length of the leg turned down the face",
+        default=inch(8.0), min=0.0, unit='LENGTH',
+        precision=4)  # type: ignore
+    bar_width: FloatProperty(
+        name="Bar Width", default=inch(4.0), min=inch(0.25),
+        unit='LENGTH', precision=4)  # type: ignore
+    thickness: FloatProperty(
+        name="Thickness", default=inch(0.375), min=inch(0.0625),
+        unit='LENGTH', precision=4)  # type: ignore
+
+
+class HB_FACE_FRAME_OT_steel_bracket_options(Operator):
+    """What a newly placed steel support starts as"""
+    bl_idname = "hb_face_frame.steel_bracket_options"
+    bl_label = "Steel Bracket Placement Options"
+    bl_options = {'UNDO'}
+
+    def invoke(self, context, event):
+        return context.window_manager.invoke_props_dialog(self, width=340)
+
+    def draw(self, context):
+        d = defaults(context.scene)
+        col = self.layout.column(align=True)
+        col.use_property_split = True
+        col.use_property_decorate = False
+        col.prop(d, 'fit_to_countertop')
+        sub = col.column(align=True)
+        sub.active = d.fit_to_countertop
+        sub.prop(d, 'edge_setback')
+        col.separator()
+        col.prop(d, 'run_in')
+        col.prop(d, 'run_out')
+        col.prop(d, 'drop')
+        col.separator()
+        col.prop(d, 'bar_width')
+        col.prop(d, 'thickness')
+
+    def execute(self, context):
+        return {'FINISHED'}
+
+
+class HB_FACE_FRAME_OT_steel_support_fit_countertop(Operator):
+    """Run this support out to the set distance from the edge of the countertop over its cabinet"""
+    bl_idname = "hb_face_frame.steel_support_fit_countertop"
+    bl_label = "Fit To Countertop"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        return obj is not None and bool(obj.get(STEEL_SUPPORT_TAG))
+
+    def execute(self, context):
+        done = 0
+        picked = [o for o in context.selected_objects
+                  if o.get(STEEL_SUPPORT_TAG)]
+        if context.active_object not in picked:
+            picked.append(context.active_object)
+        for obj in picked:
+            cab = obj.parent
+            sp = obj.hb_steel_support
+            if cab is None or sp.shape == 'U':
+                continue
+            run = fitted_run_out(cab, sp.exits, sp.x_position)
+            if run is None:
+                continue
+            sp.run_out = run
+            done += 1
+        if not done:
+            self.report({'WARNING'},
+                        "No countertop overhangs the cabinet there")
+            return {'CANCELLED'}
+        return {'FINISHED'}
+
+
 class HB_FACE_FRAME_OT_steel_support_prompts(Operator):
     """Steel support options"""
     bl_idname = "hb_face_frame.steel_support_prompts"
@@ -659,6 +882,8 @@ class HOME_BUILDER_MT_face_frame_steel_support_commands(Menu):
         layout = self.layout
         layout.operator("hb_face_frame.steel_support_prompts",
                         text="Steel Support Options...", icon='WINDOW')
+        layout.operator("hb_face_frame.steel_support_fit_countertop",
+                        icon='SNAP_EDGE')
         layout.separator()
         layout.operator("hb_general.delete", text="Delete Steel Support",
                         icon='X')
@@ -666,6 +891,9 @@ class HOME_BUILDER_MT_face_frame_steel_support_commands(Menu):
 
 classes = (
     Face_Frame_Steel_Support_Props,
+    Face_Frame_Steel_Bracket_Defaults,
+    HB_FACE_FRAME_OT_steel_bracket_options,
+    HB_FACE_FRAME_OT_steel_support_fit_countertop,
     HB_FACE_FRAME_OT_add_steel_support,
     HB_FACE_FRAME_OT_steel_support_prompts,
     HOME_BUILDER_MT_face_frame_steel_support_commands,
@@ -679,11 +907,15 @@ def register():
         bpy.utils.register_class(cls)
     bpy.types.Object.hb_steel_support = PointerProperty(
         type=Face_Frame_Steel_Support_Props)
+    bpy.types.Scene.hb_steel_bracket_defaults = PointerProperty(
+        type=Face_Frame_Steel_Bracket_Defaults)
 
 
 def unregister():
     _remove_place_handles()
     if hasattr(bpy.types.Object, 'hb_steel_support'):
         del bpy.types.Object.hb_steel_support
+    if hasattr(bpy.types.Scene, 'hb_steel_bracket_defaults'):
+        del bpy.types.Scene.hb_steel_bracket_defaults
     for cls in reversed(classes):
         bpy.utils.unregister_class(cls)
