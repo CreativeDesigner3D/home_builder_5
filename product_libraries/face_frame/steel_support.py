@@ -521,9 +521,13 @@ class HOME_BUILDER_MT_face_frame_steel_support_shapes(Menu):
     bl_label = "Steel Bracket"
 
     def draw(self, context):
+        layout = self.layout
+        # The pick starts the placing tool, which is a modal: ask for
+        # it to be invoked whatever context the menu was opened from.
+        layout.operator_context = 'INVOKE_DEFAULT'
         for key, label, _desc in SHAPE_ITEMS:
-            self.layout.operator("hb_face_frame.place_steel_support",
-                                 text=label).shape = key
+            layout.operator("hb_face_frame.place_steel_support",
+                            text=label).shape = key
 
 
 class HB_FACE_FRAME_OT_place_steel_support(Operator):
@@ -549,6 +553,16 @@ class HB_FACE_FRAME_OT_place_steel_support(Operator):
             bpy.ops.wm.call_menu(
                 name=HOME_BUILDER_MT_face_frame_steel_support_shapes.__name__)
             return {'FINISHED'}
+        return self._start(context)
+
+    def execute(self, context):
+        # Reached when the menu runs the pick without an event: the
+        # tool needs none to start, the cursor is read as it moves.
+        if self.shape not in [i[0] for i in SHAPE_ITEMS]:
+            return {'CANCELLED'}
+        return self._start(context)
+
+    def _start(self, context):
         from ... import hb_snap
         if hb_snap.get_region(context) is None:
             self.report({'WARNING'}, "Open a 3D view to place a bracket")
