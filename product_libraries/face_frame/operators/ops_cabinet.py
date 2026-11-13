@@ -4953,6 +4953,22 @@ class hb_face_frame_OT_add_pullout_accessory(bpy.types.Operator):
             return {'CANCELLED'}
 
         code = "" if self.product in ('NONE', '') else self.product
+        # A model made for a wider opening is refused, not just flagged:
+        # the dialog shows the minimum, but OK used to apply it anyway.
+        item = accessory_registry.lookup(_PULLOUT_HOST, code) if code else None
+        mw = item.get('min_opening_w') if item else None
+        if mw is not None:
+            for opening_obj in openings:
+                ow = (meter_to_inch(self.opening_width)
+                      if self.opening_width > 0.0
+                      else _opening_width_in(opening_obj))
+                if ow is not None and ow + 1e-6 < mw:
+                    self.report(
+                        {'ERROR'},
+                        '%s needs a %g" opening; this one is %g". Widen '
+                        'the opening or pick another model'
+                        % (item.get('name', code), mw, round(ow, 3)))
+                    return {'CANCELLED'}
         with types_face_frame.suspend_recalc():
             for opening_obj in openings:
                 op_props = opening_obj.face_frame_opening
