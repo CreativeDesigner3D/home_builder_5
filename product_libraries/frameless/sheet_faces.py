@@ -24,7 +24,10 @@ _MARKED_ONLY_ROLES = ('TOP', 'BOTTOM', 'BACK')
 # The frame of a base assembly is structure under the cabinets, never a
 # show face: it stays in the interior material whatever the cabinet wears.
 _NEVER_FINISHED_ROLES = ('BASE_FRONT', 'BASE_BACK', 'BASE_LEFT_END',
-                         'BASE_RIGHT_END', 'BASE_SUPPORT')
+                         'BASE_RIGHT_END', 'BASE_SUPPORT',
+                         'BASE_SLEEPER_CLEAT', 'BASE_SLEEPER_CLEAT_LEFT',
+                         'BASE_SLEEPER_CLEAT_RIGHT', 'BASE_FLOOR_CLEAT_FRONT',
+                         'BASE_FLOOR_CLEAT_BACK')
 
 
 def is_two_sided(material_name):

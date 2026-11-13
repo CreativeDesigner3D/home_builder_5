@@ -215,6 +215,18 @@ class hb_frameless_OT_product_prompts(bpy.types.Operator):
         row.label(text="Thickness:")
         row.prop(obj, '["%s"]' % tp.BASE_BY_OTHERS_THICKNESS_KEY, text="")
 
+        if tp.SLEEPER_CLEAT_KEY not in obj:
+            return
+        box = layout.box()
+        box.label(text="Cleats (0 = None)")
+        col = box.column(align=True)
+        row = col.row(align=True)
+        row.label(text="Sleeper Cleat Width:")
+        row.prop(obj, '["%s"]' % tp.SLEEPER_CLEAT_KEY, text="")
+        row = col.row(align=True)
+        row.label(text="Floor Cleat Width:")
+        row.prop(obj, '["%s"]' % tp.FLOOR_CLEAT_KEY, text="")
+
     def draw_floating_shelf(self, layout, obj):
         box = layout.box()
         box.label(text="Options")
