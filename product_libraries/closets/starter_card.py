@@ -23,6 +23,8 @@ from ... import units
 SCHEMA = 'CL_STARTER'
 
 _CUSTOM = ('CUSTOM', "Custom")
+# A typed height that lands between the 32mm holes.
+_OFF_SYSTEM = ('CUSTOM', "Custom (off the 32mm holes)")
 
 # The run's own properties shown as they stand.
 _OWN = (
@@ -141,6 +143,18 @@ def _set_all_heights(root, value):
     sp['set_all_heights'] = False
 
 
+def _get_height_standard(root):
+    """The standard height the run stands at, or Custom while its
+    height sits off the 32mm system, so a typed height can be checked
+    against the holes at a glance."""
+    return const.nearest_panel_height_key(_sp(root).height) or 'CUSTOM'
+
+
+def _set_height_standard(root, value):
+    if value != 'CUSTOM':
+        _sp(root).height = const.millimeter(int(value))
+
+
 def _get_kick(root):
     return const.kick_height_key(_sp(root).toe_kick_height) or 'CUSTOM'
 
@@ -205,6 +219,10 @@ def _ensure():
             _get_all_heights, _set_all_heights, type='ENUM',
             items=([i[:2] for i in const.PANEL_HEIGHT_ITEMS]
                    + [('CUSTOM', "Mixed")])),
+        'height_standard': P.computed(
+            _get_height_standard, _set_height_standard, type='ENUM',
+            items=([i[:2] for i in const.PANEL_HEIGHT_ITEMS]
+                   + [_OFF_SYSTEM])),
         'kick_standard': P.computed(
             _get_kick, _set_kick, type='ENUM',
             items=[i[:2] for i in const.KICK_HEIGHT_ITEMS] + [_CUSTOM]),
@@ -440,6 +458,10 @@ def fields(root):
         ('distance', 'height', "Height"),
         ('distance', 'depth', "Depth"),
     ]
+    if not is_filler:
+        # The height again as a pick off the standard list: it reads
+        # Custom when the typed height misses the holes.
+        out.insert(3, ('enum', 'height_standard', "Standard Height"))
     if hangs:
         # A run its bays hang from: the hang line on its own, and one
         # height written to every bay at once.

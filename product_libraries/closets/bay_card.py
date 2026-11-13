@@ -89,6 +89,27 @@ def _set_top_standard(bay, value):
         _set_top(bay, const.opening_height(value))
 
 
+def _get_height_standard(bay):
+    """The standard height the bay stands at, or Custom while its
+    height sits off the 32mm system."""
+    return const.nearest_panel_height_key(_bp(bay).height) or 'CUSTOM'
+
+
+def _set_height_standard(bay, value):
+    """A height picked for one bay is that bay's own, as a typed one
+    is behind its padlock."""
+    if value == 'CUSTOM':
+        return
+    bp = _bp(bay)
+    with types_closets.suspend_recalc():
+        if not bp.unlock_height:
+            bp.unlock_height = True
+        bp.height = const.millimeter(int(value))
+    root = _root(bay)
+    if root is not None:
+        types_closets.recalculate_closet_starter(root)
+
+
 def _ensure():
     from ...operators import prop_proxy as P
     if SCHEMA in P._schemas:
@@ -101,6 +122,10 @@ def _ensure():
     props.update({
         'top_opening': P.computed(_get_top, _set_top, unit='LENGTH',
                                   precision=4, hard_min=units.inch(1.0)),
+        'height_standard': P.computed(
+            _get_height_standard, _set_height_standard, type='ENUM',
+            items=([i[:2] for i in const.PANEL_HEIGHT_ITEMS]
+                   + [('CUSTOM', "Custom (off the 32mm holes)")])),
         'top_standard': P.computed(
             _get_top_standard, _set_top_standard, type='ENUM',
             items=([i[:2] for i in const.OPENING_HEIGHT_ITEMS]
@@ -200,6 +225,7 @@ def fields(bay):
     out = [
         ('locked', 'width', "Width", {'unlock': 'unlock_width'}),
         ('locked', 'height', "Height", {'unlock': 'unlock_height'}),
+        ('enum', 'height_standard', "Standard Height"),
         ('locked', 'depth', "Depth", {'unlock': 'unlock_depth'}),
         ('bool', 'floor_mounted', "Floor Mounted"),
         ('group', 'cl_bay_more', "Construction",
