@@ -127,6 +127,27 @@ def _grabbed(obj):
     return bool(obj.get(TAG_CABINET) or obj.get(TAG_FILLER))
 
 
+def _shown(obj):
+    """True when the product is on screen. Its cage alone cannot say:
+    a cage is hidden whenever its selection mode is not the active one,
+    and in Material Preview and Rendered shading every unselected cage
+    is. A hidden cage therefore counts as shown while the parts under
+    it are."""
+    try:
+        if obj.visible_get():
+            return True
+    except Exception:
+        return False
+    if not obj.get('IS_GEONODE_CAGE') or obj.get('HB_ISOLATED_HIDDEN'):
+        return False
+    if obj.hide_get():
+        return False
+    try:
+        return bool(_overlay()._cabinet_shown(obj))
+    except Exception:
+        return False
+
+
 def _entry(obj, appliance=False):
     try:
         dim_x, dim_y, dim_z = _dims(obj)
@@ -158,7 +179,7 @@ def _run_entries(scene):
     out = []
     for obj in scene.objects:
         if _grabbed(obj):
-            if not obj.visible_get():
+            if not _shown(obj):
                 continue
             e = _entry(obj)
         elif (obj.get('IS_APPLIANCE') and obj.get('APPLIANCE_TYPE')
@@ -295,7 +316,7 @@ def move_group(scene, name):
         return [name]
     out = [name]
     for obj in scene.objects:
-        if obj is cab or not _grabbed(obj) or not obj.visible_get():
+        if obj is cab or not _grabbed(obj) or not _shown(obj):
             continue
         try:
             if not obj.select_get():
