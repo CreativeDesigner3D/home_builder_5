@@ -51,6 +51,11 @@ class hb_face_frame_OT_draw_cabinet(bpy.types.Operator):
         if self.cabinet_name == "Corbel":
             bpy.ops.hb_face_frame.place_corbel('INVOKE_DEFAULT')
             return {'FINISHED'}
+        # A steel bracket picks its shape, then goes on the cabinets
+        # clicked.
+        if self.cabinet_name == "Steel Bracket":
+            bpy.ops.hb_face_frame.place_steel_support('INVOKE_DEFAULT')
+            return {'FINISHED'}
         # A tambour is drawn by clicking its ends and its bow.
         if self.cabinet_name == "Tambour":
             bpy.ops.hb_face_frame.draw_tambour('INVOKE_DEFAULT')
