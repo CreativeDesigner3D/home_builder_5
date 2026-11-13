@@ -14098,6 +14098,8 @@ class FaceFrameCabinet(GeoNodeCage):
         galley_sink = appliance_geo.opening_appliance(self.obj)
         if galley_sink is not None:
             sink_cutters.append(appliance_geo.sink_clearance_cutter(galley_sink))
+        bay_objs = [c for c in self.obj.children if c.get(TAG_BAY_CAGE)
+                    and not c.hide_viewport]
         for bay_obj in [c for c in self.obj.children if c.get(TAG_BAY_CAGE)]:
             if bay_obj.hide_viewport:
                 self._update_countertop_appliance_in_bay(bay_obj, None)
@@ -14109,8 +14111,12 @@ class FaceFrameCabinet(GeoNodeCage):
                 # first time. Changing the bay to plain doors must keep
                 # the sink; Remove Appliance from Bay opts out ('NONE').
                 bay_obj['APPLIANCE_BAY'] = kind
-            if not kind and is_cooktop_cabinet:
+            if not kind and is_cooktop_cabinet and (
+                    len(bay_objs) == 1 or self._bay_has_false_front(bay_obj)):
                 kind = 'COOKTOP'
+                # Stamped like the sink: the cooktop belongs to the bay it
+                # came in, not to every bay the cabinet later gains.
+                bay_obj['APPLIANCE_BAY'] = kind
             if kind in ('SINK', 'COOKTOP'):
                 self._create_appliance_annotation(bay_obj, kind)
             # After the annotation: the appliance decides whether it shows.
