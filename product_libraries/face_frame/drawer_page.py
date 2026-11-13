@@ -27,6 +27,7 @@ from mathutils import Vector
 
 from ... import accessory_registry
 from ... import hb_types
+from ... import units
 from ...hb_gpu_draw import (draw_rect, draw_rect_outline, draw_text,
                             draw_lines)
 from ...hb_gpu_ui import Theme, fit_text, text_width
@@ -44,6 +45,8 @@ DIVIDER_FILL = (0.90, 0.80, 0.62, 1.0)
 PART_LINE = (0.36, 0.28, 0.18, 1.0)         # an insert's own partitions
 PICK_LINE = (0.35, 0.80, 1.00, 1.0)
 HOVER_FILL = (1.0, 1.0, 1.0, 0.18)
+MISFIT_LINE = (0.95, 0.30, 0.25, 1.0)       # past the box, or on another
+FIT_TOLERANCE = 0.0008  # 1/32": closer than this still fits
 
 DRAWER_HOST = 'drawer_accessory'
 # What the page offers in one click, by the kind of model the catalog's
@@ -219,6 +222,97 @@ def _item_at(drawer, view, mx, my, s):
     return best[0] if best else -1
 
 
+# ---- Sizes and fit -------------------------------------------------------------
+
+def fit_report(box, opening):
+    """What the drawer holds, measured: the inside of the box, and for
+    every accessory its size from above, the room left around it, how
+    far it runs past the inside of the box and which other inserts it
+    lies on. Read from the parts the cabinet built, like the picture.
+
+    {'inside': (width, depth),
+     'rows': [{'index', 'name', 'divider', 'size': (width, depth),
+               'clear': (left, right, front, back),
+               'over': (width, depth), 'overlaps': [name, ...]}],
+     'missing': [name, ...]}    accessories set that no part was built for"""
+    drawer = _Drawer(box)
+    items = _items(opening) if opening is not None else ()
+    ix0, iy0, ix1, iy1 = drawer.inner
+    tol = FIT_TOLERANCE
+
+    def name_of(index):
+        if 0 <= index < len(items):
+            item = items[index]
+            return (item.accessory_code or item.accessory_label
+                    or "Accessory")
+        return "Accessory"
+
+    rows = []
+    for index in sorted(i for i in drawer.parts if i >= 0):
+        x0, y0, x1, y1 = drawer.union(index)
+        over_w = max(ix0 - x0, 0.0) + max(x1 - ix1, 0.0)
+        over_d = max(iy0 - y0, 0.0) + max(y1 - iy1, 0.0)
+        rows.append({
+            'index': index,
+            'name': name_of(index),
+            'divider': any(r[4] for r in drawer.parts[index]),
+            'box': (x0, y0, x1, y1),
+            'size': (x1 - x0, y1 - y0),
+            'clear': (x0 - ix0, ix1 - x1, y0 - iy0, iy1 - y1),
+            'over': (over_w if over_w > tol else 0.0,
+                     over_d if over_d > tol else 0.0),
+            'overlaps': [],
+        })
+    # Inserts are blocks that cannot share floor; a divider may cross one.
+    blocks_ = [r for r in rows if not r['divider']]
+    for i, a in enumerate(blocks_):
+        for b in blocks_[i + 1:]:
+            ax0, ay0, ax1, ay1 = a['box']
+            bx0, by0, bx1, by1 = b['box']
+            if (min(ax1, bx1) - max(ax0, bx0) > tol
+                    and min(ay1, by1) - max(ay0, by0) > tol):
+                a['overlaps'].append(b['name'])
+                b['overlaps'].append(a['name'])
+    # An accessory the drawer could not take is left unbuilt. Parts
+    # from before they carried their item's index cannot be told apart,
+    # so nothing is called missing beside one of those.
+    missing = []
+    if -1 not in drawer.parts:
+        missing = [name_of(i) for i, item in enumerate(items)
+                   if item.kind == 'ACCESSORY' and i not in drawer.parts]
+    return {'inside': (ix1 - ix0, iy1 - iy0), 'rows': rows,
+            'missing': missing}
+
+
+def _misfit(row):
+    return bool(row['over'][0] or row['over'][1] or row['overlaps'])
+
+
+def _dist(context, value):
+    return units.unit_to_string(context.scene.unit_settings, value)
+
+
+def fit_notes(context, report):
+    """One line for every accessory that does not fit as it sits."""
+    out = []
+    for row in report['rows']:
+        over_w, over_d = row['over']
+        if over_w:
+            out.append("%s is %s too wide for this drawer"
+                       % (row['name'], _dist(context, over_w)))
+        if over_d:
+            out.append("%s is %s too deep for this drawer"
+                       % (row['name'], _dist(context, over_d)))
+        for other in row['overlaps']:
+            # Said once for the pair, from the first of the two.
+            if any(r['name'] == other and r['index'] > row['index']
+                   for r in report['rows']):
+                out.append("%s overlaps %s" % (row['name'], other))
+    for name in report.get('missing', ()):
+        out.append("%s is not built where it is set" % name)
+    return out
+
+
 # ---- The picture ---------------------------------------------------------------
 
 def canvas(box_name, opening_name):
@@ -280,6 +374,19 @@ def _paint(shader, font_id, rect, mx, my, s, box_name, opening_name):
             tw = text_width(font_id, size, text)
             draw_text(font_id, x + (w - tw) / 2.0, y + (h - size) / 2.0,
                       size, (0.10, 0.08, 0.05, 1.0), text)
+    # An accessory past the inside of the box, or lying on another.
+    try:
+        misfits = [row['index']
+                   for row in fit_report(bpy.data.objects[box_name],
+                                         opening)['rows']
+                   if _misfit(row)]
+    except Exception:
+        misfits = []
+    for index in misfits:
+        x, y, w, h = view.rect(drawer.union(index), min_px=3.0 * s)
+        draw_rect_outline(shader, x, y, w, h, MISFIT_LINE)
+        draw_rect_outline(shader, x + s, y + s, w - 2 * s, h - 2 * s,
+                          MISFIT_LINE)
     if picked in drawer.parts:
         for r in drawer.parts[picked]:
             x, y, w, h = view.rect(r, min_px=3.0 * s)
@@ -383,6 +490,16 @@ def blocks(context, box, opening):
     from ...operators import options_panel
     from . import interior_page
     out = [('canvas', canvas(box.name, opening.name))]
+    try:
+        report = fit_report(box, opening)
+    except Exception:
+        report = None
+    if report is not None:
+        out.append(('note', "Inside %s wide x %s deep"
+                    % (_dist(context, report['inside'][0]),
+                       _dist(context, report['inside'][1]))))
+        for line in fit_notes(context, report):
+            out.append(('note', "Does not fit: " + line))
     quick = _quick_add(opening)
     if quick:
         out.append(('label', "Add to this drawer"))
@@ -400,6 +517,17 @@ def blocks(context, box, opening):
         out.append(('gap', None))
         out.append(('label', item.accessory_label or item.accessory_code
                     or "Accessory"))
+        row = next((r for r in (report['rows'] if report else ())
+                    if r['index'] == index), None)
+        if row is not None:
+            # As built: its size from above and the room around it.
+            left, right, front, back = (max(v, 0.0) for v in row['clear'])
+            out.append(('note', "%s wide x %s deep"
+                        % (_dist(context, row['size'][0]),
+                           _dist(context, row['size'][1]))))
+            out.append(('note', "Room: %s left, %s right, %s front, %s back"
+                        % tuple(_dist(context, v)
+                                for v in (left, right, front, back))))
         fields = interior_page._item_fields(item, index, opening.name)
         # The first field is the item's type: a drawer accessory stays one.
         out.extend(options_panel.field_blocks(context, fields[1:], item))
