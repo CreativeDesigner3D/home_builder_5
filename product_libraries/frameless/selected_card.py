@@ -262,6 +262,28 @@ def _flip_up(owner):
     return any(c.get('IS_FLIP_UP_DOOR') for c in owner.id_data.children)
 
 
+def _drawer_look_on(owner):
+    from . import drawer_look
+    return drawer_look.count(owner.id_data) > 0
+
+
+def _drawer_look():
+    """How many drawer fronts a doors opening is shown as. An opening
+    that never had the look keeps no prompt for it."""
+    from ...operators import prop_proxy
+    from . import drawer_look
+
+    def get(obj):
+        return str(drawer_look.count(obj))
+
+    def set(obj, value):
+        if int(value) or drawer_look.COUNT_KEY in obj:
+            obj[drawer_look.COUNT_KEY] = int(value)
+    return prop_proxy.computed(
+        get, set, type='ENUM',
+        items=[(key, label) for key, label, _tip in drawer_look.COUNT_ITEMS])
+
+
 # ---- Schemas ----------------------------------------------------------------
 
 def _solve(obj, context):
@@ -446,6 +468,8 @@ def _register_schemas():
     P.register(OPENING_SCHEMA, {
         'door_swing': P.index_enum('Door Swing', ("Left", "Right", "Double"), 2),
         'door_mechanism': P.index_enum('Door Mechanism', ("Standard", "Retracting")),
+        'drawer_look': _drawer_look(),
+        'drawer_look_top_height': P.length('Drawer Look Top Height'),
         'lift_mechanism': P.index_enum('Lift Mechanism', (
             "Stay Lift", "Bi-Fold Lift", "Up and Over", "Vertical Lift")),
         'inset_front': P.flag('Inset Front'),
@@ -506,6 +530,9 @@ CABINET_FIELDS = (
 OPENING_FIELDS = (
     ('enum', 'door_swing', "Door Swing", {'when': _door}),
     ('enum', 'door_mechanism', "Mechanism", {'when': _door}),
+    ('enum', 'drawer_look', "Drawer Look", {'when': _door}),
+    ('distance', 'drawer_look_top_height', "Top Front Height",
+     {'when': _drawer_look_on}),
     ('enum', 'lift_mechanism', "Lift", {'when': _flip_up}),
     ('bool', 'inset_front', "Inset Front", {'when': _has('Inset Front')}),
     ('group', 'fl_opening_overlays', "Overlays", {

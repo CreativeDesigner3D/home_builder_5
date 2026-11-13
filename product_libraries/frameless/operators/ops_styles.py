@@ -962,7 +962,10 @@ class hb_frameless_OT_update_cabinet_pulls(bpy.types.Operator):
                 if parent.get(edge_pulls.PULL_KEY):
                     continue
                 
-                if parent.get('IS_DOOR_FRONT') and self.pull_type in ('DOOR', 'ALL'):
+                # A door's drawer look fronts carry the drawer pull.
+                drawer_look = bool(parent.get('IS_DRAWER_LOOK_FRONT'))
+                if (parent.get('IS_DOOR_FRONT') and not drawer_look
+                        and self.pull_type in ('DOOR', 'ALL')):
                     if door_is_none:
                         pull_hw.set_input("Object", None)
                         cleared_count += 1
@@ -973,7 +976,8 @@ class hb_frameless_OT_update_cabinet_pulls(bpy.types.Operator):
                     updated_objs.append(obj)
                     updated_objs.append(parent)
                 
-                elif parent.get('IS_DRAWER_FRONT') and self.pull_type in ('DRAWER', 'ALL'):
+                elif ((parent.get('IS_DRAWER_FRONT') or drawer_look)
+                        and self.pull_type in ('DRAWER', 'ALL')):
                     if drawer_is_none:
                         pull_hw.set_input("Object", None)
                         cleared_count += 1

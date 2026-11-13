@@ -2383,6 +2383,15 @@ def solve_insert_parts(insert_obj):
             # A lone front keeps whatever visibility it was given.
             set_part(child, (-left, y, -bottom), length=length, width=width,
                      thickness=thickness, visible=not child.hide_viewport)
+        # A door that looks like a stack of drawers: the leaf carries
+        # the look fronts (they swing with it) and is not itself shown.
+        look = 0
+        if role in ('LEFT_DOOR', 'RIGHT_DOOR'):
+            from . import drawer_look
+            if not child.hide_viewport:
+                look = drawer_look.wanted(insert_obj, length)
+            if look:
+                child.hide_viewport = child.hide_render = True
         for key, value in (('Top Overlay', top), ('Bottom Overlay', bottom),
                            ('Left Overlay', left), ('Right Overlay', right)):
             if key in child:
@@ -2452,6 +2461,9 @@ def solve_insert_parts(insert_obj):
                                          @ square_basis @ part.matrix_basis)
         edge_pulls.solve_front(child, length, width, thickness, front_hidden)
         edge_pulls.solve_lock(child, length, width, thickness, front_hidden)
+        if role in ('LEFT_DOOR', 'RIGHT_DOOR'):
+            drawer_look.solve(insert_obj, child, look, length, width,
+                              thickness)
     if 'Door Swing' in insert_obj:
         _solve_pocket_panels(insert_obj, dim_x, dim_y, dim_z)
 

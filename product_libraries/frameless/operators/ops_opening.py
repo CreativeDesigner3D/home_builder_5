@@ -2,6 +2,7 @@ import bpy
 from .. import types_frameless
 from .. import solver_frameless
 from .. import props_hb_frameless
+from .. import drawer_look
 from .... import hb_utils, hb_types, units
 from . import ops_interior
 
@@ -722,6 +723,15 @@ class hb_frameless_OT_opening_prompts(bpy.types.Operator):
         items=[('0', "Standard", "Doors swing open on hinges"),
                ('1', "Retracting", "Doors open, then slide back into pockets")],
         default='0') # type: ignore
+    drawer_look: bpy.props.EnumProperty(
+        name="Drawer Look",
+        description="Show each door as a stack of drawer fronts; it still opens as one door",
+        items=drawer_look.COUNT_ITEMS,
+        default='0') # type: ignore
+    drawer_look_top_height: bpy.props.FloatProperty(
+        name="Top Front Height",
+        description="Height of the top drawer look front; 0 makes the fronts equal",
+        default=0.0, min=0.0, unit='LENGTH', precision=4) # type: ignore
     lift_mechanism: bpy.props.EnumProperty(
         name="Lift Mechanism",
         items=[('0', "Stay Lift", "Front tilts up on its top edge"),
@@ -757,6 +767,9 @@ class hb_frameless_OT_opening_prompts(bpy.types.Operator):
         if 'Door Swing' in opening_bp:
             self.door_swing = str(opening_bp['Door Swing'])
             self.door_mechanism = str(int(opening_bp.get('Door Mechanism', 0)))
+            self.drawer_look = str(drawer_look.count(opening_bp))
+            self.drawer_look_top_height = float(
+                opening_bp.get(drawer_look.TOP_HEIGHT_KEY, 0.0))
         self.lift_mechanism = str(int(opening_bp.get('Lift Mechanism', 0)))
         if 'Inset Front' in opening_bp:
             self.inset_front = opening_bp['Inset Front']
@@ -779,6 +792,13 @@ class hb_frameless_OT_opening_prompts(bpy.types.Operator):
             if ('Door Mechanism' in self.opening.obj
                     or self.door_mechanism != '0'):
                 self.opening.obj['Door Mechanism'] = int(self.door_mechanism)
+            # Likewise the drawer look: no prompt until it is asked for.
+            if (drawer_look.COUNT_KEY in self.opening.obj
+                    or self.drawer_look != '0'):
+                self.opening.obj[drawer_look.COUNT_KEY] = int(self.drawer_look)
+            if (drawer_look.TOP_HEIGHT_KEY in self.opening.obj
+                    or self.drawer_look_top_height > 0.0):
+                self.opening.obj[drawer_look.TOP_HEIGHT_KEY] = self.drawer_look_top_height
         if self._is_flip_up():
             self.opening.obj['Lift Mechanism'] = int(self.lift_mechanism)
         if 'Inset Front' in self.opening.obj:
@@ -808,6 +828,13 @@ class hb_frameless_OT_opening_prompts(bpy.types.Operator):
             row = box.row()
             row.label(text="Mechanism:")
             row.prop(self, 'door_mechanism', text="")
+            row = box.row()
+            row.label(text="Drawer Look:")
+            row.prop(self, 'drawer_look', text="")
+            if self.drawer_look != '0':
+                row = box.row()
+                row.label(text="Top Front Height:")
+                row.prop(self, 'drawer_look_top_height', text="")
 
         if self._is_flip_up():
             row = box.row()

@@ -57,8 +57,10 @@ def _room():
 
 
 def _is_drawer(front_obj):
+    # A drawer look front on a door is handled the way a drawer front is.
     return bool(front_obj.get('IS_DRAWER_FRONT')
-                or front_obj.get('IS_PULLOUT_FRONT'))
+                or front_obj.get('IS_PULLOUT_FRONT')
+                or front_obj.get('IS_DRAWER_LOOK_FRONT'))
 
 
 def handle_type(front_obj):
