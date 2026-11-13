@@ -986,6 +986,7 @@ def _bay_fields(bay_obj, bp):
                'cab_insert_after'), None)),
         ((_act("Break Left", 'hb_face_frame.break_cabinet_left'), _several_bays),
          (_act("Break Right", 'hb_face_frame.break_cabinet_right'), _several_bays)),
+        ((_act("Break Both", 'hb_face_frame.break_cabinet_both'), _several_bays),),
         ((_act("Equal Doors", 'hb_face_frame.set_equal_door_width', None,
                'cab_equal_doors'), None),
          (_act("Flush Toe Kick", 'hb_face_frame.toggle_flush_toe_kick', None,
