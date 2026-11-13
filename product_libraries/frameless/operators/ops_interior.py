@@ -41,6 +41,36 @@ def get_default_shelf_quantity(opening_height, opening_depth):
             return 4
 
 
+def show_in_selection_mode(context, cabinet_bp):
+    """Give a cabinet whose interior was just rebuilt the look of the
+    current selection mode. Parts and cages that are built new come in
+    plain - the cage showing, the parts not lifted in front the way
+    Interiors mode shows them - until the mode is applied to them.
+    Applying it selects whatever the mode offers, so the selection is
+    put back the way it was found."""
+    if cabinet_bp is None:
+        return
+    from .ops_placement import apply_frameless_selection_mode
+    view_layer = context.view_layer
+    was_selected = set()
+    for obj in [cabinet_bp, *cabinet_bp.children_recursive]:
+        try:
+            if obj.select_get(view_layer=view_layer):
+                was_selected.add(obj.name)
+        except RuntimeError:
+            pass
+    try:
+        apply_frameless_selection_mode(context, cabinet_bp)
+    except Exception as e:
+        print(f"frameless interior: selection mode not applied: {e}")
+        return
+    for obj in [cabinet_bp, *cabinet_bp.children_recursive]:
+        try:
+            obj.select_set(obj.name in was_selected, view_layer=view_layer)
+        except RuntimeError:
+            pass
+
+
 # ---------------------------------------------------------------------------
 # Drawers: box construction and accessories
 # ---------------------------------------------------------------------------
@@ -695,6 +725,7 @@ class hb_frameless_OT_change_interior_type(bpy.types.Operator):
             hb_utils.run_calc_fix(context, cabinet_bp)
             update_shelf_quantities(context, cabinet_bp)
             hb_utils.run_calc_fix(context, cabinet_bp)
+            show_in_selection_mode(context, cabinet_bp)
         
         return {'FINISHED'}
 
@@ -839,6 +870,7 @@ def split_host(context, host, kind, section_type='EMPTY'):
     # are painted like the rest of the styled cabinet.
     solver_frameless.paint_new_parts(
         solver_frameless.cabinet_root(splitter.obj), splitter.obj)
+    show_in_selection_mode(context, cabinet)
     return splitter.obj
 
 
@@ -859,6 +891,7 @@ def remove_interior_split(context, section_obj):
     cabinet = hb_utils.get_cabinet_bp(host)
     if cabinet is not None:
         hb_utils.run_calc_fix(context, cabinet)
+        show_in_selection_mode(context, cabinet)
     return interior
 
 
@@ -1740,6 +1773,7 @@ class hb_frameless_OT_add_interior_item(bpy.types.Operator):
             return {'CANCELLED'}
         interior_items.add_item(interior_obj, self.kind)
         hb_utils.run_calc_fix(context, interior_obj)
+        show_in_selection_mode(context, hb_utils.get_cabinet_bp(interior_obj))
         return {'FINISHED'}
 
 
