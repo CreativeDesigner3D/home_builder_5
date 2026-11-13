@@ -694,6 +694,47 @@ def update_top_cabinet_clearance(self, context):
 # Each default also pushes itself onto the cabinets already in the room,
 # so the room follows the field rather than waiting on a refresh button.
 
+_syncing_countertop_thickness = False
+
+
+def set_countertop_thickness(self, new_value, curr_value, is_set):
+    """The countertop thickness is one value for the project, and a room
+    keeps its counter height when it changes: every room's base cabinet
+    height gives up (or takes back) the difference."""
+    global _syncing_countertop_thickness
+    if _syncing_countertop_thickness:
+        return new_value
+    _syncing_countertop_thickness = True
+    try:
+        delta = curr_value - new_value
+        for scene in bpy.data.scenes:
+            props = getattr(scene, 'hb_frameless', None)
+            if props is None:
+                continue
+            if props != self:
+                props.countertop_thickness = new_value
+            base_height = props.base_cabinet_height + delta
+            if abs(delta) > 1e-7 and base_height > 0.0:
+                props.base_cabinet_height = base_height
+    finally:
+        _syncing_countertop_thickness = False
+    return new_value
+
+
+def _project_countertop_thickness():
+    return hb_project.get_main_scene().hb_frameless.countertop_thickness
+
+
+def get_counter_height(self):
+    return self.base_cabinet_height + _project_countertop_thickness()
+
+
+def set_counter_height(self, value):
+    base_height = value - _project_countertop_thickness()
+    if base_height > 0.0:
+        self.base_cabinet_height = base_height
+
+
 def update_material_thickness_default(self, context):
     bpy.ops.hb_frameless.update_material_thickness_prompts()
 
@@ -2078,6 +2119,13 @@ class Frameless_Scene_Props(PropertyGroup):
                                                   unit='LENGTH',
                                                   precision=4)# type: ignore
     
+    counter_height: FloatProperty(name="Counter Height",
+                                  description="Floor to the top of the countertop. The base cabinet height is this less the countertop thickness",
+                                  unit='LENGTH',
+                                  precision=4,
+                                  get=get_counter_height,
+                                  set=set_counter_height)# type: ignore
+
     base_inside_corner_size: FloatProperty(name="Base Inside Corner Size",
                                            description="Default width and depth for the inside base corner cabinets",
                                            default=units.inch(36.0),
@@ -2385,9 +2433,10 @@ class Frameless_Scene_Props(PropertyGroup):
 
     # COUNTERTOP OPTIONS
     countertop_thickness: FloatProperty(name="Countertop Thickness",
-                                        description="Thickness of the countertop slab",
+                                        description="Thickness of the countertop slab. Changing it keeps the counter height and resizes the base cabinet height",
                                         default=units.inch(1.5),
-                                        unit='LENGTH')# type: ignore
+                                        unit='LENGTH',
+                                        set_transform=set_countertop_thickness)# type: ignore
 
     countertop_overhang_front: FloatProperty(name="Countertop Front Overhang",
                                               description="Overhang past the front of cabinets",
@@ -2555,6 +2604,11 @@ class Frameless_Scene_Props(PropertyGroup):
         else:
             row.label(text=units.unit_to_string(unit_settings,self.tall_cabinet_height))
             row.label(text=units.unit_to_string(unit_settings,self.upper_cabinet_height))
+        row = layout.row()
+        row.label(text="Counter Height:")
+        row.prop(self,'counter_height',text="")
+        row.label(text="Top Thickness:")
+        row.prop(hb_project.get_main_scene().hb_frameless,'countertop_thickness',text="")
         row = layout.row()
         row.prop(self,'override_tall_upper_heights')
         row = layout.row()
