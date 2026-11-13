@@ -71,6 +71,9 @@ _INPUT_CHARS = set("0123456789./-+'\" ")
 TAG_CABINET = 'IS_FRAMELESS_CABINET_CAGE'
 TAG_BAY     = 'IS_FRAMELESS_BAY_CAGE'
 TAG_OPENING = 'IS_FRAMELESS_OPENING_CAGE'
+# A wall scribe filler: a product that is sized on the model like a
+# cabinet (W / H / D on its own cage).
+TAG_FILLER  = 'IS_CORNER_FILLER'
 
 MODES = ('Cabinets', 'Bays', 'Openings')
 
@@ -316,6 +319,43 @@ def _iter_cabinet_roots(scene):
             yield obj
 
 
+def _iter_fillers(scene):
+    for obj in scene.objects:
+        if obj.get(TAG_FILLER):
+            yield obj
+
+
+def _filler_targets(filler):
+    """W / H / D for a wall scribe filler, on its own front. A filler
+    is narrow, so the height sits above the middle and the width below
+    it rather than both on one line. The depth is the filler as built:
+    its cage reaches the door plane, its face may stand behind that."""
+    from . import types_products
+    dim_x, dim_y, dim_z = _cage_dims(filler)
+    if dim_x <= 0.0 or dim_z <= 0.0:
+        return []
+    editable = _cabinet_editable(filler)
+    try:
+        setback = float(types_products.product_front_setback(filler))
+    except Exception:
+        setback = 0.0
+    mw = _world_matrix(filler)
+    fy = -dim_y + setback
+
+    def at(fx, fz):
+        return mw @ Vector((dim_x * fx, fy - 0.003, dim_z * fz))
+    return [
+        (filler, 'CAB_H', editable, False, dim_z, "H ", at(0.5, 0.6),
+         (at(0.5, 0.0), at(0.5, 1.0))),
+        (filler, 'CAB_W', editable, False, dim_x, "W ", at(0.5, 0.4),
+         (at(0.0, 0.4), at(1.0, 0.4))),
+        (filler, 'CAB_D', editable, False, dim_y - setback, "D ",
+         mw @ Vector((dim_x / 2.0, fy / 2.0, dim_z)),
+         (mw @ Vector((dim_x / 2.0, fy, dim_z)),
+          mw @ Vector((dim_x / 2.0, 0.0, dim_z)))),
+    ]
+
+
 def _iter_bay_cages(cabinet):
     for child in cabinet.children_recursive:
         if child.get(TAG_BAY):
@@ -443,6 +483,7 @@ def compute_labels(context, region, rv3d, lines_out=None):
         # (and only those). Selected first: a gap two products share is
         # labelled -- and edited -- on the first one reached.
         products += list(wall_run_dims.iter_wall_appliances(scene))
+        products += list(_iter_fillers(scene))
         products.sort(key=lambda p: p.name not in picked)
     for cabinet in products:
         if not _cabinet_shown(cabinet, space):
@@ -459,6 +500,8 @@ def compute_labels(context, region, rv3d, lines_out=None):
         if cabinet.get('IS_APPLIANCE'):
             if scope != 'SELECTED' or cabinet.name in sel_names:
                 targets = _run_targets(cabinet, seen_spans, True)
+        elif cabinet.get(TAG_FILLER):
+            targets = _filler_targets(cabinet)
         elif mode == 'Cabinets':
             dim_x, dim_y, dim_z = _cage_dims(cabinet)
             editable = _cabinet_editable(cabinet)
@@ -687,6 +730,19 @@ def _commit(context, obj, kind, value):
         if not cage.has_modifier():
             return False
         name = {'CAB_W': 'Dim X', 'CAB_H': 'Dim Z', 'CAB_D': 'Dim Y'}[kind]
+        if obj.get(TAG_FILLER):
+            # A product: its depth is typed as built, and a filler in a
+            # narrow gap goes back on the gap after a width edit, as it
+            # does when the width is typed in its settings.
+            from . import scribe_fit, types_products
+            if kind == 'CAB_D':
+                types_products.set_product_depth(obj, value)
+            else:
+                cage.set_input(name, value)
+            hb_utils.run_calc_fix(context, obj)
+            if kind == 'CAB_W' and scribe_fit.refit(obj):
+                hb_utils.run_calc_fix(context, obj)
+            return True
         if kind == 'CAB_H':
             from . import types_frameless
             types_frameless.set_cabinet_height(obj, value)

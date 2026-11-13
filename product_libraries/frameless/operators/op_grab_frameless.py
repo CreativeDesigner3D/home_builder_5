@@ -41,9 +41,13 @@ from ....units import inch
 
 
 TAG_CABINET = 'IS_FRAMELESS_CABINET_CAGE'
+# A wall scribe filler is grabbed like a cabinet: ends, a joint with
+# the cabinet it stands against, its top and bottom, and a move handle.
+TAG_FILLER = 'IS_CORNER_FILLER'
 
 HIT_TOLERANCE_PX = 12.0
 MIN_WIDTH = inch(3.0)
+FILLER_MIN_WIDTH = inch(0.5)
 SNAP_STEP = inch(0.125)
 # Two ends this close are butted: one joint instead of two end handles.
 BUTT_TOL = inch(0.0625)
@@ -99,6 +103,30 @@ def _dims(obj):
             geo.get_input('Dim Z'))
 
 
+def _min_width(obj):
+    """The narrowest a drag leaves this cabinet or filler."""
+    if obj is not None and obj.get(TAG_FILLER):
+        return FILLER_MIN_WIDTH
+    return MIN_WIDTH
+
+
+def _fills_gap(obj):
+    """A wall scribe filler: its width is the gap it closes, so it is
+    resized from the cabinet beside it rather than from its own far
+    end."""
+    try:
+        from .. import scribe_fit
+        return bool(scribe_fit.is_wall_scribe_filler(obj))
+    except Exception:
+        return False
+
+
+def _grabbed(obj):
+    """A product Grab puts handles on: a cabinet or a wall scribe
+    filler."""
+    return bool(obj.get(TAG_CABINET) or obj.get(TAG_FILLER))
+
+
 def _entry(obj, appliance=False):
     try:
         dim_x, dim_y, dim_z = _dims(obj)
@@ -119,22 +147,22 @@ def _entry(obj, appliance=False):
         'z_low': mw.translation.z,
         'z_high': mw.translation.z + dim_z,
         'appliance': appliance,
+        'gap_filler': _fills_gap(obj),
     }
 
 
 def _run_entries(scene):
-    """Frameless cabinets, plus the freestanding appliances and wall
-    scribe fillers that stand in a run: an end stops against them and
-    snaps to their sides, but they never join a joint."""
+    """Frameless cabinets and wall scribe fillers, plus the
+    freestanding appliances that stand in a run: an end stops against
+    an appliance and snaps to its sides, but it never joins a joint."""
     out = []
     for obj in scene.objects:
-        if obj.get(TAG_CABINET):
+        if _grabbed(obj):
             if not obj.visible_get():
                 continue
             e = _entry(obj)
-        elif ((obj.get('IS_APPLIANCE') and obj.get('APPLIANCE_TYPE')
-                and not obj.get('IS_COUNTERTOP_APPLIANCE'))
-                or obj.get('IS_CORNER_FILLER')):
+        elif (obj.get('IS_APPLIANCE') and obj.get('APPLIANCE_TYPE')
+                and not obj.get('IS_COUNTERTOP_APPLIANCE')):
             if not obj.visible_get():
                 continue
             e = _entry(obj, appliance=True)
@@ -192,7 +220,8 @@ def collect_cabinet_handles(scene):
 
     kind 'JOINT' (left, right): the shared end of two butted cabinets.
     kind 'END_RIGHT' / 'END_LEFT' (cab): a free end, with 'room' -- how
-    far it may grow outward (None = unlimited).
+    far it may grow outward (None = unlimited). A wall scribe filler
+    beside a cabinet has none: it is sized at the joint.
     kind 'MOVE' (cab): the handle at the cabinet's centre that slides
     the whole cabinet along its run.
     kind 'TOP' (cab): the top edge; dragging it sets the height and the
@@ -203,6 +232,9 @@ def collect_cabinet_handles(scene):
     owning cabinet's origin / x / front offset and its z span."""
     entries = _run_entries(scene)
     folded = set()
+    # Names with a joint: a wall scribe filler beside a cabinet is
+    # sized at that joint, and its end at the wall is left to the gap.
+    jointed = set()
     handles = []
     for a in entries:
         if a['appliance']:
@@ -212,6 +244,7 @@ def collect_cabinet_handles(scene):
                 continue
             folded.add((a['name'], 'RIGHT'))
             folded.add((b['name'], 'LEFT'))
+            jointed.update((a['name'], b['name']))
             handles.append({
                 'kind': 'JOINT', 'left': a['name'], 'right': b['name'],
                 'frame': a, 'pos': a['dim_x'],
@@ -223,6 +256,8 @@ def collect_cabinet_handles(scene):
             continue
         for side, pos in (('LEFT', 0.0), ('RIGHT', a['dim_x'])):
             if (a['name'], side) in folded:
+                continue
+            if a['gap_filler'] and a['name'] in jointed:
                 continue
             handles.append({
                 'kind': 'END_' + side, 'cab': a['name'], 'frame': a,
@@ -260,7 +295,7 @@ def move_group(scene, name):
         return [name]
     out = [name]
     for obj in scene.objects:
-        if obj is cab or not obj.get(TAG_CABINET) or not obj.visible_get():
+        if obj is cab or not _grabbed(obj) or not obj.visible_get():
             continue
         try:
             if not obj.select_get():
@@ -536,16 +571,16 @@ def _clamp_delta(handle, start, d):
     if kind == 'BOTTOM':
         return min(max(d, -start['z_world']), start['h'] - MIN_HEIGHT)
     if kind == 'JOINT':
-        lo = MIN_WIDTH - start['left_w']
-        hi = start['right_w'] - MIN_WIDTH
+        lo = start.get('left_min', MIN_WIDTH) - start['left_w']
+        hi = start['right_w'] - start.get('right_min', MIN_WIDTH)
     elif kind == 'END_RIGHT':
-        lo = MIN_WIDTH - start['w']
+        lo = start.get('min_w', MIN_WIDTH) - start['w']
         room = handle.get('room')
         hi = room if room is not None else math.inf
     else:  # END_LEFT: dragging right narrows
         room = handle.get('room')
         lo = -room if room is not None else -math.inf
-        hi = start['w'] - MIN_WIDTH
+        hi = start['w'] - start.get('min_w', MIN_WIDTH)
     return min(max(d, lo), hi)
 
 
@@ -604,10 +639,12 @@ def start_state(handle):
         left = bpy.data.objects[handle['left']]
         right = bpy.data.objects[handle['right']]
         return {'left_w': _dims(left)[0], 'right_w': _dims(right)[0],
+                'left_min': _min_width(left), 'right_min': _min_width(right),
                 'right_loc': right.location.copy()}
     cab = bpy.data.objects[handle['cab']]
     w, _dy, h = _dims(cab)
-    return {'w': w, 'h': h, 'loc': cab.location.copy(),
+    return {'w': w, 'h': h, 'min_w': _min_width(cab),
+            'loc': cab.location.copy(),
             'world': cab.matrix_world.translation.copy(),
             'z_world': cab.matrix_world.translation.z}
 
@@ -953,7 +990,7 @@ class hb_frameless_OT_grab(bpy.types.Operator):
 
     @classmethod
     def poll(cls, context):
-        return any(o.get(TAG_CABINET) for o in context.scene.objects)
+        return any(_grabbed(o) for o in context.scene.objects)
 
     # ---- lifecycle ----
 
