@@ -428,13 +428,33 @@ def footprint(cab, shape, point):
     return lines, exits
 
 
+def _view_region(context, event):
+    """The 3D view region under the cursor. The tool is started from a
+    menu, where the context carries no area, so the view is found from
+    the mouse the way the other placement tools find theirs."""
+    from ... import hb_snap
+    try:
+        return hb_snap.get_region(context, event.mouse_x, event.mouse_y)
+    except Exception:
+        return None
+
+
+def _redraw_views(context):
+    screen = getattr(context, 'screen', None)
+    for area in (screen.areas if screen is not None else ()):
+        if area.type == 'VIEW_3D':
+            area.tag_redraw()
+
+
 def _hit_cabinet(context, event):
     """(cabinet root, hit point in its frame) under the cursor."""
     from bpy_extras import view3d_utils
-    region, rv3d = context.region, context.region_data
+    region = _view_region(context, event)
+    rv3d = region.data if region is not None else None
     if region is None or rv3d is None:
         return None, None
-    coord = (event.mouse_region_x, event.mouse_region_y)
+    coord = (event.mouse_x - region.x, event.mouse_y - region.y)
+    _place['mouse'] = coord
     origin = view3d_utils.region_2d_to_origin_3d(region, rv3d, coord)
     direction = view3d_utils.region_2d_to_vector_3d(region, rv3d, coord)
     depsgraph = context.evaluated_depsgraph_get()
@@ -512,7 +532,9 @@ class HB_FACE_FRAME_OT_place_steel_support(Operator):
     bl_label = "Place Steel Bracket"
     bl_options = {'REGISTER'}
 
-    shape: bpy.props.StringProperty(name="Shape", default="")  # type: ignore
+    # Not remembered: the tile always asks for the shape.
+    shape: bpy.props.StringProperty(
+        name="Shape", default="", options={'SKIP_SAVE'})  # type: ignore
 
     _waiting_for_menu = False
 
@@ -527,24 +549,26 @@ class HB_FACE_FRAME_OT_place_steel_support(Operator):
             bpy.ops.wm.call_menu(
                 name=HOME_BUILDER_MT_face_frame_steel_support_shapes.__name__)
             return {'FINISHED'}
-        if context.area is None or context.area.type != 'VIEW_3D':
+        from ... import hb_snap
+        if hb_snap.get_region(context) is None:
+            self.report({'WARNING'}, "Open a 3D view to place a bracket")
             return {'CANCELLED'}
         self._waiting_for_menu = False
         self.added = 0
         _remove_place_handles()
         _place['label'] = "Steel Bracket  (%s)" % dict(
             (i[0], i[1]) for i in SHAPE_ITEMS)[self.shape]
-        _place['mouse'] = (event.mouse_region_x, event.mouse_region_y)
+        # Off screen until the cursor is over a view.
+        _place['mouse'] = (-1000, -1000)
         _place_handles.append(bpy.types.SpaceView3D.draw_handler_add(
             _draw_place_3d, (), 'WINDOW', 'POST_VIEW'))
         _place_handles.append(bpy.types.SpaceView3D.draw_handler_add(
             _draw_place_2d, (), 'WINDOW', 'POST_PIXEL'))
         context.window_manager.modal_handler_add(self)
-        context.area.tag_redraw()
+        _redraw_views(context)
         return {'RUNNING_MODAL'}
 
     def _hover(self, context, event):
-        _place['mouse'] = (event.mouse_region_x, event.mouse_region_y)
         cab, point = _hit_cabinet(context, event)
         if cab is None:
             _place['lines'], _place['text'] = [], ""
@@ -553,13 +577,12 @@ class HB_FACE_FRAME_OT_place_steel_support(Operator):
             _place['lines'] = lines
             _place['text'] = "Click to add: %s" % dict(
                 (i[0], i[1]) for i in EXIT_ITEMS)[exits]
-        context.area.tag_redraw()
+        _redraw_views(context)
         return cab, point
 
     def _finish(self, context):
         _remove_place_handles()
-        if context.area is not None:
-            context.area.tag_redraw()
+        _redraw_views(context)
         if getattr(self, 'added', 0):
             self.report({'INFO'}, "Added %d steel support%s" % (
                 self.added, "" if self.added == 1 else "s"))
@@ -575,13 +598,12 @@ class HB_FACE_FRAME_OT_place_steel_support(Operator):
             if event.type in {'ESC', 'RIGHTMOUSE'}:
                 return {'CANCELLED'}
             return {'RUNNING_MODAL'}
-        if context.area is None:
-            return self._finish(context)
         if event.type in {'ESC', 'RIGHTMOUSE'} and event.value == 'PRESS':
             return self._finish(context)
         if event.type == 'MOUSEMOVE':
             self._hover(context, event)
-            return {'RUNNING_MODAL'}
+            # Let the move through: the views keep their own hover.
+            return {'PASS_THROUGH'}
         if event.type == 'LEFTMOUSE' and event.value == 'PRESS':
             cab, point = self._hover(context, event)
             if cab is None:
