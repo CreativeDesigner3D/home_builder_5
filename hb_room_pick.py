@@ -61,6 +61,24 @@ def room_of(obj):
     return None
 
 
+def select_marker(context, room):
+    """Select a room's marker, and nothing else: the marker is the room,
+    so moving it (G) moves the room into another area."""
+    global _busy
+    marker = room.marker
+    if marker is None or marker.name not in context.view_layer.objects:
+        return
+    _busy = True                # the room is already the one shown
+    try:
+        for obj in context.selected_objects:
+            obj.select_set(False)
+        marker.hide_viewport = False
+        marker.select_set(True)
+        context.view_layer.objects.active = marker
+    finally:
+        _busy = False
+
+
 def open_room(scene, level_index, room_index):
     """Make the room active and show it on the HOUSE tab's Rooms page."""
     from .operators import scene_navigator, house_panel_tab
