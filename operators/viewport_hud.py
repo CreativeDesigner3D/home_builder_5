@@ -119,6 +119,11 @@ def suspend(on):
     _suspended = bool(on)
 
 
+def suspended():
+    """Whether a presentation (walk mode) has the viewport to itself."""
+    return _suspended
+
+
 def _mode_names():
     """Whether every selection mode says its name, or only the one in use."""
     p = _get_prefs()

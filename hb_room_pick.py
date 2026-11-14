@@ -171,7 +171,9 @@ def fill_triangles(room):
 
 def shown_room(context):
     """The room the Rooms page shows, while it is on screen, else None."""
-    from .operators import scene_navigator, house_panel_tab
+    from .operators import scene_navigator, house_panel_tab, viewport_hud
+    if viewport_hud.suspended():
+        return None             # walk mode: the panel is away, and its outline with it
     scene = context.scene
     if scene is None or not scene.get(hb_house.HOUSE_SCENE_KEY):
         return None
