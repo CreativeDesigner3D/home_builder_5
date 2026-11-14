@@ -269,6 +269,7 @@ def _gable_above(gables, m, x, y, z):
 
 
 FIRE_BLOCK_OVER = 3.048     # walls taller than 10' get a row of fire blocks
+FIRE_BLOCK_AT = 2.44        # 8' up: the line of an ordinary wall's plates
 BRIDGING_OVER = 2.44        # joist spans longer than 8' get bridging
 JOIST_LAP = inch(3)         # joists lap this far past a bearing
 COLLAR_DEPTH = inch(5.5)    # 2x6 collar ties
@@ -322,19 +323,46 @@ def junction_studs(scene, level, walls):
 
 
 def _wall_top(wall_obj, tree=None):
-    """top(x): how high the wall stands at x along it - its height, or
-    the roof's underside where that comes lower."""
+    """top(x): how high the wall's framing stands at x along it - its
+    height, or the roof's underside where that comes lower.
+
+    A wall under a roof is drawn taller than it is built and the roof
+    cuts it, so its top is read off the roof - which goes wrong in two
+    places. Past the middle of the wall round the corner there may be no
+    roof underside to find (a gable end runs up through it), so x is
+    kept between the wall's own ends. And an eaves wall passing under
+    another roof (the main roof's, beside a wing) reads that roof for a
+    stretch: a wall that is level for most of its length is level for
+    all of it. A gable end, which rises to a peak, is left as it reads."""
+    from .operators import walls as hb_walls
     wall = hb_types.GeoNodeWall(wall_obj)
     length = wall.get_input('Length')
     height = wall.get_input('Height')
     end_h = wall.get_input('End Height') if wall.has_input('End Height') else 0.0
     ymid = wall.get_input('Thickness') / 2.0
     m = wall_obj.matrix_world
+    ext = hb_walls.wall_face_extents(wall_obj)
+    if ext is not None:
+        lo = (ext['back'][0] + ext['front'][0]) / 2.0 + T / 2.0
+        hi = (ext['back'][1] + ext['front'][1]) / 2.0 - T / 2.0
+    else:
+        lo, hi = T / 2.0, length - T / 2.0
+    if hi < lo:
+        lo = hi = (lo + hi) / 2.0
 
-    def top(x):
+    def raw(x):
+        x = min(max(x, lo), hi)
         h = height if end_h <= 0.0 else height + (end_h - height) * (x / max(length, 1e-6))
         return _roof_above(tree, m, x, ymid, 0.0, h)
-    return top
+
+    if tree is None:
+        return raw
+    n = 32
+    tops = sorted(raw(lo + (hi - lo) * i / n) for i in range(n + 1))
+    level = tops[len(tops) // 2]
+    if level - tops[0] > 0.03:
+        return raw                  # it rises to a peak: a gable end
+    return lambda x: min(raw(x), level)
 
 
 def corner_plan(walls, tree=None, rooms=None):
@@ -584,11 +612,15 @@ def frame_wall(boards, wall_obj, step, tree=None, gables=None, extra=(), blockin
         if not door and oz0 - T - T > 0.02:
             stud(xa, T, oz0 - T)
 
-    # Fire blocking: a row between the studs halfway up a tall wall
+    # Fire blocking: a row between the studs of a tall wall, at the height
+    # of an ordinary one - where the studs really are tall (a wall under
+    # a roof is drawn taller than it is built)
     if blocking and height > FIRE_BLOCK_OVER:
-        zb = height / 2.0
+        zb = FIRE_BLOCK_AT
         for xa, xb in zip(xs, xs[1:]):
             if xb - (xa + T) < 0.02:
+                continue
+            if min(top(xa + T / 2.0), top(xb + T / 2.0)) - plates <= FIRE_BLOCK_OVER:
                 continue
             if any(o[0] - 1e-4 < xb and xa + T < o[1] + 1e-4 and o[4] - T < zb + T and zb < o[5]
                    for o in taken):
