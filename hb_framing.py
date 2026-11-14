@@ -113,17 +113,20 @@ class Boards:
             self.bm.faces.new([v[i] for i in f])
         self.count += 1
 
-    def local_box(self, m, x0, x1, y0, y1, z0, z1, z1_end=None, x0_far=None, x1_far=None):
+    def local_box(self, m, x0, x1, y0, y1, z0, z1, z1_end=None, x0_far=None, x1_far=None,
+                  z0_end=None):
         """An axis-aligned board in a wall's own space (m its matrix); the
-        top may slope from z1 at x0 to z1_end at x1. `x0_far` and `x1_far`
-        are its ends on the y1 side, for an end cut on the skew (a plate
-        at a corner that isn't square)."""
+        top may slope from z1 at x0 to z1_end at x1, and the underside
+        with it from z0 to `z0_end` (a plate under a roof's slope).
+        `x0_far` and `x1_far` are its ends on the y1 side, for an end cut
+        on the skew (a plate at a corner that isn't square)."""
         xa = x0 if x0_far is None else x0_far
         xb = x1 if x1_far is None else x1_far
-        if max(x1 - x0, xb - xa) < 1e-4 or y1 - y0 < 1e-4 or z1 - z0 < 1e-4:
-            return
         ze = z1 if z1_end is None else z1_end
-        pts = [(x0, y0, z0), (x1, y0, z0), (xb, y1, z0), (xa, y1, z0),
+        zb = z0 if z0_end is None else z0_end
+        if max(x1 - x0, xb - xa) < 1e-4 or y1 - y0 < 1e-4 or max(z1 - z0, ze - zb) < 1e-4:
+            return
+        pts = [(x0, y0, z0), (x1, y0, zb), (xb, y1, zb), (xa, y1, z0),
                (x0, y0, z1), (x1, y0, ze), (xb, y1, ze), (xa, y1, z1)]
         self.box([m @ Vector(p) for p in pts])
 
@@ -465,14 +468,14 @@ def frame_wall(boards, wall_obj, step, tree=None, gables=None, extra=(), blockin
         through = (role == 'THROUGH') != (upper and lap)
         return far if through else near
 
-    def plate(a, b, lo, hi, z0, z1, z1_end=None, upper=False):
+    def plate(a, b, lo, hi, z0, z1, z1_end=None, upper=False, z0_end=None):
         """A plate from a to b, its ends cut to the corner where they are
         the wall's own (lo and hi)."""
         boards.local_box(
             m, edge(0, y0, upper) if a == lo else a, edge(1, y0, upper) if b == hi else b,
             y0, y1, z0, z1, z1_end,
             x0_far=edge(0, y1, upper) if a == lo else a,
-            x1_far=edge(1, y1, upper) if b == hi else b)
+            x1_far=edge(1, y1, upper) if b == hi else b, z0_end=z0_end)
 
     def reach(upper=False):
         """The ends of a plate, at their longest."""
@@ -525,7 +528,9 @@ def frame_wall(boards, wall_obj, step, tree=None, gables=None, extra=(), blockin
             pieces.append((a, b, ta, tb))
         lo = k * T - plates
         for a, b, ta, tb in pieces:
-            plate(a, b, q0, q1, min(ta, tb) + lo, ta + lo + T, tb + lo + T, upper)
+            # A board as thick at one end as the other: under a slope its
+            # underside rises with its top
+            plate(a, b, q0, q1, ta + lo, ta + lo + T, tb + lo + T, upper, z0_end=tb + lo)
 
     def stud(xa, z_lo, z_hi=None):
         z_hi = top(xa + T / 2.0) - plates if z_hi is None else z_hi
@@ -932,12 +937,28 @@ def frame_level_ceilings(boards, scene, level, step, tree=None):
 # ROOFS
 # =============================================================================
 
-def frame_roof(boards, obj, depsgraph, step, depth=RAFTER_DEPTH, sits_on=False):
+VALLEY_REACH = 2.0          # m: how far a rafter runs on to the valley it lands on
+
+
+def frame_roof(boards, obj, depsgraph, step, depth=RAFTER_DEPTH, sits_on=False, base=None):
     """Rafters up from every sloped underside face of a roof, inside its
     thickness, and a board along each crease between two of them (ridges,
     hips, valleys). Where the roof is cut to meet another: a valley rafter
     under the cut, or - for a roof that `sits_on` another (a cross gable,
-    a porch) - a flat valley board on that roof for its rafters to land on."""
+    a porch) - a flat valley board on that roof for its rafters to land on.
+
+    The roof is modelled cut away under the whole of a roof that meets
+    it - back to where that roof's TOP comes through its underside - but
+    a valley rafter stands where the two undersides meet, further in. So
+    the valley is put there, and this roof's rafters run on past the cut
+    to land on it.
+
+    `base` is what framing the roof it sits on returned, when that roof
+    has rafters of its own: this roof's rafters then run on down to that
+    same valley, so the jacks of both roofs land on the one valley
+    rafter, and the flat boards are left out. Returns (shell, [(normal,
+    plane offset, thickness)], its valleys) of this roof, to be the
+    `base` of another."""
     ev = obj.evaluated_get(depsgraph)
     mesh = ev.to_mesh()
     m = obj.matrix_world
@@ -972,13 +993,48 @@ def frame_roof(boards, obj, depsgraph, step, depth=RAFTER_DEPTH, sits_on=False):
         pts = [m @ mesh.vertices[i].co for i in poly.vertices]
         # As deep as the roof is thick, less its sheathing
         d_face = max(min(depth, dist + 0.001 - SHEATHING), inch(3.5))
-        faces.append((poly.index, n, pts, d_face))
+        faces.append((poly.index, n, pts, d_face, dist))
     by_index = {f[0]: f for f in faces}
+
+    # Where a slope is cut to meet another roof: the edges it shares with
+    # a cut through its thickness that isn't square to it (square is the
+    # fascia at the eaves)
+    edge_faces = {}
+    for poly in mesh.polygons:
+        if poly.index not in by_index and poly.index not in cuts:
+            continue
+        for key in poly.edge_keys:
+            edge_faces.setdefault(key, []).append(poly.index)
+    meets = {}              # edge -> (a, b, the slope's face, the cut's normal, shift)
+    for (i, j), owners in edge_faces.items():
+        framed = [o for o in owners if o in by_index]
+        if len(owners) != 2 or len(framed) != 1:
+            continue
+        f1 = by_index[framed[0]]
+        n_cut = cuts[owners[0] if owners[0] not in by_index else owners[1]]
+        if abs(f1[1].dot(n_cut)) < 0.2:
+            continue
+        a, b = m @ mesh.vertices[i].co, m @ mesh.vertices[j].co
+        if (b - a).length < T:
+            continue
+        # From the cut's edge to the valley: out of the face, along the
+        # slope, to where the other roof's underside (its top, a roof's
+        # thickness down) comes through
+        shift = None
+        if not sits_on:
+            # (the way that goes deeper under the other roof's top)
+            out = (b - a).cross(f1[1]).normalized()
+            if n_cut.dot(out) < 0.0:
+                out = -out
+            den = n_cut.dot(out)
+            if den > 1e-6 and f1[4] / den < VALLEY_REACH:
+                shift = out * (f1[4] / den)
+        meets[(i, j)] = (a, b, f1, n_cut, shift)
 
     # A rafter runs on from face to face within one plane (the eave strip
     # beside the rest of a slope): spans are gathered per plane and joined
     planes = {}
-    for _i, n, pts, d_face in faces:
+    for _i, n, pts, d_face, _dist in faces:
         key = (round(n.x, 3), round(n.y, 3), round(n.z, 3), round(n.dot(pts[0]), 3))
         plane = planes.setdefault(key, {'n': n, 'p0': pts[0], 'depth': d_face, 'lines': {}})
         plane['depth'] = min(plane['depth'], d_face)
@@ -990,12 +1046,17 @@ def frame_roof(boards, obj, depsgraph, step, depth=RAFTER_DEPTH, sits_on=False):
             lo, hi = sorted((a.dot(down), b.dot(down)))
             plane['lines'].setdefault(pos, []).append((lo, hi))
 
+    ran_on = []             # where rafters that run on to a valley left this roof
     for plane in planes.values():
         n, d_face = plane['n'], plane['depth']
         plane_d = n.dot(plane['p0'])
         down = Vector((-n.x, -n.y)).normalized()
         across = Vector((-down.y, down.x))
         w = Vector((across.x, across.y, 0.0)) * (T / 2.0)
+        # The slope's own reach, up and down: a rafter run on to a valley
+        # stays within it
+        reach = (min(lo for spans in plane['lines'].values() for lo, _hi in spans),
+                 max(hi for spans in plane['lines'].values() for _lo, hi in spans))
 
         def rise(p, inward):
             """Ends cut plumb, as a rafter's are, no deeper than the roof
@@ -1003,7 +1064,10 @@ def frame_roof(boards, obj, depsgraph, step, depth=RAFTER_DEPTH, sits_on=False):
             d = d_face
             for k in (0.003, 0.02, 0.05):
                 hit = shell.ray_cast(p + inward * k - n * 0.001, -n, 2.0)
-                if hit[0] is not None and hit[1].dot(n) < 0.0:      # leaving the roof
+                # Leaving the roof by its top. Not by a plumb face: an eave or
+                # a gable end cut plumb is the rafter's own plumb cut, and
+                # takes nothing off its depth.
+                if hit[0] is not None and hit[1].dot(n) < 0.0 and hit[1].z > 0.05:
                     d = min(d, max(hit[3] - SHEATHING, hit[3] * 0.6))
             # Plumb if that stays in the roof; square to the slope where a
             # steeper one meets a flatter (a gambrel's break); else shorter
@@ -1031,6 +1095,26 @@ def frame_roof(boards, obj, depsgraph, step, depth=RAFTER_DEPTH, sits_on=False):
                 ta, tb = ends
                 along = (tb - ta).normalized()
                 ra, rb = rise(ta, along), rise(tb, -along)
+                # On to the valley: this roof's own, past where it is cut,
+                # or that of the roof this one sits on
+                full = Vector((0.0, 0.0, d_face / abs(n.z)))
+                landed = [None, None]
+                for k, (end, outward) in enumerate(((ta, -along), (tb, along))):
+                    if base is not None:
+                        landed[k] = _to_valley(base, end, outward, n)
+                    else:
+                        landed[k] = _past_cut(meets.values(), end, outward, n)
+                for k in (0, 1):
+                    if landed[k] is not None and not (
+                            reach[0] - 1e-3 <= Vector((landed[k].x, landed[k].y)).dot(down)
+                            <= reach[1] + 1e-3):
+                        landed[k] = None
+                    if landed[k] is not None and base is not None:
+                        ran_on.append((ta, tb)[k])
+                if landed[0] is not None:
+                    ta, ra = landed[0], full
+                if landed[1] is not None:
+                    tb, rb = landed[1], full
                 bottom = [ta - w, tb - w, tb + w, ta + w]
                 boards.box(bottom + [bottom[0] + ra, bottom[1] + rb,
                                      bottom[2] + rb, bottom[3] + ra])
@@ -1049,35 +1133,51 @@ def frame_roof(boards, obj, depsgraph, step, depth=RAFTER_DEPTH, sits_on=False):
             tops.append(p + Vector((0.0, 0.0, up)))
         _sloped_board(boards, tops[0], tops[1], plumb + inch(1.5))
 
+    # The valleys, moved in from the cuts: two that cross (either side of
+    # a cross gable, at its ridge) stop at each other
+    valleys = {key: [v[0] + v[4], v[1] + v[4]] for key, v in meets.items() if v[4] is not None}
+    keys = list(valleys)
+    for x, ka in enumerate(keys):
+        for kb in keys[x + 1:]:
+            hit = _cross_2d(valleys[ka], valleys[kb])
+            if hit is None:
+                continue
+            for key, t in ((ka, hit[0]), (kb, hit[1])):
+                a, b = valleys[key]
+                at = a + (b - a) * t
+                valleys[key] = [a, at] if t > 0.5 else [at, b]
+
     # Creases: edges two sloped faces share where they are not one plane
-    edge_faces = {}
-    for poly in mesh.polygons:
-        if poly.index not in by_index and poly.index not in cuts:
-            continue
-        for key in poly.edge_keys:
-            edge_faces.setdefault(key, []).append(poly.index)
     for (i, j), owners in edge_faces.items():
         if len(owners) != 2:
             continue
         framed = [o for o in owners if o in by_index]
-        if len(framed) == 1:
-            # A framed slope against a cut. Square to it is the fascia at
-            # the eaves; at an angle, where this roof meets another
-            f1 = by_index[framed[0]]
-            n_cut = cuts[owners[0] if owners[0] not in by_index else owners[1]]
-            if abs(f1[1].dot(n_cut)) < 0.2:
-                continue
-            a, b = m @ mesh.vertices[i].co, m @ mesh.vertices[j].co
-            if (b - a).length < T:
-                continue
+        if (i, j) in meets:
+            # A slope cut to meet another roof
+            a, b, f1, n_cut, shift = meets[(i, j)]
             if sits_on:
                 inner = Vector(f1[2][0])
                 for q in f1[2]:
                     inner = inner + q
                 inner = inner / (len(f1[2]) + 1)
-                _flat_board(boards, a, b, n_cut, inch(5.5), inner)
+                # A board laid on the roof this one sits on, for its rafters
+                # to land on - but not along the stretch whose rafters run on
+                # to that roof's valley instead
+                ab = b - a
+                ts = [(q - a).dot(ab) / ab.length_squared for q in ran_on
+                      if (a + ab * max(0.0, min(1.0, (q - a).dot(ab) / ab.length_squared)) - q).length < 0.03]
+                pad = step / ab.length
+                runs = [(0.0, 1.0)] if not ts else [(0.0, min(ts) - pad), (max(ts) + pad, 1.0)]
+                least = step * 1.5 if ts else inch(6)      # no stub past the last rafter
+                for t0, t1 in runs:
+                    t0, t1 = max(t0, 0.0), min(t1, 1.0)
+                    if (t1 - t0) * ab.length > least:
+                        _flat_board(boards, a + ab * t0, a + ab * t1, n_cut, inch(5.5), inner)
+            elif shift is not None:
+                crease(valleys[(i, j)][0], valleys[(i, j)][1],
+                       f1[3] / abs(f1[1].z))                    # the valley rafter
             else:
-                crease(a, b, f1[3] / abs(f1[1].z))     # a valley rafter
+                crease(a, b, f1[3] / abs(f1[1].z))
             continue
         if len(framed) != 2:
             continue
@@ -1088,8 +1188,105 @@ def frame_roof(boards, obj, depsgraph, step, depth=RAFTER_DEPTH, sits_on=False):
         a, b = m @ mesh.vertices[i].co, m @ mesh.vertices[j].co
         if (b - a).length < T:
             continue
+        if base is not None:
+            # A ridge that runs into the roof this one sits on carries on
+            # to the valleys' meeting
+            along = (b - a).normalized()
+            a = _to_valley(base, a, -along) or a
+            b = _to_valley(base, b, along) or b
         crease(a, b, min(f1[3] / abs(n1.z), f2[3] / abs(n2.z)))
     ev.to_mesh_clear()
+    thick = {}
+    for _i, n, pts, _d, dist in faces:
+        key = (round(n.x, 3), round(n.y, 3), round(n.z, 3), round(n.dot(pts[0]), 3))
+        thick[key] = max(thick.get(key, 0.0), dist)
+    return (shell, [(plane['n'], plane['n'].dot(plane['p0']), thick[key])
+                    for key, plane in planes.items()], list(valleys.values()))
+
+
+def _short_of_valley(s, outward, valley):
+    """A rafter's run to a valley's line, less half the valley rafter."""
+    sin = outward.cross(valley.normalized()).length
+    return s - (T / 2.0) / max(sin, 0.3)
+
+
+def _past_cut(meets, p, outward, n):
+    """Where a rafter ending at p - on an edge its slope is cut along to
+    meet another roof - lands on the valley, carried on `outward`. None
+    if p isn't on such an edge, or the rafter doesn't run that way."""
+    for a, b, f1, _n_cut, shift in meets:
+        if shift is None or f1[1].dot(n) < 0.999:
+            continue
+        ab = b - a
+        t = max(0.0, min(1.0, (p - a).dot(ab) / ab.length_squared))
+        if (a + ab * t - p).length > 0.02:
+            continue
+        # The valley is the edge moved by `shift`: along the rafter, that far
+        # square to the edge
+        square = shift - ab * (shift.dot(ab) / ab.length_squared)
+        den = outward.dot(square.normalized())
+        if den < 0.05:
+            return None
+        s = _short_of_valley(square.length / den, outward, ab)
+        return p + outward * s if s > 0.0 else None
+    return None
+
+
+def _cross_2d(s1, s2):
+    """Where two segments cross in plan, as (t along the first, t along
+    the second), or None."""
+    p, r = s1[0].to_2d(), (s1[1] - s1[0]).to_2d()
+    q, d = s2[0].to_2d(), (s2[1] - s2[0]).to_2d()
+    den = r.x * d.y - r.y * d.x
+    if abs(den) < 1e-9:
+        return None
+    t = ((q.x - p.x) * d.y - (q.y - p.y) * d.x) / den
+    u = ((q.x - p.x) * r.y - (q.y - p.y) * r.x) / den
+    return (t, u) if 0.0 <= t <= 1.0 and 0.0 <= u <= 1.0 else None
+
+
+def _to_valley(base, p, outward, n=None):
+    """Where a rafter ending at p - where its roof lands on the roof it
+    sits on - meets that roof's underside, carried on down `outward`: the
+    valley, less half the valley rafter standing there. None if p isn't
+    on that roof's top, or there is no valley rafter where it would land.
+    Without `n` (the rafter's slope) it is a ridge, level, carried to the
+    valley itself."""
+    shell, planes, valleys = base
+    if n is not None and outward.z >= 0.0:
+        return None
+    if shell.find_nearest(p, 0.03)[0] is not None:
+        return None             # that roof is whole here: this one lands on it
+    best = None
+    for bn, bd, thick in planes:
+        # On that slope's top: its underside's plane, its thickness up
+        # (the roof itself is cut away there, so there is no face to find)
+        if abs(bn.dot(p) - (bd - thick)) > 0.03:
+            continue
+        den = bn.dot(outward)
+        if abs(den) < 1e-6:
+            continue
+        s = (bd - bn.dot(p)) / den
+        if 0.01 < s < VALLEY_REACH and (best is None or s < best[0]):
+            best = (s, bn)
+    if best is None:
+        return None
+    s, bn = best
+    q = p + outward * s
+    for a, b in valleys:
+        ab = b - a
+        t = max(0.0, min(1.0, (q - a).dot(ab) / max(ab.length_squared, 1e-9)))
+        if (a + ab * t - q).length < 0.1:
+            break
+    else:
+        return None             # no valley rafter there to land on
+    if n is None:
+        return q
+    valley = n.cross(bn)
+    if valley.length < 1e-6:
+        return None
+    s = _short_of_valley(s, outward, valley)
+    return p + outward * s if s > 0.0 else None
 
 
 def _flat_board(boards, a, b, n, width, toward):
@@ -1268,12 +1465,16 @@ def level_framing(scene, level, depsgraph, tree):
     if house.framing_roofs and house.framing_collar_ties and not trussed:
         frame_collar_ties(boards, scene, level, inch(24) if house.framing_spacing == '24' else step)
     if house.framing_roofs and level.roof.enabled:
+        base = None             # the main roof's undersides, for what sits on it
         for obj, sits_on in ((level.roof.roof_obj, False), (level.roof.dormer_obj, True)):
             if trussed and obj == level.roof.roof_obj:
                 continue                # trusses, not rafters
             if obj is not None and obj.type == 'MESH' and obj.name in scene.objects:
-                frame_roof(boards, obj, depsgraph, inch(24) if house.framing_spacing == '24' else step,
-                           sits_on=sits_on)
+                made = frame_roof(boards, obj, depsgraph,
+                                  inch(24) if house.framing_spacing == '24' else step,
+                                  sits_on=sits_on, base=base if sits_on else None)
+                if not sits_on:
+                    base = made
     if house.framing_roofs:
         for room in level.rooms:
             obj = room.porch_roof_obj
