@@ -683,6 +683,10 @@ class hb_frameless_OT_applied_end_prompts(bpy.types.Operator):
         name="Height", unit='LENGTH', min=0.0, precision=4,
         description="Panel height; 0 is the cabinet's height") # type: ignore
 
+    to_floor: bpy.props.BoolProperty(
+        name="Panel to Floor", default=True,
+        description="An applied back runs down to the floor; off, it stops at the toe kick") # type: ignore
+
     panel_name: bpy.props.StringProperty(options={'HIDDEN'}) # type: ignore
 
     @classmethod
@@ -695,6 +699,7 @@ class hb_frameless_OT_applied_end_prompts(bpy.types.Operator):
             self.report({'WARNING'}, "No slab end panel on that side")
             return {'CANCELLED'}
         self.panel_name = panel.name
+        self.to_floor = bool(panel.get(solver_frameless.PANEL_TO_FLOOR_KEY, True))
         self.thickness = hb_types.GeoNodeCutpart(panel).get_input('Thickness')
         self.front_extension = float(panel.get(
             solver_frameless.END_FRONT_EXTENSION_KEY,
@@ -712,6 +717,8 @@ class hb_frameless_OT_applied_end_prompts(bpy.types.Operator):
         panel[solver_frameless.END_FRONT_EXTENSION_KEY] = self.front_extension
         panel[solver_frameless.END_BACK_EXTENSION_KEY] = self.back_extension
         panel[solver_frameless.END_HEIGHT_KEY] = self.height
+        if panel.get('IS_APPLIED_END_BACK'):
+            panel[solver_frameless.PANEL_TO_FLOOR_KEY] = bool(self.to_floor)
         solver_frameless.recalculate_cabinet(panel)
         return True
 
@@ -722,6 +729,11 @@ class hb_frameless_OT_applied_end_prompts(bpy.types.Operator):
     def draw(self, context):
         col = self.layout.column(align=True)
         col.prop(self, 'thickness')
+        panel = bpy.data.objects.get(self.panel_name)
+        if panel is not None and panel.get('IS_APPLIED_END_BACK'):
+            # A back spans the cabinet; it only chooses where it stops.
+            col.prop(self, 'to_floor')
+            return
         col.prop(self, 'front_extension')
         col.prop(self, 'back_extension')
         col.prop(self, 'height', text="Height (0 = Cabinet)")

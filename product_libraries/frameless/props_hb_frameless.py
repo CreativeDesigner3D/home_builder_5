@@ -908,6 +908,23 @@ def update_auto_finished_ends(self, context):
     exposure.recalc_scene(context.scene, context)
 
 
+def update_applied_back_to_floor(self, context):
+    """Applied backs the room looks after follow the setting; one set by
+    hand keeps its own."""
+    from . import exposure, solver_frameless
+    to_floor = bool(self.applied_back_to_floor)
+    for obj in context.scene.objects:
+        if not obj.get('IS_APPLIED_END_BACK'):
+            continue
+        cabinet = obj.parent
+        if cabinet is None or exposure.is_manual(cabinet, 'BACK'):
+            continue
+        if bool(obj.get(solver_frameless.PANEL_TO_FLOOR_KEY, True)) == to_floor:
+            continue
+        obj[solver_frameless.PANEL_TO_FLOOR_KEY] = to_floor
+        solver_frameless.recalculate_cabinet(cabinet)
+
+
 def update_show_machining(self,context):
     print('UPDATE SHOW MACHINING',self.show_machining)
 
@@ -2358,6 +2375,14 @@ class Frameless_Scene_Props(PropertyGroup):
         default='FINISHED',
         update=update_auto_finished_ends)# type: ignore
 
+    applied_back_to_floor: BoolProperty(
+        name="Applied Back To Floor",
+        description="An applied back runs down to the floor. Off, it stops "
+                    "at the toe kick, leaving the toe space open behind "
+                    "the cabinet",
+        default=True,
+        update=update_applied_back_to_floor)# type: ignore
+
     default_carcass_part_thickness: FloatProperty(name="Default Carcass Part Thickness",
                                                  description="",
                                                  default=units.inch(.75),
@@ -2883,6 +2908,9 @@ class Frameless_Scene_Props(PropertyGroup):
         row.prop(self,'default_finished_end',text="Default")
         row = size_box.row()
         row.prop(self,'default_finished_back',text="Backs That Show")
+        if self.default_finished_back in ('SLAB', '5PIECE'):
+            row = size_box.row()
+            row.prop(self,'applied_back_to_floor',text="Applied Back To Floor")
         size_box = layout.box()
         row = size_box.row()
         row.label(text="Toe Kick:")

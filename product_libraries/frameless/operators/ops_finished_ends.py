@@ -156,6 +156,8 @@ class hb_frameless_OT_update_finished_end(bpy.types.Operator):
         panel.obj['IS_APPLIED_END_' + side] = True
         panel.obj['IS_SLAB_PANEL'] = True
         panel.obj[solver_frameless.PART_ROLE_KEY] = 'APPLIED_END_' + side
+        if side == 'BACK':
+            panel.obj[solver_frameless.PANEL_TO_FLOOR_KEY] = bool(self.panel_to_floor)
         panel.obj['MENU_ID'] = 'HOME_BUILDER_MT_applied_end_commands'
         panel.obj.parent = cabinet_obj
         panel.obj.location.z = 0
@@ -345,6 +347,10 @@ class hb_frameless_OT_update_finished_end(bpy.types.Operator):
         col = box.column(align=True)
         col.prop(self, "finished_end_type", text="Type")
         
+        if self.finished_end_type == 'SLAB' and self.side == 'BACK':
+            col.separator()
+            col.prop(self, "panel_to_floor")
+
         if self.finished_end_type == '5PIECE':
             col.separator()
             col.prop(self, "panel_to_floor")
@@ -527,6 +533,10 @@ def set_finish_condition(context, cabinet_obj, side, condition):
     if side in PANEL_SIDES:
         kind = condition if condition in ('SLAB', '5PIECE') else 'NONE'
         kwargs = {'side': side, 'finished_end_type': kind}
+        if side == 'BACK':
+            # The room says whether applied backs run to the floor.
+            kwargs['panel_to_floor'] = bool(getattr(
+                context.scene.hb_frameless, 'applied_back_to_floor', True))
         door_style = get_door_style_from_front(get_door_from_cabinet(cabinet_obj))
         if kind == '5PIECE' and door_style:
             for key, arg in (('top_rail_width', 'top_rail_width'),

@@ -1453,8 +1453,18 @@ FINISH_REAR_KEY = 'Finish Rear'
 LOOSE_SKIN_KEY = 'Loose Finished Skin'
 BASE_BY_OTHERS_KEY = 'Base by Others'
 BASE_BY_OTHERS_THICKNESS_KEY = 'Base by Others Thickness'
+# Cleats, both off (zero wide) on a new base; 3 in is the usual width.
+# Sleeper Cleat: a strip lying flat beside each cross support and inside
+# each end, its top flush with the top of the frame, for the cabinets to
+# bear on and fasten to.
+# Floor Cleat: a strip lying flat on the floor inside the kick face and
+# inside the back rail, between the ends, to fasten the base down. The
+# cross supports are cut shorter and stand on the two cleats.
+SLEEPER_CLEAT_KEY = 'Sleeper Cleat Width'
+FLOOR_CLEAT_KEY = 'Floor Cleat Width'
 BASE_ASSEMBLY_OPTION_KEYS = (FINISH_REAR_KEY, LOOSE_SKIN_KEY,
-                             BASE_BY_OTHERS_KEY, BASE_BY_OTHERS_THICKNESS_KEY)
+                             BASE_BY_OTHERS_KEY, BASE_BY_OTHERS_THICKNESS_KEY,
+                             SLEEPER_CLEAT_KEY, FLOOR_CLEAT_KEY)
 BASE_ASSEMBLY_SKIN_THICKNESS = inch(0.75)
 BASE_BY_OTHERS_THICKNESS = inch(0.125)
 
@@ -1481,6 +1491,21 @@ BASE_ASSEMBLY_SKINS = {
                              (False, True)),
 }
 
+# The cleats lie flat. A sleeper cleat runs front to back and hangs from
+# the top of the frame; a floor cleat runs the length of the base on the
+# floor.
+BASE_ASSEMBLY_CLEATS = {
+    'BASE_SLEEPER_CLEAT': ("Sleeper Cleat", (0, 0, 90), 'XZ', (False, False)),
+    'BASE_SLEEPER_CLEAT_LEFT': ("Left Sleeper Cleat", (0, 0, 90), 'XYZ',
+                                (False, False)),
+    'BASE_SLEEPER_CLEAT_RIGHT': ("Right Sleeper Cleat", (0, 0, 90), 'XZ',
+                                 (False, False)),
+    'BASE_FLOOR_CLEAT_FRONT': ("Front Floor Cleat", (0, 0, 0), '',
+                               (False, False)),
+    'BASE_FLOOR_CLEAT_BACK': ("Back Floor Cleat", (0, 0, 0), 'Y',
+                              (False, False)),
+}
+
 
 def _default_rear_setback():
     try:
@@ -1499,7 +1524,9 @@ def add_base_assembly_options(root):
             (LOOSE_SKIN_KEY, 'CHECKBOX', False),
             (BASE_BY_OTHERS_KEY, 'CHECKBOX', False),
             (BASE_BY_OTHERS_THICKNESS_KEY, 'DISTANCE',
-             BASE_BY_OTHERS_THICKNESS)):
+             BASE_BY_OTHERS_THICKNESS),
+            (SLEEPER_CLEAT_KEY, 'DISTANCE', 0.0),
+            (FLOOR_CLEAT_KEY, 'DISTANCE', 0.0)):
         if key not in root:
             root.home_builder.add_property(key, kind, value)
     if REAR_SETBACK_KEY not in root:
@@ -1509,6 +1536,17 @@ def add_base_assembly_options(root):
 def _skin_part(root, parts, role, wanted):
     """The loose toe skin ``role``, made when it is wanted and taken
     away when it is not."""
+    return _optional_part(root, parts, role, wanted, BASE_ASSEMBLY_SKINS,
+                          loose=True)
+
+
+def _cleat_part(root, parts, role, wanted):
+    """The cleat ``role``, made when it is wanted and taken away when
+    it is not."""
+    return _optional_part(root, parts, role, wanted, BASE_ASSEMBLY_CLEATS)
+
+
+def _optional_part(root, parts, role, wanted, specs, loose=False):
     part = parts.get(role)
     if not wanted:
         if part is not None:
@@ -1516,10 +1554,11 @@ def _skin_part(root, parts, role, wanted):
             parts.pop(role, None)
         return None
     if part is None:
-        name, rotation, mirror, finish = BASE_ASSEMBLY_SKINS[role]
+        name, rotation, mirror, finish = specs[role]
         part = _add_part(root, name, role, rotation=rotation, mirror=mirror,
                          finish=finish).obj
-        part[SENT_LOOSE_KEY] = True
+        if loose:
+            part[SENT_LOOSE_KEY] = True
         parts[role] = part
         try:
             from .solver_frameless import _paint_like_cabinet
@@ -1658,18 +1697,61 @@ def _solve_base_assembly_capped(root, parts, dim_x, dim_y, dim_z, mt,
             _set_part(part, (x, y_back - mt, 0.0),
                       length=inner, width=dim_z, thickness=mt)
 
+    # Cleats fit inside the frame: between the kick face and the rail,
+    # and between the two ends.
+    clear = max(x_r - x_l - mt * 2.0, 0.0)
+    sleeper_cleat = max(float(_prompt(root, SLEEPER_CLEAT_KEY, 0.0)), 0.0)
+    floor_cleat = max(float(_prompt(root, FLOOR_CLEAT_KEY, 0.0)), 0.0)
+    if inner <= 0.0 or clear <= 0.0:
+        sleeper_cleat = floor_cleat = 0.0
+    # Front and back floor cleats never overlap, and the end sleeper
+    # cleats never reach past the middle of the base.
+    floor_cleat = min(floor_cleat, inner / 2.0)
+    sleeper_cleat = min(sleeper_cleat, clear / 2.0)
+    # The cross supports stand on the floor cleats.
+    lift = mt if floor_cleat > 0.0 else 0.0
+
+    span = x_r - x_l
+    bays = 1
+    if spacing > 0.0:
+        bays = max(int(math.ceil((span - mt) / spacing - 1e-6)), 1)
+    pitch = (span - mt) / bays
+    count = bays - 1
     part = parts.get('BASE_SUPPORT')
     if part is not None:
-        span = x_r - x_l
-        bays = 1
-        if spacing > 0.0:
-            bays = max(int(math.ceil((span - mt) / spacing - 1e-6)), 1)
-        pitch = (span - mt) / bays
-        count = bays - 1
-        _set_part(part, (x_l + pitch, y_back - mt, 0.0),
-                  length=inner, width=dim_z, thickness=mt,
+        _set_part(part, (x_l + pitch, y_back - mt, lift),
+                  length=inner, width=dim_z - lift, thickness=mt,
                   visible=count > 0)
         _set_array(part, count, -pitch)
+
+    # One sleeper cleat on the left of each cross support, and one
+    # inside each end.
+    mid = sleeper_cleat > 0.0 and count > 0 and pitch - mt > sleeper_cleat
+    part = _cleat_part(root, parts, 'BASE_SLEEPER_CLEAT', mid)
+    if part is not None:
+        _set_part(part, (x_l + pitch, y_back - mt, dim_z),
+                  length=inner, width=sleeper_cleat, thickness=mt)
+        array_mod = part.modifiers.get(ARRAY_MOD_NAME)
+        if array_mod is None:
+            array_mod = part.modifiers.new(ARRAY_MOD_NAME, 'ARRAY')
+        array_mod.use_relative_offset = False
+        array_mod.use_constant_offset = True
+        # Turned a quarter in plan: the run of the base is the part's -Y.
+        array_mod.constant_offset_displace = (0.0, -pitch, 0.0)
+        array_mod.count = max(count, 1)
+    for role, x in (('BASE_SLEEPER_CLEAT_LEFT', x_l + mt),
+                    ('BASE_SLEEPER_CLEAT_RIGHT', x_r - mt)):
+        part = _cleat_part(root, parts, role, sleeper_cleat > 0.0)
+        if part is not None:
+            _set_part(part, (x, y_back - mt, dim_z),
+                      length=inner, width=sleeper_cleat, thickness=mt)
+
+    for role, y in (('BASE_FLOOR_CLEAT_FRONT', y_front + mt),
+                    ('BASE_FLOOR_CLEAT_BACK', y_back - mt)):
+        part = _cleat_part(root, parts, role, floor_cleat > 0.0)
+        if part is not None:
+            _set_part(part, (x_l + mt, y, 0.0),
+                      length=clear, width=floor_cleat, thickness=mt)
 
     # Loose skins: the front and the rear run the full length, the kick
     # face's run under a wall filler included; an end skin stands
