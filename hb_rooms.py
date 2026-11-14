@@ -1647,13 +1647,25 @@ def update_stair_guard(stair, level, edges=None):
             j = (i + 1) % 4
             bm.faces.new((bottom[i], bottom[j], top[j], top[i]))
 
+    def turns(point, n):
+        """The normal of another guarded edge that meets this one at a
+        corner of the opening, or (0, 0)."""
+        for a2, b2, n2 in kept:
+            if n2 != n and any(abs(q[0] - point[0]) < 1e-4 and abs(q[1] - point[1]) < 1e-4
+                               for q in (a2, b2)):
+                return n2
+        return (0.0, 0.0)
+
     posts = set()
     rail_top = rise + height
+    half = GUARD_POST / 2.0
     for a, b, n in kept:
-        # Stand just off the opening, on the floor
-        off = (n[0] * GUARD_POST / 2.0, n[1] * GUARD_POST / 2.0)
-        ax, ay = a[0] + off[0], a[1] + off[1]
-        bx, by = b[0] + off[0], b[1] + off[1]
+        # Stand just off the opening, on the floor. Where the guard turns a
+        # corner the two sides share one post, off the opening both ways,
+        # and each side's rails run to it.
+        na, nb = turns(a, n), turns(b, n)
+        ax, ay = a[0] + (n[0] + na[0]) * half, a[1] + (n[1] + na[1]) * half
+        bx, by = b[0] + (n[0] + nb[0]) * half, b[1] + (n[1] + nb[1]) * half
         length = ((bx - ax) ** 2 + (by - ay) ** 2) ** 0.5
         if length < 1e-4:
             continue
