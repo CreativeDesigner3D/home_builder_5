@@ -2599,7 +2599,7 @@ class HB_House_Props(PropertyGroup):
         update=lambda self, context: _labels_shown_changed(self))  # type: ignore
 
     show_window_cages: BoolProperty(
-        name="Show Window Cages",
+        name="Show Door/Window Cages",
         description="Draw the door and window cages solid. Off, they are wire, so the "
                     "doors and windows inside them show",
         get=_cages_get, set=_cages_set)  # type: ignore
