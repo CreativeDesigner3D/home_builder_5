@@ -1140,7 +1140,53 @@ def stair_opening_rects(stair, level):
     # air, bar where it comes up through a porch or balcony
     floors = _upper_floors(stair, level)
     rects = [r for r in rects if any(_rect_overlaps(r, p) for p in floors)]
+    rects = _arc_opening(stair, rects)
     return _widen_opening(stair, level, rects)
+
+
+def _stair_arrival(stair):
+    """Where the top flight comes up onto the floor above, in the stair's
+    own space: (the way it is climbing there, as an axis; how far that way
+    its top tread reaches; that tread's span across) - or None."""
+    mesh = stair.data
+    tops = sorted(((max(mesh.vertices[i].co.z for i in p.vertices), p)
+                   for p in mesh.polygons if p.normal.z > 0.9), key=lambda t: t[0])
+    if len(tops) < 2:
+        return None
+    top, below = tops[-1][1], tops[-2][1]
+    d = (top.center - below.center).to_2d()
+    co = [mesh.vertices[i].co for i in top.vertices]
+    xs, ys = [c.x for c in co], [c.y for c in co]
+    if abs(d.x) >= abs(d.y):
+        return ((1, 0) if d.x > 0 else (-1, 0), max(xs) if d.x > 0 else min(xs), (min(ys), max(ys)))
+    return ((0, 1) if d.y > 0 else (0, -1), max(ys) if d.y > 0 else min(ys), (min(xs), max(xs)))
+
+
+def _arc_opening(stair, rects):
+    """A curved or spiral stair's opening: one rectangle round the treads
+    that need it, as such an opening is framed - not the stepped outline
+    of every tread's own rectangle, which no floor is cut to and no guard
+    rail can follow. It stops where the top tread steps off, so the floor
+    comes up to that tread."""
+    from . import hb_stairs, hb_stair_shapes as shapes
+    if not rects or not shapes.is_arc(hb_stairs.values(stair)):
+        return rects
+    x0, y0 = min(r[0] for r in rects), min(r[1] for r in rects)
+    x1, y1 = max(r[2] for r in rects), max(r[3] for r in rects)
+    arrive = _stair_arrival(stair)
+    if arrive is not None:
+        (dx, dy), at, _span = arrive
+        if dx > 0:
+            x1 = min(x1, at)
+        elif dx < 0:
+            x0 = max(x0, at)
+        elif dy > 0:
+            y1 = min(y1, at)
+        else:
+            y0 = max(y0, at)
+    if x1 - x0 < 1e-3 or y1 - y0 < 1e-3:
+        return rects
+    return [(x0, y0, x1, y1)]
 
 
 def _upper_floors(stair, level):
@@ -1561,21 +1607,29 @@ def _guard_material():
 def _guard_edges(stair, level, edges):
     """The opening's edges a guard goes along: not the one the top flight
     arrives over, nor one running along a wall of the floor above."""
-    mesh = stair.data
-    tops = sorted(((max(mesh.vertices[i].co.z for i in p.vertices), p)
-                   for p in mesh.polygons if p.normal.z > 0.9), key=lambda t: t[0])
-    arrive = None
-    if len(tops) >= 2:
-        top, below = tops[-1][1], tops[-2][1]
-        c1, c0 = top.center, below.center
-        d = (c1 - c0).to_2d()
-        co = [mesh.vertices[i].co for i in top.vertices]
-        if abs(d.x) >= abs(d.y):
-            arrive = ((1, 0) if d.x > 0 else (-1, 0),
-                      max(c.x for c in co) if d.x > 0 else min(c.x for c in co))
-        else:
-            arrive = ((0, 1) if d.y > 0 else (0, -1),
-                      max(c.y for c in co) if d.y > 0 else min(c.y for c in co))
+    arrive = _stair_arrival(stair)
+    # The side the top flight comes up over is left open only as wide as
+    # its top tread: the rest of that side (a spiral's, whose opening is
+    # wider than its last tread) is guarded like any other
+    split = []
+    for a, b, n in edges:
+        if arrive is None or n != arrive[0]:
+            split.append((a, b, n))
+            continue
+        k = 1 if n[0] != 0 else 0           # the axis the edge runs along
+        if abs(a[1 - k] - arrive[1]) > 1e-4:
+            split.append((a, b, n))
+            continue
+        lo, hi = arrive[2]
+        for p0, p1 in ((a, b),):
+            s0, s1 = sorted((p0[k], p1[k]))
+            for t0, t1 in ((s0, min(lo, s1)), (max(hi, s0), s1)):
+                if t1 - t0 > inch(6):
+                    q0, q1 = list(p0), list(p1)
+                    q0[k], q1[k] = (t0, t1) if p0[k] <= p1[k] else (t1, t0)
+                    split.append((tuple(q0), tuple(q1), n))
+    edges = split
+    arrive = None                           # dealt with above
     from .operators import walls
     upper = level_above(level.id_data.hb_house, level)
     scene = hb_house.house_scene_of(stair.users_scene[0]) if stair.users_scene else None
