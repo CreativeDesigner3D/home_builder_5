@@ -7,7 +7,9 @@ ghosts the solids so it can be seen:
 
 * Walls: a bottom plate, a double top plate and studs on centres from
   the wall's start, sized from the wall's thickness (2x6 in a 6" wall,
-  2x4 in a 4 1/2" one). At each door and window: king and jack studs, a
+  2x4 in a 4 1/2" one). At a square corner one wall runs through and
+  the other butts into it, their upper top plates lapped the other way
+  (see corner_plan). At each door and window: king and jack studs, a
   header sized to the opening, and for a window a sill with cripples
   above and below; a door's opening takes out the bottom plate. A wall
   that runs up under a roof (a gable end) stops its studs at the roof's
@@ -111,14 +113,18 @@ class Boards:
             self.bm.faces.new([v[i] for i in f])
         self.count += 1
 
-    def local_box(self, m, x0, x1, y0, y1, z0, z1, z1_end=None):
+    def local_box(self, m, x0, x1, y0, y1, z0, z1, z1_end=None, x0_far=None, x1_far=None):
         """An axis-aligned board in a wall's own space (m its matrix); the
-        top may slope from z1 at x0 to z1_end at x1."""
-        if x1 - x0 < 1e-4 or y1 - y0 < 1e-4 or z1 - z0 < 1e-4:
+        top may slope from z1 at x0 to z1_end at x1. `x0_far` and `x1_far`
+        are its ends on the y1 side, for an end cut on the skew (a plate
+        at a corner that isn't square)."""
+        xa = x0 if x0_far is None else x0_far
+        xb = x1 if x1_far is None else x1_far
+        if max(x1 - x0, xb - xa) < 1e-4 or y1 - y0 < 1e-4 or z1 - z0 < 1e-4:
             return
         ze = z1 if z1_end is None else z1_end
-        pts = [(x0, y0, z0), (x1, y0, z0), (x1, y1, z0), (x0, y1, z0),
-               (x0, y0, z1), (x1, y0, ze), (x1, y1, ze), (x0, y1, z1)]
+        pts = [(x0, y0, z0), (x1, y0, z0), (xb, y1, z0), (xa, y1, z0),
+               (x0, y0, z1), (x1, y0, ze), (xb, y1, ze), (xa, y1, z1)]
         self.box([m @ Vector(p) for p in pts])
 
     def run(self, a, b, z_top, width, depth):
@@ -312,11 +318,113 @@ def junction_studs(scene, level, walls):
     return out
 
 
+def _wall_top(wall_obj, tree=None):
+    """top(x): how high the wall stands at x along it - its height, or
+    the roof's underside where that comes lower."""
+    wall = hb_types.GeoNodeWall(wall_obj)
+    length = wall.get_input('Length')
+    height = wall.get_input('Height')
+    end_h = wall.get_input('End Height') if wall.has_input('End Height') else 0.0
+    ymid = wall.get_input('Thickness') / 2.0
+    m = wall_obj.matrix_world
+
+    def top(x):
+        h = height if end_h <= 0.0 else height + (end_h - height) * (x / max(length, 1e-6))
+        return _roof_above(tree, m, x, ymid, 0.0, h)
+    return top
+
+
+def corner_plan(walls, tree=None, rooms=None):
+    """How each wall's framing ends where two walls turn a corner.
+
+    The walls' solids are mitred there; framing isn't. At a square
+    corner one wall runs THROUGH to the outside and the other BUTTs into
+    its inside face - the wall whose end is at the corner runs through,
+    the one starting there butts, so round a room every wall does one of
+    each. Their upper top plates lap the other way, tying the two walls
+    together. A corner that isn't square stays a MITRE: its plates are
+    cut on the mitre line, so they meet without crossing.
+
+    {wall name: {'start' | 'end': ('MITRE',) or (role, near, far, lap)}}
+    with near and far the faces of the other wall's framing along this
+    wall (near the room side, far the outside), and lap whether the
+    upper plates cross. An end not in the plan is square: nothing to do."""
+    from .operators import walls as hb_walls
+    from . import hb_assemblies
+    info = {}
+    for obj in walls:
+        wall = hb_types.GeoNodeWall(obj)
+        if not wall.has_modifier() or hb_types.is_curved_wall(obj):
+            continue
+        ext = hb_walls.wall_face_extents(obj)
+        if ext is None:
+            continue
+        pts = {}
+        for end, face, pt in hb_walls.wall_plan_corners(obj):
+            pts.setdefault(end, {})[face] = pt
+        info[obj.name] = (obj, ext, pts)
+
+    def same(a, b):
+        return (a - b).length < 0.002
+
+    plan = {}
+    names = sorted(info)
+    for name in names:
+        obj, ext, pts = info[name]
+        m = obj.matrix_world
+        inv = m.inverted()
+        d = (m.to_3x3() @ Vector((1.0, 0.0, 0.0))).to_2d().normalized()
+        for i, end in enumerate(('start', 'end')):
+            if abs(ext['back'][i] - ext['front'][i]) < 1e-4:
+                continue            # cut square: a free end, or one against another wall
+            role = ('MITRE',)
+            mine = pts[end]
+            for other in names:
+                if other == name or role[0] != 'MITRE':
+                    continue
+                oobj, oext, opts = info[other]
+                for j, oend in enumerate(('start', 'end')):
+                    theirs = opts[oend]
+                    if not ((same(mine['back'], theirs['back']) and same(mine['front'], theirs['front']))
+                            or (same(mine['back'], theirs['front']) and same(mine['front'], theirs['back']))):
+                        continue
+                    om = oobj.matrix_world
+                    od = (om.to_3x3() @ Vector((1.0, 0.0, 0.0))).to_2d().normalized()
+                    if abs(d.dot(od)) > 0.02:
+                        break       # not square: mitred
+                    through = (end == 'end') if end != oend else (name < other)
+                    oy0, oy1 = hb_assemblies.framing_band(oobj, rooms)
+                    xs = sorted((inv @ (om @ Vector((0.0, oy, 0.0)))).x for oy in (oy0, oy1))
+                    near, far = (xs[0], xs[1]) if end == 'end' else (xs[1], xs[0])
+                    # The upper plates cross only where the two walls top out together
+                    half = 'Half' in (obj.get('WALL_TYPE'), oobj.get('WALL_TYPE'))
+                    here = _wall_top(obj, tree)((ext['back'][i] + ext['front'][i]) / 2.0)
+                    there = _wall_top(oobj, tree)((oext['back'][j] + oext['front'][j]) / 2.0)
+                    lap = not half and abs(here - there) < 0.002
+                    role = ('THROUGH' if through else 'BUTT', near, far, lap)
+                    break
+            plan.setdefault(name, {})[end] = role
+    return plan
+
+
+def corner_studs(plan):
+    """A backing stud in each wall that runs through a corner, just inside
+    the wall butting into it: with its end stud, the corner the drywall
+    on both walls nails to. {wall name: [x]}."""
+    out = {}
+    for name, ends in plan.items():
+        for end, role in ends.items():
+            if role[0] == 'THROUGH':
+                out.setdefault(name, []).append(role[1] if end == 'start' else role[1] - T)
+    return out
+
+
 def frame_wall(boards, wall_obj, step, tree=None, gables=None, extra=(), blocking=False,
-               rooms=None):
+               rooms=None, corners=None):
     """Plates, studs and opening framing for one wall; `extra` stud
-    positions (corners), and with `blocking` a row of fire blocks in a
-    wall over 10' tall."""
+    positions (corners), with `blocking` a row of fire blocks in a
+    wall over 10' tall, and `corners` how its ends meet the walls round
+    the corner (see corner_plan)."""
     from .operators import walls as hb_walls
     wall = hb_types.GeoNodeWall(wall_obj)
     if not wall.has_modifier() or hb_types.is_curved_wall(wall_obj):
@@ -324,7 +432,6 @@ def frame_wall(boards, wall_obj, step, tree=None, gables=None, extra=(), blockin
     length = wall.get_input('Length')
     t = wall.get_input('Thickness')
     height = wall.get_input('Height')
-    end_h = wall.get_input('End Height') if wall.has_input('End Height') else 0.0
     if length < 0.05 or height < 0.3:
         return
     ext = hb_walls.wall_face_extents(wall_obj)
@@ -338,17 +445,47 @@ def frame_wall(boards, wall_obj, step, tree=None, gables=None, extra=(), blockin
     y0, y1 = hb_assemblies.framing_band(wall_obj, rooms)
     ymid = t / 2.0
     m = wall_obj.matrix_world
-
-    def top(x):
-        h = height if end_h <= 0.0 else height + (end_h - height) * (x / max(length, 1e-6))
-        return _roof_above(tree, m, x, ymid, 0.0, h)
+    top = _wall_top(wall_obj, tree)
 
     half = wall_obj.get('WALL_TYPE') == 'Half'
     plates = T if half else 2 * T
     openings = _openings(wall_obj)
+    corners = corners if (corners and ext is not None) else {}
+
+    def edge(i, y, upper=False):
+        """Where a plate stops at the wall's start (i 0) or end (i 1), on
+        the line y across the wall; `upper` for the upper top plate."""
+        c = corners.get(('start', 'end')[i])
+        if c is None:
+            return (x0, x1)[i]
+        if c[0] == 'MITRE':
+            back, front = ext['back'][i], ext['front'][i]
+            return back + (front - back) * (y / max(t, 1e-6))
+        role, near, far, lap = c
+        through = (role == 'THROUGH') != (upper and lap)
+        return far if through else near
+
+    def plate(a, b, lo, hi, z0, z1, z1_end=None, upper=False):
+        """A plate from a to b, its ends cut to the corner where they are
+        the wall's own (lo and hi)."""
+        boards.local_box(
+            m, edge(0, y0, upper) if a == lo else a, edge(1, y0, upper) if b == hi else b,
+            y0, y1, z0, z1, z1_end,
+            x0_far=edge(0, y1, upper) if a == lo else a,
+            x1_far=edge(1, y1, upper) if b == hi else b)
+
+    def reach(upper=False):
+        """The ends of a plate, at their longest."""
+        return (min(edge(0, y0, upper), edge(0, y1, upper)),
+                max(edge(1, y0, upper), edge(1, y1, upper)))
+
+    # The studs stand between the plates' ends at their shortest
+    x0 = max(edge(0, y0), edge(0, y1))
+    x1 = min(edge(1, y0), edge(1, y1))
 
     # Bottom plate, broken at doors
-    runs = [(x0, x1)]
+    p0, p1 = reach()
+    runs = [(p0, p1)]
     for ox0, ox1, _z0, _z1, door in openings:
         if not door:
             continue
@@ -363,28 +500,32 @@ def frame_wall(boards, wall_obj, step, tree=None, gables=None, extra=(), blockin
                 cut.append((ox1, b))
         runs = cut
     for a, b in runs:
-        boards.local_box(m, a, b, y0, y1, 0.0, T)
+        plate(a, b, p0, p1, 0.0, T)
 
     # Top plates, following the top: one board per layer along each
-    # straight stretch, in steps only where a roof bends it
-    marks = sorted({x0, x1} | {min(max(x0 + k * step, x0), x1)
-                               for k in range(1, int((x1 - x0) / step) + 1)})
-    tops = [top(x) for x in marks]
-    pieces = []
-    for i in range(len(marks) - 1):
-        a, b, ta, tb = marks[i], marks[i + 1], tops[i], tops[i + 1]
-        if pieces:
-            pa, _pb, pta, _ptb = pieces[-1]
-            slope = (tb - ta) / max(b - a, 1e-6)
-            if abs(pta + slope * (a - pa) - ta) < 1e-4 and abs(
-                    (ta - pta) / max(a - pa, 1e-6) - slope) < 1e-4:
-                pieces[-1] = (pa, b, pta, tb)
-                continue
-        pieces.append((a, b, ta, tb))
-    for a, b, ta, tb in pieces:
-        for k in range(int(round(plates / T))):
-            lo = k * T - plates
-            boards.local_box(m, a, b, y0, y1, min(ta, tb) + lo, ta + lo + T, tb + lo + T)
+    # straight stretch, in steps only where a roof bends it. The upper
+    # one laps the corner the other way from the lower.
+    layers = int(round(plates / T))
+    for k in range(layers):
+        upper = layers > 1 and k == layers - 1
+        q0, q1 = reach(upper)
+        marks = sorted({q0, q1} | {min(max(q0 + j * step, q0), q1)
+                                   for j in range(1, int((q1 - q0) / step) + 1)})
+        tops = [top(x) for x in marks]
+        pieces = []
+        for i in range(len(marks) - 1):
+            a, b, ta, tb = marks[i], marks[i + 1], tops[i], tops[i + 1]
+            if pieces:
+                pa, _pb, pta, _ptb = pieces[-1]
+                slope = (tb - ta) / max(b - a, 1e-6)
+                if abs(pta + slope * (a - pa) - ta) < 1e-4 and abs(
+                        (ta - pta) / max(a - pa, 1e-6) - slope) < 1e-4:
+                    pieces[-1] = (pa, b, pta, tb)
+                    continue
+            pieces.append((a, b, ta, tb))
+        lo = k * T - plates
+        for a, b, ta, tb in pieces:
+            plate(a, b, q0, q1, min(ta, tb) + lo, ta + lo + T, tb + lo + T, upper)
 
     def stud(xa, z_lo, z_hi=None):
         z_hi = top(xa + T / 2.0) - plates if z_hi is None else z_hi
@@ -395,11 +536,24 @@ def frame_wall(boards, wall_obj, step, tree=None, gables=None, extra=(), blockin
     for ox0, ox1, oz0, oz1, door in openings:
         hd = header_depth(ox1 - ox0)
         head_top = min(oz1 + hd, top((ox0 + ox1) / 2.0) - plates)
-        for xa in (ox0 - 2 * T, ox1 + T):
-            stud(xa, T)
-        for xa in (ox0 - T, ox1):
-            stud(xa, T, oz1)
-        boards.local_box(m, ox0 - T, ox1 + T, y0, y1, oz1, head_top)
+        # An opening hard against the wall's end (a bay's side window) has
+        # no room there for both: the king goes, and the stud beside the
+        # opening stands full height in its place - never past the wall's
+        # own framing, into the wall round the corner.
+        h0, h1 = ox0 - T, ox1 + T
+        for king, jack, left in ((ox0 - 2 * T, ox0 - T, True), (ox1 + T, ox1, False)):
+            fits = lambda xa: xa >= x0 - 1e-4 and xa + T <= x1 + 1e-4
+            if fits(king):
+                stud(king, T)
+                if fits(jack):
+                    stud(jack, T, oz1)
+            elif fits(jack):
+                stud(jack, T)
+                if left:
+                    h0 = ox0
+                else:
+                    h1 = ox1
+        boards.local_box(m, max(h0, x0), min(h1, x1), y0, y1, oz1, head_top)
         if not door and oz0 > 2 * T:
             boards.local_box(m, ox0, ox1, y0, y1, oz0 - T, oz0)
         taken.append((ox0 - 2 * T, ox1 + 2 * T, ox0, ox1, oz0, head_top, door))
@@ -1099,9 +1253,13 @@ def level_framing(scene, level, depsgraph, tree):
         from . import hb_exterior
         rooms = hb_exterior._indoor_polygons(scene) if any(
             o.get('HB_ASSEMBLY') for o in walls) else None
+        corners = corner_plan(walls, tree, rooms)
+        if house.framing_corners:
+            for name, xs in corner_studs(corners).items():
+                extras[name] = list(extras.get(name, ())) + xs
         for obj in walls:
             frame_wall(boards, obj, step, tree, gables, extras.get(obj.name, ()),
-                       house.framing_blocking, rooms)
+                       house.framing_blocking, rooms, corners.get(obj.name))
     if house.framing_floors:
         frame_level_floor(boards, scene, level, step)
     if house.framing_ceilings:
