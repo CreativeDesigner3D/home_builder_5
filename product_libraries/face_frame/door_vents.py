@@ -274,6 +274,65 @@ def set_vent_settings(front_obj, width, height, rise):
     sync(front_obj)
 
 
+# ---- On the door's page -------------------------------------------------
+# The same settings as fields: whether the door has the vent, the
+# pattern's overall size (three diamonds wide and tall) and how far it
+# sits above the panel centre. Each write is applied at once.
+
+VENT_SCHEMA = 'FF_DOOR_VENT'
+
+
+def pattern_size(front_obj):
+    """(overall width, overall height, rise) of this door's pattern."""
+    width, height, rise = vent_settings(front_obj)
+    return width * 3.0, height * 3.0, rise
+
+
+def set_pattern_size(front_obj, width=None, height=None, rise=None):
+    """Change any of the pattern's overall width, overall height and
+    rise on a door that has the vent, keeping the rest."""
+    if not has_vent(front_obj):
+        return
+    now = pattern_size(front_obj)
+    width = now[0] if width is None else float(width)
+    height = now[1] if height is None else float(height)
+    rise = now[2] if rise is None else float(rise)
+    set_vent_settings(front_obj, width / 3.0, height / 3.0, rise)
+
+
+def vent_owner(front_obj):
+    """The door's vent settings as an owner the field engine reads."""
+    from ...operators import prop_proxy as P
+    if VENT_SCHEMA not in P._schemas:
+        P.register(VENT_SCHEMA, {
+            'on': P.computed(has_vent, lambda o, v: set_vent(o, bool(v)),
+                             type='BOOLEAN'),
+            'width': P.computed(
+                lambda o: pattern_size(o)[0],
+                lambda o, v: set_pattern_size(o, width=v),
+                unit='LENGTH', precision=4, hard_min=MIN_DIAMOND_SIZE * 3.0),
+            'height': P.computed(
+                lambda o: pattern_size(o)[1],
+                lambda o, v: set_pattern_size(o, height=v),
+                unit='LENGTH', precision=4, hard_min=MIN_DIAMOND_SIZE * 3.0),
+            'rise': P.computed(
+                lambda o: pattern_size(o)[2],
+                lambda o, v: set_pattern_size(o, rise=v),
+                unit='LENGTH', precision=4),
+        })
+    return P.owner(front_obj, VENT_SCHEMA)
+
+
+def vent_fields():
+    on = {'when': lambda o: bool(o.on)}
+    return (
+        ('bool', 'on', "Diamond Vent"),
+        ('distance', 'width', "Vent Width", on),
+        ('distance', 'height', "Vent Height", on),
+        ('distance', 'rise', "Vent Move Up", on),
+    )
+
+
 def _vent_modifier(front_obj):
     for mod in front_obj.modifiers:
         if (mod.type == 'NODES' and mod.node_group

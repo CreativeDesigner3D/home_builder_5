@@ -232,6 +232,15 @@ def _hung(owner):
     return owner.id_data.get('CABINET_TYPE') == 'UPPER'
 
 
+def _houses_appliance(owner):
+    from . import types_frameless
+    return types_frameless.appliance_opening(owner.id_data) is not None
+
+
+def _blind_corner(owner):
+    return bool(owner.id_data.get('IS_BLIND_CORNER'))
+
+
 def _kicked(owner):
     return 'Toe Kick Height' in owner.id_data
 
@@ -255,6 +264,28 @@ def _door(owner):
 
 def _flip_up(owner):
     return any(c.get('IS_FLIP_UP_DOOR') for c in owner.id_data.children)
+
+
+def _drawer_look_on(owner):
+    from . import drawer_look
+    return drawer_look.count(owner.id_data) > 0
+
+
+def _drawer_look():
+    """How many drawer fronts a doors opening is shown as. An opening
+    that never had the look keeps no prompt for it."""
+    from ...operators import prop_proxy
+    from . import drawer_look
+
+    def get(obj):
+        return str(drawer_look.count(obj))
+
+    def set(obj, value):
+        if int(value) or drawer_look.COUNT_KEY in obj:
+            obj[drawer_look.COUNT_KEY] = int(value)
+    return prop_proxy.computed(
+        get, set, type='ENUM',
+        items=[(key, label) for key, label, _tip in drawer_look.COUNT_ITEMS])
 
 
 # ---- Schemas ----------------------------------------------------------------
@@ -291,13 +322,161 @@ def _toe_kick_type():
         items=[(str(i), label) for i, label in enumerate(TOE_KICK_TYPES)])
 
 
+def _cabinet_height():
+    """The cabinet's height; an upper keeps its top or bottom in place
+    by the room's setting."""
+    from ...operators import prop_proxy
+
+    def get(obj):
+        try:
+            return float(_cage(obj).get_input('Dim Z'))
+        except Exception:
+            return 0.0
+
+    def set(obj, value):
+        from . import types_frameless
+        types_frameless.set_cabinet_height(obj, float(value))
+    return prop_proxy.computed(get, set, unit='LENGTH', precision=4,
+                               hard_min=0.0)
+
+
+def _top_off_floor():
+    from ...operators import prop_proxy
+
+    def get(obj):
+        from . import types_frameless
+        try:
+            return float(types_frameless.cabinet_top_off_floor(obj))
+        except Exception:
+            return 0.0
+
+    def set(obj, value):
+        from . import types_frameless
+        types_frameless.set_cabinet_top_off_floor(obj, value)
+    return prop_proxy.computed(get, set, unit='LENGTH', precision=4)
+
+
+def _product_depth():
+    """A product's depth as built (a wall scribe filler flush with the
+    carcass reads to its own face, not the door plane)."""
+    from ...operators import prop_proxy
+
+    def get(obj):
+        from . import types_products
+        try:
+            return float(types_products.product_depth(obj))
+        except Exception:
+            return 0.0
+
+    def set(obj, value):
+        from . import types_products
+        types_products.set_product_depth(obj, float(value))
+    return prop_proxy.computed(get, set, unit='LENGTH', precision=4,
+                               hard_min=0.0)
+
+
+def _appliance_opening(axis):
+    """Width (0) or height (1) of the opening that houses a refrigerator,
+    column or laundry unit; the cabinet or the doors over it follow."""
+    from ...operators import prop_proxy
+
+    def get(obj):
+        from . import types_frameless
+        size = types_frameless.appliance_opening_size(obj)
+        return float(size[axis]) if size else 0.0
+
+    def set(obj, value):
+        from . import types_frameless
+        if axis == 0:
+            types_frameless.set_appliance_opening_width(obj, value)
+        else:
+            types_frameless.set_appliance_opening_height(obj, value)
+    return prop_proxy.computed(get, set, unit='LENGTH', precision=4,
+                               hard_min=0.0)
+
+
+_OVERLAY_SIDES = ('Top', 'Bottom', 'Left', 'Right')
+
+
+def _half_overlay(side):
+    """The half overlay switch for one side. Using it hands the side
+    back to the switch: a typed overlay there is dropped."""
+    from ...operators import prop_proxy
+    key = 'Half Overlay ' + side
+
+    def get(obj):
+        return bool(obj.get(key, False))
+
+    def set(obj, value):
+        obj[key] = bool(value)
+        if 'Typed Overlay ' + side in obj:
+            del obj['Typed Overlay ' + side]
+    return prop_proxy.computed(get, set, type='BOOLEAN')
+
+
+def _overlay_amount(side):
+    """How far the front laps the opening on one side. Reads what the
+    cabinet builds; typing a value overrides that side."""
+    from ...operators import prop_proxy
+    index = _OVERLAY_SIDES.index(side)
+
+    def get(obj):
+        from . import solver_frameless
+        return float(solver_frameless.front_overlays(obj)[index])
+
+    def set(obj, value):
+        obj['Typed Overlay ' + side] = float(value)
+    return prop_proxy.computed(get, set, unit='LENGTH', precision=4)
+
+
+def _overlay_summary(owner):
+    obj = owner.id_data
+    parts = []
+    for side in _OVERLAY_SIDES:
+        if 'Typed Overlay ' + side in obj:
+            parts.append(side + " typed")
+        elif obj.get('Half Overlay ' + side):
+            parts.append(side + " half")
+    return ", ".join(parts) or "Full"
+
+
+def _overlaid(owner):
+    obj = owner.id_data
+    return 'Half Overlay Top' in obj and not obj.get('Inset Front')
+
+
+def _blind_opening_width():
+    """Width of a blind corner's door opening; the blind panel takes up
+    the difference, the cabinet keeps its width."""
+    from ...operators import prop_proxy
+
+    def get(obj):
+        from . import types_frameless
+        return float(types_frameless.blind_opening_width(obj) or 0.0)
+
+    def set(obj, value):
+        from . import types_frameless
+        types_frameless.set_blind_opening_width(obj, value)
+    return prop_proxy.computed(get, set, unit='LENGTH', precision=4,
+                               hard_min=0.0)
+
+
+def _cage(obj):
+    from ...hb_types import GeoNodeCage
+    return GeoNodeCage(obj)
+
+
 def _register_schemas():
     from ...operators import prop_proxy as P
     P.register(CABINET_SCHEMA, {
         'width': P.node_input('Dim X'),
         'depth': P.node_input('Dim Y'),
-        'height': P.node_input('Dim Z'),
+        'height': _cabinet_height(),
         'height_off_floor': P.height_off_floor(),
+        'top_off_floor': _top_off_floor(),
+        'appliance_opening_width': _appliance_opening(0),
+        'appliance_opening_height': _appliance_opening(1),
+        'blind_opening_width': _blind_opening_width(),
         'toe_kick_type': _toe_kick_type(),
         'toe_kick_height': P.length('Toe Kick Height'),
         'toe_kick_setback': P.length('Toe Kick Setback'),
@@ -310,17 +489,23 @@ def _register_schemas():
     P.register(OPENING_SCHEMA, {
         'door_swing': P.index_enum('Door Swing', ("Left", "Right", "Double"), 2),
         'door_mechanism': P.index_enum('Door Mechanism', ("Standard", "Retracting")),
+        'drawer_look': _drawer_look(),
+        'drawer_look_top_height': P.length('Drawer Look Top Height'),
         'lift_mechanism': P.index_enum('Lift Mechanism', (
             "Stay Lift", "Bi-Fold Lift", "Up and Over", "Vertical Lift")),
         'inset_front': P.flag('Inset Front'),
-        'half_overlay_top': P.flag('Half Overlay Top'),
-        'half_overlay_bottom': P.flag('Half Overlay Bottom'),
-        'half_overlay_left': P.flag('Half Overlay Left'),
-        'half_overlay_right': P.flag('Half Overlay Right'),
+        'half_overlay_top': _half_overlay('Top'),
+        'half_overlay_bottom': _half_overlay('Bottom'),
+        'half_overlay_left': _half_overlay('Left'),
+        'half_overlay_right': _half_overlay('Right'),
+        'overlay_top': _overlay_amount('Top'),
+        'overlay_bottom': _overlay_amount('Bottom'),
+        'overlay_left': _overlay_amount('Left'),
+        'overlay_right': _overlay_amount('Right'),
     }, after=_solve)
     P.register(PRODUCT_SCHEMA, {
         'width': P.node_input('Dim X'),
-        'depth': P.node_input('Dim Y'),
+        'depth': _product_depth(),
         'height': P.node_input('Dim Z'),
         'height_off_floor': P.height_off_floor(),
     }, after=_solve_product)
@@ -346,6 +531,13 @@ CABINET_FIELDS = (
     ('distance', 'height', "Height"),
     ('distance', 'depth', "Depth"),
     ('distance', 'height_off_floor', "Above Floor", {'when': _hung}),
+    ('distance', 'top_off_floor', "Top Above Floor", {'when': _hung}),
+    ('distance', 'appliance_opening_width', "Appliance Opening Width",
+     {'when': _houses_appliance}),
+    ('distance', 'appliance_opening_height', "Appliance Opening Height",
+     {'when': _houses_appliance}),
+    ('distance', 'blind_opening_width', "Door Opening Width",
+     {'when': _blind_corner}),
     ('group', 'fl_cab_kick', "Toe Kick", {'icon': 'cab_construction', 'when': _kicked, 'fields': (
         ('enum', 'toe_kick_type', "Type"),
         ('distance', 'toe_kick_height', "Height"),
@@ -361,19 +553,23 @@ CABINET_FIELDS = (
 OPENING_FIELDS = (
     ('enum', 'door_swing', "Door Swing", {'when': _door}),
     ('enum', 'door_mechanism', "Mechanism", {'when': _door}),
+    ('enum', 'drawer_look', "Drawer Look", {'when': _door}),
+    ('distance', 'drawer_look_top_height', "Top Front Height",
+     {'when': _drawer_look_on}),
     ('enum', 'lift_mechanism', "Lift", {'when': _flip_up}),
     ('bool', 'inset_front', "Inset Front", {'when': _has('Inset Front')}),
-    ('group', 'fl_opening_overlays', "Half Overlays", {
+    ('group', 'fl_opening_overlays', "Overlays", {
         'when': _has('Half Overlay Top'),
-        'summary': lambda o: ", ".join(
-            n for n, p in (("Top", 'half_overlay_top'), ("Bottom", 'half_overlay_bottom'),
-                           ("Left", 'half_overlay_left'), ("Right", 'half_overlay_right'))
-            if getattr(o, p)) or "None",
+        'summary': _overlay_summary,
         'fields': (
-            ('bool', 'half_overlay_top', "Top"),
-            ('bool', 'half_overlay_bottom', "Bottom"),
-            ('bool', 'half_overlay_left', "Left"),
-            ('bool', 'half_overlay_right', "Right"),
+            ('bool', 'half_overlay_top', "Half Top"),
+            ('bool', 'half_overlay_bottom', "Half Bottom"),
+            ('bool', 'half_overlay_left', "Half Left"),
+            ('bool', 'half_overlay_right', "Half Right"),
+            ('distance', 'overlay_top', "Top", {'when': _overlaid}),
+            ('distance', 'overlay_bottom', "Bottom", {'when': _overlaid}),
+            ('distance', 'overlay_left', "Left", {'when': _overlaid}),
+            ('distance', 'overlay_right', "Right", {'when': _overlaid}),
         )}),
 )
 
@@ -670,6 +866,15 @@ def _bay_page(context, out, bay_obj, title):
     out.extend(options_panel.field_blocks(context, (
         ('value', lambda _o, b=bay_obj: _bay_size(b), "Size"),
     ), bay_obj))
+    from . import solver_frameless
+    root = solver_frameless.cabinet_root(bay_obj)
+    if root is not None and root.get('IS_BLIND_CORNER'):
+        # A blind corner's bay is its door opening: the one bay width
+        # that is typed rather than read.
+        from ...operators import prop_proxy
+        out.extend(options_panel.field_blocks(context, (
+            ('distance', 'blind_opening_width', "Opening Width"),
+        ), prop_proxy.owner(root, CABINET_SCHEMA)))
     out.extend(generic_page.prompt_blocks(
         context, bay_obj, 'fl_bay_prompts', "Bay Prompts", open_first=False))
     _quick(out, _menu_actions(context, bay_obj))

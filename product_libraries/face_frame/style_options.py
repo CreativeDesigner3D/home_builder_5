@@ -5012,9 +5012,44 @@ def overlays_for_ui():
     return [(o, _OVERLAY_LABEL.get(o, o)) for o in OVERLAYS if o not in _OVERLAY_HIDE]
 
 
-def woods_for_ui():
-    """[(identifier, label)] woods to show, hidden ones removed, relabeled."""
-    return [(w, _WOOD_LABEL.get(w, w)) for w in WOOD_SPECIES if w not in _WOOD_HIDE]
+# Woods and colors that are no longer offered. They leave the dropdowns,
+# but stay valid picks: a style that already carries one keeps it (and
+# keeps showing it) until something else is picked. Unlike the hides
+# above, the enum numbering still counts them, so every other stored
+# pick keeps its number.
+_WOOD_RETIRED = {
+    'Ash', 'Builder Elite Birch', 'Builder Elite White Oak',
+    'Euro Laminate', 'Euro TFL', 'Red Grandis',
+}
+_COLOR_RETIRED = {
+    'American Classic', 'Andover Blue', 'Autumn Light', 'Bayou',
+    'Black Cherry', 'Brandywine', 'Builder Elite Unfinished', 'Buttercream',
+    'Coriander', 'Doc Martin Black', 'Dover White', 'Frosted White',
+    'Garden Gate', 'Glen Elder Green', 'Harvest', 'Lancaster Yellow',
+    'Le Jardin', 'Match, Stain', 'Merlot', 'Paint', 'Pebble', 'Pecan',
+    'Pine', 'Portabella', 'Rustic Heritage - Milan',
+    'Rustic Heritage - Naples', 'Rustic Heritage - Palermo',
+    'Rustic Heritage - Sicily', 'Seneca Red', 'Spanish Oak', 'Teak',
+    'Truffle', 'Tuscan Hills', 'Vintage Cream', 'Walnut',
+}
+
+
+def wood_retired(wood):
+    """True for a wood that is no longer offered for new picks."""
+    return wood in _WOOD_RETIRED
+
+
+def color_retired(color):
+    """True for a color that is no longer offered for new picks."""
+    return color in _COLOR_RETIRED
+
+
+def woods_for_ui(include_retired=False):
+    """[(identifier, label)] woods to show, hidden ones removed, relabeled.
+    Retired woods are left out unless asked for."""
+    return [(w, _WOOD_LABEL.get(w, w)) for w in WOOD_SPECIES
+            if w not in _WOOD_HIDE
+            and (include_retired or w not in _WOOD_RETIRED)]
 
 
 # Color names hidden from the UI: "Let Down" paint duplicates, "limited time"
@@ -5043,14 +5078,19 @@ def _color_hidden(color):
     return any(p.search(color) for p in _COLOR_HIDE_PATTERNS)
 
 
-def colors_for_wood_ui(wood):
+def colors_for_wood_ui(wood, include_retired=False):
     """[(identifier, label)] colors to show for a wood: compatibility-filtered
-    by wood, then the unwanted-name drops removed."""
-    return [(c, c) for c in colors_for_wood(wood) if not _color_hidden(c)]
+    by wood, then the unwanted-name drops removed. Retired colors are left
+    out unless asked for."""
+    return [(c, c) for c in colors_for_wood(wood)
+            if not _color_hidden(c)
+            and (include_retired or c not in _COLOR_RETIRED)]
 
 
 # Woods with zero showable colors -> drop from the wood dropdown entirely.
-_WOOD_HIDE = _WOOD_HIDE_BASE | {w for w in WOOD_SPECIES if not colors_for_wood_ui(w)}
+# Retired colors still count here: this set decides the enum numbering.
+_WOOD_HIDE = _WOOD_HIDE_BASE | {
+    w for w in WOOD_SPECIES if not colors_for_wood_ui(w, include_retired=True)}
 
 
 # ===========================================================================

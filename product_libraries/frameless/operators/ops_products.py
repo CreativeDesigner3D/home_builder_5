@@ -41,6 +41,7 @@ class hb_frameless_OT_product_prompts(bpy.types.Operator):
 
     product = None
     part_type = ""
+    _front_setback = 0.0
     # Support frame: the Leg Style seen at the last check(), so a style
     # CHANGE (vs a size edit) can size the legs to the style's blank.
     _leg_style_seen = None
@@ -54,6 +55,14 @@ class hb_frameless_OT_product_prompts(bpy.types.Operator):
     def invoke(self, context, event):
         product_bp = get_product_bp(context.object)
         self.part_type = product_bp.get('PART_TYPE', '')
+        if (self.part_type == 'CORNER_FILLER'
+                and types_products.BOTTOM_RETURN_KEY not in product_bp):
+            # Fillers built before the option.
+            product_bp[types_products.BOTTOM_RETURN_KEY] = False
+        if (self.part_type == 'BASE_ASSEMBLY'
+                and types_products.BACK_GAP_KEY in product_bp):
+            # Bases built before the finish options.
+            types_products.add_base_assembly_options(product_bp)
         self._leg_style_seen = product_bp.get(_turned_leg().LEG_STYLE_PROP)
 
         if product_bp.get('IS_FRAMELESS_MISC_PART'):
@@ -69,7 +78,10 @@ class hb_frameless_OT_product_prompts(bpy.types.Operator):
             self.product = hb_types.GeoNodeCage(product_bp)
             self.width = self.product.get_input('Dim X')
             self.height = self.product.get_input('Dim Z')
-            self.depth = self.product.get_input('Dim Y')
+            # As built: a filler flush with the carcass reads the depth
+            # to its own face, not to the door plane its cage reaches.
+            self._front_setback = types_products.product_front_setback(product_bp)
+            self.depth = self.product.get_input('Dim Y') - self._front_setback
         self.height_off_floor = product_bp.matrix_world.translation.z
 
         wm = context.window_manager
@@ -90,7 +102,13 @@ class hb_frameless_OT_product_prompts(bpy.types.Operator):
         else:
             self.product.set_input('Dim X', self.width)
             self.product.set_input('Dim Z', self.height)
-            self.product.set_input('Dim Y', self.depth)
+            # Flush With Doors switched in the dialog moves the face, not
+            # the cage: the depth shown follows it.
+            setback = types_products.product_front_setback(self.product.obj)
+            if abs(setback - self._front_setback) > 1e-9:
+                self.depth += self._front_setback - setback
+                self._front_setback = setback
+            self.product.set_input('Dim Y', self.depth + setback)
         # Moved up or down by the difference, so it keeps its place on a
         # wall whatever the wall's own height off the floor.
         obj = self.product.obj
@@ -173,6 +191,41 @@ class hb_frameless_OT_product_prompts(bpy.types.Operator):
             self.draw_voided_corner(layout, obj)
         elif self.part_type == 'CORNER_FILLER':
             self.draw_corner_filler(layout, obj)
+        elif self.part_type == 'L_CROWN':
+            self.draw_l_crown(layout, obj)
+        elif self.part_type == 'BASE_ASSEMBLY':
+            self.draw_base_assembly(layout, obj)
+
+    def draw_base_assembly(self, layout, obj):
+        tp = types_products
+        if tp.FINISH_REAR_KEY not in obj:
+            return      # a base that keeps the frame it was first cut to
+        box = layout.box()
+        box.label(text="Finish")
+        col = box.column(align=True)
+        col.prop(obj, '["%s"]' % tp.FINISH_REAR_KEY, text="Finish Rear")
+        by_others = bool(obj.get(tp.BASE_BY_OTHERS_KEY, False))
+        # Base by Others takes the place of the loose skin.
+        row = col.row(align=True)
+        row.enabled = not by_others
+        row.prop(obj, '["%s"]' % tp.LOOSE_SKIN_KEY, text="Loose Finished Skin")
+        col.prop(obj, '["%s"]' % tp.BASE_BY_OTHERS_KEY, text="Base by Others")
+        row = col.row(align=True)
+        row.enabled = by_others
+        row.label(text="Thickness:")
+        row.prop(obj, '["%s"]' % tp.BASE_BY_OTHERS_THICKNESS_KEY, text="")
+
+        if tp.SLEEPER_CLEAT_KEY not in obj:
+            return
+        box = layout.box()
+        box.label(text="Cleats (0 = None)")
+        col = box.column(align=True)
+        row = col.row(align=True)
+        row.label(text="Sleeper Cleat Width:")
+        row.prop(obj, '["%s"]' % tp.SLEEPER_CLEAT_KEY, text="")
+        row = col.row(align=True)
+        row.label(text="Floor Cleat Width:")
+        row.prop(obj, '["%s"]' % tp.FLOOR_CLEAT_KEY, text="")
 
     def draw_floating_shelf(self, layout, obj):
         box = layout.box()
@@ -275,6 +328,9 @@ class hb_frameless_OT_product_prompts(bpy.types.Operator):
         if 'Flush With Doors' in obj:   # fillers built before the option
             row.prop(obj, '["Flush With Doors"]', text="Flush With Doors")
         row.prop(obj, '["Cabinet On Right"]', text="Cabinet On Right")
+        key = types_products.BOTTOM_RETURN_KEY
+        if key in obj and float(obj.get('Toe Kick Height', 0.0)) <= 0.0:
+            col.prop(obj, '["%s"]' % key, text="Bottom Return")
         if float(obj.get('Toe Kick Height', 0.0)) > 0.0:
             box = layout.box()
             box.label(text="Toe Kick")
@@ -286,6 +342,15 @@ class hb_frameless_OT_product_prompts(bpy.types.Operator):
                 row.prop(obj, '["%s"]' % key, text="")
             if 'Toe Kick Piece' in obj:
                 col.prop(obj, '["Toe Kick Piece"]', text="Toe Kick Piece")
+
+    def draw_l_crown(self, layout, obj):
+        box = layout.box()
+        box.label(text="Ceiling Closure")
+        col = box.column(align=True)
+        row = col.row(align=True)
+        row.label(text="Return Cleat Depth:")
+        row.prop(obj, '["%s"]' % types_products.RETURN_CLEAT_KEY, text="")
+        col.prop(obj, '["Flush With Doors"]', text="Flush With Doors")
 
     def draw_voided_corner(self, layout, obj):
         box = layout.box()
@@ -423,6 +488,8 @@ class hb_frameless_OT_delete_product(bpy.types.Operator):
             objs_to_delete = [product_bp] + list(product_bp.children_recursive)
             for obj in objs_to_delete:
                 bpy.data.objects.remove(obj, do_unlink=True)
+            from .. import exposure
+            exposure.request(context.scene)
         return {'FINISHED'}
 
 

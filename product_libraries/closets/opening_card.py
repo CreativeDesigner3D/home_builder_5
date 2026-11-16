@@ -11,6 +11,7 @@ change, with nothing to accept at the end.
 import bpy
 
 from . import const_closets as const
+from . import materials_closets
 from . import types_closets
 from ... import units
 
@@ -402,6 +403,13 @@ def _ensure():
             lambda obj, value: setattr(_pg(obj), 'slant_color', value),
             type='ENUM',
             items=[i[:2] for i in types_closets.SHOE_FENCE_COLOR_ITEMS]),
+        'accent_material': P.computed(
+            lambda obj: materials_closets.opening_color(
+                _pg(obj).accent_material),
+            lambda obj, value: setattr(
+                _pg(obj), 'accent_material',
+                '' if value == materials_closets.ROOM_COLOR else value),
+            type='ENUM', items=materials_closets.opening_color_items()),
         'door_swing': P.computed(_get_door, _set_door, type='ENUM',
                                  items=_DOOR_ITEMS),
         'rod_top_offset': P.computed(_get_rod_top, _set_rod_top,
@@ -623,6 +631,7 @@ def fields(obj):
     op = _pg(obj)
     return (
         ('value', lambda _ow: size_text(obj), "Size"),
+        ('enum', 'accent_material', "Color"),
         ('group', 'cl_op_interior', "Interior", {
             'summary': lambda _ow: fill_text(obj),
             'fields': _interior_fields(obj)}),

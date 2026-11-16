@@ -18,7 +18,13 @@ class hb_frameless_OT_update_toe_kick_prompts(bpy.types.Operator):
         }
         new_type_index = type_map.get(frameless_props.default_toe_kick_type, 0)
 
-        for obj in context.scene.objects:
+        # Snapshot first: switching the type adds and removes parts, which
+        # must not happen under a live scene.objects iterator.
+        for obj in list(context.scene.objects):
+            try:
+                obj.name
+            except ReferenceError:
+                continue  # a part of the old type, already taken off
             # A filler, panel or corner standing off the floor (beside an
             # upper) is built with no toe kick: it keeps none.
             no_kick = (not obj.get('IS_FRAMELESS_CABINET_CAGE')
@@ -29,7 +35,14 @@ class hb_frameless_OT_update_toe_kick_prompts(bpy.types.Operator):
             if 'Toe Kick Setback' in obj and not no_kick:
                 obj['Toe Kick Setback'] = frameless_props.default_toe_kick_setback
             if 'Toe Kick Type' in obj:
-                obj['Toe Kick Type'] = new_type_index
+                # A cabinet trades the old type's parts for the new one's
+                # (kick board, ladder base, levelers, the notch in the
+                # sides); anything else just carries the number.
+                if not (obj.get('IS_FRAMELESS_CABINET_CAGE')
+                        and int(obj['Toe Kick Type']) != new_type_index
+                        and types_frameless.set_toe_kick_type(
+                            obj, new_type_index)):
+                    obj['Toe Kick Type'] = new_type_index
             if 'Leg Leveler Inset' in obj:
                 obj['Leg Leveler Inset'] = frameless_props.default_leg_leveler_inset
             hb_utils.run_calc_fix(context,obj)              

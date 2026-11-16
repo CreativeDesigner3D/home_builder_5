@@ -206,6 +206,11 @@ def _assign(pg, pid, value, skipped):
             return
         elif prop.type == 'ENUM' and prop.is_enum_flag:
             setattr(pg, pid, set(value or ()))
+        elif pid in ('finish_wood', 'finish_color'):
+            # A wood or color the dropdown no longer offers still loads.
+            from . import props_hb_face_frame
+            if not props_hb_face_frame.set_finish_pick(pg, pid, value):
+                skipped.append("%s=%r (not in the catalog)" % (pid, value))
         else:
             setattr(pg, pid, value)
     except Exception as ex:

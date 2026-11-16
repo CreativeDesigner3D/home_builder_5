@@ -238,20 +238,27 @@ class Product(GeoNodeCage):
                  part_cls=CabinetPart, finish=None):
         """One product part, parented and tagged. Size and position are
         the solver's to write, so only the fixed orientation is set here."""
-        part = part_cls()
-        part.create(name)
-        part.obj.parent = self.obj
-        part.obj[PART_ROLE_KEY] = role
-        part.obj.rotation_euler = tuple(math.radians(a) for a in rotation)
-        for axis in mirror:
-            part.set_input('Mirror ' + axis, True)
-        if finish is not None:
-            part.obj['Finish Top'] = finish[0]
-            part.obj['Finish Bottom'] = finish[1]
-        return part
+        return _add_part(self.obj, name, role, rotation, mirror, part_cls,
+                         finish)
 
     def solve(self):
         recalculate_product(self.obj)
+
+
+def _add_part(root, name, role, rotation=(0, 0, 0), mirror=(),
+              part_cls=CabinetPart, finish=None):
+    """One part under the product ``root``, parented and tagged."""
+    part = part_cls()
+    part.create(name)
+    part.obj.parent = root
+    part.obj[PART_ROLE_KEY] = role
+    part.obj.rotation_euler = tuple(math.radians(a) for a in rotation)
+    for axis in mirror:
+        part.set_input('Mirror ' + axis, True)
+    if finish is not None:
+        part.obj['Finish Top'] = finish[0]
+        part.obj['Finish Bottom'] = finish[1]
+    return part
 
 
 # A left end panel built mirrored in Z as well faces out on its top
@@ -1032,9 +1039,86 @@ def scribe_filler_flush_with_doors():
     carcass front."""
     props = getattr(bpy.context.scene, 'hb_frameless', None)
     return bool(getattr(props, 'scribe_filler_flush_with_doors', False))
+
+
+def scribe_filler_toe_kick_piece():
+    """Whether the room's new wall scribe fillers on a base or tall
+    come in with a kick piece under the face (Cabinet Sizes)."""
+    props = getattr(bpy.context.scene, 'hb_frameless', None)
+    return bool(getattr(props, 'scribe_filler_toe_kick_piece', False))
+
+
 # How far the door fronts stand off the carcass; the filler's face is
 # set to line up with them.
 FRONT_THICKNESS = inch(0.75)
+
+
+def product_front_setback(root):
+    """How far behind the front of its cage a product's own front
+    stands. A wall scribe filler's cage always reaches the door plane;
+    flush with the carcass, its face is a front thickness behind that."""
+    if (root.get('PART_TYPE') in ('CORNER_FILLER', 'L_CROWN')
+            and not root.get('Flush With Doors', True)):
+        return FRONT_THICKNESS
+    return 0.0
+
+
+def product_depth(root):
+    """The product's depth as built: wall to its own front."""
+    return GeoNodeCage(root).get_input('Dim Y') - product_front_setback(root)
+
+
+def set_product_depth(root, depth):
+    GeoNodeCage(root).set_input('Dim Y', depth + product_front_setback(root))
+
+
+# A panel closing the gap under an upper's wall scribe filler.
+BOTTOM_RETURN_KEY = 'Bottom Return'
+
+
+def _paint_product(root):
+    """Paint a product's parts from its style, by their finish flags."""
+    from ... import hb_project
+    styles = hb_project.get_main_scene().hb_frameless.cabinet_styles
+    if not len(styles):
+        return
+    index = root.get('CABINET_STYLE_INDEX', 0)
+    style = styles[index] if 0 <= index < len(styles) else styles[0]
+    style.apply_materials_to_cabinet(root)
+
+
+def _solve_filler_bottom_return(root, parts, dim_x, depth, mt, on):
+    """The bottom return of a filler with no kick under it: a panel
+    lying behind the face's bottom edge, from the face back to the wall,
+    made when the option is switched on and removed when it is off. Its
+    underside is finished when the bottom of the cabinet beside the
+    filler is."""
+    part = parts.get('FILLER_BOTTOM_RETURN')
+    if not on:
+        if part is not None:
+            parts.pop('FILLER_BOTTOM_RETURN')
+            bpy.data.objects.remove(part, do_unlink=True)
+        return
+    made = part is None
+    if made:
+        new = CabinetPart()
+        new.create('Bottom Return')
+        part = new.obj
+        part.parent = root
+        part[PART_ROLE_KEY] = 'FILLER_BOTTOM_RETURN'
+        new.set_input('Mirror Y', True)
+        parts['FILLER_BOTTOM_RETURN'] = part
+    from . import scribe_fit
+    finished = scribe_fit.bottom_return_finished(root)
+    repaint = made or bool(part.get('Finish Bottom')) != finished
+    part['Finish Top'] = False
+    part['Finish Bottom'] = finished
+    _set_part(part, (0.0, 0.0, 0.0), length=dim_x, width=depth, thickness=mt)
+    if repaint:
+        try:
+            _paint_product(root)
+        except Exception:
+            pass
 
 
 def _solve_corner_filler(root, parts, dim_x, dim_y, dim_z):
@@ -1054,6 +1138,12 @@ def _solve_corner_filler(root, parts, dim_x, dim_y, dim_z):
     # Off over a separate toe kick platform, which runs on under it.
     kick_on = bool(root.get('Toe Kick Piece', True))
     face_y = -dim_y + (0.0 if on_doors else FRONT_THICKNESS)
+    # Under an upper only: a base or tall stands on its kick or the floor.
+    bottom_on = bool(root.get(BOTTOM_RETURN_KEY, False)) and tkh <= 0.0
+    _solve_filler_bottom_return(root, parts, dim_x, -(face_y + mt), mt,
+                                bottom_on)
+    # The return leg stands on the bottom return.
+    leg_z = tkh + (mt if bottom_on else 0.0)
 
     part = parts.get('FILLER_FACE')
     if part is not None:
@@ -1075,8 +1165,8 @@ def _solve_corner_filler(root, parts, dim_x, dim_y, dim_z):
             # A side panel's width runs toward -Y from where it is set,
             # so it is set at its back edge to run from the face's back
             # toward the wall.
-            _set_part(part, (x, face_y + mt + ret, tkh),
-                      length=dim_z - tkh, width=ret, thickness=mt,
+            _set_part(part, (x, face_y + mt + ret, leg_z),
+                      length=dim_z - leg_z, width=ret, thickness=mt,
                       visible=on)
 
     # The cage is what gets clicked, so it is drawn back to the filler
@@ -1117,7 +1207,7 @@ class CornerFiller(Product):
         self.toe_kick_setback = props.default_toe_kick_setback
         self.cabinet_on_right = True
         self.flush_with_doors = scribe_filler_flush_with_doors()
-        self.kick_piece = True
+        self.kick_piece = scribe_filler_toe_kick_piece()
 
     def add_properties(self):
         self.add_property('Toe Kick Height', 'DISTANCE', self.toe_kick_height)
@@ -1126,6 +1216,7 @@ class CornerFiller(Product):
         self.add_property('Cabinet On Right', 'CHECKBOX', self.cabinet_on_right)
         self.add_property('Flush With Doors', 'CHECKBOX', self.flush_with_doors)
         self.add_property('Toe Kick Piece', 'CHECKBOX', self.kick_piece)
+        self.add_property(BOTTOM_RETURN_KEY, 'CHECKBOX', False)
 
     def create(self, name="Wall Scribe Filler"):
         self.create_product(name)
@@ -1333,6 +1424,10 @@ class VoidedCornerUpper(VoidedCorner):
 # ---------------------------------------------------------------------------
 
 BASE_ASSEMBLY_SUPPORT_SPACING = inch(16)
+# The back rail is held this far off the wall, so the base can be
+# scribed and levelled without the rail fouling the wall.
+BASE_ASSEMBLY_BACK_GAP = inch(0.25)
+BACK_GAP_KEY = 'Back Gap'
 
 
 # (Finish Top, Finish Bottom) for the parts that show: whichever surface
@@ -1343,6 +1438,134 @@ BASE_ASSEMBLY_FINISH = {
     'BASE_LEFT_END': (True, False),
     'BASE_RIGHT_END': (False, True),
 }
+
+# Finish options, all off on a new base.
+# Finish Rear: an island's base is held in at the back as it is at the
+# front, so the rear shows a toe space of its own.
+# Loose Finished Skin: finished toe skins, sent loose and fit on site,
+# cover the faces of the base that show; the frame is held back by their
+# thickness so the skin's face lands where the frame's would have.
+# Base by Others: the base finish (a rubber or vinyl base, say) is
+# applied on site by someone else; the frame is held back by the typed
+# thickness on the same faces and no skins are made. It wins over the
+# loose skin: the two are never both on.
+FINISH_REAR_KEY = 'Finish Rear'
+LOOSE_SKIN_KEY = 'Loose Finished Skin'
+BASE_BY_OTHERS_KEY = 'Base by Others'
+BASE_BY_OTHERS_THICKNESS_KEY = 'Base by Others Thickness'
+# Cleats, both off (zero wide) on a new base; 3 in is the usual width.
+# Sleeper Cleat: a strip lying flat beside each cross support and inside
+# each end, its top flush with the top of the frame, for the cabinets to
+# bear on and fasten to.
+# Floor Cleat: a strip lying flat on the floor inside the kick face and
+# inside the back rail, between the ends, to fasten the base down. The
+# cross supports are cut shorter and stand on the two cleats.
+SLEEPER_CLEAT_KEY = 'Sleeper Cleat Width'
+FLOOR_CLEAT_KEY = 'Floor Cleat Width'
+BASE_ASSEMBLY_OPTION_KEYS = (FINISH_REAR_KEY, LOOSE_SKIN_KEY,
+                             BASE_BY_OTHERS_KEY, BASE_BY_OTHERS_THICKNESS_KEY,
+                             SLEEPER_CLEAT_KEY, FLOOR_CLEAT_KEY)
+BASE_ASSEMBLY_SKIN_THICKNESS = inch(0.75)
+BASE_BY_OTHERS_THICKNESS = inch(0.125)
+
+# What the base was built from, written by whatever stands it under a
+# run: which ends show, and how far the kick face stands back from the
+# cabinet fronts (the rear is held in by the same when it is finished).
+LEFT_END_EXPOSED_KEY = 'Left End Exposed'
+RIGHT_END_EXPOSED_KEY = 'Right End Exposed'
+REAR_SETBACK_KEY = 'Rear Setback'
+
+# Marks a part that ships loose to be fit on site.
+SENT_LOOSE_KEY = 'SENT_LOOSE'
+
+# role: (name, rotation, mirror, finish) -- each skin stands like the
+# frame part it covers.
+BASE_ASSEMBLY_SKINS = {
+    'LOOSE_KICK_FRONT': ("Loose Toe Skin Front", (90, 0, 0), 'Z',
+                         (False, True)),
+    'LOOSE_KICK_REAR': ("Loose Toe Skin Rear", (90, 0, 0), '',
+                        (False, True)),
+    'LOOSE_KICK_END_LEFT': ("Loose Toe Skin Left End", (-90, 0, 90), 'XYZ',
+                            (True, False)),
+    'LOOSE_KICK_END_RIGHT': ("Loose Toe Skin Right End", (-90, 0, 90), 'XY',
+                             (False, True)),
+}
+
+# The cleats lie flat. A sleeper cleat runs front to back and hangs from
+# the top of the frame; a floor cleat runs the length of the base on the
+# floor.
+BASE_ASSEMBLY_CLEATS = {
+    'BASE_SLEEPER_CLEAT': ("Sleeper Cleat", (0, 0, 90), 'XZ', (False, False)),
+    'BASE_SLEEPER_CLEAT_LEFT': ("Left Sleeper Cleat", (0, 0, 90), 'XYZ',
+                                (False, False)),
+    'BASE_SLEEPER_CLEAT_RIGHT': ("Right Sleeper Cleat", (0, 0, 90), 'XZ',
+                                 (False, False)),
+    'BASE_FLOOR_CLEAT_FRONT': ("Front Floor Cleat", (0, 0, 0), '',
+                               (False, False)),
+    'BASE_FLOOR_CLEAT_BACK': ("Back Floor Cleat", (0, 0, 0), 'Y',
+                              (False, False)),
+}
+
+
+def _default_rear_setback():
+    try:
+        from ... import hb_project
+        props = hb_project.get_main_scene().hb_frameless
+        return max(float(props.default_toe_kick_setback), 0.0)
+    except Exception:
+        return inch(2.5)
+
+
+def add_base_assembly_options(root):
+    """Give a base the finish options it does not carry yet (one built
+    before they existed), all off."""
+    for key, kind, value in (
+            (FINISH_REAR_KEY, 'CHECKBOX', False),
+            (LOOSE_SKIN_KEY, 'CHECKBOX', False),
+            (BASE_BY_OTHERS_KEY, 'CHECKBOX', False),
+            (BASE_BY_OTHERS_THICKNESS_KEY, 'DISTANCE',
+             BASE_BY_OTHERS_THICKNESS),
+            (SLEEPER_CLEAT_KEY, 'DISTANCE', 0.0),
+            (FLOOR_CLEAT_KEY, 'DISTANCE', 0.0)):
+        if key not in root:
+            root.home_builder.add_property(key, kind, value)
+    if REAR_SETBACK_KEY not in root:
+        root[REAR_SETBACK_KEY] = _default_rear_setback()
+
+
+def _skin_part(root, parts, role, wanted):
+    """The loose toe skin ``role``, made when it is wanted and taken
+    away when it is not."""
+    return _optional_part(root, parts, role, wanted, BASE_ASSEMBLY_SKINS,
+                          loose=True)
+
+
+def _cleat_part(root, parts, role, wanted):
+    """The cleat ``role``, made when it is wanted and taken away when
+    it is not."""
+    return _optional_part(root, parts, role, wanted, BASE_ASSEMBLY_CLEATS)
+
+
+def _optional_part(root, parts, role, wanted, specs, loose=False):
+    part = parts.get(role)
+    if not wanted:
+        if part is not None:
+            bpy.data.objects.remove(part, do_unlink=True)
+            parts.pop(role, None)
+        return None
+    if part is None:
+        name, rotation, mirror, finish = specs[role]
+        part = _add_part(root, name, role, rotation=rotation, mirror=mirror,
+                         finish=finish).obj
+        if loose:
+            part[SENT_LOOSE_KEY] = True
+        parts[role] = part
+        try:
+            from .solver_frameless import _paint_like_cabinet
+            _paint_like_cabinet(root, part)
+        except Exception:
+            pass
+    return part
 
 
 def _solve_base_assembly(root, parts, dim_x, dim_y, dim_z):
@@ -1362,6 +1585,11 @@ def _solve_base_assembly(root, parts, dim_x, dim_y, dim_z):
     # the wall; the end itself stays under the cabinet side.
     ext_l = float(_prompt(root, 'Left Front Extension', 0.0))
     ext_r = float(_prompt(root, 'Right Front Extension', 0.0))
+    if BACK_GAP_KEY in root:
+        _solve_base_assembly_capped(root, parts, dim_x, dim_y, dim_z, mt,
+                                    spacing, ext_l, ext_r)
+        return
+    # Bases built before the back gap keep the frame they were cut to.
     part = parts.get('BASE_FRONT')
     if part is not None:
         _set_part(part, (-ext_l, -dim_y, 0.0),
@@ -1394,6 +1622,159 @@ def _solve_base_assembly(root, parts, dim_x, dim_y, dim_z):
         _set_array(part, count, -pitch)
 
 
+def _solve_base_assembly_capped(root, parts, dim_x, dim_y, dim_z, mt,
+                                spacing, ext_l, ext_r):
+    """The frame as the shop cuts it. An end that shows or butts the
+    next base is a full-depth piece with the kick face and the back rail
+    between the two ends. An end at a wall, where the kick face runs on
+    to the wall, is a cross piece between the face and the rail instead.
+    The rail stands off the wall by the back gap.
+
+    The cage is the finished size of the base. With a loose skin, or a
+    base finish applied by others, the frame is held back from each face
+    that shows -- the front, an exposed end, a finished rear -- by that
+    finish's thickness, so the finished face stays where it was."""
+    if FINISH_REAR_KEY not in root:
+        add_base_assembly_options(root)
+    gap = max(float(_prompt(root, BACK_GAP_KEY, 0.0)), 0.0)
+    cap_l = 0.0 if ext_l > 0.0 else mt
+    cap_r = 0.0 if ext_r > 0.0 else mt
+
+    finish_rear = bool(_prompt(root, FINISH_REAR_KEY, False))
+    by_others = bool(_prompt(root, BASE_BY_OTHERS_KEY, False))
+    skinned = bool(_prompt(root, LOOSE_SKIN_KEY, False))
+    if by_others and skinned:
+        root[LOOSE_SKIN_KEY] = False
+        skinned = False
+    skin_t = BASE_ASSEMBLY_SKIN_THICKNESS
+    if by_others:
+        hold = max(float(_prompt(root, BASE_BY_OTHERS_THICKNESS_KEY, 0.0)),
+                   0.0)
+    else:
+        hold = skin_t if skinned else 0.0
+
+    # An end under a wall scribe filler is at the wall: it never shows.
+    shows_l = bool(root.get(LEFT_END_EXPOSED_KEY, False)) and ext_l <= 0.0
+    shows_r = bool(root.get(RIGHT_END_EXPOSED_KEY, False)) and ext_r <= 0.0
+    x_l = hold if shows_l else 0.0
+    x_r = dim_x - (hold if shows_r else 0.0)
+    y_front = -dim_y + hold
+    if finish_rear:
+        # The finished rear stands in from the cabinet backs by the
+        # front's setback; nothing is left to scribe, so no back gap.
+        rear_face = -min(max(float(_prompt(root, REAR_SETBACK_KEY, 0.0)),
+                             0.0), dim_y)
+        y_back = rear_face - hold
+        y_cap = y_back
+    else:
+        rear_face = 0.0
+        y_back = -gap
+        y_cap = 0.0
+    inner = max(y_back - y_front - mt * 2.0, 0.0)
+    cap_len = max(y_cap - y_front, 0.0)
+
+    part = parts.get('BASE_FRONT')
+    if part is not None:
+        _set_part(part, (x_l + cap_l - ext_l, y_front, 0.0),
+                  length=x_r - x_l + ext_l + ext_r - cap_l - cap_r,
+                  width=dim_z, thickness=mt)
+
+    part = parts.get('BASE_BACK')
+    if part is not None:
+        _set_part(part, (x_l + cap_l, y_back, 0.0),
+                  length=x_r - x_l - cap_l - cap_r, width=dim_z,
+                  thickness=mt)
+
+    for role, x, cap in (('BASE_LEFT_END', x_l, cap_l),
+                         ('BASE_RIGHT_END', x_r, cap_r)):
+        part = parts.get(role)
+        if part is None:
+            continue
+        if cap > 0.0:
+            _set_part(part, (x, y_cap, 0.0),
+                      length=cap_len, width=dim_z, thickness=mt)
+        else:
+            _set_part(part, (x, y_back - mt, 0.0),
+                      length=inner, width=dim_z, thickness=mt)
+
+    # Cleats fit inside the frame: between the kick face and the rail,
+    # and between the two ends.
+    clear = max(x_r - x_l - mt * 2.0, 0.0)
+    sleeper_cleat = max(float(_prompt(root, SLEEPER_CLEAT_KEY, 0.0)), 0.0)
+    floor_cleat = max(float(_prompt(root, FLOOR_CLEAT_KEY, 0.0)), 0.0)
+    if inner <= 0.0 or clear <= 0.0:
+        sleeper_cleat = floor_cleat = 0.0
+    # Front and back floor cleats never overlap, and the end sleeper
+    # cleats never reach past the middle of the base.
+    floor_cleat = min(floor_cleat, inner / 2.0)
+    sleeper_cleat = min(sleeper_cleat, clear / 2.0)
+    # The cross supports stand on the floor cleats.
+    lift = mt if floor_cleat > 0.0 else 0.0
+
+    span = x_r - x_l
+    bays = 1
+    if spacing > 0.0:
+        bays = max(int(math.ceil((span - mt) / spacing - 1e-6)), 1)
+    pitch = (span - mt) / bays
+    count = bays - 1
+    part = parts.get('BASE_SUPPORT')
+    if part is not None:
+        _set_part(part, (x_l + pitch, y_back - mt, lift),
+                  length=inner, width=dim_z - lift, thickness=mt,
+                  visible=count > 0)
+        _set_array(part, count, -pitch)
+
+    # One sleeper cleat on the left of each cross support, and one
+    # inside each end.
+    mid = sleeper_cleat > 0.0 and count > 0 and pitch - mt > sleeper_cleat
+    part = _cleat_part(root, parts, 'BASE_SLEEPER_CLEAT', mid)
+    if part is not None:
+        _set_part(part, (x_l + pitch, y_back - mt, dim_z),
+                  length=inner, width=sleeper_cleat, thickness=mt)
+        array_mod = part.modifiers.get(ARRAY_MOD_NAME)
+        if array_mod is None:
+            array_mod = part.modifiers.new(ARRAY_MOD_NAME, 'ARRAY')
+        array_mod.use_relative_offset = False
+        array_mod.use_constant_offset = True
+        # Turned a quarter in plan: the run of the base is the part's -Y.
+        array_mod.constant_offset_displace = (0.0, -pitch, 0.0)
+        array_mod.count = max(count, 1)
+    for role, x in (('BASE_SLEEPER_CLEAT_LEFT', x_l + mt),
+                    ('BASE_SLEEPER_CLEAT_RIGHT', x_r - mt)):
+        part = _cleat_part(root, parts, role, sleeper_cleat > 0.0)
+        if part is not None:
+            _set_part(part, (x, y_back - mt, dim_z),
+                      length=inner, width=sleeper_cleat, thickness=mt)
+
+    for role, y in (('BASE_FLOOR_CLEAT_FRONT', y_front + mt),
+                    ('BASE_FLOOR_CLEAT_BACK', y_back - mt)):
+        part = _cleat_part(root, parts, role, floor_cleat > 0.0)
+        if part is not None:
+            _set_part(part, (x_l + mt, y, 0.0),
+                      length=clear, width=floor_cleat, thickness=mt)
+
+    # Loose skins: the front and the rear run the full length, the kick
+    # face's run under a wall filler included; an end skin stands
+    # between them.
+    part = _skin_part(root, parts, 'LOOSE_KICK_FRONT', skinned)
+    if part is not None:
+        _set_part(part, (-ext_l, -dim_y, 0.0),
+                  length=dim_x + ext_l + ext_r, width=dim_z,
+                  thickness=skin_t)
+
+    part = _skin_part(root, parts, 'LOOSE_KICK_REAR', skinned and finish_rear)
+    if part is not None:
+        _set_part(part, (0.0, rear_face, 0.0),
+                  length=dim_x, width=dim_z, thickness=skin_t)
+
+    for role, x, shows in (('LOOSE_KICK_END_LEFT', 0.0, shows_l),
+                           ('LOOSE_KICK_END_RIGHT', dim_x, shows_r)):
+        part = _skin_part(root, parts, role, skinned and shows)
+        if part is not None:
+            _set_part(part, (x, y_cap, 0.0),
+                      length=cap_len, width=dim_z, thickness=skin_t)
+
+
 class BaseAssembly(Product):
     """The ladder base a run of base and tall cabinets stands on.
 
@@ -1422,6 +1803,8 @@ class BaseAssembly(Product):
                           BASE_ASSEMBLY_SUPPORT_SPACING)
         self.add_property('Left Front Extension', 'DISTANCE', 0.0)
         self.add_property('Right Front Extension', 'DISTANCE', 0.0)
+        self.add_property(BACK_GAP_KEY, 'DISTANCE', BASE_ASSEMBLY_BACK_GAP)
+        add_base_assembly_options(self.obj)
 
         self.add_part('Front', 'BASE_FRONT', rotation=(90, 0, 0), mirror='Z',
                       finish=BASE_ASSEMBLY_FINISH['BASE_FRONT'])
@@ -1444,8 +1827,93 @@ class BaseAssembly(Product):
         self.solve()
 
 
+# ---------------------------------------------------------------------------
+# L crown
+# ---------------------------------------------------------------------------
+
+L_CROWN_HEIGHT = inch(6.0)
+# Front to back, the face board's own thickness included.
+L_CROWN_RETURN_DEPTH = inch(4.0)
+RETURN_CLEAT_KEY = 'Return Cleat Depth'
+
+
+def _solve_l_crown(root, parts, dim_x, dim_y, dim_z):
+    """An L in section: a face board standing on the cabinet tops, with
+    a return cleat lying on the tops behind it to fix through. The face
+    is flush with the carcass front or out in the door plane (Dim Y
+    always reaches from the wall to the door plane, so the option can
+    be switched either way). In the door plane the bottom of the cleat
+    shows from below, so it is finished."""
+    mt = float(_prompt(root, 'Material Thickness', inch(0.75)))
+    ret = float(_prompt(root, RETURN_CLEAT_KEY, L_CROWN_RETURN_DEPTH))
+    on_doors = bool(root.get('Flush With Doors', False))
+    face_y = -dim_y + (0.0 if on_doors else FRONT_THICKNESS)
+
+    part = parts.get('CROWN_FRONT')
+    if part is not None:
+        _set_part(part, (0.0, face_y, 0.0),
+                  length=dim_x, width=dim_z, thickness=mt)
+
+    part = parts.get('CROWN_CLEAT')
+    if part is not None:
+        _finish_faces(part, (False, on_doors))
+        _set_part(part, (0.0, face_y + mt, 0.0),
+                  length=dim_x, width=ret - mt, thickness=mt,
+                  visible=ret - mt > 0.0)
+
+    # The cage is what gets clicked, so it is drawn back to the face
+    # when that stands behind the door plane.
+    try:
+        from . import solver_frameless as sf
+        sf.set_cage_clamp(root, sf.FRONT_CLEAR_MOD, sf.FRONT_CLEAR_GROUP,
+                          'Front', 'Y', face_y, not on_doors)
+    except Exception:
+        pass
+
+
+class LCrown(Product):
+    """The closure between the top of a run of cabinets and the ceiling.
+
+    A face board with a return cleat behind its bottom edge, standing
+    on the cabinet tops. It belongs to the run rather than to a cabinet,
+    so it is built from the room the way base assemblies are: Add L
+    Crowns measures the runs of upper and tall cabinets and stands
+    these over each.
+    Dim X = length along the run, Dim Y = wall to the door plane,
+    Dim Z = height above the cabinet tops.
+    """
+
+    def __init__(self):
+        super().__init__()
+        props = bpy.context.scene.hb_frameless
+        self.width = inch(36)
+        self.height = L_CROWN_HEIGHT
+        self.depth = props.upper_cabinet_depth + FRONT_THICKNESS
+        self.return_depth = L_CROWN_RETURN_DEPTH
+        self.flush_with_doors = scribe_filler_flush_with_doors()
+
+    def create(self, name="Ceiling Closure"):
+        self.create_product(name)
+        self.obj['PART_TYPE'] = 'L_CROWN'
+        self.obj['IS_L_CROWN'] = True
+
+        self.add_properties_common()
+        self.add_property(RETURN_CLEAT_KEY, 'DISTANCE', self.return_depth)
+        self.add_property('Flush With Doors', 'CHECKBOX', self.flush_with_doors)
+
+        # The face shows on its bottom surface; the cleat only from
+        # below, and only where it stands out past the carcass.
+        self.add_part('Front', 'CROWN_FRONT', rotation=(-90, 0, 0),
+                      mirror='Y', finish=(False, True))
+        self.add_part('Return Cleat', 'CROWN_CLEAT',
+                      finish=(False, self.flush_with_doors))
+
+        self.solve()
+
+
 _SOLVERS = {
     'BASE_ASSEMBLY': _solve_base_assembly,
+    'L_CROWN': _solve_l_crown,
     'FLOATING_SHELF': _solve_floating_shelf,
     'VALANCE': _solve_valance,
     'SUPPORT_FRAME': _solve_support_frame,

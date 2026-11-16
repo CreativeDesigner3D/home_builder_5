@@ -141,6 +141,19 @@ def _peers(owner):
         obj = owner.id_data
     except Exception:
         return ()
+    from ...operators import prop_proxy
+    if path == prop_proxy.PATH_PREFIX + OVERLAY_KEY:
+        # An opening's overlays are read through a schema, not straight
+        # off its properties; its peers are the other picked openings
+        # seen the same way.
+        try:
+            objs = _picked.get('face_frame_opening', ())
+            if obj not in objs:
+                return ()
+            return [prop_proxy.owner(o, OVERLAY_KEY) for o in objs
+                    if o != obj]
+        except ReferenceError:
+            return ()
     if path not in _PEER_PATHS:
         return ()
     objs = _picked.get(path, ())
@@ -351,6 +364,19 @@ def _drawer_look_ok(op):
     return _single_door(op) or op.front_type == 'DRAWER_FRONT'
 
 
+def _drawer_split_ok(op):
+    """One drawer front built as several faces side by side: drawer
+    fronts on the box construction that takes applied faces, and not
+    while the stacked drawer look is on."""
+    return (op.front_type == 'DRAWER_FRONT'
+            and op.drawer_look_divisions == 'NONE'
+            and types_face_frame.drawer_split_look_allowed(op.id_data))
+
+
+def _drawer_split_on(op):
+    return _drawer_split_ok(op) and op.drawer_split_look != 'NONE'
+
+
 def _door_look_ok(op):
     return ((_single_door(op) and op.drawer_look_divisions == 'NONE')
             or (op.front_type == 'DOOR' and op.hinge_side == 'DOUBLE'))
@@ -426,7 +452,13 @@ def _overlay_owner(opening_obj):
 
         def setter(side):
             def set(obj, value):
-                setattr(obj.face_frame_opening, f'{side}_overlay', value)
+                op = obj.face_frame_opening
+                # A typed overlay is the opening's own. The picked field
+                # is unlocked already; another opening picked with it
+                # may not be, and would ignore the value.
+                if not getattr(op, f'unlock_{side}_overlay'):
+                    setattr(op, f'unlock_{side}_overlay', True)
+                setattr(op, f'{side}_overlay', value)
             return set
 
         def lock_get(side):
@@ -954,6 +986,7 @@ def _bay_fields(bay_obj, bp):
                'cab_insert_after'), None)),
         ((_act("Break Left", 'hb_face_frame.break_cabinet_left'), _several_bays),
          (_act("Break Right", 'hb_face_frame.break_cabinet_right'), _several_bays)),
+        ((_act("Break Both", 'hb_face_frame.break_cabinet_both'), _several_bays),),
         ((_act("Equal Doors", 'hb_face_frame.set_equal_door_width', None,
                'cab_equal_doors'), None),
          (_act("Flush Toe Kick", 'hb_face_frame.toggle_flush_toe_kick', None,
@@ -1039,6 +1072,13 @@ def front_detail_fields():
         ('bool', 'add_apron', "Add Apron", {'when': _is_door}),
         ('distance', 'apron_height', "Apron Height", {'when': _apron}),
         ('enum', 'drawer_look_divisions', "Drawer-Look", {'when': _drawer_look_ok}),
+        ('enum', 'drawer_split_look', "Side-by-Side Look", {'when': _drawer_split_ok}),
+        ('distance', 'drawer_split_stile_width', "Integral Stile",
+         {'when': _drawer_split_on}),
+        ('distance', 'drawer_split_groove_width', "Groove Width",
+         {'when': _drawer_split_on}),
+        ('distance', 'drawer_split_groove_depth', "Groove Depth",
+         {'when': _drawer_split_on}),
         ('enum', 'door_look_divisions', "Door-Look", {'when': _door_look_ok}),
         ('enum', 'door_look_direction', "Door-Look Layout", {'when': _door_look_layout}),
         ('distance', 'door_look_top_height', "Top Door Height", {'when': _door_look_top}),
@@ -1133,6 +1173,16 @@ def _drawer_look_rows(op):
     return out
 
 
+def _drawer_split_rows(op):
+    """[(fields, owner)] for a side-by-side drawer front's face widths,
+    left to right."""
+    if not _drawer_split_on(op):
+        return []
+    return [((('locked', 'size', "Face %d" % (idx + 1),
+               {'unlock': 'unlock_size'}),), face)
+            for idx, face in enumerate(op.drawer_split_faces)]
+
+
 def _owners_group(context, key, label, summary, parts):
     """A folding group, as a 'group' field draws one, whose fields sit
     on more than one owner: [(fields, owner)]. Left out when nothing in
@@ -1170,6 +1220,10 @@ def opening_group_blocks(context, opening_obj):
     if rows:
         out += _owners_group(context, 'ff_opening_rows', "Drawer Heights",
                              "%d rows" % len(op.drawer_look_openings), rows)
+    faces = _drawer_split_rows(op)
+    if faces:
+        out += _owners_group(context, 'ff_opening_faces', "Drawer Face Widths",
+                             "%d faces" % len(op.drawer_split_faces), faces)
     out += _owners_group(context, 'ff_opening_finish', "Finish",
                          _finish_summary(op),
                          [(finish_fields(), op), (finish_tex, cab)])
@@ -1396,6 +1450,15 @@ def blocks(context, item):
         out.append(('actions', (
             _act("Edit Interior", 'hb_face_frame.show_interior_page',
                  {'opening_name': opening_obj.name}, 'cab_interior'),)))
+        if several:
+            # The Interior page is one opening's; these change what is
+            # inside every picked opening at once.
+            out.append(('label', f"Set all {n_part} to"))
+            out.append(('actions', (
+                _act("Shelves", 'hb_face_frame.set_picked_interiors',
+                     {'kind': 'ADJUSTABLE_SHELF'}),
+                _act("Roll-outs", 'hb_face_frame.set_picked_interiors',
+                     {'kind': 'ROLLOUT'}))))
         out.extend(opening_group_blocks(context, opening_obj))
         out.extend(opening_overlay_blocks(context, opening_obj))
         _footer(out, 'hb_face_frame.opening_prompts')

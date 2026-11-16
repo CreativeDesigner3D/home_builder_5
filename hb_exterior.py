@@ -38,6 +38,9 @@ BASE_PROUD = 0.03           # how far the base stands out from the wall (m)
 BASE_STEP = 0.005           # how finely a base end is pulled back off a room
 BASE_BACK = 0.6             # the furthest it is pulled back past its wall's end
 BASE_BELOW = 0.15           # and how far it runs down past the floor
+BASE_PORCH_STEP = 0.05      # how finely a porch's stretch of a wall is found
+BASE_CLEAR = 0.003          # the gap the base leaves round a window's trim
+RUN_ATTR = "hb_run"         # the base mesh's distance along each wall, for its bond
 BATTEN_SPACING = 0.4064     # 16"
 BATTEN_WIDTH = 0.038        # 1 1/2"
 LAP_EXPOSURE = 0.152        # 6" lap boards
@@ -301,29 +304,166 @@ def base_material(style, color):
     mat.diffuse_color = rgba
     nt, bsdf = _nodes_reset(mat)
     bsdf.inputs['Roughness'].default_value = 0.85
-    run, z = _run_coordinate(nt)
+    run, z = _run_attribute(nt)
     _masonry(nt, bsdf, style, rgba, run, z)
     return mat
 
 
+def _run_attribute(nt):
+    """The base's own running coordinate: the distance along each wall,
+    stored on its mesh (RUN_ATTR), so the bond runs true on a wall at any
+    angle - a bay window's sides - where x + y would stand still."""
+    attr = nt.nodes.new('ShaderNodeAttribute')
+    attr.attribute_type = 'GEOMETRY'
+    attr.attribute_name = RUN_ATTR
+    geo = nt.nodes.new('ShaderNodeNewGeometry')
+    sep = nt.nodes.new('ShaderNodeSeparateXYZ')
+    nt.links.new(geo.outputs['Position'], sep.inputs['Vector'])
+    return attr.outputs['Fac'], sep.outputs['Z']
+
+
 # ---- The base band -------------------------------------------------------------------
 
-def _gaps(wall_obj, base_top):
-    """Spans along a wall (local x) its openings take out of the base:
-    doors, and windows that come down into it."""
+def _gaps(wall_obj, base_top, floor=0.0):
+    """[(x0, x1, bottom)] along a wall (local x) for what its openings
+    take out of the base: a door all of it, a window that comes down into
+    it a notch round its outdoor casing and sill, the base carrying on
+    under it up to `bottom`. Heights are above the level's floor; `floor`
+    is how far above it the wall itself starts (a bay's wall on a seat)."""
     from . import hb_types
+    from .product_libraries.common import door_window_geo
     out = []
     for child in wall_obj.children:
-        if not (child.get('IS_ENTRY_DOOR_BP') or child.get('IS_WINDOW_BP')):
+        door = bool(child.get('IS_ENTRY_DOOR_BP'))
+        if not (door or child.get('IS_WINDOW_BP')):
             continue
         cage = hb_types.GeoNodeCage(child)
         if not cage.has_modifier():
             continue
-        if child.location.z >= base_top - 1e-4:
-            continue
         x0 = child.location.x
-        out.append((x0, x0 + cage.get_input('Dim X')))
+        x1 = x0 + cage.get_input('Dim X')
+        bottom = floor + child.location.z
+        if door:
+            if bottom >= base_top - 1e-4:
+                continue
+            bottom = 0.0
+        else:
+            side = below = 0.0
+            try:
+                opts = door_window_geo.merged_opts(child)
+                if opts.get('include_exterior_casing', True):
+                    side = opts.get('ext_casing_width') or opts.get('casing_width') or 0.0
+                    below = side
+                if opts.get('include_sill', True):
+                    below = opts.get('sill_height') or 0.0
+                    side += opts.get('sill_horn') or 0.0
+            except Exception:
+                pass
+            bottom = max(bottom - below - BASE_CLEAR, 0.0)
+            if bottom >= base_top - 1e-4:
+                continue
+            x0, x1 = x0 - side - BASE_CLEAR, x1 + side + BASE_CLEAR
+        out.append((x0, x1, bottom))
     return sorted(out)
+
+
+def _bay_cuts(wall_obj, base_top):
+    """[(x0, x1, bottom)] for the bay windows on a wall that come down
+    into the base: the span each takes along the wall (local x) and how
+    high off the floor its underside is (0 for a bay to the floor)."""
+    from . import hb_bays
+    out = []
+    for child in wall_obj.children:
+        if not hb_bays.is_bay(child):
+            continue
+        try:
+            F = hb_bays.Frame(child)
+        except Exception:
+            continue
+        if F.bottom >= base_top - 1e-4:
+            continue
+        out.append((child.location.x, child.location.x + F.W, F.bottom, F, child))
+    return sorted(out, key=lambda c: c[0])
+
+
+def _bay_base(bm, cage, F, level, height, z0):
+    """The base round a bay that comes to the floor: a band on each of
+    its sides, mitred at the corners, notched round the side's window,
+    the bond running on from one side to the next."""
+    from . import hb_bay_geom, hb_bays
+    outer = hb_bay_geom.offset(F.pts, -BASE_PROUD)
+    walls = {w.get(hb_bays.BAY_SEG, -1): w for w in hb_bays.bay_walls(cage)}
+    run0 = 0.0
+    for i in range(len(F.pts) - 1):
+        P0, P1 = F.xy(*F.pts[i]), F.xy(*F.pts[i + 1])
+        O0, O1 = F.xy(*outer[i]), F.xy(*outer[i + 1])
+        length = (P1 - P0).length
+        if length < 1e-4:
+            continue
+        u = (P1 - P0) / length
+        out = (O0 - P0) - u * (O0 - P0).dot(u)
+        if out.length > 1e-6:
+            out = out.normalized() * BASE_PROUD
+        # The side's wall may run the other way along it
+        pieces = [(0.0, length, height)]
+        wall = walls.get(i)
+        if wall is not None:
+            _A, wu, wlen = hb_bays._wall_ends(F, i)[:3]
+            back = wu.dot(u) < 0.0
+            for g0, g1, bottom in _gaps(wall, height, F.bottom):
+                if back:
+                    g0, g1 = wlen - g1, wlen - g0
+                cut = []
+                for a, b, top in pieces:
+                    if g1 <= a or g0 >= b:
+                        cut.append((a, b, top))
+                        continue
+                    if g0 > a:
+                        cut.append((a, g0, top))
+                    if bottom > 0.02:
+                        cut.append((max(a, g0), min(b, g1), min(top, bottom)))
+                    if g1 < b:
+                        cut.append((g1, b, top))
+                pieces = cut
+        for a, b, top in pieces:
+            if b - a < 0.005:
+                continue
+            pa, pb = P0 + u * a, P0 + u * b
+            oa = O0 if a < 1e-6 else pa + out
+            ob = O1 if b > length - 1e-6 else pb + out
+            _box(bm, [(pa.x, pa.y), (pb.x, pb.y), (ob.x, ob.y), (oa.x, oa.y)],
+                 z0, level.elevation + top, (run0 + a, run0 + b, run0 + b, run0 + a))
+        run0 += length
+
+
+def _cut_spans(spans, g0, g1):
+    """Spans [(a, b)] with (g0, g1) taken out."""
+    cut = []
+    for a, b in spans:
+        if g1 <= a or g0 >= b:
+            cut.append((a, b))
+            continue
+        if g0 > a:
+            cut.append((a, g0))
+        if g1 < b:
+            cut.append((g1, b))
+    return cut
+
+
+def _box(bm, quad, z0, z1, runs):
+    """A closed box over a plan quad (four (x, y) corners in order), each
+    corner's distance along its wall (`runs`) stored for the material."""
+    layer = bm.verts.layers.float.get(RUN_ATTR) or bm.verts.layers.float.new(RUN_ATTR)
+    low = [bm.verts.new((x, y, z0)) for x, y in quad]
+    high = [bm.verts.new((x, y, z1)) for x, y in quad]
+    for verts in (low, high):
+        for v, r in zip(verts, runs):
+            v[layer] = r
+    bm.faces.new(low)
+    bm.faces.new(high[::-1])
+    for i in range(4):
+        j = (i + 1) % 4
+        bm.faces.new((low[i], low[j], high[j], high[i]))
 
 
 def _porch_polygons(scene, level):
@@ -364,13 +504,14 @@ def base_mesh(scene, level, height):
             face, sign, probe = 0.0, -1.0, ref_probe
         else:
             face, sign, probe = t, 1.0, thick_probe
-        # Facing a porch: its floor is there instead
-        if any(hb_wall_graph.point_in_polygon(probe, poly) for poly in porches):
-            continue
-        # Each end runs on past an outside corner, round the wall it meets.
+        # Each end runs on past an outside corner, round the wall it meets:
+        # by the base's own depth where the wall's outdoor face is its
+        # reference line (the corner is the walls' own), and by the wall's
+        # thickness too where the thickness falls outward.
         # At an inside corner that would run through the other wall into
         # the room beyond: there it stops short of the room instead.
-        reach = t + BASE_PROUD
+        reach = (t if sign > 0 else 0.0) + BASE_PROUD
+        probe_out = (probe[0] - mid[0], probe[1] - mid[1])
 
         def end_reach(at_end):
             for k in range(int((reach + BASE_BACK) / BASE_STEP) + 1):
@@ -385,34 +526,63 @@ def base_mesh(scene, level, height):
             return -BASE_BACK
 
         spans = [(-end_reach(False), seg.length + end_reach(True))]
-        for g0, g1 in _gaps(obj, height):
-            cut = []
-            for a, b in spans:
-                if g1 <= a or g0 >= b:
-                    cut.append((a, b))
-                    continue
-                if g0 > a:
-                    cut.append((a, g0))
-                if g1 < b:
-                    cut.append((g1, b))
-            spans = cut
+        # Where the wall faces a porch, the porch's floor is there instead:
+        # only that stretch of the wall goes without, found by stepping
+        # along it
+        if porches:
+            steps = max(int(seg.length / BASE_PORCH_STEP), 1)
+            run_start = None
+            for k in range(steps + 2):
+                along = min(k * seg.length / steps, seg.length)
+                p = (seg.start[0] + d[0] * along + probe_out[0],
+                     seg.start[1] + d[1] * along + probe_out[1])
+                on_porch = k <= steps and any(
+                    hb_wall_graph.point_in_polygon(p, poly) for poly in porches)
+                if on_porch and run_start is None:
+                    run_start = along
+                elif not on_porch and run_start is not None:
+                    # A porch to the wall's very end takes the corner too
+                    g0 = run_start if run_start > 1e-4 else -BASE_BACK
+                    g1 = along if k <= steps else seg.length + BASE_BACK
+                    spans = _cut_spans(spans, g0, g1)
+                    run_start = None
         z0, z1 = level.elevation - BASE_BELOW, level.elevation + height
-        for a, b in spans:
-            if b - a < 0.02:
-                continue
+
+        def band(a, b, top):
             corners = []
             for along in (a, b):
                 for out in (face, face + sign * BASE_PROUD):
                     corners.append((seg.start[0] + d[0] * along + n[0] * out,
                                     seg.start[1] + d[1] * along + n[1] * out))
-            p = [corners[0], corners[2], corners[3], corners[1]]
-            low = [bm.verts.new((x, y, z0)) for x, y in p]
-            high = [bm.verts.new((x, y, z1)) for x, y in p]
-            bm.faces.new(low)
-            bm.faces.new(high[::-1])
-            for i in range(4):
-                j = (i + 1) % 4
-                bm.faces.new((low[i], low[j], high[j], high[i]))
+            # The bond's run: x + y at the wall's start, then its length
+            r = seg.start[0] + seg.start[1]
+            _box(bm, [corners[0], corners[2], corners[3], corners[1]], z0, top,
+                 (r + a, r + b, r + b, r + a))
+
+        def under(g0, g1, bottom):
+            """Take an opening's span out, the base carrying on under it."""
+            nonlocal spans
+            covered = [s for s in spans if s[0] < g1 and s[1] > g0]
+            spans = _cut_spans(spans, g0, g1)
+            if bottom > 0.02:
+                for a, b in covered:
+                    if min(b, g1) - max(a, g0) > 0.005:
+                        band(max(a, g0), min(b, g1), level.elevation + bottom)
+            return covered
+
+        for g0, g1, bottom in _gaps(obj, height):
+            under(g0, g1, bottom)
+
+        # A bay window standing in the base: the base goes round a bay that
+        # comes to the floor, and stops under one that stands off it
+        for g0, g1, bottom, F, cage in _bay_cuts(obj, height):
+            if not under(g0, g1, bottom) or bottom > 0.02:
+                continue
+            _bay_base(bm, cage, F, level, height, z0)
+        for a, b in spans:
+            if b - a < 0.02:
+                continue
+            band(a, b, z1)
     bmesh.ops.recalc_face_normals(bm, faces=bm.faces[:])
     mesh = bpy.data.meshes.new(BASE_OBJECT)
     bm.to_mesh(mesh)

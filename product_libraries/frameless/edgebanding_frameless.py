@@ -21,7 +21,8 @@ The rest band like the closet part they stand in for: a fixed shelf,
 division or drawer-bank splitter like a closet fixed shelf / division
 (front only), a front stretcher like a closet drawer stretcher (front
 only), a toe kick like a closet toe kick (none), a misc part like a
-closet misc part.
+closet misc part. A sink sub front bands its bottom edge only: the top
+is under the countertop and the ends butt the sides.
 
 BAND_EDGES is written in the closet's frame, where L2 is the front
 edge, L1 the back and W1 / W2 the ends. A frameless part's edge
@@ -52,6 +53,13 @@ BAND_EDGES = {
     'SHELF': ('L2',),
     'SPLITTER': ('L2',),
     'FRONT_STRETCHER': ('L2',),
+    # A sink sub front stands on edge under the countertop, between the
+    # sides: only its bottom edge shows.
+    'SINK_APRON': ('L2',),
+    # An L crown's face shows its bottom edge; the cleat behind it
+    # shows none.
+    'CROWN_FRONT': ('L1',),
+    'CROWN_CLEAT': (),
     'TOE_KICK': (),
     'LEFT_TOE_KICK': (),
     'RIGHT_TOE_KICK': (),
@@ -67,6 +75,39 @@ _WALL_KINDS = ('UPPER', 'CORNER_UPPER')
 
 MISC_TAG = 'IS_FRAMELESS_MISC_PART'
 MISC_FLAG = 'hb_band_'
+
+
+# Raw edges can be picked out in the model: the board core then wears
+# a soft red instead of its own colour. The switch is kept on the
+# material, so it is one setting for the whole file.
+RAW_EDGE_KEY = 'hb_raw_edge_highlight'
+RAW_EDGE_COLOR = (0.60, 0.22, 0.20, 1.0)
+
+
+def raw_edges_highlighted():
+    mat = bpy.data.materials.get('Board Core')
+    return bool(mat is not None and mat.get(RAW_EDGE_KEY))
+
+
+def highlight_raw_edges(on):
+    """Show every unbanded edge in the soft red (or back in the board
+    colour)."""
+    from ..closets import materials_closets
+    mat = materials_closets.load_core_material()
+    color = RAW_EDGE_COLOR if on else materials_closets.CORE_MATERIAL_COLOR
+    mat.diffuse_color = color
+    tree = mat.node_tree
+    bsdf = tree.nodes.get('Principled BSDF') if tree is not None else None
+    if bsdf is not None and not bsdf.inputs['Base Color'].is_linked:
+        bsdf.inputs['Base Color'].default_value = color
+    mat[RAW_EDGE_KEY] = bool(on)
+
+
+def is_loose_shelf(obj):
+    """An adjustable, pull-out or part-depth shelf: a shelf that sits
+    inside the box rather than being part of it (a fixed shelf is a
+    splitter)."""
+    return 'SHELF' in (obj.get(solver_frameless.PART_ROLE_KEY) or '')
 
 
 def is_bandable_misc_part(obj):

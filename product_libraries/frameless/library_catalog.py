@@ -283,7 +283,7 @@ OPTION_PAGES = {
         'remove_op': 'hb_frameless.remove_cabinet_style',
         'duplicate_op': 'hb_frameless.duplicate_cabinet_style',
         'fields': (
-            ('enum', 'sheet_material', "Material"),
+            ('enum', 'sheet_material', "Exterior"),
             ('enum', 'front_material', "Fronts"),
             ('enum', 'interior_sheet_material', "Interior"),
             ('enum', 'edge_material', "Cabinet Edge"),
@@ -294,6 +294,11 @@ OPTION_PAGES = {
             (("Assign Style",
               'hb_frameless.assign_cabinet_style_to_selected_cabinets'),
              ("Update Cabinets", 'hb_frameless.update_cabinets_from_style')),
+        ),
+        # One setting for the whole file, not per style: unbanded edges
+        # in a soft red. Drawn under the style's commands.
+        'scene_fields': (
+            ('bool', 'highlight_raw_edges', "Highlight Raw Edges"),
         ),
     },
     'draw_door_styles_ui': {
@@ -375,6 +380,17 @@ OPTION_PAGES = {
         'fields': (
             ('distance', 'default_carcass_part_thickness', "Material Thickness"),
             ('gap', None, None),
+            # Ends and backs that show finish themselves.
+            ('bool', 'auto_finished_ends', "Automatic Finished Ends"),
+            ('enum', 'default_finished_end', "Finished End",
+             {'when': lambda p: p.auto_finished_ends}),
+            ('enum', 'default_finished_back', "Finished Back",
+             {'when': lambda p: p.auto_finished_ends}),
+            ('bool', 'applied_back_to_floor', "Applied Back To Floor",
+             {'when': lambda p: (p.auto_finished_ends
+                                 and p.default_finished_back
+                                 in ('SLAB', '5PIECE'))}),
+            ('gap', None, None),
             ('distance', 'default_toe_kick_height', "Toe Kick Height"),
             ('distance', 'default_toe_kick_setback', "Toe Kick Setback"),
             ('enum', 'default_toe_kick_type', "Toe Kick Type"),
@@ -391,6 +407,16 @@ OPTION_PAGES = {
                           'hb_frameless.edit_base_assemblies'),
                          ("Remove",
                           'hb_frameless.remove_base_assemblies')), None),
+            ('gap', None, None),
+            # One closure over each run of upper and tall cabinets.
+            ('actions', (("Add Ceiling Closures",
+                          'hb_frameless.add_l_crowns',
+                          'selected_only', False),
+                         ("Add to Selected",
+                          'hb_frameless.add_l_crowns',
+                          'selected_only', True)), None),
+            ('actions', (("Remove Ceiling Closures",
+                          'hb_frameless.remove_l_crowns'),), None),
             ('gap', None, None),
             ('enum', 'base_top_construction', "Base Top"),
             ('bool', 'base_top_hand_hole', "Hand Hole in Base Tops"),
@@ -442,6 +468,11 @@ OPTION_PAGES = {
             ('enum', 'molding_light_rail_profile', "Profile",
              {'when': lambda p: (_has_molding_pack()
                                  and p.molding_light_rail_package != 'NONE')}),
+            # The hung uppers' bottom doors reach this far below the
+            # cabinet when they are set to cover the rail.
+            ('distance', 'molding_light_rail_height', "Rail Height"),
+            ('bool', 'molding_light_rail_doors_cover', "Doors to Cover",
+             {'when': lambda p: p.molding_light_rail_height > 0.0}),
         ),
         'actions': (
             (("Refresh Molding", 'home_builder.refresh_room_molding'),),
@@ -458,6 +489,12 @@ OPTION_PAGES = {
         'fields': (
             ('label', None, "Countertops"),
             ('distance', 'countertop_thickness', "Thickness"),
+            # Off: base cabinets keep the height from the cabinet sizes.
+            # On: Add Countertops stands them at this height less the
+            # thickness, and they follow either value afterwards.
+            ('bool', 'use_counter_height', "Set Counter Height"),
+            ('distance', 'counter_height', "Counter Height",
+             {'when': lambda p: p.use_counter_height}),
             ('distance', 'countertop_overhang_front', "Front Overhang"),
             ('distance', 'countertop_overhang_sides', "Side Overhang"),
             ('distance', 'countertop_overhang_back', "Back Overhang"),

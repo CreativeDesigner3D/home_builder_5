@@ -30,6 +30,10 @@ def openable_front(obj):
     drawer box or an insert count as their front), or None. False fronts
     and appliance panels don't open."""
     while obj is not None:
+        if obj.get('IS_DRAWER_LOOK_FRONT'):
+            # One of the fronts a door is shown as: the door opens.
+            obj = obj.parent
+            continue
         if obj.get('IS_CABINET_FRONT'):
             if obj.get('False Front', False):
                 return None

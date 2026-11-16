@@ -2591,6 +2591,18 @@ class hb_face_frame_OT_set_door_vent(bpy.types.Operator):
     def poll(cls, context):
         return bool(_selected_doors(context))
 
+    def invoke(self, context, event):
+        # Adding one goes straight on to its size: the options open on
+        # the vent just cut, so it is sized without a second trip to
+        # the menu.
+        result = self.execute(context)
+        if self.add and 'FINISHED' in result:
+            try:
+                bpy.ops.hb_face_frame.door_vent_options('INVOKE_DEFAULT')
+            except RuntimeError:
+                pass
+        return result
+
     def execute(self, context):
         from .. import door_vents
         doors = _selected_doors(context)
@@ -2603,6 +2615,31 @@ class hb_face_frame_OT_set_door_vent(bpy.types.Operator):
         return {'FINISHED'}
 
 
+# The options dialog while it is up: what the doors had when it opened
+# (put back on cancel), and a hold while it loads its fields.
+_vent_dialog = {'before': {}, 'loading': False}
+
+
+def _vented_doors(context):
+    from .. import door_vents
+    return [d for d in _selected_doors(context) if door_vents.has_vent(d)]
+
+
+def _apply_vent_fields(self, context):
+    """Cut the dialog's size and position into the selected doors now."""
+    from .. import door_vents
+    if _vent_dialog['loading']:
+        return
+    for door in _vented_doors(context):
+        door_vents.set_vent_settings(
+            door, self.pattern_width / 3.0, self.pattern_height / 3.0,
+            self.rise)
+    screen = getattr(context, 'screen', None)
+    for area in (screen.areas if screen else ()):
+        if area.type == 'VIEW_3D':
+            area.tag_redraw()
+
+
 class hb_face_frame_OT_door_vent_options(bpy.types.Operator):
     """Size and position of the diamond vent on the selected doors"""
     bl_idname = "hb_face_frame.door_vent_options"
@@ -2613,41 +2650,54 @@ class hb_face_frame_OT_door_vent_options(bpy.types.Operator):
     bl_options = {'UNDO'}
 
     # The pattern is three diamonds wide and three tall, so the overall
-    # size is what gets typed and one diamond is a third of it.
+    # size is what gets typed and one diamond is a third of it. Each
+    # edit is cut at once, so the doors show it while the dialog is up;
+    # cancelling puts back what they had.
     pattern_width: FloatProperty(
         name="Overall Width", subtype='DISTANCE', unit='LENGTH',
-        min=0.01905, precision=4,
+        min=0.01905, precision=4, update=_apply_vent_fields,
         description="Width of the whole pattern, side point to side "
                     "point; each diamond is a third of it")  # type: ignore
     pattern_height: FloatProperty(
         name="Overall Height", subtype='DISTANCE', unit='LENGTH',
-        min=0.01905, precision=4,
+        min=0.01905, precision=4, update=_apply_vent_fields,
         description="Height of the whole pattern, top point to bottom "
                     "point; each diamond is a third of it")  # type: ignore
     rise: FloatProperty(
         name="Move Up", subtype='DISTANCE', unit='LENGTH', precision=4,
+        update=_apply_vent_fields,
         description="How far the pattern sits above the panel centre. "
                     "Negative moves it down")  # type: ignore
 
-    @staticmethod
-    def _vented(context):
-        from .. import door_vents
-        return [d for d in _selected_doors(context)
-                if door_vents.has_vent(d)]
-
     @classmethod
     def poll(cls, context):
-        return bool(cls._vented(context))
+        return bool(_vented_doors(context))
 
     def invoke(self, context, event):
         from .. import door_vents
-        doors = self._vented(context)
+        doors = _vented_doors(context)
         obj = context.active_object
         first = obj if obj in doors else doors[0]
-        width, height, self.rise = door_vents.vent_settings(first)
-        self.pattern_width = width * 3.0
-        self.pattern_height = height * 3.0
+        _vent_dialog['before'] = {d.name: door_vents.vent_settings(d)
+                                  for d in doors}
+        _vent_dialog['loading'] = True
+        try:
+            width, height, self.rise = door_vents.vent_settings(first)
+            self.pattern_width = width * 3.0
+            self.pattern_height = height * 3.0
+        finally:
+            _vent_dialog['loading'] = False
         return context.window_manager.invoke_props_dialog(self, width=280)
+
+    def check(self, context):
+        return True
+
+    def cancel(self, context):
+        from .. import door_vents
+        for name, (width, height, rise) in _vent_dialog['before'].items():
+            door = bpy.data.objects.get(name)
+            if door is not None and door_vents.has_vent(door):
+                door_vents.set_vent_settings(door, width, height, rise)
 
     def draw(self, context):
         layout = self.layout
@@ -2665,11 +2715,7 @@ class hb_face_frame_OT_door_vent_options(bpy.types.Operator):
                 system, 'LENGTH', self.pattern_height / 3.0, precision=4)))
 
     def execute(self, context):
-        from .. import door_vents
-        for door in self._vented(context):
-            door_vents.set_vent_settings(
-                door, self.pattern_width / 3.0, self.pattern_height / 3.0,
-                self.rise)
+        _apply_vent_fields(self, context)
         return {'FINISHED'}
 
 

@@ -6962,6 +6962,9 @@ class hb_closets_OT_accessory_prompts(bpy.types.Operator):
             box.label(text="It keeps the space it was given until it "
                            "is deleted.")
             return
+        if not acc_def.custom and acc_def.label:
+            # Which accessory this is: the fields alone do not say.
+            layout.label(text=acc_def.label)
         col = layout.column(align=True)
         if acc_def.custom:
             col.prop(self, 'custom_name')
@@ -9444,6 +9447,11 @@ class hb_closets_OT_corner_opening_config(bpy.types.Operator):
                ('LOCK', "Lock Shelves", ""),
                ('ROD', "Hanging Rod", ""),
                ('DOUBLE', "Double Hang", "")])  # type: ignore
+    # One more adjustable shelf: the first into an opening that holds
+    # anything else, rather than the one a foot the opening is dealt.
+    add_shelf: bpy.props.BoolProperty(
+        name="Add One Shelf", default=False,
+        options={'HIDDEN', 'SKIP_SAVE'})  # type: ignore
 
     @classmethod
     def poll(cls, context):
@@ -9453,6 +9461,16 @@ class hb_closets_OT_corner_opening_config(bpy.types.Operator):
         root = _corner_root(context)
         cfg = types_closets.corner_opening_cfg(
             root, _corner_opening_of(context))
+        if self.add_shelf:
+            qty = (int(cfg.l_shelf_qty) + 1 if cfg.l_interior == 'ADJ'
+                   else 1)
+            # Written under the update first, so taking shelves does
+            # not deal the opening its count by height.
+            cfg['l_shelf_qty'] = max(1, min(12, qty))
+            cfg.l_interior = 'ADJ'
+            _apply_finish(root)
+            _redraw_viewports(context)
+            return {'FINISHED'}
         cfg.l_interior = self.interior
         _apply_finish(root)
         _redraw_viewports(context)

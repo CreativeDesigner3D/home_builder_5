@@ -51,6 +51,11 @@ class hb_face_frame_OT_draw_cabinet(bpy.types.Operator):
         if self.cabinet_name == "Corbel":
             bpy.ops.hb_face_frame.place_corbel('INVOKE_DEFAULT')
             return {'FINISHED'}
+        # A steel bracket picks its shape, then goes on the cabinets
+        # clicked.
+        if self.cabinet_name == "Steel Bracket":
+            bpy.ops.hb_face_frame.place_steel_support('INVOKE_DEFAULT')
+            return {'FINISHED'}
         # A tambour is drawn by clicking its ends and its bow.
         if self.cabinet_name == "Tambour":
             bpy.ops.hb_face_frame.draw_tambour('INVOKE_DEFAULT')
@@ -254,13 +259,113 @@ def _bay_count(root):
                if c.get(types_face_frame.TAG_BAY_CAGE))
 
 
+class _BreakOptions:
+    """What the three break commands ask before they cut: whether the
+    picked bay keeps its width, and whether fronts cover the joint."""
+
+    keep_width: bpy.props.BoolProperty(
+        name="Keep This Bay's Width",
+        description="Hold the picked bay at its width and take the room "
+                    "for the two new stiles from the other bays. Off, "
+                    "every bay gives up the same amount",
+        default=False)  # type: ignore
+    cover: bpy.props.EnumProperty(
+        name="Fronts Cover The Break",
+        description="Widen one bay's fronts so they run across both new "
+                    "stiles and the joint reads like a mid stile",
+        items=[
+            ('OFF', "Off", "Leave the fronts on their own stiles"),
+            ('PICKED', "This Bay",
+             "The picked bay's fronts reach across the break"),
+            ('NEIGHBOR', "Next Bay",
+             "The fronts of the bay on the other side of the break "
+             "reach across it"),
+        ],
+        default='OFF')  # type: ignore
+    cover_fronts: bpy.props.EnumProperty(
+        name="Fronts",
+        description="Which fronts of the covering bay reach across",
+        items=[
+            ('BOTH', "Doors and Drawers", "Every front along the break"),
+            ('DOORS', "Doors", "Doors and pullouts only"),
+            ('DRAWERS', "Drawers",
+             "Drawer fronts, false fronts and tilt-outs only"),
+        ],
+        default='BOTH')  # type: ignore
+    cover_hinge: bpy.props.EnumProperty(
+        name="Hinge",
+        description="The side a covering single door is hinged on",
+        items=[
+            ('KEEP', "As It Is", "Leave the door's hinge side alone"),
+            ('LEFT', "Left", "Hinge the covering door on its left"),
+            ('RIGHT', "Right", "Hinge the covering door on its right"),
+        ],
+        default='KEEP')  # type: ignore
+    cover_amount: bpy.props.FloatProperty(
+        name="Overlay",
+        description="How far the covering fronts lap past their opening "
+                    "on the break side. 0 works it out from the stiles "
+                    "and the style's gap between fronts",
+        default=0.0, min=0.0, unit='LENGTH', precision=4)  # type: ignore
+
+    def invoke(self, context, event):
+        return context.window_manager.invoke_props_dialog(self, width=320)
+
+    def draw(self, context):
+        from .. import break_cover
+        layout = self.layout
+        layout.use_property_split = True
+        layout.use_property_decorate = False
+        layout.prop(self, 'keep_width')
+        _bay, root = _find_active_bay_and_root(context)
+        props = root.face_frame_cabinet if root is not None else None
+        if props is not None and not break_cover.can_cover(props):
+            layout.label(text="Inset fronts cannot cover a break",
+                         icon='INFO')
+            return
+        layout.prop(self, 'cover')
+        if self.cover == 'OFF':
+            return
+        col = layout.column()
+        col.prop(self, 'cover_fronts')
+        col.prop(self, 'cover_hinge')
+        col.prop(self, 'cover_amount')
+        if self.cover_amount <= 0.0 and props is not None:
+            from ....units import unit_to_string
+            butt = (types_face_frame._resolve_style_stile_width(
+                root, props, 'butt_stile') or props.bay_mid_stile_width)
+            col.label(text="Automatic: %s" % unit_to_string(
+                context.scene.unit_settings,
+                break_cover.planned_amount(props, butt)))
+
+    def _cover_joints(self, joints):
+        """joints: (picked cabinet, its break side, the neighbor) for
+        each break made. Applies the cover chosen; returns how many
+        fronts were widened."""
+        if self.cover == 'OFF':
+            return 0
+        from .. import break_cover
+        count = 0
+        for picked, side, neighbor in joints:
+            if self.cover == 'PICKED':
+                cover_root, cover_side, other = picked, side, neighbor
+            else:
+                cover_root, other = neighbor, picked
+                cover_side = 'left' if side == 'right' else 'right'
+            count += len(break_cover.apply(
+                cover_root, cover_side, other, fronts=self.cover_fronts,
+                hinge=self.cover_hinge, amount=self.cover_amount))
+        return count
+
+
 # ---------------------------------------------------------------------------
 # Operators: break a cabinet at gaps adjacent to the active bay
 # ---------------------------------------------------------------------------
-class hb_face_frame_OT_break_cabinet_left(bpy.types.Operator):
+class hb_face_frame_OT_break_cabinet_left(_BreakOptions, bpy.types.Operator):
     """Break the cabinet at the gap to the left of the active bay.
     The active bay becomes the leftmost bay of the new right-side
-    cabinet; its width is locked so it holds through the recalc.
+    cabinet. The two new stiles take their room from every unlocked
+    bay alike, or from the others only when the bay's width is kept.
     """
     bl_idname = "hb_face_frame.break_cabinet_left"
     bl_label = "Break Left"
@@ -283,19 +388,22 @@ class hb_face_frame_OT_break_cabinet_left(bpy.types.Operator):
         if bay_index <= 0:
             self.report({'WARNING'}, "Active bay is the first bay")
             return {'CANCELLED'}
-        bay.face_frame_bay.unlock_width = True
+        if self.keep_width:
+            bay.face_frame_bay.unlock_width = True
         new_root = types_face_frame.break_cabinet_at_gap(root, bay_index - 1)
         if new_root is None:
             self.report({'ERROR'}, "Break failed")
             return {'CANCELLED'}
+        self._cover_joints([(new_root, 'left', root)])
         return {'FINISHED'}
 
 
-class hb_face_frame_OT_break_cabinet_right(bpy.types.Operator):
+class hb_face_frame_OT_break_cabinet_right(_BreakOptions, bpy.types.Operator):
     """Break the cabinet at the gap to the right of the active bay.
     The active bay stays as the rightmost bay of the (modified)
-    original cabinet; its width is locked so it holds through the
-    recalc.
+    original cabinet. The two new stiles take their room from every
+    unlocked bay alike, or from the others only when the bay's width
+    is kept.
     """
     bl_idname = "hb_face_frame.break_cabinet_right"
     bl_label = "Break Right"
@@ -318,19 +426,22 @@ class hb_face_frame_OT_break_cabinet_right(bpy.types.Operator):
         if bay_index >= _bay_count(root) - 1:
             self.report({'WARNING'}, "Active bay is the last bay")
             return {'CANCELLED'}
-        bay.face_frame_bay.unlock_width = True
+        if self.keep_width:
+            bay.face_frame_bay.unlock_width = True
         new_root = types_face_frame.break_cabinet_at_gap(root, bay_index)
         if new_root is None:
             self.report({'ERROR'}, "Break failed")
             return {'CANCELLED'}
+        self._cover_joints([(root, 'right', new_root)])
         return {'FINISHED'}
 
 
-class hb_face_frame_OT_break_cabinet_both(bpy.types.Operator):
+class hb_face_frame_OT_break_cabinet_both(_BreakOptions, bpy.types.Operator):
     """Break the cabinet on both sides of the active bay so the
     active bay becomes its own single-bay cabinet. On a first or
-    last bay, only the applicable side breaks. The active bay's
-    width is locked so it holds through the recalcs.
+    last bay, only the applicable side breaks. The new stiles take
+    their room from every unlocked bay alike, or from the others only
+    when the bay's width is kept.
     """
     bl_idname = "hb_face_frame.break_cabinet_both"
     bl_label = "Break Both"
@@ -357,25 +468,55 @@ class hb_face_frame_OT_break_cabinet_both(bpy.types.Operator):
             self.report({'WARNING'}, "Cabinet has only one bay")
             return {'CANCELLED'}
         bay_index = bay.face_frame_bay.bay_index
-        bay.face_frame_bay.unlock_width = True
+        if self.keep_width:
+            bay.face_frame_bay.unlock_width = True
         # Break right first so the original keeps the active bay; the
         # subsequent break-left then operates on the modified original.
-        # Each break sends its extra width AWAY from the active bay so
-        # both outer cabinets absorb exactly one boundary's worth and
-        # come out the same size (a balanced split would double up on
-        # the left: the right break's left-half share can't land on
-        # the locked active bay, and the left break's right half IS
-        # the locked bay, pushing its whole share left).
+        # With the bay's width kept, each break sends its extra width
+        # AWAY from the active bay so both outer cabinets absorb exactly
+        # one boundary's worth and come out the same size (a balanced
+        # split would double up on the left: the right break's left-half
+        # share can't land on the locked active bay, and the left
+        # break's right half IS the locked bay, pushing its whole share
+        # left).
+        both = 0 < bay_index < count - 1
+        right_side = 'RIGHT' if self.keep_width else 'AUTO'
+        left_side = 'LEFT' if self.keep_width else 'AUTO'
+        right_share = None
+        if both and not self.keep_width:
+            # Two breaks, two boundaries' worth, shared by every
+            # unlocked bay alike: the right cabinet is not touched by
+            # the second break, so the first hands it its whole part.
+            ordered = sorted(
+                (c for c in root.children
+                 if c.get(types_face_frame.TAG_BAY_CAGE)),
+                key=lambda c: c.face_frame_bay.bay_index)
+            free = [not b.face_frame_bay.unlock_width for b in ordered]
+            if any(free):
+                right_share = (2.0 * sum(free[bay_index + 1:])
+                               / sum(free))
+        # The cabinet the picked bay ends up in, and the one each side.
+        picked, right_of, left_of = root, None, None
         if bay_index < count - 1:
-            if types_face_frame.break_cabinet_at_gap(
-                    root, bay_index, shrink_side='RIGHT') is None:
+            right_of = types_face_frame.break_cabinet_at_gap(
+                root, bay_index, shrink_side=right_side,
+                right_share=right_share)
+            if right_of is None:
                 self.report({'ERROR'}, "Break (right) failed")
                 return {'CANCELLED'}
         if bay_index > 0:
-            if types_face_frame.break_cabinet_at_gap(
-                    root, bay_index - 1, shrink_side='LEFT') is None:
+            picked = types_face_frame.break_cabinet_at_gap(
+                root, bay_index - 1, shrink_side=left_side)
+            if picked is None:
                 self.report({'ERROR'}, "Break (left) failed")
                 return {'CANCELLED'}
+            left_of = root
+        joints = []
+        if left_of is not None:
+            joints.append((picked, 'left', left_of))
+        if right_of is not None:
+            joints.append((picked, 'right', right_of))
+        self._cover_joints(joints)
         return {'FINISHED'}
 
 
@@ -2327,6 +2468,8 @@ _FRONT_PROPS = (
     'lift_up_servo',
     'door_look_divisions', 'door_look_direction', 'door_look_top_height',
     'drawer_look_divisions',
+    'drawer_split_look', 'drawer_split_stile_width',
+    'drawer_split_groove_width', 'drawer_split_groove_depth',
     'drawer_box_construction', 'drawer_box_construction_label',
     'drawer_slides', 'drawer_slides_label',
 )
@@ -3386,6 +3529,56 @@ class hb_face_frame_OT_add_interior_item(bpy.types.Operator):
         root = types_face_frame.find_cabinet_root(target)
         if root is not None:
             types_face_frame.recalculate_face_frame_cabinet(root)
+        return {'FINISHED'}
+
+
+class hb_face_frame_OT_set_picked_interiors(bpy.types.Operator):
+    """Give every picked opening the same interior in one step: what
+    was inside each is replaced by one item of the chosen kind. An
+    opening whose interior is split into regions is left as it is.
+    """
+    bl_idname = "hb_face_frame.set_picked_interiors"
+    bl_label = "Set Interior of Picked Openings"
+    bl_description = (
+        "Replace the interior of every selected opening with this item"
+    )
+    bl_options = {'UNDO'}
+
+    kind: bpy.props.EnumProperty(
+        name="Kind",
+        items=props_hb_face_frame.Face_Frame_Interior_Item.INTERIOR_KIND_ITEMS,
+        default='ROLLOUT',
+    )  # type: ignore
+
+    def execute(self, context):
+        openings = [o for o in context.selected_objects
+                    if o.get(types_face_frame.TAG_OPENING_CAGE)]
+        roots, done, skipped = [], 0, 0
+        for opening in openings:
+            target_props = _interior_items_target(opening)
+            if target_props is None:
+                skipped += 1
+                continue
+            target_props.interior_items.clear()
+            item = target_props.interior_items.add()
+            item.kind = self.kind
+            if self.kind == 'ROLLOUT':
+                types_face_frame.seed_rollout_boxes(
+                    item, _read_cage_dims(opening)['cage_dim_z'])
+            target_props.interior_items_index = 0
+            done += 1
+            root = types_face_frame.find_cabinet_root(opening)
+            if root is not None and root not in roots:
+                roots.append(root)
+        if not done:
+            self.report({'WARNING'}, "Select the openings to change first")
+            return {'CANCELLED'}
+        for root in roots:
+            types_face_frame.recalculate_face_frame_cabinet(root)
+        if skipped:
+            self.report({'INFO'},
+                        "%d changed; %d with a split interior left as is"
+                        % (done, skipped))
         return {'FINISHED'}
 
 
@@ -4760,6 +4953,22 @@ class hb_face_frame_OT_add_pullout_accessory(bpy.types.Operator):
             return {'CANCELLED'}
 
         code = "" if self.product in ('NONE', '') else self.product
+        # A model made for a wider opening is refused, not just flagged:
+        # the dialog shows the minimum, but OK used to apply it anyway.
+        item = accessory_registry.lookup(_PULLOUT_HOST, code) if code else None
+        mw = item.get('min_opening_w') if item else None
+        if mw is not None:
+            for opening_obj in openings:
+                ow = (meter_to_inch(self.opening_width)
+                      if self.opening_width > 0.0
+                      else _opening_width_in(opening_obj))
+                if ow is not None and ow + 1e-6 < mw:
+                    self.report(
+                        {'ERROR'},
+                        '%s needs a %g" opening; this one is %g". Widen '
+                        'the opening or pick another model'
+                        % (item.get('name', code), mw, round(ow, 3)))
+                    return {'CANCELLED'}
         with types_face_frame.suspend_recalc():
             for opening_obj in openings:
                 op_props = opening_obj.face_frame_opening
@@ -8146,6 +8355,7 @@ classes = (
     hb_face_frame_OT_split_opening,
     hb_face_frame_OT_mid_stile_prompts,
     hb_face_frame_OT_add_interior_item,
+    hb_face_frame_OT_set_picked_interiors,
     hb_face_frame_OT_remove_interior_item,
     hb_face_frame_OT_apply_shelf_nosing_to_room,
     hb_face_frame_OT_add_rollout_box,

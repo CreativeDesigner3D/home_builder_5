@@ -846,6 +846,7 @@ def rebuild_level(scene, level):
     # one over this level where the level above is set back from it
     build_ledge(scene, level)
     build_ledge(scene, level_above(scene.hb_house, level))
+    remember_markers(level)
     return len(claimed)
 
 
@@ -1139,7 +1140,53 @@ def stair_opening_rects(stair, level):
     # air, bar where it comes up through a porch or balcony
     floors = _upper_floors(stair, level)
     rects = [r for r in rects if any(_rect_overlaps(r, p) for p in floors)]
+    rects = _arc_opening(stair, rects)
     return _widen_opening(stair, level, rects)
+
+
+def _stair_arrival(stair):
+    """Where the top flight comes up onto the floor above, in the stair's
+    own space: (the way it is climbing there, as an axis; how far that way
+    its top tread reaches; that tread's span across) - or None."""
+    mesh = stair.data
+    tops = sorted(((max(mesh.vertices[i].co.z for i in p.vertices), p)
+                   for p in mesh.polygons if p.normal.z > 0.9), key=lambda t: t[0])
+    if len(tops) < 2:
+        return None
+    top, below = tops[-1][1], tops[-2][1]
+    d = (top.center - below.center).to_2d()
+    co = [mesh.vertices[i].co for i in top.vertices]
+    xs, ys = [c.x for c in co], [c.y for c in co]
+    if abs(d.x) >= abs(d.y):
+        return ((1, 0) if d.x > 0 else (-1, 0), max(xs) if d.x > 0 else min(xs), (min(ys), max(ys)))
+    return ((0, 1) if d.y > 0 else (0, -1), max(ys) if d.y > 0 else min(ys), (min(xs), max(xs)))
+
+
+def _arc_opening(stair, rects):
+    """A curved or spiral stair's opening: one rectangle round the treads
+    that need it, as such an opening is framed - not the stepped outline
+    of every tread's own rectangle, which no floor is cut to and no guard
+    rail can follow. It stops where the top tread steps off, so the floor
+    comes up to that tread."""
+    from . import hb_stairs, hb_stair_shapes as shapes
+    if not rects or not shapes.is_arc(hb_stairs.values(stair)):
+        return rects
+    x0, y0 = min(r[0] for r in rects), min(r[1] for r in rects)
+    x1, y1 = max(r[2] for r in rects), max(r[3] for r in rects)
+    arrive = _stair_arrival(stair)
+    if arrive is not None:
+        (dx, dy), at, _span = arrive
+        if dx > 0:
+            x1 = min(x1, at)
+        elif dx < 0:
+            x0 = max(x0, at)
+        elif dy > 0:
+            y1 = min(y1, at)
+        else:
+            y0 = max(y0, at)
+    if x1 - x0 < 1e-3 or y1 - y0 < 1e-3:
+        return rects
+    return [(x0, y0, x1, y1)]
 
 
 def _upper_floors(stair, level):
@@ -1560,21 +1607,29 @@ def _guard_material():
 def _guard_edges(stair, level, edges):
     """The opening's edges a guard goes along: not the one the top flight
     arrives over, nor one running along a wall of the floor above."""
-    mesh = stair.data
-    tops = sorted(((max(mesh.vertices[i].co.z for i in p.vertices), p)
-                   for p in mesh.polygons if p.normal.z > 0.9), key=lambda t: t[0])
-    arrive = None
-    if len(tops) >= 2:
-        top, below = tops[-1][1], tops[-2][1]
-        c1, c0 = top.center, below.center
-        d = (c1 - c0).to_2d()
-        co = [mesh.vertices[i].co for i in top.vertices]
-        if abs(d.x) >= abs(d.y):
-            arrive = ((1, 0) if d.x > 0 else (-1, 0),
-                      max(c.x for c in co) if d.x > 0 else min(c.x for c in co))
-        else:
-            arrive = ((0, 1) if d.y > 0 else (0, -1),
-                      max(c.y for c in co) if d.y > 0 else min(c.y for c in co))
+    arrive = _stair_arrival(stair)
+    # The side the top flight comes up over is left open only as wide as
+    # its top tread: the rest of that side (a spiral's, whose opening is
+    # wider than its last tread) is guarded like any other
+    split = []
+    for a, b, n in edges:
+        if arrive is None or n != arrive[0]:
+            split.append((a, b, n))
+            continue
+        k = 1 if n[0] != 0 else 0           # the axis the edge runs along
+        if abs(a[1 - k] - arrive[1]) > 1e-4:
+            split.append((a, b, n))
+            continue
+        lo, hi = arrive[2]
+        for p0, p1 in ((a, b),):
+            s0, s1 = sorted((p0[k], p1[k]))
+            for t0, t1 in ((s0, min(lo, s1)), (max(hi, s0), s1)):
+                if t1 - t0 > inch(6):
+                    q0, q1 = list(p0), list(p1)
+                    q0[k], q1[k] = (t0, t1) if p0[k] <= p1[k] else (t1, t0)
+                    split.append((tuple(q0), tuple(q1), n))
+    edges = split
+    arrive = None                           # dealt with above
     from .operators import walls
     upper = level_above(level.id_data.hb_house, level)
     scene = hb_house.house_scene_of(stair.users_scene[0]) if stair.users_scene else None
@@ -1646,13 +1701,25 @@ def update_stair_guard(stair, level, edges=None):
             j = (i + 1) % 4
             bm.faces.new((bottom[i], bottom[j], top[j], top[i]))
 
+    def turns(point, n):
+        """The normal of another guarded edge that meets this one at a
+        corner of the opening, or (0, 0)."""
+        for a2, b2, n2 in kept:
+            if n2 != n and any(abs(q[0] - point[0]) < 1e-4 and abs(q[1] - point[1]) < 1e-4
+                               for q in (a2, b2)):
+                return n2
+        return (0.0, 0.0)
+
     posts = set()
     rail_top = rise + height
+    half = GUARD_POST / 2.0
     for a, b, n in kept:
-        # Stand just off the opening, on the floor
-        off = (n[0] * GUARD_POST / 2.0, n[1] * GUARD_POST / 2.0)
-        ax, ay = a[0] + off[0], a[1] + off[1]
-        bx, by = b[0] + off[0], b[1] + off[1]
+        # Stand just off the opening, on the floor. Where the guard turns a
+        # corner the two sides share one post, off the opening both ways,
+        # and each side's rails run to it.
+        na, nb = turns(a, n), turns(b, n)
+        ax, ay = a[0] + (n[0] + na[0]) * half, a[1] + (n[1] + na[1]) * half
+        bx, by = b[0] + (n[0] + nb[0]) * half, b[1] + (n[1] + nb[1]) * half
         length = ((bx - ax) ** 2 + (by - ay) ** 2) ** 0.5
         if length < 1e-4:
             continue
@@ -2018,6 +2085,116 @@ class HOME_BUILDER_OT_go_to_house(bpy.types.Operator):
         return {'FINISHED'}
 
 
+# ---- Moved by hand ------------------------------------------------------------------
+# A room's marker moved into another area (G) takes the room with it: once
+# the marker has come to rest, and no tool is still running, its level's
+# rooms are found again.
+
+_marker_at = {}         # marker name -> (x, y) its level's rooms were last found with
+_marker_moved = {}      # marker name -> (x, y) when last seen moving
+
+
+def _xy(obj):
+    return (round(obj.location.x, 5), round(obj.location.y, 5))
+
+
+def remember_markers(level):
+    """The markers are where the rooms were found with them."""
+    for room in level.rooms:
+        if room.marker is not None:
+            _marker_at[room.marker.name] = _xy(room.marker)
+            _marker_moved.pop(room.marker.name, None)
+
+
+@bpy.app.handlers.persistent
+def _remember_all_markers(_dummy=None):
+    _marker_at.clear()
+    _marker_moved.clear()
+    for scene in bpy.data.scenes:
+        if scene.get(hb_house.HOUSE_SCENE_KEY):
+            for level in scene.hb_house.levels:
+                remember_markers(level)
+
+
+@bpy.app.handlers.persistent
+def _marker_depsgraph_post(scene, depsgraph):
+    for u in depsgraph.updates:
+        obj = u.id
+        if not (isinstance(obj, bpy.types.Object) and u.is_updated_transform
+                and obj.get(MARKER_KEY)):
+            continue
+        at = _marker_at.get(obj.name)
+        if at is None:
+            _marker_at[obj.name] = _xy(obj)         # first seen: nothing to compare with
+        elif at != _xy(obj):
+            _marker_moved[obj.name] = _xy(obj)
+    if _marker_moved and not bpy.app.timers.is_registered(_markers_settled):
+        bpy.app.timers.register(_markers_settled, first_interval=0.3)
+
+
+def _make_way(scene, level, moved):
+    """A marker moved into an area that has a room: that room goes to
+    where the marker came from, so the two swap - else the older room
+    would keep the area and the one just moved be left without one."""
+    from .operators import walls
+    walls._update_scene(scene)
+    _objs, segs = walls.level_wall_segs(scene, level.uid)
+    areas = hb_wall_graph.find_rooms(segs)
+    inside = hb_wall_graph.point_in_polygon
+    movers = {obj.name for obj, _old in moved}
+    for obj, old in moved:
+        here = (obj.location.x, obj.location.y)
+        target = next((a for a in areas if inside(here, a.polygon)), None)
+        if target is None:
+            continue
+        for room in level.rooms:
+            other = room.marker
+            if other is None or other.name in movers or room.orphaned:
+                continue
+            if inside((other.location.x, other.location.y), target.polygon):
+                other.location.x, other.location.y = old
+                break
+
+
+def _markers_settled():
+    if hb_house._modal_running():
+        return 0.3              # still being moved
+    levels = {}                 # level uid -> [(marker, where it came from)]
+    for name, xy in list(_marker_moved.items()):
+        obj = bpy.data.objects.get(name)
+        if obj is None:
+            del _marker_moved[name]
+            continue
+        if _xy(obj) != xy:
+            _marker_moved[name] = _xy(obj)
+            return 0.3          # still moving
+        del _marker_moved[name]
+        if _marker_at.get(name) != xy:
+            levels.setdefault(obj.get(hb_house.LEVEL_KEY), []).append(
+                (obj, _marker_at[name]))
+    scene = hb_house.get_house_scene()
+    rebuilt = False
+    for uid, moved in levels.items():
+        level = hb_house.get_level(uid)
+        if scene is None or level is None:
+            continue
+        try:
+            _make_way(scene, level, moved)
+            rebuild_level(scene, level)
+            rebuilt = True
+        except Exception as e:
+            print(f"room rebuild: {e}")
+    if rebuilt:
+        # Its own undo step: the move's step was taken before the rebuild
+        try:
+            wm = bpy.context.window_manager
+            with bpy.context.temp_override(window=wm.windows[0]):
+                bpy.ops.ed.undo_push(message="Rebuild Rooms")
+        except Exception:
+            pass
+    return 0.3 if _marker_moved else None
+
+
 classes = (
     HOME_BUILDER_OT_rebuild_rooms,
     HOME_BUILDER_OT_select_room,
@@ -2032,6 +2209,10 @@ def register():
         bpy.utils.register_class(cls)
     _label_handle = bpy.types.SpaceView3D.draw_handler_add(
         draw_room_labels, (), 'WINDOW', 'POST_PIXEL')
+    if _marker_depsgraph_post not in bpy.app.handlers.depsgraph_update_post:
+        bpy.app.handlers.depsgraph_update_post.append(_marker_depsgraph_post)
+    if _remember_all_markers not in bpy.app.handlers.load_post:
+        bpy.app.handlers.load_post.append(_remember_all_markers)
 
 
 def unregister():
@@ -2040,5 +2221,11 @@ def unregister():
         bpy.types.SpaceView3D.draw_handler_remove(_label_handle, 'WINDOW')
         _label_handle = None
     _label_fonts = None
+    if _marker_depsgraph_post in bpy.app.handlers.depsgraph_update_post:
+        bpy.app.handlers.depsgraph_update_post.remove(_marker_depsgraph_post)
+    if _remember_all_markers in bpy.app.handlers.load_post:
+        bpy.app.handlers.load_post.remove(_remember_all_markers)
+    if bpy.app.timers.is_registered(_markers_settled):
+        bpy.app.timers.unregister(_markers_settled)
     for cls in reversed(classes):
         bpy.utils.unregister_class(cls)

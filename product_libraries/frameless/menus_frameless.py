@@ -64,7 +64,8 @@ class HOME_BUILDER_MT_applied_end_commands(bpy.types.Menu):
         layout.operator("hb_frameless.remove_applied_end", text="Remove Applied End")
 
 
-def _draw_finish_conditions(layout, side, sides_label=None, panels=True):
+def _draw_finish_conditions(layout, side, sides_label=None, panels=True,
+                            auto=False):
     from .operators import ops_finished_ends
     if sides_label:
         layout.label(text=sides_label)
@@ -74,6 +75,19 @@ def _draw_finish_conditions(layout, side, sides_label=None, panels=True):
         op = layout.operator("hb_frameless.set_finish_condition", text=name)
         op.side = side
         op.condition = ident
+    if auto:
+        layout.operator("hb_frameless.auto_finish_condition",
+                        text="Automatic").side = side
+
+
+def _draw_bottom_finish(layout, side, label):
+    """An upper's underside: the bottom itself unfinished or finished,
+    or a panel of finished stock applied under it."""
+    from .operators import ops_finished_ends
+    _draw_finish_conditions(layout, side, label, panels=False)
+    for ident, name, _desc in ops_finished_ends.FINISHED_BOTTOM_PANELS:
+        layout.operator("hb_frameless.set_finished_bottom_panel",
+                        text=name).panel = ident
 
 
 class HOME_BUILDER_MT_finish_condition(bpy.types.Menu):
@@ -84,9 +98,13 @@ class HOME_BUILDER_MT_finish_condition(bpy.types.Menu):
         layout = self.layout
         for side, label in (('LEFT', "Left End:"), ('RIGHT', "Right End:"),
                             ('BACK', "Back:")):
-            _draw_finish_conditions(layout, side, label)
+            _draw_finish_conditions(layout, side, label, auto=True)
             layout.separator()
         _draw_finish_conditions(layout, 'TOP', "Top:", panels=False)
+        from .operators import ops_finished_ends
+        if ops_finished_ends.finished_bottom_cabinets(context):
+            layout.separator()
+            _draw_bottom_finish(layout, 'BOTTOM', "Bottom:")
 
 
 class HOME_BUILDER_MT_carcass_part_commands(bpy.types.Menu):
@@ -101,9 +119,13 @@ class HOME_BUILDER_MT_carcass_part_commands(bpy.types.Menu):
         obj = context.object
         side = ops_finished_ends.FINISH_ROLE_SIDES.get(
             obj.get(solver_frameless.PART_ROLE_KEY)) if obj else None
-        if side is not None:
+        if side == 'BOTTOM' and ops_finished_ends.takes_finished_bottom(obj.parent):
+            _draw_bottom_finish(layout, 'PART', "Bottom Finish:")
+            layout.separator()
+        elif side is not None:
             _draw_finish_conditions(layout, 'PART', side.title() + " Finish:",
-                                    panels=side in ops_finished_ends.PANEL_SIDES)
+                                    panels=side in ops_finished_ends.PANEL_SIDES,
+                                    auto=side in ('LEFT', 'RIGHT', 'BACK'))
             layout.separator()
         layout.operator("hb_frameless.cabinet_prompts", text="Cabinet Prompts")
         layout.operator("hb_frameless.finish_interior", text="Finish Interior")
@@ -120,6 +142,7 @@ class HOME_BUILDER_MT_cabinet_commands(bpy.types.Menu):
             layout.operator("hb_frameless.applied_end_prompts", text="End Panel Options...")
         layout.operator("hb_frameless.cabinet_prompts", text="Cabinet Prompts")
         layout.operator("hb_frameless.adjust_multiple_cabinet_widths", text="Adjust Cabinet Sizes")
+        layout.operator("hb_frameless.equalize_cabinet_widths", text="Equal Widths")
         layout.operator("hb_frameless.duplicate_cabinet", text="Duplicate Cabinet",
                         icon='DUPLICATE')
         layout.operator("home_builder.copy_cabinet", text="Copy Cabinet",

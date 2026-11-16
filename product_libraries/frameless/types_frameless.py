@@ -1408,6 +1408,166 @@ def _set_side_notch(side_obj, notched):
         side_obj.modifiers.remove(mod)
 
 
+def upper_height_keeps_top(cabinet_obj):
+    """Whether a new height on this cabinet leaves its top where it is.
+    Only uppers: everything else stands on the floor."""
+    if cabinet_obj.get('CABINET_TYPE') != 'UPPER':
+        return False
+    scene = hb_project.get_settings_scene()
+    props = getattr(scene, 'hb_frameless', None)
+    return getattr(props, 'upper_height_anchor', 'TOP') == 'TOP'
+
+
+def set_cabinet_height(cabinet_obj, height):
+    """Give a cabinet a new height. An upper keeps its top or its bottom
+    in place, by the room's Upper Height Keeps setting."""
+    cage = GeoNodeCage(cabinet_obj)
+    old = cage.get_input('Dim Z')
+    cage.set_input('Dim Z', height)
+    if abs(height - old) > 1e-7 and upper_height_keeps_top(cabinet_obj):
+        cabinet_obj.location.z -= height - old
+        bpy.context.view_layer.update()
+
+
+def cabinet_top_off_floor(cabinet_obj):
+    """How high the top of a cabinet is above the floor."""
+    return (cabinet_obj.matrix_world.translation.z
+            + GeoNodeCage(cabinet_obj).get_input('Dim Z'))
+
+
+def set_cabinet_top_off_floor(cabinet_obj, value):
+    """Move a cabinet up or down so its top sits at this height."""
+    dz = float(value) - cabinet_top_off_floor(cabinet_obj)
+    if abs(dz) > 1e-7:
+        cabinet_obj.location.z += dz
+        bpy.context.view_layer.update()
+
+
+# The least an opening that houses an appliance leaves for the doors over
+# it, and the smallest it can be typed down to.
+APPLIANCE_OPENING_MIN_OVER = inch(3.0)
+APPLIANCE_OPENING_MIN = inch(6.0)
+
+
+def _blind_bay(cabinet_obj):
+    """The bay of a blind corner cabinet (its door opening), or None."""
+    if not cabinet_obj.get('IS_BLIND_CORNER'):
+        return None
+    for child in cabinet_obj.children:
+        if (child.get('IS_FRAMELESS_BAY_CAGE')
+                and solver_frameless.BLIND_SPAN_KEY in child):
+            return child
+    return None
+
+
+def blind_opening_width(cabinet_obj):
+    """Width of the door opening a blind corner keeps beside its blind
+    panel, or None for any other cabinet."""
+    bay = _blind_bay(cabinet_obj)
+    if bay is None:
+        return None
+    try:
+        return float(GeoNodeCage(bay).get_input('Dim X'))
+    except Exception:
+        return None
+
+
+def set_blind_opening_width(cabinet_obj, width):
+    """Make a blind corner's door opening this wide. The cabinet keeps
+    its width: the blind panel gives up or takes the difference, the
+    opening held between the solver's minimum and the full inside."""
+    bay = _blind_bay(cabinet_obj)
+    current = blind_opening_width(cabinet_obj)
+    if bay is None or current is None:
+        return False
+    span = float(bay[solver_frameless.BLIND_SPAN_KEY])
+    inner = current + span
+    width = min(max(float(width), solver_frameless.BLIND_MIN_DOOR_OPENING),
+                inner)
+    if abs(width - current) < 1e-7:
+        return False
+    cabinet_obj['Blind Width'] = max(inner - width, 0.0)
+    return True
+
+
+def appliance_opening(cabinet_obj):
+    """The opening of a refrigerator, column or laundry cabinet that
+    houses the appliance, or None."""
+    for child in cabinet_obj.children_recursive:
+        if child.get('APPLIANCE_OPENING'):
+            return child
+    return None
+
+
+def appliance_opening_size(cabinet_obj):
+    """(width, height) of the cabinet's appliance opening, or None."""
+    opening = appliance_opening(cabinet_obj)
+    if opening is None:
+        return None
+    try:
+        cage = GeoNodeCage(opening)
+        return float(cage.get_input('Dim X')), float(cage.get_input('Dim Z'))
+    except Exception:
+        return None
+
+
+def _appliance_opening_prompt(opening):
+    """(calculator, prompt) holding the appliance opening's height."""
+    splitter = opening.parent
+    index = opening.get(solver_frameless.SPLIT_INDEX_KEY)
+    if splitter is None or index is None:
+        return None, None
+    calc = solver_frameless.splitter_calculator(splitter)
+    if calc is None:
+        return None, None
+    return calc, calc.get_calculator_prompt('Opening %d Height' % int(index))
+
+
+def set_appliance_opening_width(cabinet_obj, width):
+    """Make the appliance opening this wide: the cabinet takes up the
+    difference, so its sides stay as they are."""
+    size = appliance_opening_size(cabinet_obj)
+    if size is None:
+        return False
+    delta = max(float(width), APPLIANCE_OPENING_MIN) - size[0]
+    if abs(delta) < 1e-7:
+        return False
+    cage = GeoNodeCage(cabinet_obj)
+    cage.set_input('Dim X', cage.get_input('Dim X') + delta)
+    return True
+
+
+def set_appliance_opening_height(cabinet_obj, height):
+    """Make the appliance opening this high. The cabinet keeps its
+    height: the opening over it gives up or takes the difference, down to
+    a small minimum."""
+    opening = appliance_opening(cabinet_obj)
+    if opening is None:
+        return False
+    calc, prompt = _appliance_opening_prompt(opening)
+    if prompt is None:
+        return False
+    splitter = opening.parent
+    try:
+        total = float(GeoNodeCage(splitter).get_input('Dim Z'))
+    except Exception:
+        return False
+    boards = sum(1 for (role, _i) in solver_frameless.split_parts(splitter)
+                 if role == 'SPLITTER')
+    thickness = float(splitter.get('Material Thickness', inch(0.75)))
+    others = [p for p in calc.prompts if p.name != prompt.name and p.include]
+    taken = sum(p.distance_value for p in others if not p.equal)
+    shared = sum(1 for p in others if p.equal)
+    limit = (total - boards * thickness - taken
+             - shared * APPLIANCE_OPENING_MIN_OVER)
+    height = max(APPLIANCE_OPENING_MIN, min(float(height), limit))
+    if not prompt.equal and abs(prompt.distance_value - height) < 1e-7:
+        return False
+    prompt.equal = False
+    prompt.distance_value = height
+    return True
+
+
 def set_toe_kick_type(cabinet_obj, toe_kick_type):
     """Switch a base, tall or corner base cabinet to another toe kick
     type in place: the toe kick parts of the old type come off, the new

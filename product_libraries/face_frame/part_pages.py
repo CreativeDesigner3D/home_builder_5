@@ -95,10 +95,19 @@ def gather(context, part_obj, picked):
 
 
 def proxy_peers(owner):
-    """Peers for a part seen through the width schema."""
+    """Peers for a part seen through the width schema, or a door seen
+    through its vent schema."""
     from ...operators import prop_proxy
+    from . import door_vents
     try:
-        if owner.path_from_id() != prop_proxy.PATH_PREFIX + WIDTH_KEY:
+        path = owner.path_from_id()
+        if path == prop_proxy.PATH_PREFIX + door_vents.VENT_SCHEMA:
+            obj = owner.id_data
+            if obj not in _part_peers:
+                return ()
+            return [door_vents.vent_owner(o) for o in _part_peers
+                    if o != obj]
+        if path != prop_proxy.PATH_PREFIX + WIDTH_KEY:
             return ()
         if _wrote_all[0]:
             _wrote_all[0] = False
@@ -507,6 +516,11 @@ def _front_page(context, part_obj, root):
     out.extend(_rows(actions))
     if role in ('DOOR', 'PULLOUT_FRONT'):
         out.append(('pick', ("Pull Location", _pull_locations)))
+    if role == types_face_frame.PART_ROLE_DOOR:
+        from . import door_vents
+        out.extend(options_panel.field_blocks(
+            context, door_vents.vent_fields(),
+            door_vents.vent_owner(part_obj)))
     return out
 
 

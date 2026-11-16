@@ -41,6 +41,36 @@ def get_default_shelf_quantity(opening_height, opening_depth):
             return 4
 
 
+def show_in_selection_mode(context, cabinet_bp):
+    """Give a cabinet whose interior was just rebuilt the look of the
+    current selection mode. Parts and cages that are built new come in
+    plain - the cage showing, the parts not lifted in front the way
+    Interiors mode shows them - until the mode is applied to them.
+    Applying it selects whatever the mode offers, so the selection is
+    put back the way it was found."""
+    if cabinet_bp is None:
+        return
+    from .ops_placement import apply_frameless_selection_mode
+    view_layer = context.view_layer
+    was_selected = set()
+    for obj in [cabinet_bp, *cabinet_bp.children_recursive]:
+        try:
+            if obj.select_get(view_layer=view_layer):
+                was_selected.add(obj.name)
+        except RuntimeError:
+            pass
+    try:
+        apply_frameless_selection_mode(context, cabinet_bp)
+    except Exception as e:
+        print(f"frameless interior: selection mode not applied: {e}")
+        return
+    for obj in [cabinet_bp, *cabinet_bp.children_recursive]:
+        try:
+            obj.select_set(obj.name in was_selected, view_layer=view_layer)
+        except RuntimeError:
+            pass
+
+
 # ---------------------------------------------------------------------------
 # Drawers: box construction and accessories
 # ---------------------------------------------------------------------------
@@ -186,6 +216,65 @@ def _pullout_product_enum(self, context):
     return _ff_ops()._pullout_product_enum(self, context)
 
 
+def pullout_size_limits(entry):
+    """((min, max) width, (min, max) height) of the opening a pullout
+    product takes, in inches; None where its entry does not say. The
+    minimums are the entry's own; a maximum comes from a unit that is
+    made to fit a range of openings."""
+    def number(value):
+        try:
+            return float(value) if value else None
+        except (TypeError, ValueError):
+            return None
+    min_w = number(entry.get('min_opening_w'))
+    min_h = number(entry.get('min_opening_h'))
+    max_w = max_h = None
+    params = entry.get('model_params')
+    if isinstance(params, dict):
+        try:
+            clearance, _low, high = (float(v) for v in params.get('fit_width'))
+            max_w = high + clearance
+        except (TypeError, ValueError):
+            pass
+        try:
+            _low, max_h = (float(v) for v in params.get('height_range'))
+        except (TypeError, ValueError):
+            pass
+    return (min_w, max_w), (min_h, max_h)
+
+
+def _draw_pullout_fit(layout, opening, entry):
+    """The opening's size beside what the picked product takes, with a
+    warning on the side that is out of range."""
+    dim_x, _dim_y, dim_z = solver_frameless.cage_dims(opening)
+    size = (dim_x / units.inch(1.0), dim_z / units.inch(1.0))
+    box = layout.box()
+    box.label(text='Opening: %g" wide x %g" high'
+              % (round(size[0], 3), round(size[1], 3)))
+    if not entry:
+        return
+    for label, value, (low, high) in zip(
+            ("Width", "Height"), size, pullout_size_limits(entry)):
+        if low is None and high is None:
+            continue
+        if low is not None and high is not None:
+            needs = '%g" to %g"' % (low, high)
+        elif low is not None:
+            needs = '%g" minimum' % low
+        else:
+            needs = '%g" maximum' % high
+        row = box.row()
+        short = low is not None and value + 1e-6 < low
+        over = high is not None and value - 1e-6 > high
+        if short or over:
+            row.alert = True
+            row.label(text="%s: needs %s - the opening is too %s"
+                      % (label, needs, "small" if short else "large"),
+                      icon='ERROR')
+        else:
+            row.label(text="%s: needs %s" % (label, needs), icon='CHECKMARK')
+
+
 class hb_frameless_OT_pullout_model(bpy.types.Operator):
     """Name the pullout product in this drawer or pullout: hampers and
     trash roll-outs show their model, the rest are listed"""
@@ -198,18 +287,22 @@ class hb_frameless_OT_pullout_model(bpy.types.Operator):
     product: bpy.props.EnumProperty(name="Model", items=_pullout_product_enum) # type: ignore
     clear: bpy.props.BoolProperty(name="No Model", default=False,
                                   description="Take the model off this opening") # type: ignore
-    opening_name: bpy.props.StringProperty(options={'HIDDEN'}) # type: ignore
+    opening_name: bpy.props.StringProperty(options={'HIDDEN', 'SKIP_SAVE'}) # type: ignore
 
     @classmethod
     def poll(cls, context):
         return interior_items.drawer_opening_for(context.object) is not None
 
     def invoke(self, context, event):
-        opening = interior_items.drawer_opening_for(context.object)
+        # A caller that has just built the pullout names it; otherwise it
+        # is the one under the selection.
+        opening = interior_items.drawer_opening_for(
+            bpy.data.objects.get(self.opening_name) if self.opening_name
+            else context.object)
         if opening is None:
             return {'CANCELLED'}
         self.opening_name = opening.name
-        from ... import accessory_registry
+        from .... import accessory_registry
         code = opening.face_frame_opening.pullout_accessory_code
         entry = accessory_registry.lookup(_ff_ops()._PULLOUT_HOST, code) if code else None
         if entry:
@@ -238,18 +331,10 @@ class hb_frameless_OT_pullout_model(bpy.types.Operator):
         col.prop(self, 'product')
         col.prop(self, 'clear')
         opening = bpy.data.objects.get(self.opening_name)
-        from ... import accessory_registry
+        from .... import accessory_registry
         entry = accessory_registry.lookup(_ff_ops()._PULLOUT_HOST, self.product) or {}
-        min_w = entry.get('min_opening_w')
-        if opening is not None and min_w:
-            width_in = solver_frameless.cage_dims(opening)[0] / units.inch(1.0)
-            row = layout.row()
-            if width_in + 1e-6 < min_w:
-                row.alert = True
-                row.label(text="Opening is %.2f in; this model needs %g in" % (width_in, min_w),
-                          icon='ERROR')
-            else:
-                row.label(text="Opening %.2f in (min %g in)" % (width_in, min_w), icon='CHECKMARK')
+        if opening is not None:
+            _draw_pullout_fit(layout, opening, None if self.clear else entry)
 
 
 class hb_frameless_OT_drawer_interior(bpy.types.Operator):
@@ -640,6 +725,7 @@ class hb_frameless_OT_change_interior_type(bpy.types.Operator):
             hb_utils.run_calc_fix(context, cabinet_bp)
             update_shelf_quantities(context, cabinet_bp)
             hb_utils.run_calc_fix(context, cabinet_bp)
+            show_in_selection_mode(context, cabinet_bp)
         
         return {'FINISHED'}
 
@@ -784,6 +870,7 @@ def split_host(context, host, kind, section_type='EMPTY'):
     # are painted like the rest of the styled cabinet.
     solver_frameless.paint_new_parts(
         solver_frameless.cabinet_root(splitter.obj), splitter.obj)
+    show_in_selection_mode(context, cabinet)
     return splitter.obj
 
 
@@ -804,6 +891,7 @@ def remove_interior_split(context, section_obj):
     cabinet = hb_utils.get_cabinet_bp(host)
     if cabinet is not None:
         hb_utils.run_calc_fix(context, cabinet)
+        show_in_selection_mode(context, cabinet)
     return interior
 
 
@@ -1685,6 +1773,7 @@ class hb_frameless_OT_add_interior_item(bpy.types.Operator):
             return {'CANCELLED'}
         interior_items.add_item(interior_obj, self.kind)
         hb_utils.run_calc_fix(context, interior_obj)
+        show_in_selection_mode(context, hb_utils.get_cabinet_bp(interior_obj))
         return {'FINISHED'}
 
 

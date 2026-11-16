@@ -21,7 +21,10 @@ def _door_style_enum(self, context):
 
 
 def _front_insert(front):
-    """The insert cage a front belongs to (a bi-fold's upper panel too)."""
+    """The insert cage a front belongs to (a bi-fold's upper panel too;
+    a drawer look front hangs on its door, which hangs on the insert)."""
+    if front is not None and front.get('IS_DRAWER_LOOK_FRONT'):
+        front = front.parent
     return front.parent if front is not None else None
 
 

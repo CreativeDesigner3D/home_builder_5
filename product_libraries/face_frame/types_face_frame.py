@@ -239,10 +239,15 @@ PART_ROLE_RIGHT_CORNER_FINISH_KICK = 'RIGHT_CORNER_FINISH_KICK'
 PART_ROLE_MID_FINISH_KICK = 'MID_FINISH_KICK'
 PART_ROLE_LEFT_KICK_RETURN = 'LEFT_KICK_RETURN'
 PART_ROLE_RIGHT_KICK_RETURN = 'RIGHT_KICK_RETURN'
-# Board closing an inset end's recess at a run neighbour's kick line
-# (see solver.kick_return_closure). Created on first use.
+# Loose sub kick filler closing an inset end's recess at a run
+# neighbour's kick line, and the finish board on its face (see
+# solver.kick_return_closure / kick_return_closure_finish). Created on
+# first use.
 PART_ROLE_LEFT_KICK_RETURN_CLOSURE = 'LEFT_KICK_RETURN_CLOSURE'
 PART_ROLE_RIGHT_KICK_RETURN_CLOSURE = 'RIGHT_KICK_RETURN_CLOSURE'
+PART_ROLE_LEFT_KICK_CLOSURE_FINISH = 'LEFT_KICK_CLOSURE_FINISH'
+PART_ROLE_RIGHT_KICK_CLOSURE_FINISH = 'RIGHT_KICK_CLOSURE_FINISH'
+KICK_CLOSURE_NAME = 'Loose Toe Kick Filler '
 # Loose toe kick ladder sub-base (toe_kick_type == 'LOOSE'): a freestanding
 # frame the floated carcass sits on - front + rear rail spanning between two
 # front-to-back end boards. All four are finished-material parts.
@@ -546,6 +551,84 @@ PART_ROLE_DRAWER_LOOK_FRONT = 'DRAWER_LOOK_FRONT'
 # Faux mid-rail strip between drawer-look fronts, added only for FULL
 # INSET (proud of the inset fronts, like a real inset face frame).
 PART_ROLE_DRAWER_LOOK_RAIL = 'DRAWER_LOOK_RAIL'
+# Side-by-side drawer look: the integral stile piece between two drawer
+# faces of one drawer front. A static mesh (grooved down both edges); its
+# cutpart still carries the cut size.
+PART_ROLE_DRAWER_LOOK_STILE = 'DRAWER_LOOK_STILE'
+# Box construction a side-by-side drawer front is built on: the faces
+# and stiles are applied to that box's own front.
+DRAWER_SPLIT_BOX_CONSTRUCTION = 'English'
+# Which edge of a front leaf its origin sits on, seen from the front.
+DRAWER_SPLIT_ORIGIN_IS_LEFT = True
+
+
+def opening_box_construction_name(opening_obj):
+    """Printed name of the drawer box construction an opening builds
+    to: its own pick, else its cabinet style's. '' when unknown."""
+    op = getattr(opening_obj, 'face_frame_opening', None)
+    if op is not None and (getattr(op, 'drawer_box_construction', '') or ''):
+        return (getattr(op, 'drawer_box_construction_label', '')
+                or op.drawer_box_construction)
+    root = find_cabinet_root(opening_obj)
+    style_name = root.get('STYLE_NAME') if root is not None else None
+    if not style_name:
+        return ''
+    from . import props_hb_face_frame as props
+    ff = props.get_style_props()
+    for cs in (ff.cabinet_styles if ff is not None else ()):
+        if cs.name != style_name:
+            continue
+        try:
+            if cs.ss_drawer_box_construction_is_custom:
+                return cs.ss_drawer_box_construction_custom or ''
+            return cs.ss_drawer_box_construction or ''
+        except (AttributeError, TypeError):
+            return ''
+    return ''
+
+
+def drawer_split_look_allowed(opening_obj):
+    """A side-by-side drawer front needs the box whose front the faces
+    are applied to. Allowed when the construction is unknown."""
+    name = opening_box_construction_name(opening_obj)
+    return not name or name == DRAWER_SPLIT_BOX_CONSTRUCTION
+
+
+def drawer_split_stile_piece_width(op_props):
+    """Cut width of an integral stile piece: its visible face plus the
+    groove down each edge."""
+    return (op_props.drawer_split_stile_width
+            + 2.0 * max(0.0, op_props.drawer_split_groove_width))
+
+
+def drawer_split_face_widths(width, op_props):
+    """Face widths, left to right, of a side-by-side drawer front
+    ``width`` wide, or None when the look is off or does not fit. Typed
+    (unlocked) widths are kept; the rest share what the stile pieces
+    leave equally."""
+    look = getattr(op_props, 'drawer_split_look', 'NONE')
+    if look == 'NONE':
+        return None
+    n = int(look)
+    available = width - (n - 1) * drawer_split_stile_piece_width(op_props)
+    faces = getattr(op_props, 'drawer_split_faces', None)
+    if faces is not None and len(faces) == n:
+        spec = [(f.size, bool(f.unlock_size)) for f in faces]
+    else:
+        spec = [(0.0, False)] * n
+    auto = [k for k, (s, h) in enumerate(spec) if not h]
+    if not auto:
+        # Every width typed: the last one takes up the difference.
+        spec[-1] = (0.0, False)
+        auto = [n - 1]
+    held = sum(s for s, h in spec if h)
+    share = (available - held) / len(auto)
+    widths = [s if h else share for s, h in spec]
+    if any(w <= inch(0.5) for w in widths):
+        return None
+    return widths
+
+
 # Door-look door: the same carrier trick sideways - one working leaf
 # wearing N applied door panels side by side (battened pair look), with
 # the double-door center reveal between them. Styled from the door pool.
@@ -817,6 +900,10 @@ PART_ROLE_DRAWER_INSERT = 'DRAWER_INSERT'
 DRAWER_INTERIOR_EDITABLE_ROLES = frozenset({PART_ROLE_DRAWER_DIVIDER,
                                             PART_ROLE_DRAWER_INSERT})
 DRAWER_INSERT_BUILD_INDEX = 'hb_drawer_build_index'
+# Which of the opening's interior items built a drawer insert or divider
+# (its index in the list), so a picture of the drawer can tell the parts
+# of one accessory from the next. -1 when it is not known.
+DRAWER_ITEM_INDEX = 'hb_drawer_item_index'
 # Hidden boolean cutter carving the U-notch of a sink duo drawer box.
 # A wire child of the box, so it lives and dies with the box's own
 # wipe-and-rebuild lifecycle.
@@ -1766,6 +1853,13 @@ def _overstool_profile_poly():
 # curves in face_frame_assets/profiles. See _apply_bottom_rail_profile.
 # ---------------------------------------------------------------------------
 PART_ROLE_BOTTOM_RAIL_PROFILE_CUTTER = 'BOTTOM_RAIL_PROFILE_CUTTER'
+# Valance across a cabinet's toe space: a board in the face frame's plane
+# from the floor to the bottom rail, between any end stiles that run to
+# the floor. Takes the same profiles as a bottom rail. SENT_LOOSE marks
+# one that ships loose to be fit on site instead of being attached.
+PART_ROLE_TOE_KICK_VALANCE = 'TOE_KICK_VALANCE'
+TOE_KICK_VALANCE_SEG = 'TOE_KICK_VALANCE'
+TOE_KICK_VALANCE_LOOSE_KEY = 'SENT_LOOSE'
 BOTTOM_RAIL_PROFILE_CUT_MOD_NAME = 'Bottom Rail Profile Cut'
 BOTTOM_RAIL_PROFILE_END_MARGIN = inch(2.0)  # flat, uncut rail left at each end
 _BOTTOM_RAIL_PROFILE_ARCH = 'ARCH'          # procedural smooth-arch option (no blend)
@@ -3326,13 +3420,27 @@ class FaceFrameCabinet(GeoNodeCage):
                 self._ensure_kick_return(
                     PART_ROLE_RIGHT_KICK_RETURN, 'Toe Kick Return Right',
                     mirror_z=False)
-                for close_side, close_role in (
-                        ('LEFT', PART_ROLE_LEFT_KICK_RETURN_CLOSURE),
-                        ('RIGHT', PART_ROLE_RIGHT_KICK_RETURN_CLOSURE)):
+                for close_side, close_role, finish_role in (
+                        ('LEFT', PART_ROLE_LEFT_KICK_RETURN_CLOSURE,
+                         PART_ROLE_LEFT_KICK_CLOSURE_FINISH),
+                        ('RIGHT', PART_ROLE_RIGHT_KICK_RETURN_CLOSURE,
+                         PART_ROLE_RIGHT_KICK_CLOSURE_FINISH)):
                     if solver.kick_return_closure(layout, close_side):
-                        self._ensure_loose_kick_part(
+                        filler = self._ensure_loose_kick_part(
                             close_role,
-                            'Toe Kick Return Closure '
+                            KICK_CLOSURE_NAME + close_side.title(),
+                            kind='RAIL', mirror_z=True)
+                        # Built under an earlier name as a finished
+                        # board on the kick face.
+                        if filler.name.startswith(
+                                'Toe Kick Return Closure'):
+                            filler.name = (KICK_CLOSURE_NAME
+                                           + close_side.title())
+                    if solver.kick_return_closure_finish(
+                            layout, close_side):
+                        self._ensure_loose_kick_part(
+                            finish_role,
+                            'Finish Toe Kick Filler '
                             + close_side.title(),
                             kind='RAIL', mirror_z=True)
                 # Loose ladder sub-base. Always ensured (hidden in the
@@ -3808,11 +3916,17 @@ class FaceFrameCabinet(GeoNodeCage):
                 part.set_input('Thickness', thickness)
 
             elif role in (PART_ROLE_LEFT_KICK_RETURN_CLOSURE,
-                          PART_ROLE_RIGHT_KICK_RETURN_CLOSURE):
-                seg = solver.kick_return_closure(
-                    layout,
-                    'LEFT' if role == PART_ROLE_LEFT_KICK_RETURN_CLOSURE
-                    else 'RIGHT')
+                          PART_ROLE_RIGHT_KICK_RETURN_CLOSURE,
+                          PART_ROLE_LEFT_KICK_CLOSURE_FINISH,
+                          PART_ROLE_RIGHT_KICK_CLOSURE_FINISH):
+                close_side = ('LEFT' if role.startswith('LEFT')
+                              else 'RIGHT')
+                if role in (PART_ROLE_LEFT_KICK_RETURN_CLOSURE,
+                            PART_ROLE_RIGHT_KICK_RETURN_CLOSURE):
+                    seg = solver.kick_return_closure(layout, close_side)
+                else:
+                    seg = solver.kick_return_closure_finish(
+                        layout, close_side)
                 child.hide_viewport = seg is None
                 child.hide_render = seg is None
                 if seg is None:
@@ -4156,6 +4270,10 @@ class FaceFrameCabinet(GeoNodeCage):
         # Bottom-rail decorative profile (valance): cut the chosen profile
         # into the bottom rail(s). No-op + cleanup when off.
         self._apply_bottom_rail_profile(layout)
+
+        # Toe kick valance: the board across the toe space, attached or
+        # sent loose. No-op + cleanup when off.
+        self._apply_toe_kick_valance(layout)
 
         # Angled corners: end stiles stay square; a mitre between two
         # of them is the user's pick (Miter Joint). Clears the automatic
@@ -7805,6 +7923,7 @@ class FaceFrameCabinet(GeoNodeCage):
             if mod.object is not cutter:
                 mod.object = cutter
         # Drop cutters whose rail segment no longer exists.
+        live_keys.add(TOE_KICK_VALANCE_SEG)   # kept by its own pass
         for child in list(self.obj.children):
             if (child.get('hb_part_role') == PART_ROLE_BOTTOM_RAIL_PROFILE_CUTTER
                     and child.get('hb_profile_seg') not in live_keys):
@@ -7812,6 +7931,129 @@ class FaceFrameCabinet(GeoNodeCage):
                 bpy.data.objects.remove(child, do_unlink=True)
                 if mesh is not None and mesh.users == 0:
                     bpy.data.meshes.remove(mesh)
+
+    # =====================================================================
+    # Toe kick valance
+    # =====================================================================
+    def _toe_kick_valance_part(self):
+        for child in self.obj.children:
+            if child.get('hb_part_role') == PART_ROLE_TOE_KICK_VALANCE:
+                return child
+        return None
+
+    def _cleanup_toe_kick_valance(self):
+        """Reverse of _apply_toe_kick_valance. No-op when nothing to undo."""
+        for child in list(self.obj.children):
+            role = child.get('hb_part_role')
+            if role == PART_ROLE_TOE_KICK_VALANCE or (
+                    role == PART_ROLE_BOTTOM_RAIL_PROFILE_CUTTER
+                    and child.get('hb_profile_seg') == TOE_KICK_VALANCE_SEG):
+                mesh = child.data if role != PART_ROLE_TOE_KICK_VALANCE else None
+                bpy.data.objects.remove(child, do_unlink=True)
+                if mesh is not None and mesh.users == 0:
+                    bpy.data.meshes.remove(mesh)
+
+    def _end_stile_floor_width(self, role, to_floor):
+        """Width of an end stile where it stands on the floor, else 0."""
+        if not to_floor:
+            return 0.0
+        for child in self.obj.children_recursive:
+            if child.get('hb_part_role') == role and not child.hide_viewport:
+                try:
+                    return GeoNodeCutpart(child).get_input('Width')
+                except Exception:
+                    return 0.0
+        return 0.0
+
+    def _apply_toe_kick_valance(self, layout):
+        """Build the valance across the toe space when the option is on:
+        a face-frame-thick board in the frame's plane, floor to the bottom
+        rail, between the end stiles that run to the floor (cabinet edge
+        to cabinet edge where they do not). Its bottom edge takes the
+        chosen profile exactly as a bottom rail does. A no-op + cleanup
+        when off, or on a cabinet with no toe space."""
+        cab = self.obj.face_frame_cabinet
+        height = layout.tkh
+        if (not getattr(cab, 'toe_kick_valance', False)
+                or layout.cabinet_type not in ('BASE', 'TALL')
+                or not layout.has_toe_kick
+                or layout.toe_kick_type == 'FLOATING'
+                or height <= 0.0):
+            self._cleanup_toe_kick_valance()
+            return
+        left = self._end_stile_floor_width(
+            PART_ROLE_LEFT_STILE, solver.left_stile_to_floor(layout))
+        right = self._end_stile_floor_width(
+            PART_ROLE_RIGHT_STILE, solver.right_stile_to_floor(layout))
+        length = cab.width - left - right
+        if length <= 0.0:
+            self._cleanup_toe_kick_valance()
+            return
+        board = self._toe_kick_valance_part()
+        if board is None:
+            part = CabinetPart()
+            part.create('Toe Kick Valance')
+            board = part.obj
+            board.parent = self.obj
+            board['hb_part_role'] = PART_ROLE_TOE_KICK_VALANCE
+            board['CABINET_PART'] = True
+            board['MENU_ID'] = 'HOME_BUILDER_MT_face_frame_part_commands'
+        board['IS_FINISHED'] = True
+        loose = bool(getattr(cab, 'toe_kick_valance_loose', False))
+        if loose:
+            board[TOE_KICK_VALANCE_LOOSE_KEY] = True
+        elif TOE_KICK_VALANCE_LOOSE_KEY in board:
+            del board[TOE_KICK_VALANCE_LOOSE_KEY]
+        if board.get('IS_MANUAL_PART'):
+            return
+        # Same transform convention as a bottom rail (+90 X, Mirror Z),
+        # so the profile cutter works in the board's local space.
+        gn = GeoNodeCutpart(board)
+        gn.set_input('Length', length)
+        gn.set_input('Width', height)
+        gn.set_input('Thickness', layout.fft)
+        gn.set_input('Mirror Y', False)
+        gn.set_input('Mirror Z', True)
+        loc = (left, -cab.depth, 0.0)
+        rot = (math.radians(90), 0.0, 0.0)
+        if (tuple(board.location) != loc
+                or tuple(board.rotation_euler) != rot):
+            board.location = loc
+            board.rotation_euler = rot
+            # The cutter is built through the board's matrix.
+            bpy.context.view_layer.update()
+
+        profile_id = getattr(cab, 'toe_kick_valance_profile', 'NONE')
+        procedural = profile_id in _BOTTOM_RAIL_PROCEDURAL_PROFILES
+        poly = (None if (procedural or profile_id in ('NONE', ''))
+                else _bottom_rail_profile_poly(profile_id))
+        mod = board.modifiers.get(BOTTOM_RAIL_PROFILE_CUT_MOD_NAME)
+        cutter = None
+        if profile_id not in ('NONE', '') and (procedural or poly):
+            cutter = self._ensure_bottom_rail_profile_cutter(
+                TOE_KICK_VALANCE_SEG)
+            if not self._position_bottom_rail_profile_cutter(
+                    cutter, board, profile_id, poly):
+                cutter = None
+        if cutter is None:
+            if mod is not None:
+                board.modifiers.remove(mod)
+            for child in list(self.obj.children):
+                if (child.get('hb_part_role') == PART_ROLE_BOTTOM_RAIL_PROFILE_CUTTER
+                        and child.get('hb_profile_seg') == TOE_KICK_VALANCE_SEG):
+                    mesh = child.data
+                    bpy.data.objects.remove(child, do_unlink=True)
+                    if mesh is not None and mesh.users == 0:
+                        bpy.data.meshes.remove(mesh)
+            return
+        if mod is None:
+            mod = board.modifiers.new(
+                name=BOTTOM_RAIL_PROFILE_CUT_MOD_NAME, type='BOOLEAN')
+            mod.operation = 'DIFFERENCE'
+            mod.solver = 'EXACT'
+        mod.material_mode = 'TRANSFER'
+        if mod.object is not cutter:
+            mod.object = cutter
 
     # =====================================================================
     # Corner treatment (face-frame arris detail)
@@ -13856,6 +14098,8 @@ class FaceFrameCabinet(GeoNodeCage):
         galley_sink = appliance_geo.opening_appliance(self.obj)
         if galley_sink is not None:
             sink_cutters.append(appliance_geo.sink_clearance_cutter(galley_sink))
+        bay_objs = [c for c in self.obj.children if c.get(TAG_BAY_CAGE)
+                    and not c.hide_viewport]
         for bay_obj in [c for c in self.obj.children if c.get(TAG_BAY_CAGE)]:
             if bay_obj.hide_viewport:
                 self._update_countertop_appliance_in_bay(bay_obj, None)
@@ -13867,8 +14111,12 @@ class FaceFrameCabinet(GeoNodeCage):
                 # first time. Changing the bay to plain doors must keep
                 # the sink; Remove Appliance from Bay opts out ('NONE').
                 bay_obj['APPLIANCE_BAY'] = kind
-            if not kind and is_cooktop_cabinet:
+            if not kind and is_cooktop_cabinet and (
+                    len(bay_objs) == 1 or self._bay_has_false_front(bay_obj)):
                 kind = 'COOKTOP'
+                # Stamped like the sink: the cooktop belongs to the bay it
+                # came in, not to every bay the cabinet later gains.
+                bay_obj['APPLIANCE_BAY'] = kind
             if kind in ('SINK', 'COOKTOP'):
                 self._create_appliance_annotation(bay_obj, kind)
             # After the annotation: the appliance decides whether it shows.
@@ -14388,6 +14636,12 @@ class FaceFrameCabinet(GeoNodeCage):
                 and getattr(op_props, 'door_look_divisions', 'NONE') != 'NONE'
                 and _door_look_hinge_ok(op_props)
             )
+            # Side-by-side drawer look: one drawer front built from N
+            # faces with integral stiles between; a pull per face.
+            split_faces = None
+            if (not drawer_look and leaf['role'] == PART_ROLE_DRAWER_FRONT
+                    and drawer_split_look_allowed(opening_obj)):
+                split_faces = drawer_split_face_widths(width, op_props)
             # Tri-view mirror doors carry no pulls (touch-open per the
             # production spec) -- both the three-bay build and legacy
             # single-opening builds.
@@ -14395,7 +14649,8 @@ class FaceFrameCabinet(GeoNodeCage):
                         or self.obj.get('HB_TRIVIEW_DOORS'))
             # Bi-fold pairs pull from the lead leaf only.
             pull = None
-            if not drawer_look and not no_pulls and not leaf.get('no_pull'):
+            if (not drawer_look and split_faces is None and not no_pulls
+                    and not leaf.get('no_pull')):
                 pull = self._create_pull_for_front(front, leaf['role'], leaf,
                                                    op_props)
             # A pull-out whose product is modeled carries the unit
@@ -14406,6 +14661,10 @@ class FaceFrameCabinet(GeoNodeCage):
                 self._create_drawer_box_for_front(pivot, leaf, rect, op_props)
             if drawer_look:
                 self._build_drawer_look_fronts(front, leaf, op_props)
+            elif split_faces is not None:
+                self._build_drawer_split_fronts(
+                    front, leaf, op_props, split_faces,
+                    pulls_on=not no_pulls and not leaf.get('no_pull'))
             elif door_look:
                 self._build_door_look_fronts(front, leaf, op_props, pull)
         # Racks and trays mounted on the back of the fronts swing with
@@ -14647,6 +14906,116 @@ class FaceFrameCabinet(GeoNodeCage):
                 rail.set_input('Thickness', thickness)
             if i < n - 1:
                 z += h + gaps[i]
+
+    def _build_drawer_split_fronts(self, front, leaf, op_props, face_ws,
+                                   pulls_on=True):
+        """Build one drawer front as N faces side by side with an
+        integral stile piece between each pair, so one drawer reads as
+        N drawers in a row.
+
+        No backing slab: every piece is applied straight to the drawer
+        box front. The leaf itself becomes one of the faces (it keeps
+        the DRAWER_FRONT role, so the drawer still counts and styles as
+        one drawer); the other faces are DRAWER_LOOK_FRONT parts and the
+        stiles DRAWER_LOOK_STILE parts, all children of the leaf and
+        tiled edge to edge across the front. A stile piece is cut two
+        grooves wider than its visible face, with a groove down each
+        edge of the face. ``face_ws`` runs left to right as seen from
+        the front; each face gets its own pull.
+        """
+        length, width, thickness = leaf['part_dims']
+        n = len(face_ws)
+        faces = getattr(op_props, 'drawer_split_faces', None)
+        # Show the worked-out width in the locked rows.
+        if faces is not None and len(faces) == n:
+            for k, w in enumerate(face_ws):
+                if not faces[k].unlock_size and abs(faces[k].size - w) > 1e-6:
+                    faces[k].size = w
+        piece_w = drawer_split_stile_piece_width(op_props)
+        groove_w = max(0.0, op_props.drawer_split_groove_width)
+        groove_d = min(max(0.0, op_props.drawer_split_groove_depth),
+                       thickness / 2.0)
+        scene_props = bpy.context.scene.hb_face_frame
+
+        # The leaf's local -Y runs across the front from its origin
+        # edge. The leaf takes the face at that edge; the rest follow.
+        order = (list(range(n)) if DRAWER_SPLIT_ORIGIN_IS_LEFT
+                 else list(range(n - 1, -1, -1)))
+        lead = front.obj
+        lead['HB_DRAWER_SPLIT_FACES'] = n
+        lead['HB_DRAWER_SPLIT_INDEX'] = order[0] + 1
+        front.set_input('Width', face_ws[order[0]])
+        if pulls_on:
+            self._add_drawer_look_pull(lead, length, face_ws[order[0]],
+                                       thickness, scene_props)
+        y = face_ws[order[0]]
+        for count, i in enumerate(order[1:], start=1):
+            stile = CabinetPart()
+            stile.create("Integral Stile " + str(min(i, order[count - 1]) + 1))
+            stile.obj.parent = lead
+            stile.obj['hb_part_role'] = PART_ROLE_DRAWER_LOOK_STILE
+            stile.obj['CABINET_PART'] = True
+            stile.obj.rotation_euler = (0.0, 0.0, 0.0)
+            stile.set_input('Mirror Y', True)
+            stile.obj.location = (0.0, -y, 0.0)
+            stile.set_input('Length', length)
+            stile.set_input('Width', piece_w)
+            stile.set_input('Thickness', thickness)
+            stile.obj['HB_STILE_FACE_WIDTH'] = (
+                op_props.drawer_split_stile_width)
+            stile.obj['HB_GROOVE_WIDTH'] = groove_w
+            stile.obj['HB_GROOVE_DEPTH'] = groove_d
+            if groove_w > 0.0 and groove_d > 0.0:
+                self._grooved_stile_mesh(stile.obj, length, piece_w,
+                                         thickness, groove_w, groove_d)
+            y += piece_w
+
+            panel = CabinetPart()
+            panel.create("Drawer Face " + str(i + 1))
+            panel.obj.parent = lead
+            panel.obj['hb_part_role'] = PART_ROLE_DRAWER_LOOK_FRONT
+            panel.obj['CABINET_PART'] = True
+            panel.obj['HB_DRAWER_SPLIT_INDEX'] = i + 1
+            panel.obj.rotation_euler = (0.0, 0.0, 0.0)
+            panel.set_input('Mirror Y', True)
+            panel.obj.location = (0.0, -y, 0.0)
+            panel.set_input('Length', length)
+            panel.set_input('Width', face_ws[i])
+            panel.set_input('Thickness', thickness)
+            if pulls_on:
+                self._add_drawer_look_pull(panel.obj, length, face_ws[i],
+                                           thickness, scene_props)
+            y += face_ws[i]
+
+    @staticmethod
+    def _grooved_stile_mesh(part_obj, length, width, thickness,
+                            groove_w, groove_d):
+        """Write an integral stile mesh into ``part_obj``: a board with
+        a square groove down each long edge of its face. Cutpart space:
+        X 0..length, Y 0..-width, face on z = thickness."""
+        import bmesh
+        t = thickness
+        loop = [(0.0, 0.0), (width, 0.0), (width, t - groove_d),
+                (width - groove_w, t - groove_d), (width - groove_w, t),
+                (groove_w, t), (groove_w, t - groove_d),
+                (0.0, t - groove_d)]
+        bm = bmesh.new()
+        ring0 = [bm.verts.new((0.0, -u, z)) for u, z in loop]
+        ring1 = [bm.verts.new((length, -u, z)) for u, z in loop]
+        bm.faces.new(ring0)
+        bm.faces.new(list(reversed(ring1)))
+        for i in range(len(loop)):
+            j = (i + 1) % len(loop)
+            bm.faces.new((ring0[i], ring0[j], ring1[j], ring1[i]))
+        bmesh.ops.recalc_face_normals(bm, faces=bm.faces[:])
+        bm.to_mesh(part_obj.data)
+        bm.free()
+        mod_name = getattr(part_obj.home_builder, 'mod_name', '')
+        mod = part_obj.modifiers.get(mod_name) if mod_name else None
+        if mod is not None:
+            mod.show_viewport = False
+            mod.show_render = False
+        part_obj[TAG_STATIC_TEXTURED] = True
 
     def _build_door_look_fronts(self, front, leaf, op_props, pull=None):
         """Lay N applied door panels side by side on one DOOR leaf so it
@@ -15093,6 +15462,7 @@ class FaceFrameCabinet(GeoNodeCage):
         # hand-edited part can find the one it stands in for.
         obj[DRAWER_INSERT_BUILD_INDEX] = sum(
             1 for c in box_obj.children if c.get('hb_part_role') == role)
+        obj[DRAWER_ITEM_INDEX] = getattr(self, '_drawer_item_index', -1)
         obj.parent = box_obj
         obj['hb_part_role'] = role
         obj['MENU_ID'] = 'HOME_BUILDER_MT_face_frame_drawer_box_commands'
@@ -15148,9 +15518,11 @@ class FaceFrameCabinet(GeoNodeCage):
         joins the pack: running front to back it butts the accessory
         before it and moves the cursor on by its own thickness.
         """
-        items = [it for it in getattr(op_props, 'interior_items', ())
-                 if it.kind == 'ACCESSORY'
-                 and getattr(it, 'accessory_render', '')]
+        indexed = [(i, it) for i, it in
+                   enumerate(getattr(op_props, 'interior_items', ()))
+                   if it.kind == 'ACCESSORY'
+                   and getattr(it, 'accessory_render', '')]
+        items = [it for _i, it in indexed]
         if not items:
             return
         side, front, floor = self._drawer_box_interior(box_obj)
@@ -15164,7 +15536,9 @@ class FaceFrameCabinet(GeoNodeCage):
             return
         fill_w = self._drawer_insert_fill_width(inner, items)
         cursor = inner.x0
-        for item in items:
+        for index, item in indexed:
+            # Stamped on every part this item builds (DRAWER_ITEM_INDEX).
+            self._drawer_item_index = index
             kind, params = parse_render_hint(item.accessory_render)
             spec = DRAWER_INSERT_BUILDERS.get(kind)
             if spec is None:
@@ -15190,6 +15564,7 @@ class FaceFrameCabinet(GeoNodeCage):
                 builder(box_obj, rect, item, params)
                 cursor = rect.x1
         self._emit_drawer_dividers(box_obj, inner)
+        self._drawer_item_index = -1
 
     @staticmethod
     def _drawer_insert_fill_width(inner, items):
@@ -15310,7 +15685,7 @@ class FaceFrameCabinet(GeoNodeCage):
         self._write_divider_space_sizes(item, centers, span0, span1, th)
         run = SimpleNamespace(
             item=item, lengthwise=lengthwise, centers=centers, th=th,
-            rect=rect)
+            rect=rect, index=getattr(self, '_drawer_item_index', -1))
         runs = getattr(rect, 'divider_runs', None)
         if runs is not None:
             runs.append(run)
@@ -15394,6 +15769,7 @@ class FaceFrameCabinet(GeoNodeCage):
         runs side to side of the box, or between the faces of the
         crossing dividers bounding the spaces it was limited to."""
         rect, th, item = run.rect, run.th, run.item
+        self._drawer_item_index = getattr(run, 'index', -1)
         z0, z1 = rect.z0, rect.z0 + rect.h
         # The run's own length lies across the crossing dividers.
         a0, a1 = ((rect.y0, rect.y1) if run.lengthwise
@@ -23251,18 +23627,23 @@ def _resolve_style_stile_width(root, cab_props, row):
         return None
 
 
-def break_cabinet_at_gap(cabinet, gap_index, shrink_side='AUTO'):
+def break_cabinet_at_gap(cabinet, gap_index, shrink_side='AUTO',
+                         right_share=None):
     """Break `cabinet` into two cabinets at the gap between bays
     `gap_index` and `gap_index+1`. Returns the new (right-half)
     cabinet root, or None on invalid input.
 
     `shrink_side` directs which half absorbs the extra width the break
     creates (replacing the boundary mid stile with two butt end stiles
-    widens the pair; see the width math below): 'AUTO' splits it between
-    halves that have unlocked bays; 'LEFT' / 'RIGHT' force it onto one
-    half (Break Both uses this so each outer cabinet absorbs exactly one
-    boundary's worth and the outer halves come out equal). A forced side
-    with no unlocked bays falls back to AUTO.
+    widens the pair; see the width math below): 'AUTO' shares it between
+    the halves by how many unlocked bays each has, so every unlocked bay
+    of the run gives up the same amount and bays that were equal stay
+    equal; 'LEFT' / 'RIGHT' force it onto one half (Break Both uses this
+    around a bay whose width is kept, so each outer cabinet absorbs
+    exactly one boundary's worth). A forced side with no unlocked bays
+    falls back to AUTO. `right_share` (0..1), when given, is the part of
+    the extra the right half takes instead; it may pass 1 or go below 0
+    when a second break is to come and even the two out.
 
     The original keeps bays [0..gap_index]; the new cabinet receives
     bays [gap_index+1..end] reindexed from 0. The boundary mid stile
@@ -23435,16 +23816,24 @@ def break_cabinet_at_gap(cabinet, gap_index, shrink_side='AUTO'):
         boundary_actual = mids_data[gap_index][0]
         extra = 2 * boundary_default - boundary_actual
 
-        left_has_unlocked = any(not b.face_frame_bay.unlock_width
-                                for b in bays[:gap_index + 1])
-        right_has_unlocked = any(not b.face_frame_bay.unlock_width
-                                 for b in right_bays)
-        if shrink_side == 'LEFT' and left_has_unlocked:
+        left_free = sum(1 for b in bays[:gap_index + 1]
+                        if not b.face_frame_bay.unlock_width)
+        right_free = sum(1 for b in right_bays
+                         if not b.face_frame_bay.unlock_width)
+        left_has_unlocked = left_free > 0
+        right_has_unlocked = right_free > 0
+        if (right_share is not None and left_has_unlocked
+                and right_has_unlocked):
+            right_shrink = extra * float(right_share)
+            left_shrink = extra - right_shrink
+        elif shrink_side == 'LEFT' and left_has_unlocked:
             left_shrink, right_shrink = extra, 0.0
         elif shrink_side == 'RIGHT' and right_has_unlocked:
             left_shrink, right_shrink = 0.0, extra
         elif left_has_unlocked and right_has_unlocked:
-            left_shrink, right_shrink = extra / 2.0, extra / 2.0
+            # By bay count: each unlocked bay gives up the same amount.
+            right_shrink = extra * right_free / (left_free + right_free)
+            left_shrink = extra - right_shrink
         elif left_has_unlocked:
             left_shrink, right_shrink = extra, 0.0
         elif right_has_unlocked:

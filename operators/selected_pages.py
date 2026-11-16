@@ -686,7 +686,7 @@ def _wall_more(context):
 def _wall_commands(obj):
     act = _wall_act
     return [
-        ('actions', (act("Show Elevation", "home_builder.show_elevation",
+        ('actions', (act("Show Drawings", "home_builder.show_elevation",
                          {'wall_name': obj.name}, 'elevation'),)),
         ('gap', None),
         ('label', "Room"),

@@ -828,7 +828,9 @@ class hb_frameless_OT_update_cabinets_from_style(bpy.types.Operator):
         self._cabinets = []
         for scene in bpy.data.scenes:
             for obj in scene.objects:
-                if props_hb_frameless.wears_cabinet_style(obj):
+                if (obj.get('IS_FRAMELESS_CABINET_CAGE')
+                        or obj.get('IS_FRAMELESS_PRODUCT_CAGE')
+                        or obj.get('IS_FRAMELESS_MISC_PART')):
                     cab_style_index = obj.get('CABINET_STYLE_INDEX', 0)
                     if cab_style_index == style_index:
                         self._cabinets.append(obj)
@@ -883,7 +885,9 @@ class hb_frameless_OT_update_cabinet_materials(bpy.types.Operator):
         cabinets = []
         for scene in bpy.data.scenes:
             for obj in scene.objects:
-                if props_hb_frameless.wears_cabinet_style(obj):
+                if (obj.get('IS_FRAMELESS_CABINET_CAGE')
+                        or obj.get('IS_FRAMELESS_PRODUCT_CAGE')
+                        or obj.get('IS_FRAMELESS_MISC_PART')):
                     cab_style_index = obj.get('CABINET_STYLE_INDEX', 0)
                     if cab_style_index == style_index:
                         cabinets.append(obj)
@@ -958,7 +962,10 @@ class hb_frameless_OT_update_cabinet_pulls(bpy.types.Operator):
                 if parent.get(edge_pulls.PULL_KEY):
                     continue
                 
-                if parent.get('IS_DOOR_FRONT') and self.pull_type in ('DOOR', 'ALL'):
+                # A door's drawer look fronts carry the drawer pull.
+                drawer_look = bool(parent.get('IS_DRAWER_LOOK_FRONT'))
+                if (parent.get('IS_DOOR_FRONT') and not drawer_look
+                        and self.pull_type in ('DOOR', 'ALL')):
                     if door_is_none:
                         pull_hw.set_input("Object", None)
                         cleared_count += 1
@@ -969,7 +976,8 @@ class hb_frameless_OT_update_cabinet_pulls(bpy.types.Operator):
                     updated_objs.append(obj)
                     updated_objs.append(parent)
                 
-                elif parent.get('IS_DRAWER_FRONT') and self.pull_type in ('DRAWER', 'ALL'):
+                elif ((parent.get('IS_DRAWER_FRONT') or drawer_look)
+                        and self.pull_type in ('DRAWER', 'ALL')):
                     if drawer_is_none:
                         pull_hw.set_input("Object", None)
                         cleared_count += 1

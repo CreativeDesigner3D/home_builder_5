@@ -8,6 +8,7 @@ from . import dim_edit_overlay
 from . import quiet_cages
 from . import selected_card
 from . import drill_frameless
+from . import exposure
 
 NAMESPACE = "hb_frameless"
 MENU_NAME = "Frameless"
@@ -21,8 +22,10 @@ def register():
     quiet_cages.register()
     selected_card.register()
     drill_frameless.register()
+    exposure.register()
 
 def unregister():
+    exposure.unregister()
     drill_frameless.unregister()
     selected_card.unregister()
     quiet_cages.unregister()

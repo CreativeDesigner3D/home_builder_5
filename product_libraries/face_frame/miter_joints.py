@@ -170,6 +170,32 @@ def remove_joints(part):
 # Geometry
 # ---------------------------------------------------------------------------
 
+def _evaluated_world(obj):
+    """obj's world matrix as last evaluated. An object's own matrix_world
+    is left at identity when undo reads the object back, until something
+    moves it again; its evaluated copy keeps the real one."""
+    try:
+        ev = obj.evaluated_get(bpy.context.view_layer.depsgraph)
+        if ev is not None and ev.is_evaluated:
+            return ev.matrix_world.copy()
+    except Exception:
+        pass
+    return obj.matrix_world.copy()
+
+
+def _root_world(root):
+    """A cabinet root's world matrix: its stored transform on its
+    parent's evaluated matrix, so neither a move made a moment ago nor
+    an undo leaves it stale."""
+    if root.constraints or (root.parent is not None
+                            and root.parent_type != 'OBJECT'):
+        return _evaluated_world(root)
+    local = root.matrix_parent_inverse @ root.matrix_basis
+    if root.parent is None:
+        return local
+    return _evaluated_world(root.parent) @ local
+
+
 def _world_matrix(part):
     """part's world matrix from stored transforms up to its cabinet root
     (matrix_world can lag within a rebuild)."""
@@ -181,7 +207,7 @@ def _world_matrix(part):
         node = node.parent
     if root is None:
         return part.matrix_world.copy()
-    return root.matrix_world @ m
+    return _root_world(root) @ m
 
 
 class _Board:
@@ -354,7 +380,7 @@ def _ensure_cutter(part, idx):
 
 def _write_prism(cutter, quad, z0, z1):
     root = cutter.parent
-    inv = root.matrix_world.inverted()
+    inv = _root_world(root).inverted()
     bm = bmesh.new()
     lo = [bm.verts.new(inv @ Vector((p.x, p.y, z0))) for p in quad]
     hi = [bm.verts.new(inv @ Vector((p.x, p.y, z1))) for p in quad]
@@ -543,7 +569,7 @@ def _scribe_needed(root, stile, other, mode, side):
     if line is None:
         return None
     p, q = line
-    inv = root.matrix_world.inverted()
+    inv = _root_world(root).inverted()
     z = a.mw.translation.z
 
     def local(pt):

@@ -116,6 +116,8 @@ class hb_frameless_OT_delete_appliance(bpy.types.Operator):
     def execute(self, context):
         appliance_bp = hb_utils.get_appliance_bp(context.object)
         hb_utils.delete_obj_and_children(appliance_bp)
+        from .. import exposure
+        exposure.request(context.scene)
         return {'FINISHED'}
 
 

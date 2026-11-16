@@ -694,6 +694,167 @@ def update_top_cabinet_clearance(self, context):
 # Each default also pushes itself onto the cabinets already in the room,
 # so the room follows the field rather than waiting on a refresh button.
 
+_syncing_countertop_thickness = False
+
+_BASE_HEIGHT_TOLERANCE = 1e-4
+
+
+def _counter_height_rooms(counter_height, thickness):
+    """(scene, props) for every room whose base cabinets stand at the
+    counter height less the countertop thickness. A room kept at another
+    height (a vanity, a desk) is not driven by the counter height."""
+    out = []
+    for scene in bpy.data.scenes:
+        props = getattr(scene, 'hb_frameless', None)
+        if props is None:
+            continue
+        if abs(props.base_cabinet_height
+               - (counter_height - thickness)) <= _BASE_HEIGHT_TOLERANCE:
+            out.append((scene, props))
+    return out
+
+
+def _drive_base_height(rooms, base_height, old_thickness, new_thickness):
+    for scene, props in rooms:
+        old_height = props.base_cabinet_height
+        if base_height <= 0.0 or abs(base_height - old_height) <= 1e-7:
+            continue
+        props.base_cabinet_height = base_height
+        _follow_base_height(scene, old_height, base_height,
+                            old_thickness, new_thickness)
+
+
+def set_countertop_thickness(self, new_value, curr_value, is_set):
+    """The countertop thickness is one value for the project. With the
+    counter height in use, a room standing at it keeps it when the
+    thickness changes: its base cabinet height gives up (or takes back)
+    the difference. Otherwise the base cabinet height is left alone."""
+    global _syncing_countertop_thickness
+    if _syncing_countertop_thickness:
+        return new_value
+    _syncing_countertop_thickness = True
+    try:
+        main = hb_project.get_main_scene().hb_frameless
+        rooms = []
+        if main.use_counter_height and abs(curr_value - new_value) > 1e-7:
+            rooms = _counter_height_rooms(main.counter_height, curr_value)
+        for scene in bpy.data.scenes:
+            props = getattr(scene, 'hb_frameless', None)
+            if props is not None and props != self:
+                props.countertop_thickness = new_value
+        _drive_base_height(rooms, main.counter_height - new_value,
+                           curr_value, new_value)
+    finally:
+        _syncing_countertop_thickness = False
+    return new_value
+
+
+def set_counter_height(self, new_value, curr_value, is_set):
+    """With the counter height in use, the rooms standing at the old one
+    take the new one: base cabinets, fillers and countertops follow."""
+    main = hb_project.get_main_scene().hb_frameless
+    if (self == main and main.use_counter_height
+            and abs(curr_value - new_value) > 1e-7):
+        thickness = main.countertop_thickness
+        _drive_base_height(_counter_height_rooms(curr_value, thickness),
+                           new_value - thickness, thickness, thickness)
+    return new_value
+
+
+def apply_counter_height(scene, cabinets, force=False):
+    """Stand a room's base cabinets at the counter height less the
+    countertop thickness, ahead of countertops being built on them.
+
+    Nothing happens unless the counter height is in use. The room's base
+    cabinet height takes the new value, and what stands at the old one
+    follows; with ``force`` the cabinets in ``cabinets`` are resized
+    instead, whatever height they were at. Returns the base height, or
+    None."""
+    main = hb_project.get_main_scene().hb_frameless
+    if not main.use_counter_height:
+        return None
+    thickness = main.countertop_thickness
+    target = main.counter_height - thickness
+    if target <= 0.0:
+        return None
+    if force:
+        from . import solver_frameless
+        changed = []
+        for obj in cabinets:
+            if not obj.get('IS_FRAMELESS_CABINET_CAGE'):
+                continue
+            try:
+                cage = hb_types.GeoNodeObject(obj)
+                if abs(cage.get_input('Dim Z') - target) <= 1e-7:
+                    continue
+                cage.set_input('Dim Z', target)
+            except Exception:
+                continue
+            changed.append(obj)
+        if changed:
+            solver_frameless.solve_roots(changed)
+    else:
+        _drive_base_height([(scene, scene.hb_frameless)], target,
+                           thickness, thickness)
+    return target
+
+
+def _follow_base_height(scene, old_height, new_height,
+                        old_thickness, new_thickness):
+    """Carry a room's new base cabinet height to what is already drawn.
+
+    Base cabinets, and the floor-standing products beside them (fillers),
+    that stand at the old height take the new one; anything sized by hand
+    is left alone. A countertop resting on the old height moves with them
+    and takes the new thickness, so its top stays at the counter height.
+    """
+    from . import solver_frameless
+    tol = _BASE_HEIGHT_TOLERANCE
+    changed = []
+    for obj in scene.objects:
+        if obj.get('IS_FRAMELESS_CABINET_CAGE'):
+            if obj.get('CABINET_TYPE') != 'BASE':
+                continue
+            if obj.parent and obj.parent.get('IS_FRAMELESS_CABINET_CAGE'):
+                continue
+        elif obj.get('IS_FRAMELESS_PRODUCT_CAGE'):
+            if abs(obj.location.z) > tol:
+                continue
+        else:
+            continue
+        try:
+            cage = hb_types.GeoNodeObject(obj)
+            if abs(cage.get_input('Dim Z') - old_height) > tol:
+                continue
+            cage.set_input('Dim Z', new_height)
+        except Exception:
+            continue
+        changed.append(obj)
+    if changed:
+        solver_frameless.solve_roots(changed)
+
+    for obj in scene.objects:
+        if (not obj.get('IS_COUNTERTOP')
+                or obj.get('HB_COUNTERTOP_LIB') != 'FRAMELESS'
+                or obj.type != 'MESH' or not obj.data.vertices):
+            continue
+        verts = obj.data.vertices
+        z_bot = min(v.co.z for v in verts)
+        z_top = max(v.co.z for v in verts)
+        # A plain slab only: two levels, resting on the old base height.
+        if (abs(z_bot - old_height) > tol
+                or abs((z_top - z_bot) - old_thickness) > tol
+                or any(abs(v.co.z - z_bot) > tol and abs(v.co.z - z_top) > tol
+                       for v in verts)):
+            continue
+        for v in verts:
+            if abs(v.co.z - z_bot) <= tol:
+                v.co.z = new_height
+            else:
+                v.co.z = new_height + new_thickness
+        obj.data.update()
+
+
 def update_material_thickness_default(self, context):
     bpy.ops.hb_frameless.update_material_thickness_prompts()
 
@@ -731,6 +892,38 @@ def update_include_drawer_boxes(self,context):
         drawer_boxes = [obj for obj in context.scene.objects if obj.get('IS_DRAWER_BOX')]
         for db in drawer_boxes:
             bpy.data.objects.remove(db, do_unlink=True)
+
+def _get_highlight_raw_edges(self):
+    from . import edgebanding_frameless
+    return edgebanding_frameless.raw_edges_highlighted()
+
+
+def _set_highlight_raw_edges(self, value):
+    from . import edgebanding_frameless
+    edgebanding_frameless.highlight_raw_edges(value)
+
+
+def update_auto_finished_ends(self, context):
+    from . import exposure
+    exposure.recalc_scene(context.scene, context)
+
+
+def update_applied_back_to_floor(self, context):
+    """Applied backs the room looks after follow the setting; one set by
+    hand keeps its own."""
+    from . import exposure, solver_frameless
+    to_floor = bool(self.applied_back_to_floor)
+    for obj in context.scene.objects:
+        if not obj.get('IS_APPLIED_END_BACK'):
+            continue
+        cabinet = obj.parent
+        if cabinet is None or exposure.is_manual(cabinet, 'BACK'):
+            continue
+        if bool(obj.get(solver_frameless.PANEL_TO_FLOOR_KEY, True)) == to_floor:
+            continue
+        obj[solver_frameless.PANEL_TO_FLOOR_KEY] = to_floor
+        solver_frameless.recalculate_cabinet(cabinet)
+
 
 def update_show_machining(self,context):
     print('UPDATE SHOW MACHINING',self.show_machining)
@@ -888,24 +1081,9 @@ def get_interior_material_enum_items(self, context):
     return _interior_enum_cache
 
 
-def wears_cabinet_style(obj):
-    """True for an object a frameless cabinet style paints: a cabinet, a
-    loose misc part, or a product placed in a style (a wall scribe
-    filler, which placement styles and stamps CABINET_STYLE_INDEX on).
-    Products left out here kept the colour they were placed in when the
-    style's Exterior changed, so a filler read as the interior white.
-    Face frame products on frameless parts wear face frame styles."""
-    if obj.get('IS_FRAMELESS_CABINET_CAGE') or obj.get('IS_FRAMELESS_MISC_PART'):
-        return True
-    return (bool(obj.get('IS_FRAMELESS_PRODUCT_CAGE'))
-            and not obj.get('IS_FACE_FRAME_PRODUCT_CAGE')
-            and 'CABINET_STYLE_INDEX' in obj)
-
-
 def _cabinets_wearing_style(style):
-    """Every cabinet (and loose misc part, and styled product) in the
-    project assigned this style, by the index it holds in the main
-    scene's pool."""
+    """Every cabinet (and loose misc part) in the project assigned this
+    style, by the index it holds in the main scene's pool."""
     main_scene = hb_project.get_main_scene()
     styles = main_scene.hb_frameless.cabinet_styles
     index = next((i for i, s in enumerate(styles)
@@ -915,7 +1093,9 @@ def _cabinets_wearing_style(style):
     found = []
     for scene in bpy.data.scenes:
         for obj in scene.objects:
-            if not wears_cabinet_style(obj):
+            if not (obj.get('IS_FRAMELESS_CABINET_CAGE')
+                    or obj.get('IS_FRAMELESS_PRODUCT_CAGE')
+                    or obj.get('IS_FRAMELESS_MISC_PART')):
                 continue
             if obj.get('CABINET_STYLE_INDEX', 0) == index:
                 found.append(obj)
@@ -1102,8 +1282,8 @@ class Frameless_Cabinet_Style(PropertyGroup):
     # wood species / stain / paint selection below, which stays declared
     # so older files still load but is no longer drawn.
     sheet_material: EnumProperty(
-        name="Cabinet Material",
-        description="Sheet material for the carcass and, unless Fronts "
+        name="Exterior Material",
+        description="Sheet material for the cabinet exterior and, unless Fronts "
                     "says otherwise, the doors and drawer fronts",
         items=get_sheet_material_enum_items,
         update=update_style_materials,
@@ -1235,11 +1415,30 @@ class Frameless_Cabinet_Style(PropertyGroup):
                 m.rotated_variant(self._sheet(self.front_edge_material,
                                               front)))
 
+    def exterior_two_sided(self):
+        """True when the exterior is a board made the same both faces,
+        so a part is that or the interior material right through."""
+        from . import sheet_faces
+        return sheet_faces.is_two_sided(self.sheet_material)
+
+    def get_shelf_edge_material(self, finished_interior=False):
+        """Banding for a loose shelf inside the box. It is read against
+        the interior it sits in, so with the cabinet edge on Match it
+        takes the interior material rather than the cabinet's; a picked
+        cabinet edge, or a Finished Interior, bands it like the box."""
+        m = _sheet_materials()
+        if finished_interior or self.edge_material not in ('', m.MATCH):
+            return self.get_edge_materials()[0]
+        interior, _ = self.get_interior_material()
+        return m.rotated_variant(interior)
+
     def apply_materials_to_cabinet(self, cabinet_obj):
         """Paint every cutpart under the cabinet. Carcass faces take the
         cabinet material where the part is flagged finished (Finish Top
         / Finish Bottom) and the interior material elsewhere -- or the
-        cabinet material throughout on a Finished Interior cabinet.
+        cabinet material throughout on a Finished Interior cabinet. A
+        cabinet material made the same both faces finishes a part right
+        through or not at all (see sheet_faces).
         Fronts take the fronts material both sides. Edges take the
         matching banding. Five-piece fronts also get their stile / rail
         / panel materials, the rails turned so the grain runs across."""
@@ -1254,6 +1453,10 @@ class Frameless_Cabinet_Style(PropertyGroup):
         # and the in-plane turn is what runs a rail across.
         front_across = m.vertical_variant(front_mat)
         finished_interior = cabinet_obj.get('Finished Interior', False)
+        shelf_edge = self.get_shelf_edge_material(finished_interior)
+        from . import edgebanding_frameless
+        from . import sheet_faces
+        two_sided = self.exterior_two_sided()
 
         parts = [child for child in cabinet_obj.children_recursive
                  if 'CABINET_PART' in child]
@@ -1276,16 +1479,17 @@ class Frameless_Cabinet_Style(PropertyGroup):
                 top_mat = bottom_mat = finish_mat
                 edge = carcass_edge
             else:
-                top_mat = (finish_mat if child.get('Finish Top', False)
-                           else interior_mat)
-                bottom_mat = (finish_mat if child.get('Finish Bottom', True)
-                              else interior_mat)
+                fin_top, fin_bottom = sheet_faces.finished_faces(
+                    child, two_sided)
+                top_mat = finish_mat if fin_top else interior_mat
+                bottom_mat = finish_mat if fin_bottom else interior_mat
                 edge = carcass_edge
+            if edgebanding_frameless.is_loose_shelf(child):
+                edge = shelf_edge
 
             part.set_input("Top Surface", top_mat)
             part.set_input("Bottom Surface", bottom_mat)
             # Carcass parts are banded only where an edge shows.
-            from . import edgebanding_frameless
             edgebanding_frameless.apply_edges(child, edge)
             # A turned leg is a static mesh carrying its own material, taken
             # from Top Surface when it was turned; give it the new one.
@@ -1377,7 +1581,7 @@ class Frameless_Cabinet_Style(PropertyGroup):
         box.prop(self, "name", text="Style Name")
 
         col = box.column(align=True)
-        col.prop(self, "sheet_material", text="Material")
+        col.prop(self, "sheet_material", text="Exterior")
         col.prop(self, "front_material", text="Fronts")
         col.prop(self, "interior_sheet_material", text="Interior")
 
@@ -1778,7 +1982,7 @@ class CalculatorCabinet(PropertyGroup):
     """Property group for calculator cabinet data used in Adjust Cabinet Sizes."""
     cabinet_obj: PointerProperty(name="Cabinet Object", type=bpy.types.Object) # type: ignore
     is_equal: BoolProperty(name="Equal Width", default=True) # type: ignore
-    cabinet_width: FloatProperty(name="Width", subtype='DISTANCE', unit='LENGTH') # type: ignore
+    cabinet_width: FloatProperty(name="Width", subtype='DISTANCE', unit='LENGTH', precision=5) # type: ignore
 
 
 class Crown_Detail(PropertyGroup):
@@ -1992,6 +2196,12 @@ class Frameless_Scene_Props(PropertyGroup):
         description=("New wall scribe fillers stand out in the plane of the "
                      "doors. Off, their face is flush with the carcass front"),
         default=False)  # type: ignore
+    scribe_filler_toe_kick_piece: BoolProperty(
+        name="Toe Kick Piece",
+        description=("New wall scribe fillers on a base or tall cabinet come "
+                     "in with a kick piece under the face. Off, the filler "
+                     "stops at the toe kick"),
+        default=False)  # type: ignore
 
     base_exterior: EnumProperty(name="Base Exterior",
                                items=[('Doors',"Doors","Doors"),
@@ -2064,8 +2274,18 @@ class Frameless_Scene_Props(PropertyGroup):
                                                  default=units.inch(54.0),
                                                  unit='LENGTH',
                                                  precision=4,
-                                                 update=update_top_cabinet_clearance)# type: ignore  
-    
+                                                 update=update_top_cabinet_clearance)# type: ignore
+
+    upper_height_anchor: EnumProperty(
+        name="Upper Height Keeps",
+        description="Which edge of an upper cabinet stays where it is "
+                    "when its height is changed",
+        items=[('TOP', "Top", "The top stays; the cabinet grows or "
+                              "shrinks along its bottom"),
+               ('BOTTOM', "Bottom", "The bottom stays; the cabinet grows "
+                                    "or shrinks along its top")],
+        default='TOP')# type: ignore
+
     default_cabinet_width: FloatProperty(name="Default Cabinet Width",
                                                  description="Default width for cabinets",
                                                  default=units.inch(36.0),
@@ -2166,6 +2386,50 @@ class Frameless_Scene_Props(PropertyGroup):
     
     #CABINET GENERAL CONSTRUCTION OPTIONS
     show_machining: bpy.props.BoolProperty(name="Show Machining",default = True,update=update_show_machining)# type: ignore
+
+    highlight_raw_edges: BoolProperty(
+        name="Highlight Raw Edges",
+        description="Show the edges that get no edgebanding in a soft red "
+                    "instead of the board colour, so they stand out from "
+                    "the interior and exterior materials",
+        get=_get_highlight_raw_edges,
+        set=_set_highlight_raw_edges)# type: ignore
+
+    auto_finished_ends: BoolProperty(
+        name="Automatic Finished Ends",
+        description="Finish the ends of cabinets that show, and leave the "
+                    "ends a wall, an appliance or other cabinets cover "
+                    "unfinished. An end set by hand stays as it was set",
+        default=True,
+        update=update_auto_finished_ends)# type: ignore
+
+    default_finished_end: EnumProperty(
+        name="Default Finished End",
+        description="What an end that shows is given",
+        items=[('FINISHED', "Finished Side", "The cabinet side itself in the finish material"),
+               ('SLAB', "Applied Slab Panel", "A finished slab panel applied over the side"),
+               ('5PIECE', "Applied 5-Piece Panel", "A five-piece panel matching the doors")],
+        default='FINISHED',
+        update=update_auto_finished_ends)# type: ignore
+
+    default_finished_back: EnumProperty(
+        name="Default Finished Back",
+        description="What a back that shows is given: one no wall and no "
+                    "other cabinet stands behind, as on an island",
+        items=[('UNFINISHED', "Unfinished", "Backs are left unfinished"),
+               ('FINISHED', "Finished Back", "The cabinet back itself in the finish material"),
+               ('SLAB', "Applied Slab Panel", "A finished slab panel applied behind the cabinet's own back"),
+               ('5PIECE', "Applied 5-Piece Panel", "A five-piece panel matching the doors")],
+        default='FINISHED',
+        update=update_auto_finished_ends)# type: ignore
+
+    applied_back_to_floor: BoolProperty(
+        name="Applied Back To Floor",
+        description="An applied back runs down to the floor. Off, it stops "
+                    "at the toe kick, leaving the toe space open behind "
+                    "the cabinet",
+        default=True,
+        update=update_applied_back_to_floor)# type: ignore
 
     default_carcass_part_thickness: FloatProperty(name="Default Carcass Part Thickness",
                                                  description="",
@@ -2366,9 +2630,21 @@ class Frameless_Scene_Props(PropertyGroup):
 
     # COUNTERTOP OPTIONS
     countertop_thickness: FloatProperty(name="Countertop Thickness",
-                                        description="Thickness of the countertop slab",
+                                        description="Thickness of the countertop slab. With the counter height in use, changing it keeps the counter height and resizes the base cabinets",
                                         default=units.inch(1.5),
-                                        unit='LENGTH')# type: ignore
+                                        unit='LENGTH',
+                                        set_transform=set_countertop_thickness)# type: ignore
+
+    use_counter_height: BoolProperty(name="Use Counter Height",
+                                     description="Build countertops to a set counter height. Adding countertops stands the base cabinets under them at the counter height less the countertop thickness. Off, base cabinets keep the base cabinet height from the cabinet sizes",
+                                     default=False)# type: ignore
+
+    counter_height: FloatProperty(name="Counter Height",
+                                  description="Floor to the top of the countertop",
+                                  default=units.inch(36.0),
+                                  unit='LENGTH',
+                                  precision=4,
+                                  set_transform=set_counter_height)# type: ignore
 
     countertop_overhang_front: FloatProperty(name="Countertop Front Overhang",
                                               description="Overhang past the front of cabinets",
@@ -2452,6 +2728,7 @@ class Frameless_Scene_Props(PropertyGroup):
         if props.cabinet_styles and props.active_cabinet_style_index < len(props.cabinet_styles):
             style = props.cabinet_styles[props.active_cabinet_style_index]
             style.draw_cabinet_style_ui(layout, context)
+        layout.prop(props, 'highlight_raw_edges')
 
     def ensure_default_door_style(self):
         """Ensure at least one door style exists."""
@@ -2513,6 +2790,10 @@ class Frameless_Scene_Props(PropertyGroup):
         row.prop(self,'default_wall_cabinet_location',text="")  
         row.label(text="",icon='BLANK1')
         row = layout.row()
+        row.label(text="Upper Height Change Keeps:")
+        row.prop(self,'upper_height_anchor',expand=True)
+        row.label(text="",icon='BLANK1')
+        row = layout.row()
         row.label(text="Sizes")
         row.label(text="Base")
         row.label(text="Tall")      
@@ -2544,6 +2825,7 @@ class Frameless_Scene_Props(PropertyGroup):
         row.prop(self,'corner_filler_width',text="Width")
         row.prop(self,'corner_filler_return',text="Return")
         row.prop(self,'scribe_filler_flush_with_doors',text="Flush With Doors")
+        row.prop(self,'scribe_filler_toe_kick_piece',text="Toe Kick Piece")
 
     def draw_user_library_ui(self,layout,context):
         from .operators import ops_library
@@ -2667,6 +2949,18 @@ class Frameless_Scene_Props(PropertyGroup):
         row.prop(self,'back_tongue_length',text="Back Tongue")
         size_box = layout.box()
         row = size_box.row()
+        row.label(text="Finished Ends:")
+        row = size_box.row()
+        row.prop(self,'auto_finished_ends',text="Automatic on Ends That Show")
+        row = size_box.row()
+        row.prop(self,'default_finished_end',text="Default")
+        row = size_box.row()
+        row.prop(self,'default_finished_back',text="Backs That Show")
+        if self.default_finished_back in ('SLAB', '5PIECE'):
+            row = size_box.row()
+            row.prop(self,'applied_back_to_floor',text="Applied Back To Floor")
+        size_box = layout.box()
+        row = size_box.row()
         row.label(text="Toe Kick:")
         row.operator('hb_frameless.update_toe_kick_prompts',text="",icon='FILE_REFRESH')
         row = size_box.row()
@@ -2683,6 +2977,13 @@ class Frameless_Scene_Props(PropertyGroup):
         row.operator('hb_frameless.remove_base_assemblies',text="",icon='X')
         row = size_box.row()
         row.operator('hb_frameless.edit_base_assemblies',text="Edit Base Assemblies",icon='EDITMODE_HLT')
+        size_box = layout.box()
+        row = size_box.row()
+        row.label(text="Ceiling Closure:")
+        row = size_box.row(align=True)
+        row.operator('hb_frameless.add_l_crowns',text="Add Ceiling Closures").selected_only = False
+        row.operator('hb_frameless.add_l_crowns',text="Selected").selected_only = True
+        row.operator('hb_frameless.remove_l_crowns',text="",icon='X')
         size_box = layout.box()
         row = size_box.row()
         row.label(text="Base Top Construction:")
@@ -2944,6 +3245,10 @@ class Frameless_Scene_Props(PropertyGroup):
         sub = col.row(align=True)
         sub.enabled = hb_scene.molding_light_rail_package != 'NONE'
         sub.prop(hb_scene, 'molding_light_rail_profile', text="Profile")
+        col.prop(hb_scene, 'molding_light_rail_height', text="Rail Height")
+        sub = col.row(align=True)
+        sub.enabled = hb_scene.molding_light_rail_height > 0.0
+        sub.prop(hb_scene, 'molding_light_rail_doors_cover')
         row = col.row(align=True)
         row.scale_y = 1.3
         row.operator('home_builder.refresh_room_molding', text="Refresh Molding",
@@ -2964,6 +3269,11 @@ class Frameless_Scene_Props(PropertyGroup):
 
         col = layout.column(align=True)
         col.prop(props, 'countertop_thickness', text="Thickness")
+        row = col.row(align=True)
+        row.prop(props, 'use_counter_height', text="Counter Height")
+        sub = row.row(align=True)
+        sub.enabled = props.use_counter_height
+        sub.prop(props, 'counter_height', text="")
         col.prop(props, 'countertop_overhang_front', text="Front Overhang")
         col.prop(props, 'countertop_overhang_sides', text="Side Overhang")
         col.prop(props, 'countertop_overhang_back', text="Back Overhang")

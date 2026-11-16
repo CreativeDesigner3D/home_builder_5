@@ -1222,10 +1222,11 @@ class PlacementMixin:
     def blocks_placement(self, obj) -> bool:
         """Whether ``obj`` takes up room along the wall as far as the
         thing being placed is concerned. A base assembly never does:
-        it is what cabinets stand on, so they are placed over it. An
-        operator placing something with its own idea of an obstacle
-        overrides this."""
-        return not obj.get('IS_BASE_ASSEMBLY')
+        it is what cabinets stand on, so they are placed over it; nor
+        does an L crown, which stands on top of them. An operator
+        placing something with its own idea of an obstacle overrides
+        this."""
+        return not (obj.get('IS_BASE_ASSEMBLY') or obj.get('IS_L_CROWN'))
 
     def find_placement_gap_by_side(self, wall_obj, cursor_x: float,
                                    object_width: float,

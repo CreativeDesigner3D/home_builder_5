@@ -472,7 +472,11 @@ class PoolSpec:
     (the active level's rooms); `list_label` heads the list; `row_text` says what a row
     shows (the item's name by default); `rename_prop` is what a second
     click on the active row types into, None for no rename; and
-    `allow_empty` lets the last item be removed.
+    `allow_empty` lets the last item be removed, and `can_remove(item)`
+    says which items may be removed at all (every one by default).
+    `head_action` is (icon, operator, tip): a small icon button at the
+    right of the list's header, for a command on the whole list.
+    `on_select(context, item)` is called when a row is clicked.
     `move_every_row` puts the move arrows on every row rather than the
     active one alone, for a list whose order is what it means (a press
     on one moves that row).
@@ -492,7 +496,8 @@ class PoolSpec:
                  actions_first=False, scope='main', list_label="Styles",
                  row_text=None, rename_prop='name', allow_empty=False,
                  row_dot=None, row_count=None, summary=None,
-                 move_every_row=False, reorder_op=None):
+                 move_every_row=False, reorder_op=None, can_remove=None,
+                 head_action=None, on_select=None):
         self.title = title
         self.props = props
         self.collection = collection
@@ -516,6 +521,9 @@ class PoolSpec:
         self.summary = summary
         self.move_every_row = move_every_row
         self.reorder_op = reorder_op
+        self.can_remove = can_remove
+        self.head_action = head_action
+        self.on_select = on_select
 
     @property
     def key(self):
@@ -529,6 +537,20 @@ class PoolSpec:
         if self.scope == 'scene':
             return getattr(context.scene, self.props, None)
         return _main_group(self.props, context)
+
+    def removable(self, context, i):
+        """Whether the item at i may be removed."""
+        if not self.remove_op:
+            return False
+        items = self.items(context)
+        if not 0 <= i < len(items) or len(items) <= (0 if self.allow_empty else 1):
+            return False
+        if self.can_remove is None:
+            return True
+        try:
+            return bool(self.can_remove(items[i]))
+        except Exception:
+            return False
 
     def text(self, item):
         """What the item's row says."""
@@ -557,6 +579,18 @@ class PoolSpec:
         owner = self.owner(context)
         if owner is not None and getattr(owner, self.index, None) != i:
             setattr(owner, self.index, i)
+            self.selected(context)
+
+    def selected(self, context):
+        """A row was clicked: tell the page, if it asked to know."""
+        if self.on_select is None:
+            return
+        try:
+            item = self.active(context)
+            if item is not None:
+                self.on_select(context, item)
+        except Exception as ex:
+            print('Home Builder: on_select failed: %s' % ex)
 
     def active(self, context):
         items = self.items(context)
@@ -588,6 +622,9 @@ def _pool_from_spec(spec):
         summary=spec.get('summary'),
         move_every_row=spec.get('move_every_row', False),
         reorder_op=spec.get('reorder_op'),
+        can_remove=spec.get('can_remove'),
+        head_action=spec.get('head_action'),
+        on_select=spec.get('on_select'),
     )
 
 
@@ -996,8 +1033,7 @@ def _tile_edit_blocks(context, spec, pool):
     dup = pool.duplicate_op or pool.add_op
     if dup:
         row.append(("Duplicate", dup, None, None))
-    if pool.remove_op and (pool.allow_empty
-                           or len(pool.items(context)) > 1):
+    if pool.removable(context, pool.active_index(context)):
         row.append(("Delete", pool.remove_op, None, None))
     if row:
         blocks.append(('actions', tuple(row)))
@@ -1239,7 +1275,15 @@ def build_page(rect, context, blocks_fn, lst):
                 bh = NEW_BTN_H * s
                 add_rect = (x + row_w - bw, block_top - sect_h + (sect_h - bh) / 2.0,
                             bw, bh)
-            entries.append(('styles_head', label, head_rect, add_rect, pool))
+            # The list's own command, an icon at the right (left of NEW)
+            icon_rect = None
+            if pool is not None and pool.head_action:
+                bh = NEW_BTN_H * s
+                right = add_rect[0] - 4 * s if add_rect else x + row_w
+                icon_rect = (right - bh, block_top - sect_h + (sect_h - bh) / 2.0,
+                             bh, bh)
+            entries.append(('styles_head', label, head_rect, add_rect, pool,
+                            icon_rect))
         elif kind == 'style':
             i, name, is_active, pool = payload
             rect = (x, block_top - row_h, row_w, row_h)
@@ -1249,8 +1293,7 @@ def build_page(rect, context, blocks_fn, lst):
             count = len(pool.items(context))
             gear_rect = None
             right = x + row_w - 2 * s
-            if (pool.remove_op and is_active
-                    and count > (0 if pool.allow_empty else 1)):
+            if is_active and pool.removable(context, i):
                 gear = GEAR * s
                 gear_w = gear
                 if _armed_delete == (pool.key, i):
@@ -1578,13 +1621,24 @@ def _clip(entries):
     return None
 
 
-def _paint_head(shader, font_id, s, mx, my, label, rect, add_rect):
+def _paint_head(shader, font_id, s, mx, my, label, rect, add_rect,
+                icon_rect=None, head_action=None):
     rx, ry, rw, rh = rect
     draw_text(semibold_font(), rx, ry + rh * 0.32, FONT * s,
               Theme.TEXT_HEADER, label.upper())
     # The rule stops short of the button rather than running under
     # it -- a line crossing a control reads as a mistake.
-    rule_w = rw if add_rect is None else add_rect[0] - rx - PAD * s
+    left = min(r[0] for r in (add_rect, icon_rect) if r is not None) \
+        if (add_rect or icon_rect) else None
+    rule_w = rw if left is None else left - rx - PAD * s
+    if icon_rect is not None and head_action:
+        hot = point_in_rect(mx, my, icon_rect)
+        paint_button(shader, icon_rect, hovered=hot)
+        draw_icon(head_action[0], icon_rect,
+                  Theme.GLYPH_HOVER if hot else Theme.GLYPH)
+        shader.bind()
+        if hot and len(head_action) > 2 and head_action[2]:
+            note_tip(icon_rect, head_action[2])
     draw_rects(shader, [(rx, ry, max(rule_w, 0.0), 1 * s)],
                Theme.SEPARATOR)
     if add_rect is not None:
@@ -1729,8 +1783,9 @@ def paint(entries, mx, my):
                 draw_text(font_id, rx + 8 * s, ry + rh * 0.28, FONT * s,
                           Theme.TEXT_NORMAL, shown)
             elif kind == 'styles_head':
-                _, label, rect, add_rect, _pool = entry
-                _paint_head(shader, font_id, s, mx, my, label, rect, add_rect)
+                _, label, rect, add_rect, h_pool, icon_rect = entry
+                _paint_head(shader, font_id, s, mx, my, label, rect, add_rect,
+                            icon_rect, h_pool.head_action if h_pool else None)
             elif kind == 'style_row':
                 (_, _i, name, rect, is_active, gear_rect,
                  up_rect, down_rect, pool) = entry
@@ -2741,6 +2796,7 @@ def hit(context, mx, my, entries):
                 if pool.active_index(context) != index:
                     pool.set_active(context, index)
                 elif pool.rename_prop:
+                    pool.selected(context)
                     # Clicking the style you are already on renames it,
                     # the same second click that renames a room.
                     item = pool.active(context)
@@ -2754,6 +2810,11 @@ def hit(context, mx, my, entries):
             if _list_row_hit(context, mx, my, entry, armed):
                 return True
             continue
+        if kind == 'styles_head' and entry[5] is not None:
+            if point_in_rect(mx, my, entry[5]):
+                _run_on_release(entry[4].head_action[1], {})
+                _tag()
+                return True
         if kind == 'styles_head' and entry[3] is not None:
             if point_in_rect(mx, my, entry[3]):
                 pool = entry[4]

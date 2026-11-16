@@ -91,6 +91,10 @@ PANEL_TO_FLOOR_KEY = 'Panel To Floor'
 END_FRONT_EXTENSION_KEY = 'End Front Extension'
 END_BACK_EXTENSION_KEY = 'End Back Extension'
 END_HEIGHT_KEY = 'End Height'
+# An applied back stands behind the cabinet's own back and stops this
+# far short of each side, the way the fronts do, so a run of backs
+# reads as a run of fronts.
+APPLIED_BACK_REVEAL = inch(0.0625)
 
 # Base Top Construction prompt: index into ["Full Top", "Stretchers", "Sink"].
 TOP_FULL, TOP_STRETCHERS, TOP_SINK = 0, 1, 2
@@ -282,10 +286,32 @@ def carcass_parts(root):
 
 def _solve_applied_ends(root, parts, p, dim_x, dim_y, dim_z):
     """Applied end panels on the cabinet's outside faces."""
+    # An applied back stands behind the cabinet, so an applied end runs
+    # back over its edge, and the back meets that end instead of
+    # stopping short of it.
+    back_part = parts.get('APPLIED_END_BACK')
+    wrap = 0.0
+    if back_part is not None and not back_part.hide_viewport:
+        wrap = max(float(GeoNodeCutpart(back_part).get_input('Thickness')), 0.0)
+
+    def wrapped(role):
+        end = parts.get(role)
+        return wrap > 0.0 and end is not None and not end.hide_viewport
+
     for role, side in (('APPLIED_END_LEFT', 'LEFT'), ('APPLIED_END_RIGHT', 'RIGHT'),
                        ('APPLIED_END_BACK', 'BACK')):
         part = parts.get(role)
         if part is None:
+            continue
+        if side == 'BACK':
+            # To the floor unless it is told to stop at the toe kick.
+            to_floor = bool(part.get(PANEL_TO_FLOOR_KEY, True))
+            z = 0.0 if to_floor else p.tkh
+            x0 = 0.0 if wrapped('APPLIED_END_LEFT') else APPLIED_BACK_REVEAL
+            x1 = dim_x - (0.0 if wrapped('APPLIED_END_RIGHT')
+                          else APPLIED_BACK_REVEAL)
+            set_part(part, (x0, 0.0, z), length=x1 - x0, width=dim_z - z,
+                     visible=not part.hide_viewport)
             continue
         if part.get('IS_APPLIED_PANEL_5PIECE'):
             if PANEL_TO_FLOOR_KEY not in part:
@@ -295,26 +321,22 @@ def _solve_applied_ends(root, parts, p, dim_x, dim_y, dim_z):
             to_floor = bool(part.get(PANEL_TO_FLOOR_KEY))
             z = 0.0 if to_floor else p.tkh
             length = dim_z if to_floor else dim_z - p.tkh
-            width = dim_y - inch(0.75)
+            # Runs back from the cabinet's back face over an applied back.
+            y = wrap
+            width = dim_y - inch(0.75) + wrap
         else:
             z = 0.0
             height = float(part.get(END_HEIGHT_KEY, 0.0) or 0.0)
             length = height if height > 0.0 else dim_z
             front = float(part.get(END_FRONT_EXTENSION_KEY,
                                    APPLIED_END_EXTENSION))
-            back = float(part.get(END_BACK_EXTENSION_KEY, 0.0))
-            width = dim_y + front + back
+            # Runs back past the cabinet from its back face: as far as
+            # it is set to, and at least over an applied back.
+            y = max(float(part.get(END_BACK_EXTENSION_KEY, 0.0)), wrap)
+            width = dim_y + front + y
         visible = not part.hide_viewport
-        y = 0.0
-        if not part.get('IS_APPLIED_PANEL_5PIECE'):
-            # Runs back past the cabinet from its back face.
-            y = float(part.get(END_BACK_EXTENSION_KEY, 0.0))
-        if side == 'LEFT':
-            set_part(part, (0.0, y, z), length=length, width=width, visible=visible)
-        elif side == 'RIGHT':
-            set_part(part, (dim_x, y, z), length=length, width=width, visible=visible)
-        else:
-            set_part(part, (0.0, 0.0, 0.0), length=dim_x, width=dim_z, visible=visible)
+        x = 0.0 if side == 'LEFT' else dim_x
+        set_part(part, (x, y, z), length=length, width=width, visible=visible)
 
 
 # ---------------------------------------------------------------------------
@@ -1731,11 +1753,12 @@ def _holds_drawer(opening):
         for o in opening.children_recursive)
 
 
-def _drawer_stack_board(splitter_obj, opening_above, opening_below):
-    """A front split board with a drawer on both sides of it."""
+def _drawer_stretcher_board(splitter_obj, opening_above):
+    """A front split board with a drawer over it, whatever is below
+    (another drawer, or doors)."""
     if splitter_obj.get(INTERIOR_SPLITTER_VERTICAL_TAG):
         return False
-    return _holds_drawer(opening_above) and _holds_drawer(opening_below)
+    return _holds_drawer(opening_above)
 
 
 def _stretcher_width(obj):
@@ -1776,11 +1799,11 @@ def _solve_splitter(splitter_obj, vertical):
                 # Under a sink's false front the bowl takes the space:
                 # the split stays (the fronts keep their reveal) but no
                 # fixed shelf is built there.
-                # Between two drawers the board is a front stretcher, not
-                # a full shelf: the drawer boxes need nothing to sit on.
+                # Under a drawer the board is a front stretcher, not a
+                # full shelf: the drawer box needs nothing to sit on,
+                # over another drawer or over doors.
                 width = dim_y
-                if _drawer_stack_board(splitter_obj, opening,
-                                       parts.get(('OPENING', i + 1))):
+                if _drawer_stretcher_board(splitter_obj, opening):
                     width = min(_stretcher_width(splitter_obj), dim_y)
                 set_part(board, (0.0, 0.0, top - size - mt), length=dim_x,
                          width=width, thickness=mt,
@@ -1992,12 +2015,85 @@ PULL_BASE, PULL_TALL, PULL_UPPER = 0, 1, 2
 _DOOR_ROLE_BY_NAME = {'Left Door': 'LEFT_DOOR', 'Right Door': 'RIGHT_DOOR'}
 
 
+# A typed overlay on one side of one opening: present only while the
+# side is overridden, and it wins over the half / full overlay there.
+TYPED_OVERLAY_KEYS = ('Typed Overlay Top', 'Typed Overlay Bottom',
+                      'Typed Overlay Left', 'Typed Overlay Right')
+
+
+# An upper whose bottom sits below this rests on the countertop (a hutch
+# or appliance garage); nothing hangs under it for its doors to cover.
+LIGHT_RAIL_MIN_MOUNT = inch(42.0)
+LIGHT_RAIL_STAMP = 'HB_LIGHT_RAIL_DOORS'
+
+
+def _room_light_rail(scene):
+    """The room's light rail height while its doors are set to cover it,
+    else 0."""
+    hb = getattr(scene, 'home_builder', None)
+    if hb is None or not getattr(hb, 'molding_light_rail_doors_cover', False):
+        return 0.0
+    return max(float(getattr(hb, 'molding_light_rail_height', 0.0) or 0.0),
+               0.0)
+
+
+def light_rail_door_drop(insert_obj):
+    """How far a front reaches below its opening's bottom board to cover
+    the room's light rail: the rail height on the bottom row of a hung
+    upper cabinet, 0 everywhere else."""
+    root = cabinet_root(insert_obj)
+    if root is None or root.get('CABINET_TYPE') != 'UPPER':
+        return 0.0
+    scenes = root.users_scene
+    drop = _room_light_rail(scenes[0]) if scenes else 0.0
+    if drop <= 0.0:
+        return 0.0
+    # Height of the opening over the bottom of the outermost cabinet (a
+    # stacked upper nests one cabinet in another), and that cabinet's
+    # height off the floor.
+    z = 0.0
+    obj = insert_obj
+    outer = root
+    while obj is not None:
+        if obj.get('IS_FRAMELESS_CABINET_CAGE'):
+            outer = obj
+            if not (obj.parent is not None
+                    and cabinet_root(obj.parent) is not None):
+                break
+        z += obj.location.z
+        obj = obj.parent
+    if outer.location.z < LIGHT_RAIL_MIN_MOUNT:
+        return 0.0
+    bottom = float(prompt(insert_obj, 'Bottom Thickness', inch(0.75)))
+    if z > bottom + inch(0.0625):
+        return 0.0                  # an opening further up the cabinet
+    return drop
+
+
+def apply_room_light_rail(scene):
+    """Re-solve the room's upper cabinets when its light rail door cover
+    has changed since they were last solved for it. Returns how many."""
+    drop = _room_light_rail(scene)
+    if abs(float(scene.get(LIGHT_RAIL_STAMP, 0.0)) - drop) < 1e-7:
+        return 0
+    scene[LIGHT_RAIL_STAMP] = drop
+    uppers = [obj for obj in scene.objects
+              if obj.get('IS_FRAMELESS_CABINET_CAGE')
+              and obj.get('CABINET_TYPE') == 'UPPER']
+    if uppers:
+        solve_roots(uppers)
+    return len(uppers)
+
+
 def front_overlays(insert_obj):
     """(top, bottom, left, right) overlay of a front on its opening.
 
     Inset fronts sit inside the opening by the inset reveal; a half
     overlay splits the neighbouring board with the front next door; a
-    full overlay covers the board less the reveal.
+    full overlay covers the board less the reveal. A side with a typed
+    overlay takes that value instead (not on an inset front). The bottom
+    of a hung upper's lowest fronts also takes the room's light rail,
+    where its doors are set to cover it.
     """
     inset = bool(insert_obj.get('Inset Front', False))
     inset_reveal = float(prompt(insert_obj, 'Inset Reveal', inch(0.125)))
@@ -2006,13 +2102,20 @@ def front_overlays(insert_obj):
     def overlay(half_key, thickness_key, reveal_key, reveal_default):
         if inset:
             return -inset_reveal
+        typed = insert_obj.get(half_key.replace('Half', 'Typed'))
+        if typed is not None:
+            return float(typed)
         thickness = float(prompt(insert_obj, thickness_key, inch(0.75)))
         if insert_obj.get(half_key, False):
             return (thickness - gap) / 2.0
         return thickness - float(prompt(insert_obj, reveal_key, reveal_default))
 
+    bottom = overlay('Half Overlay Bottom', 'Bottom Thickness',
+                     'Bottom Reveal', 0.0)
+    if not inset and insert_obj.get('Typed Overlay Bottom') is None:
+        bottom += light_rail_door_drop(insert_obj)
     return (overlay('Half Overlay Top', 'Top Thickness', 'Top Reveal', inch(0.0625)),
-            overlay('Half Overlay Bottom', 'Bottom Thickness', 'Bottom Reveal', 0.0),
+            bottom,
             overlay('Half Overlay Left', 'Left Thickness', 'Left Reveal', inch(0.0625)),
             overlay('Half Overlay Right', 'Right Thickness', 'Right Reveal', inch(0.0625)))
 
@@ -2241,6 +2344,9 @@ def _paint_interior(root, part_obj):
         except Exception:
             pass
     from . import edgebanding_frameless
+    if edgebanding_frameless.is_loose_shelf(part_obj):
+        edge = style.get_shelf_edge_material(
+            bool(root.get('Finished Interior', False)))
     edgebanding_frameless.apply_edges(part_obj, edge)
 
 
@@ -2369,6 +2475,15 @@ def solve_insert_parts(insert_obj):
             # A lone front keeps whatever visibility it was given.
             set_part(child, (-left, y, -bottom), length=length, width=width,
                      thickness=thickness, visible=not child.hide_viewport)
+        # A door that looks like a stack of drawers: the leaf carries
+        # the look fronts (they swing with it) and is not itself shown.
+        look = 0
+        if role in ('LEFT_DOOR', 'RIGHT_DOOR'):
+            from . import drawer_look
+            if not child.hide_viewport:
+                look = drawer_look.wanted(insert_obj, length)
+            if look:
+                child.hide_viewport = child.hide_render = True
         for key, value in (('Top Overlay', top), ('Bottom Overlay', bottom),
                            ('Left Overlay', left), ('Right Overlay', right)):
             if key in child:
@@ -2438,6 +2553,9 @@ def solve_insert_parts(insert_obj):
                                          @ square_basis @ part.matrix_basis)
         edge_pulls.solve_front(child, length, width, thickness, front_hidden)
         edge_pulls.solve_lock(child, length, width, thickness, front_hidden)
+        if role in ('LEFT_DOOR', 'RIGHT_DOOR'):
+            drawer_look.solve(insert_obj, child, look, length, width,
+                              thickness)
     if 'Door Swing' in insert_obj:
         _solve_pocket_panels(insert_obj, dim_x, dim_y, dim_z)
 

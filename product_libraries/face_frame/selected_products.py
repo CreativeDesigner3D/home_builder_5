@@ -568,7 +568,8 @@ def _register_part_schemas():
 STEEL_SUPPORT_FIELDS = (
     ('choices', 'shape', "", {'cols': 3}),
     ('choices', 'exits', "Exits", {'cols': 2}),
-    ('distance', 'x_position', "Center From Left"),
+    ('distance', 'x_position', "Center Along Face",
+     {'when': lambda sp: '_' not in sp.exits}),
     ('distance', 'run_in', "Into Cabinet"),
     ('distance', 'run_out', "Past Cabinet"),
     ('distance', 'drop', "Drop Leg", {'when': lambda sp: sp.shape == 'L'}),

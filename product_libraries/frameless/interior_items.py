@@ -447,11 +447,17 @@ def _paint(root, parts):
         else:
             face, _ = style.get_interior_material()
         edge, _front_edge = style.get_edge_materials()
+        shelf_edge = style.get_shelf_edge_material(
+            bool(root.get('Finished Interior', False)))
     except Exception:
         return
     from ...hb_types import GeoNodeObject
+    from . import edgebanding_frameless
+    carcass_edge = edge
     for obj in parts:
         part = GeoNodeObject(obj)
+        edge = (shelf_edge if edgebanding_frameless.is_loose_shelf(obj)
+                else carcass_edge)
         for name, mat in (('Top Surface', face), ('Bottom Surface', face),
                           ('Edge W1', edge), ('Edge W2', edge),
                           ('Edge L1', edge), ('Edge L2', edge)):

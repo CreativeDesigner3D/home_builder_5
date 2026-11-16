@@ -91,7 +91,6 @@ LEVEL_SPEC = {
     'index': 'active_level_index',
     'add_op': 'home_builder.add_level',
     'remove_op': 'home_builder.remove_level',
-    'actions': ((("Walk Through", "home_builder.walk_through"),),),
     'fields': (
         ('distance', 'elevation', "Elevation"),
         ('distance', 'floor_to_floor', "Floor to Floor"),
@@ -121,11 +120,10 @@ VIEW_FIELDS = (
         ('bool', 'show_roofs', "Roofs"),
         ('bool', 'show_ceilings', "Ceilings"),
         ('bool', 'show_room_labels', "Room Labels"),
-        ('bool', 'show_window_cages', "Window Cages"),
+        ('bool', 'show_window_cages', "Door/Window Cages"),
         ('bool', 'show_annotations', "Annotations"),
         ('bool', 'show_framing', "Framing"),
     )}),
-    ('pick', lambda context: _import_entries(context), "Import Room as Level"),
 )
 
 
@@ -963,6 +961,16 @@ ROOM_SPEC = {
     'collection': 'rooms',
     'index': 'active_room_index',
     'row_text': _room_row,
+    # Rooms are found, not made: only one its walls no longer enclose
+    # can be removed (an enclosed one would only be found again)
+    'remove_op': 'home_builder.remove_room',
+    'can_remove': lambda room: room.orphaned,
+    'allow_empty': True,
+    # Picking a room picks its marker - the room itself - so G moves the
+    # room into another area; the refresh then finds the rooms again
+    'on_select': lambda context, room: _select_marker(context, room),
+    'head_action': ('refresh', 'home_builder.rebuild_rooms',
+                    "Rebuild Rooms: find the rooms again, after moving one"),
     'fields': (
         ('value', _room_area, "Area"),
         ('enum', 'room_type', "Room Type"),
@@ -1055,18 +1063,12 @@ ROOM_SPEC = {
             ('native', 'post_material', "Post Material"),
         )}),
     ),
-    'actions': ((("Rebuild Rooms", "home_builder.rebuild_rooms"),
-                 ("Select Marker", "home_builder.select_room")),),
 }
 
 
-def _import_entries(context):
-    """The pick menu for Import Room as Level: each room scene with walls."""
-    scenes = hb_house.importable_room_scenes(context.scene)
-    if not scenes:
-        return [("No room scenes with walls to import", None, {})]
-    return [(scene.name, "home_builder.import_room_as_level",
-             {'scene_name': scene.name, 'INVOKE': True}) for scene in scenes]
+def _select_marker(context, room):
+    from .. import hb_room_pick
+    hb_room_pick.select_marker(context, room)
 
 
 def _start_notes(context):

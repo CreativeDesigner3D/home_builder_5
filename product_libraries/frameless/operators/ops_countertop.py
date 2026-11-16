@@ -760,6 +760,16 @@ class hb_frameless_OT_add_countertops(bpy.types.Operator):
                 self.report({'WARNING'}, "No base cabinets found")
             return {'CANCELLED'}
 
+        # With a counter height in use, the cabinets come to it first so
+        # the tops built below land on it.
+        from .. import props_hb_frameless
+        under = [c for cabs in wall_cabinets.values() for c in cabs]
+        for _group, cabs in cage_groups:
+            under.extend(cabs)
+        under.extend(island_cabinets)
+        props_hb_frameless.apply_counter_height(
+            context.scene, under, force=self.selected_only)
+
         if not self.selected_only:
             # Remove existing countertops only when adding to all
             existing = [o for o in context.scene.objects if o.get('IS_COUNTERTOP')]
@@ -797,7 +807,6 @@ class hb_frameless_OT_add_countertops(bpy.types.Operator):
 
         # The room's countertop laminate, when one is chosen; new tops
         # are the only ones without it.
-        from .. import props_hb_frameless
         props_hb_frameless.apply_countertop_material(
             [o for o in context.scene.objects if o.get('IS_COUNTERTOP')
              and o.get('HB_COUNTERTOP_LIB') == 'FRAMELESS'])

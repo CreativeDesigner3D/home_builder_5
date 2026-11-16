@@ -26,6 +26,26 @@ class hb_frameless_OT_cabinet_prompts(bpy.types.Operator):
         name="Height Off Floor",
         description="How high the bottom of the cabinet is hung",
         unit='LENGTH', precision=5)  # type: ignore
+    top_off_floor: bpy.props.FloatProperty(
+        name="Top Off Floor",
+        description="How high the top of the cabinet is hung; the "
+                    "cabinet moves up or down to it",
+        unit='LENGTH', precision=5)  # type: ignore
+    appliance_opening_width: bpy.props.FloatProperty(
+        name="Appliance Opening Width",
+        description="Clear width between the sides for the appliance; "
+                    "the cabinet width follows",
+        unit='LENGTH', precision=5, min=0.0)  # type: ignore
+    appliance_opening_height: bpy.props.FloatProperty(
+        name="Appliance Opening Height",
+        description="Clear height for the appliance; the opening over "
+                    "it takes what is left",
+        unit='LENGTH', precision=5, min=0.0)  # type: ignore
+    blind_opening_width: bpy.props.FloatProperty(
+        name="Door Opening Width",
+        description="Width of the door opening beside the blind panel; "
+                    "the panel takes up the difference",
+        unit='LENGTH', precision=5, min=0.0)  # type: ignore
     toe_kick_height: bpy.props.FloatProperty(name="Toe Kick Height", unit='LENGTH', precision=5) # type: ignore
     toe_kick_setback: bpy.props.FloatProperty(name="Toe Kick Setback", unit='LENGTH', precision=5) # type: ignore
     toe_kick_type: bpy.props.EnumProperty(
@@ -98,6 +118,9 @@ class hb_frameless_OT_cabinet_prompts(bpy.types.Operator):
         return (not obj.get('IS_CORNER_CABINET')
                 and solver_frameless.carcass_kind(obj) == 'UPPER')
 
+    def _appliance_opening_size(self):
+        return types_frameless.appliance_opening_size(self.cabinet.obj)
+
     def _is_hung(self):
         """Uppers are hung at a height of their own; everything else
         stands on the floor or its toe kick."""
@@ -135,6 +158,13 @@ class hb_frameless_OT_cabinet_prompts(bpy.types.Operator):
         self.cabinet_height = self.cabinet.get_input('Dim Z')
         self.cabinet_depth = self.cabinet.get_input('Dim Y')
         self.height_off_floor = cabinet_bp.matrix_world.translation.z
+        self.top_off_floor = self.height_off_floor + self.cabinet_height
+        size = self._appliance_opening_size()
+        if size is not None:
+            self.appliance_opening_width, self.appliance_opening_height = size
+        blind = types_frameless.blind_opening_width(cabinet_bp)
+        if blind is not None:
+            self.blind_opening_width = blind
 
         # Get toe kick properties if they exist (BASE and TALL cabinets)
         if 'Toe Kick Height' in cabinet_bp:
@@ -179,6 +209,34 @@ class hb_frameless_OT_cabinet_prompts(bpy.types.Operator):
                 obj.pop(solver_frameless.FRONT_LEFT_DEPTH_KEY, None)
                 obj.pop(solver_frameless.FRONT_RIGHT_DEPTH_KEY, None)
                 self.front_left_depth = self.front_right_depth = self.cabinet_depth
+        if self._is_hung():
+            # One field is typed at a time. A new top moves the cabinet;
+            # a new height keeps the top or the bottom, by the room's
+            # setting. The other fields then follow.
+            old_height = self.cabinet.get_input('Dim Z')
+            old_top = obj.matrix_world.translation.z + old_height
+            if abs(self.top_off_floor - old_top) > 1e-6:
+                self.height_off_floor = self.top_off_floor - self.cabinet_height
+            elif (abs(self.cabinet_height - old_height) > 1e-6
+                    and types_frameless.upper_height_keeps_top(obj)):
+                self.height_off_floor -= self.cabinet_height - old_height
+            self.top_off_floor = self.height_off_floor + self.cabinet_height
+        size = self._appliance_opening_size()
+        if size is not None:
+            # A typed opening width moves the cabinet width; a typed
+            # cabinet width is read back onto the opening below.
+            if (abs(self.appliance_opening_width - size[0]) > 1e-6
+                    and abs(self.cabinet_width
+                            - self.cabinet.get_input('Dim X')) < 1e-6):
+                self.cabinet_width += self.appliance_opening_width - size[0]
+            if abs(self.appliance_opening_height - size[1]) > 1e-6:
+                types_frameless.set_appliance_opening_height(
+                    obj, self.appliance_opening_height)
+        blind = types_frameless.blind_opening_width(obj)
+        if (blind is not None
+                and abs(self.blind_opening_width - blind) > 1e-6):
+            types_frameless.set_blind_opening_width(
+                obj, self.blind_opening_width)
         self.cabinet.set_input('Dim X', self.cabinet_width)
         self.cabinet.set_input('Dim Z', self.cabinet_height)
         self.cabinet.set_input('Dim Y', self.cabinet_depth)
@@ -242,6 +300,12 @@ class hb_frameless_OT_cabinet_prompts(bpy.types.Operator):
                 style.assign_style_to_cabinet(self.cabinet.obj)
 
         hb_utils.run_calc_fix(context, self.cabinet.obj)
+        size = self._appliance_opening_size()
+        if size is not None:
+            self.appliance_opening_width, self.appliance_opening_height = size
+        blind = types_frameless.blind_opening_width(self.cabinet.obj)
+        if blind is not None:
+            self.blind_opening_width = blind
         return True
 
     def execute(self, context):
@@ -270,6 +334,31 @@ class hb_frameless_OT_cabinet_prompts(bpy.types.Operator):
             row = col.row(align=True)
             row.label(text="Height Off Floor:")
             row.prop(self, 'height_off_floor', text="")
+            row = col.row(align=True)
+            row.label(text="Top Off Floor:")
+            row.prop(self, 'top_off_floor', text="")
+            props = hb_project.get_settings_scene(context).hb_frameless
+            row = col.row(align=True)
+            row.label(text="Height Keeps:")
+            row.prop(props, 'upper_height_anchor', expand=True)
+
+        if self._appliance_opening_size() is not None:
+            box = layout.box()
+            box.label(text="Appliance Opening")
+            col = box.column(align=True)
+            row = col.row(align=True)
+            row.label(text="Width:")
+            row.prop(self, 'appliance_opening_width', text="")
+            row = col.row(align=True)
+            row.label(text="Height:")
+            row.prop(self, 'appliance_opening_height', text="")
+
+        if types_frameless.blind_opening_width(self.cabinet.obj) is not None:
+            box = layout.box()
+            box.label(text="Blind Corner")
+            row = box.row(align=True)
+            row.label(text="Door Opening Width:")
+            row.prop(self, 'blind_opening_width', text="")
 
         if self._show_angle_front():
             box = layout.box()
@@ -594,6 +683,10 @@ class hb_frameless_OT_applied_end_prompts(bpy.types.Operator):
         name="Height", unit='LENGTH', min=0.0, precision=4,
         description="Panel height; 0 is the cabinet's height") # type: ignore
 
+    to_floor: bpy.props.BoolProperty(
+        name="Panel to Floor", default=True,
+        description="An applied back runs down to the floor; off, it stops at the toe kick") # type: ignore
+
     panel_name: bpy.props.StringProperty(options={'HIDDEN'}) # type: ignore
 
     @classmethod
@@ -606,6 +699,7 @@ class hb_frameless_OT_applied_end_prompts(bpy.types.Operator):
             self.report({'WARNING'}, "No slab end panel on that side")
             return {'CANCELLED'}
         self.panel_name = panel.name
+        self.to_floor = bool(panel.get(solver_frameless.PANEL_TO_FLOOR_KEY, True))
         self.thickness = hb_types.GeoNodeCutpart(panel).get_input('Thickness')
         self.front_extension = float(panel.get(
             solver_frameless.END_FRONT_EXTENSION_KEY,
@@ -623,6 +717,8 @@ class hb_frameless_OT_applied_end_prompts(bpy.types.Operator):
         panel[solver_frameless.END_FRONT_EXTENSION_KEY] = self.front_extension
         panel[solver_frameless.END_BACK_EXTENSION_KEY] = self.back_extension
         panel[solver_frameless.END_HEIGHT_KEY] = self.height
+        if panel.get('IS_APPLIED_END_BACK'):
+            panel[solver_frameless.PANEL_TO_FLOOR_KEY] = bool(self.to_floor)
         solver_frameless.recalculate_cabinet(panel)
         return True
 
@@ -633,6 +729,11 @@ class hb_frameless_OT_applied_end_prompts(bpy.types.Operator):
     def draw(self, context):
         col = self.layout.column(align=True)
         col.prop(self, 'thickness')
+        panel = bpy.data.objects.get(self.panel_name)
+        if panel is not None and panel.get('IS_APPLIED_END_BACK'):
+            # A back spans the cabinet; it only chooses where it stops.
+            col.prop(self, 'to_floor')
+            return
         col.prop(self, 'front_extension')
         col.prop(self, 'back_extension')
         col.prop(self, 'height', text="Height (0 = Cabinet)")
@@ -712,6 +813,9 @@ class hb_frameless_OT_delete_cabinet(bpy.types.Operator):
                 cabinet_bps.add(cabinet_bp)
         for cabinet_bp in cabinet_bps:
             hb_utils.delete_obj_and_children(cabinet_bp)
+        # The ends this cabinet covered show again.
+        from .. import exposure
+        exposure.request(context.scene)
         return {'FINISHED'}
 
 
@@ -1284,6 +1388,109 @@ class hb_frameless_OT_adjust_multiple_cabinet_widths(bpy.types.Operator):
                 row.prop(cabinet, 'cabinet_width', text="Width:")
 
 
+class hb_frameless_OT_equalize_cabinet_widths(bpy.types.Operator):
+    """Give the selected cabinets one width, in the room they take now"""
+    bl_idname = "hb_frameless.equalize_cabinet_widths"
+    bl_label = "Equal Widths"
+    bl_description = (
+        "Set the selected cabinets to the same width. Together they keep "
+        "the width they have now, so the run's ends stay where they are; "
+        "cabinets standing between them slide along")
+    bl_options = {'REGISTER', 'UNDO'}
+
+    # How far off the run's line a cabinet that was not picked may sit
+    # and still be carried along with it.
+    LINE_TOLERANCE = units.inch(1.0)
+
+    @staticmethod
+    def _cabinets(context):
+        found = []
+        for obj in context.selected_objects:
+            root = hb_utils.get_cabinet_bp(obj)
+            if (root is None or root in found
+                    or not root.get('IS_FRAMELESS_CABINET_CAGE')
+                    or 'CORNER_TYPE' in root
+                    or not hb_types.GeoNodeCage(root).has_modifier()):
+                continue
+            found.append(root)
+        return found
+
+    @staticmethod
+    def _row_key(obj):
+        """Cabinets that can share a run: one parent, one facing, and
+        uppers apart from what stands on the floor."""
+        turn = round(math.degrees(obj.rotation_euler.z)) % 360
+        return (obj.parent, turn,
+                solver_frameless.carcass_kind(obj) == 'UPPER')
+
+    @classmethod
+    def poll(cls, context):
+        return len(cls._cabinets(context)) > 1
+
+    def execute(self, context):
+        rows = {}
+        for obj in self._cabinets(context):
+            rows.setdefault(self._row_key(obj), []).append(obj)
+
+        changed = 0
+        widths = []
+        for key, picked in rows.items():
+            if len(picked) < 2:
+                continue
+            turn = picked[0].rotation_euler.z
+            along = Vector((math.cos(turn), math.sin(turn), 0.0))
+            across = Vector((-along.y, along.x, 0.0))
+
+            def place(obj):
+                return Vector((obj.location.x, obj.location.y, 0.0)).dot(along)
+
+            picked.sort(key=place)
+            first, last = place(picked[0]), place(picked[-1])
+            line = Vector((picked[0].location.x, picked[0].location.y,
+                           0.0)).dot(across)
+            width = sum(hb_types.GeoNodeCage(o).get_input('Dim X')
+                        for o in picked) / len(picked)
+
+            # Everything on the run between the first and last pick, in
+            # order: each one moves by what the picks before it gained.
+            carried = []
+            for obj in (key[0].children if key[0] is not None
+                        else context.scene.objects):
+                if (obj in picked or obj.parent is not key[0]
+                        or not obj.get('IS_FRAMELESS_CABINET_CAGE')
+                        or self._row_key(obj) != key
+                        or not first < place(obj) < last):
+                    continue
+                off_line = Vector((obj.location.x, obj.location.y,
+                                   0.0)).dot(across) - line
+                if abs(off_line) <= self.LINE_TOLERANCE:
+                    carried.append(obj)
+
+            shift = 0.0
+            for obj in sorted(picked + carried, key=place):
+                if shift:
+                    obj.location.x += along.x * shift
+                    obj.location.y += along.y * shift
+                if obj in carried:
+                    continue
+                cage = hb_types.GeoNodeCage(obj)
+                shift += width - cage.get_input('Dim X')
+                cage.set_input('Dim X', width)
+                hb_utils.run_calc_fix(context, obj)
+                changed += 1
+            widths.append(width)
+
+        if not changed:
+            self.report({'WARNING'},
+                        "Select two or more cabinets in one run")
+            return {'CANCELLED'}
+        self.report({'INFO'}, "%d cabinets set to %s" % (
+            changed, ", ".join(
+                units.unit_to_string(context.scene.unit_settings, w)
+                for w in widths)))
+        return {'FINISHED'}
+
+
 class hb_frameless_OT_finish_interior(bpy.types.Operator):
     bl_idname = "hb_frameless.finish_interior"
     bl_label = "Finish Interior"
@@ -1355,6 +1562,7 @@ class hb_frameless_OT_finish_interior(bpy.types.Operator):
 
 classes = (
     hb_frameless_OT_adjust_multiple_cabinet_widths,
+    hb_frameless_OT_equalize_cabinet_widths,
     hb_frameless_OT_cabinet_prompts,
     hb_frameless_OT_drop_cabinet_to_countertop,
     hb_frameless_OT_add_applied_end,

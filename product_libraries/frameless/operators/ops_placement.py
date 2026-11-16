@@ -732,6 +732,9 @@ class PlaceCabinetBase(WallObjectPlacementMixin):
         return props.base_cabinet_depth
 
     def get_cabinet_height(self, context) -> float:
+        level = self.scribe_level_now()
+        if level is not None:
+            return level[1]
         if (self.cursor_z_tracking or self.align_top_to_base) and self.cursor_z_product_height > 0:
             return self.cursor_z_product_height
         props = context.scene.hb_frameless
@@ -762,6 +765,9 @@ class PlaceCabinetBase(WallObjectPlacementMixin):
                 or (self.is_appliance and self.appliance_type == 'HOOD'))
 
     def get_cabinet_z_location(self, context) -> float:
+        level = self.scribe_level_now()
+        if level is not None:
+            return level[0]
         # Floating shelves track cursor Z position
         if self.cursor_z_tracking:
             return self.cursor_z
@@ -1453,14 +1459,51 @@ class PlaceCabinetBase(WallObjectPlacementMixin):
         """The library's wall scribe filler (or its old name)."""
         return self.cabinet_name in ('Wall Scribe Filler', 'Corner Filler')
 
+    def scribe_level_now(self):
+        """(z, height) of the row of cabinets a wall scribe filler is
+        being placed against, or None for the floor row it comes in at."""
+        if not self.is_scribe_filler():
+            return None
+        return getattr(self, 'scribe_level', None)
+
+    def find_scribe_level(self, cursor_x, cursor_z):
+        """The row the cursor is at: (z, height) of the cabinet on this
+        side of the wall whose height the cursor is within, the nearest
+        along the wall when several are. None when the cursor is at no
+        cabinet's height. So a filler follows the cursor up to an upper
+        standing over a base, instead of always taking the base."""
+        if not self.selected_wall:
+            return None
+        side_rot = 0.0 if self.place_on_front else math.pi
+        best = None
+        for child in self.selected_wall.children:
+            if not child.get('IS_FRAMELESS_CABINET_CAGE'):
+                continue
+            turn = math.remainder(child.rotation_euler.z - side_rot, 2 * math.pi)
+            if abs(turn) > 0.1:
+                continue
+            cage = hb_types.GeoNodeCage(child)
+            z0 = child.location.z
+            height = cage.get_input('Dim Z')
+            if not (z0 <= cursor_z <= z0 + height):
+                continue
+            xs = [(child.matrix_local @ Vector((x, 0.0, 0.0))).x
+                  for x in (0.0, cage.get_input('Dim X'))]
+            away = max(min(xs) - cursor_x, cursor_x - max(xs), 0.0)
+            if best is None or away < best[0]:
+                best = (away, z0, height)
+        return None if best is None else (best[1], best[2])
+
     def find_scribe_neighbour(self, x0, x1):
         """The cabinet on this side of the wall standing at either end of
         wall-local x0..x1, as (cabinet, on_wall_right), or None. With one
-        at each end the taller is the one the filler is sized to."""
+        at each end the taller is the one the filler is sized to. With
+        the cursor at a row's height, only that row's cabinets count."""
         if not self.selected_wall:
             return None
         tol = units.inch(0.1)
         side_rot = 0.0 if self.place_on_front else math.pi
+        level = self.scribe_level_now()
         found = []
         for child in self.selected_wall.children:
             if not child.get('IS_FRAMELESS_CABINET_CAGE'):
@@ -1469,6 +1512,10 @@ class PlaceCabinetBase(WallObjectPlacementMixin):
             if abs(turn) > 0.1:
                 continue
             cage = hb_types.GeoNodeCage(child)
+            if level is not None and not (
+                    level[0] < child.location.z + cage.get_input('Dim Z')
+                    and child.location.z < level[0] + level[1]):
+                continue
             xs = [(child.matrix_local @ Vector((x, 0.0, 0.0))).x
                   for x in (0.0, cage.get_input('Dim X'))]
             c0, c1 = min(xs), max(xs)
@@ -1503,9 +1550,11 @@ class PlaceCabinetBase(WallObjectPlacementMixin):
         filler_obj['Toe Kick Setback'] = (
             float(nb.get('Toe Kick Setback', props.default_toe_kick_setback))
             if has_kick else 0.0)
-        # A separate toe kick platform runs on under the filler.
+        # Only when the room asks for one, and never over a separate toe
+        # kick platform, which runs on under the filler.
         filler_obj['Toe Kick Piece'] = (
-            int(nb.get('Toe Kick Type', -1)) != ops_base_assembly.LADDER_STYLE)
+            types_products.scribe_filler_toe_kick_piece()
+            and int(nb.get('Toe Kick Type', -1)) != ops_base_assembly.LADDER_STYLE)
 # A back-side filler is turned 180, which swaps its sides.
         filler_obj['Cabinet On Right'] = (on_wall_right if self.place_on_front
                                           else not on_wall_right)
@@ -1524,8 +1573,10 @@ class PlaceCabinetBase(WallObjectPlacementMixin):
         has_kick = self.cabinet_type in ('BASE', 'TALL')
         filler.toe_kick_height = props.default_toe_kick_height if has_kick else 0.0
         filler.toe_kick_setback = props.default_toe_kick_setback if has_kick else 0.0
-        # A separate toe kick platform runs on under the filler.
-        filler.kick_piece = props.default_toe_kick_type != 'Ladder Style'
+        # Only when the room asks for one, and never over a separate toe
+        # kick platform, which runs on under the filler.
+        filler.kick_piece = (types_products.scribe_filler_toe_kick_piece()
+                             and props.default_toe_kick_type != 'Ladder Style')
 # A back-side run is turned 180, which swaps which local side
         # the cabinet is on.
         filler.cabinet_on_right = cabinet_on_right if self.place_on_front else not cabinet_on_right
@@ -1656,6 +1707,16 @@ class PlaceCabinetBase(WallObjectPlacementMixin):
         
         self.update_place_on_front(wall_thickness, cursor_y)
 
+        if self.is_scribe_filler():
+            self.scribe_level = self.find_scribe_level(cursor_x, local_loc.z)
+
+        # A run that already carries on past the end of a short wall
+        # keeps going there: beside its last cabinet, not back on the wall.
+        past = self.run_past_wall_end(context, cursor_x, wall_thickness)
+        if past is not None:
+            self.set_position_past_wall_end(context, wall_thickness, *past)
+            return
+
         # Find available gap, filtering by which side we're placing on
         gap_start, gap_end, snap_x = self.find_placement_gap_by_side(
             self.selected_wall,
@@ -1670,6 +1731,85 @@ class PlaceCabinetBase(WallObjectPlacementMixin):
         )
         self.finish_position_on_wall(context, wall_thickness, cursor_x,
                                      gap_start, gap_end, snap_x)
+
+    # ---- Past the end of a short wall --------------------------------------
+    # A run can be longer than its wall: a refrigerator cabinet on a short
+    # return stands out past the wall's end. The gap finder only knows the
+    # wall's own length, so the next cabinet used to be pulled back onto
+    # the wall. With the cursor on the outer half of a cabinet that
+    # crosses the end (or anywhere beyond it), the cabinet goes beside the
+    # outermost one instead, still a child of the wall like its neighbour.
+
+    PAST_END_TOL = units.inch(0.25)
+
+    def run_past_wall_end(self, context, cursor_x, wall_thickness):
+        """('right' | 'left', x) when the cursor asks to carry the run on
+        past that end of the wall: x is the outer edge of the outermost
+        cabinet standing past it. None when the wall holds the run."""
+        if (self.is_corner_cabinet() or self.is_scribe_filler()
+                or self.is_base_assembly() or not self.selected_wall):
+            return None
+        z0 = self.get_cabinet_z_location(context)
+        z1 = z0 + self.get_cabinet_height(context)
+        own = self.preview_cage.obj if self.preview_cage else None
+        spans = []
+        for child in self.selected_wall.children:
+            if child == own or child.get('obj_x'):
+                continue
+            if not any(m in child for m in hb_placement.CABINET_MARKERS):
+                continue
+            if not self.blocks_placement(child):
+                continue
+            if (child.location.y < wall_thickness / 2) != self.place_on_front:
+                continue
+            try:
+                geo = hb_types.GeoNodeObject(child)
+                width = geo.get_input('Dim X')
+                height = geo.get_input('Dim Z')
+            except Exception:
+                continue
+            if not (z0 < child.location.z + height and child.location.z < z1):
+                continue
+            rot_z = child.rotation_euler.z
+            if abs(abs(rot_z) - math.pi) < 0.1:
+                spans.append((child.location.x - width, child.location.x))
+            elif abs(rot_z) < 0.1:
+                spans.append((child.location.x, child.location.x + width))
+        tol = self.PAST_END_TOL
+        over = [s for s in spans if s[1] > self.wall_length + tol]
+        if over:
+            first = min(over, key=lambda s: s[0])
+            if cursor_x > min(self.wall_length, (first[0] + first[1]) / 2.0):
+                return 'right', max(s[1] for s in over)
+        over = [s for s in spans if s[0] < -tol]
+        if over:
+            first = max(over, key=lambda s: s[1])
+            if cursor_x < max(0.0, (first[0] + first[1]) / 2.0):
+                return 'left', min(s[0] for s in over)
+        return None
+
+    def set_position_past_wall_end(self, context, wall_thickness, side, edge):
+        """Stand the preview beside the run's outermost cabinet, past the
+        end of the wall. There is no gap to fill out there, so the
+        cabinet keeps the width it came in at."""
+        self.corner_filler_left = False
+        self.corner_filler_right = False
+        self.scribe_neighbour = None
+        self.center_snap_state = None
+        if self.fill_mode:
+            if self.auto_quantity and self.cabinet_quantity != 1:
+                self.cabinet_quantity = 1
+                self.array_modifier.count = 1
+            self.individual_cabinet_width = self.default_width
+        total_width = self.individual_cabinet_width * self.cabinet_quantity
+        snap_x = edge if side == 'right' else edge - total_width
+        self.gap_left_boundary = snap_x
+        self.gap_right_boundary = snap_x + total_width
+        self.current_gap_width = total_width
+        self.placement_x = snap_x
+        self.preview_cage.set_input('Dim X', self.individual_cabinet_width)
+        self.update_preview_position()
+        self.update_dimensions(context)
 
     def update_place_on_front(self, wall_thickness, cursor_y):
         """Which side of the selected wall the cursor is on, with an inch

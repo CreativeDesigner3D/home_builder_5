@@ -536,6 +536,14 @@ def draw_construction(layout, cab_props):
                    else 'TRIA_RIGHT', emboss=False)
         if cab_props.show_bottom_rail_profile:
             rpbox.prop(cab_props, 'bottom_rail_profile', text="Profile")
+            if cab_props.cabinet_type in ('BASE', 'TALL'):
+                col = rpbox.column(align=True)
+                col.prop(cab_props, 'toe_kick_valance')
+                sub = col.column(align=True)
+                sub.active = cab_props.toe_kick_valance
+                sub.prop(cab_props, 'toe_kick_valance_profile',
+                         text="Profile")
+                sub.prop(cab_props, 'toe_kick_valance_loose')
 
 
 def draw_ada_sink_options(layout, root):
@@ -1577,6 +1585,29 @@ def draw_opening_properties(layout, opening_obj):
                     heights_box.prop(below, 'no_rail_above',
                                      text="Remove Rail")
 
+        # Side-by-side drawer look: one drawer front built from several
+        # faces with integral stiles between them.
+        if (op.front_type == 'DRAWER_FRONT'
+                and op.drawer_look_divisions == 'NONE'
+                and types_face_frame.drawer_split_look_allowed(opening_obj)):
+            fcol.prop(op, 'drawer_split_look', text="Side-by-Side Look")
+            if op.drawer_split_look != 'NONE':
+                faces_box = fcol.box()
+                faces_box.label(text="Drawer Face Widths (left to right)")
+                for idx, item in enumerate(op.drawer_split_faces):
+                    frow = faces_box.row(align=True)
+                    field = frow.row(align=True)
+                    field.enabled = item.unlock_size
+                    field.prop(item, 'size', text="Face " + str(idx + 1))
+                    frow.prop(item, 'unlock_size', text="",
+                              icon='UNLOCKED' if item.unlock_size else 'LOCKED')
+                faces_box.prop(op, 'drawer_split_stile_width',
+                               text="Integral Stile")
+                faces_box.prop(op, 'drawer_split_groove_width',
+                               text="Groove Width")
+                faces_box.prop(op, 'drawer_split_groove_depth',
+                               text="Groove Depth")
+
         # Tilt-out flag (false fronts only): label-only -- the 2D elevation
         # prints TILT-OUT instead of FALSE. No geometry change.
         # Pull: a false front is bare by default; turn it on where the
@@ -1904,10 +1935,13 @@ def _draw_interior_items_section(layout, target_props, target_name=""):
             # solver), so no spacer_height row -- same as pullouts.
         elif item.kind == 'TRAY_DIVIDERS':
             sub.prop(item, 'tray_qty', text="Qty")
-            sub.prop(item, 'tray_remove_shelf', text="Remove Locked Shelf")
+            from . import interior_page
+            sub.prop(item, 'tray_remove_shelf',
+                     text="Remove " + interior_page.tray_shelf_label(item))
             shelf_row = sub.row()
             shelf_row.enabled = not item.tray_remove_shelf
-            shelf_row.prop(item, 'tray_opening_height', text="Opening Height")
+            shelf_row.prop(item, 'tray_opening_height',
+                           text="Tray Divider Height")
             sub.prop(item, 'tray_divider_thickness', text="Divider Thickness")
             sub.prop(item, 'tray_setback', text="Setback")
             sub.prop(item, 'bottom_offset', text="From Bottom")

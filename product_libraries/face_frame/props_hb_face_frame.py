@@ -324,11 +324,23 @@ def _items_or_none(items):
 
 
 # --- cabinet-style finish caches ---
-_FINISH_WOOD_ITEMS = [(i, lbl, lbl, n)
-                      for n, (i, lbl) in enumerate(style_options.woods_for_ui())]
-_FINISH_COLOR_ITEMS = {w: [(i, lbl, lbl, n)
-                           for n, (i, lbl) in enumerate(style_options.colors_for_wood_ui(w))]
-                       for w in style_options.WOOD_SPECIES}
+# Wood + color are numbered over the full list, retired entries included,
+# so a retired entry leaving the dropdown does not renumber the picks
+# stored in existing files. The *_ALL tables keep the retired rows; the
+# plain ones are what the dropdowns offer.
+_FINISH_WOOD_ITEMS_ALL = [
+    (i, lbl, lbl, n) for n, (i, lbl) in enumerate(
+        style_options.woods_for_ui(include_retired=True))]
+_FINISH_WOOD_ITEMS = [it for it in _FINISH_WOOD_ITEMS_ALL
+                      if not style_options.wood_retired(it[0])]
+_FINISH_COLOR_ITEMS_ALL = {
+    w: [(i, lbl, lbl, n) for n, (i, lbl) in enumerate(
+        style_options.colors_for_wood_ui(w, include_retired=True))]
+    for w in style_options.WOOD_SPECIES}
+_FINISH_COLOR_ITEMS = {
+    w: [it for it in rows if not style_options.color_retired(it[0])]
+    for w, rows in _FINISH_COLOR_ITEMS_ALL.items()}
+_FINISH_ITEMS_KEPT = {}
 _FINISH_VARNISH_ITEMS = {c: _enum_items(style_options.varnishes_for_color(c) or ["N/A"])
                          for c in style_options.COLORS}
 _FINISH_GLAZE_ITEMS = {c: _enum_items(style_options.glazes_for_color(c))
@@ -348,12 +360,78 @@ def _set_enum_safe(owner, prop, identifier):
         pass
 
 
+def _stored_enum_number(owner, prop):
+    """The number an enum holds on file, 0 when it was never set (a
+    never-touched dynamic enum reads as its number-0 item)."""
+    try:
+        store = owner.bl_system_properties_get()
+        value = store.get(prop) if store is not None else None
+    except Exception:
+        value = None
+    return value if isinstance(value, int) else 0
+
+
+def _items_keeping_current(offered, every, owner, prop):
+    """The offered items, plus the retired one this owner already holds
+    so an existing pick still reads and shows."""
+    number = _stored_enum_number(owner, prop)
+    if any(it[3] == number for it in offered):
+        return offered
+    held = next((it for it in every if it[3] == number), None)
+    if held is None:
+        return offered
+    # Item lists must outlive the callback, so each combination is built
+    # once and kept.
+    key = (id(offered), held[0])
+    rows = _FINISH_ITEMS_KEPT.get(key)
+    if rows is None:
+        rows = sorted(offered + [held], key=lambda it: it[3])
+        _FINISH_ITEMS_KEPT[key] = rows
+    return rows
+
+
+def first_offered_color(wood):
+    """Identifier of the first color still offered for a wood, or ''."""
+    rows = _FINISH_COLOR_ITEMS.get(wood, [])
+    return rows[0][0] if rows else ''
+
+
+def set_finish_pick(owner, prop, identifier):
+    """Assign a style's wood or color by identifier, retired entries
+    included, so a copy or a saved template can carry a pick the
+    dropdown no longer offers. A retired entry is written as its number,
+    which runs no update callback. True when the value landed."""
+    try:
+        setattr(owner, prop, identifier)
+        return True
+    except (TypeError, ValueError):
+        pass
+    if prop == "finish_wood":
+        every = _FINISH_WOOD_ITEMS_ALL
+    elif prop == "finish_color":
+        every = _FINISH_COLOR_ITEMS_ALL.get(owner.finish_wood, [])
+    else:
+        return False
+    held = next((it for it in every if it[0] == identifier), None)
+    if held is None:
+        return False
+    try:
+        owner.bl_system_properties_get(do_create=True)[prop] = held[3]
+    except Exception:
+        return False
+    return True
+
+
 def get_finish_wood_items(self, context):
-    return _items_or_none(_FINISH_WOOD_ITEMS)
+    return _items_or_none(_items_keeping_current(
+        _FINISH_WOOD_ITEMS, _FINISH_WOOD_ITEMS_ALL, self, "finish_wood"))
 
 
 def get_finish_color_items(self, context):
-    return _items_or_none(_FINISH_COLOR_ITEMS.get(self.finish_wood, []))
+    wood = self.finish_wood
+    return _items_or_none(_items_keeping_current(
+        _FINISH_COLOR_ITEMS.get(wood, []),
+        _FINISH_COLOR_ITEMS_ALL.get(wood, []), self, "finish_color"))
 
 
 def get_finish_varnish_items(self, context):
@@ -1055,6 +1133,11 @@ def ensure_default_styles(context):
         cs = ff.cabinet_styles.add()
         cs.name = "Default"
         ff.active_cabinet_style_index = 0
+        # A new style starts on a color that is still offered (the
+        # number-0 color it would otherwise read may be a retired one).
+        color = first_offered_color(cs.finish_wood)
+        if color:
+            _set_enum_safe(cs, "finish_color", color)
     # One-time hinge seeding: styles whose hinge was never explicitly set
     # otherwise read the number-0 catalog row (Compact) instead of the
     # overlay's default hinge (CLIPtop for the standard overlays).
@@ -1556,10 +1639,57 @@ def _style_tint_for_cabinet(cabinet_obj, styles):
 PAINT_STYLE_KEY = 'hb_paint_style'
 
 
+_PAINT_FRONT_ROLES = frozenset((
+    'DOOR', 'DRAWER_FRONT', 'PULLOUT_FRONT', 'FALSE_FRONT', 'TILT_OUT'))
+_PAINT_SHELF_ROLES = frozenset((
+    'ADJUSTABLE_SHELF', 'INTERIOR_FIXED_SHELF', 'BAY_SHELF', 'VANITY_SHELF',
+    'CORNER_SHELF', 'CORNER_FIXED_SHELF', 'SHELF_NOSING'))
+
+
+def _part_paint_style_name(obj):
+    """The style whose FINISH Paint Part put on a cabinet part, or None.
+
+    The stamp sits where the material walk reads it: on the part, or for
+    the parts a rebuild replaces, on the opening cage (fronts) or the
+    opening / bay cage (shelves and their nosing). An Interior paint
+    changes no finish, so it changes no colour either.
+    """
+    role = obj.get('hb_part_role')
+    if not (obj.get('CABINET_PART') or role == 'SHELF_NOSING'):
+        return None
+    if role in _PAINT_FRONT_ROLES:
+        node = obj.parent
+        while node is not None:
+            if node.get('IS_FACE_FRAME_OPENING_CAGE'):
+                if node.get('hb_front_material_override') == 'FINISH':
+                    return node.get('hb_front_material_style')
+                return None
+            node = node.parent
+        return None
+    if role in _PAINT_SHELF_ROLES:
+        node = obj.parent
+        while node is not None:
+            if (node.get('IS_FACE_FRAME_OPENING_CAGE')
+                    or node.get('IS_FACE_FRAME_BAY_CAGE')):
+                over = node.get('hb_shelf_material_override')
+                if over == 'FINISH':
+                    return node.get('hb_shelf_material_style')
+                if over == 'INTERIOR':
+                    return None
+            node = node.parent
+    if obj.get('hb_part_material_override') == 'FINISH':
+        return obj.get('hb_part_material_style')
+    return None
+
+
 def _painted_style_tint(obj, styles):
-    """The viewport RGB for the style Paint Part stamped on ``obj``, or
-    None when it carries no stamp (or names a style since removed)."""
-    name = obj.get(PAINT_STYLE_KEY)
+    """The viewport RGB for the style Paint Part put on ``obj``, or None
+    when it carries no stamp (or names a style since removed). A cage is
+    never a painted piece: it is the selection highlight, and a stamp
+    left on one by an older build is ignored."""
+    if _is_cage(obj):
+        return None
+    name = obj.get(PAINT_STYLE_KEY) or _part_paint_style_name(obj)
     if not name:
         return None
     for index, style in enumerate(styles):
@@ -2190,10 +2320,14 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
     interior_material_type: EnumProperty(
         name="Interior Material",
         description="Material for cabinet interior",
+        # Numbered so the list can read in a sensible order while the
+        # picks stored in existing files keep their value.
         items=[
-            ('MAPLE_PLY', "UV Plywood", "UV plywood"),
-            ('MATCHING', "Matching Exterior", "Use the same material as the exterior"),
-            ('CUSTOM', "Custom Material", "Use a custom material from the file"),
+            ('MAPLE_PLY', "UV Plywood", "UV plywood", 0),
+            ('PARTICLE_BOARD', "Particle Board", "Particle board", 3),
+            ('UNFINISHED_PLY', "Unfinished Plywood", "Unfinished plywood", 4),
+            ('MATCHING', "Matching Exterior", "Use the same material as the exterior", 1),
+            ('CUSTOM', "Custom Material", "Use a custom material from the file", 2),
         ],
         default='MAPLE_PLY',
         update=_propagate_cabinet_style,
@@ -3122,6 +3256,8 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
         # Drawer-look appliance panels (flat slabs mimicking a drawer
         # stack, plus the inset look's mid rails)
         'DRAWER_LOOK_FRONT', 'DRAWER_LOOK_RAIL', 'DOOR_LOOK_FRONT',
+        # Valance across a cabinet's toe space
+        'TOE_KICK_VALANCE',
         # Valance product boards
         'VALANCE_BOARD', 'VALANCE_COVER',
         'VALANCE_PANEL_LEFT', 'VALANCE_PANEL_RIGHT',
@@ -3132,7 +3268,7 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
         'LEFT_CORNER_FINISH_KICK', 'RIGHT_CORNER_FINISH_KICK',
         'DIAGONAL_FINISH_KICK',
         'LEFT_KICK_RETURN', 'RIGHT_KICK_RETURN',
-        'LEFT_KICK_RETURN_CLOSURE', 'RIGHT_KICK_RETURN_CLOSURE',
+        'LEFT_KICK_CLOSURE_FINISH', 'RIGHT_KICK_CLOSURE_FINISH',
         # Loose ladder sub-base boards - finished material
         'LOOSE_KICK_FRONT', 'LOOSE_KICK_REAR',
         'LOOSE_KICK_END_LEFT', 'LOOSE_KICK_END_RIGHT',
@@ -3700,7 +3836,8 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
 
             # An arched finished back is a bent mesh the same way.
             if ((role in ('BEADBOARD', 'SHIPLAP', 'V_GROOVE', 'WOOD_TOP',
-                          'WOOD_TOP_EDGE', 'INSET_PANEL', 'FINISHED_BACK')
+                          'WOOD_TOP_EDGE', 'INSET_PANEL', 'FINISHED_BACK',
+                          'DRAWER_LOOK_STILE')
                  or child.get('hb_return_member'))
                     and child.get('HB_STATIC_TEXTURED')):
                 slot_mat = ov_mat if ov_mat is not None else finish_mat
@@ -10255,6 +10392,26 @@ class Face_Frame_Cabinet_Props(PropertyGroup):
         items=_bottom_rail_profile_items,
         update=_update_cabinet_dim,
     )  # type: ignore
+    toe_kick_valance: BoolProperty(
+        name="Toe Kick Valance",
+        description="A valance board across the toe space, in the plane "
+                    "of the face frame, from the floor to the bottom rail",
+        default=False,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    toe_kick_valance_profile: EnumProperty(
+        name="Valance Profile",
+        description="Decorative profile cut into the valance's bottom edge",
+        items=_bottom_rail_profile_items,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    toe_kick_valance_loose: BoolProperty(
+        name="Sent Loose",
+        description="The valance is sent loose and fit on site rather "
+                    "than attached to the cabinet",
+        default=False,
+        update=_update_cabinet_dim,
+    )  # type: ignore
     overstool_accessory: EnumProperty(
         name="Leg Accessory",
         items=[
@@ -11444,13 +11601,13 @@ class Face_Frame_Interior_Item(bpy.types.PropertyGroup):
         update=_update_cabinet_dim,
     )  # type: ignore
     tray_remove_shelf: BoolProperty(
-        name="Remove Locked Shelf",
-        description="When on, dividers run the full opening height. Off = dividers stop at a horizontal locked shelf at Tray Opening Height",
+        name="Remove Shelf Above",
+        description="When on, dividers run the full opening height. Off = dividers stop at a fixed shelf at the Tray Divider Height",
         default=False, update=_update_cabinet_dim,
     )  # type: ignore
     tray_opening_height: FloatProperty(
-        name="Tray Opening Height",
-        description="Clear height under the locked shelf, from the bottom of the dividers to the underside of the shelf (only when Remove Locked Shelf is off)",
+        name="Tray Divider Height",
+        description="Height of the tray dividers: from their bottom to the underside of the shelf above them (only while that shelf is kept)",
         default=units.inch(20.5), unit='LENGTH', precision=4,
         update=_update_cabinet_dim,
     )  # type: ignore
@@ -11696,6 +11853,37 @@ class Face_Frame_Drawer_Look_Opening(PropertyGroup):
         description="No faux mid rail between this front and the one above: "
                     "the two close up to the gap a removed mid rail leaves "
                     "on a real drawer stack",
+        default=False, update=_update_cabinet_dim,
+    )  # type: ignore
+
+
+def _update_drawer_split_look(self, context):
+    """Sync the face-width list to the side-by-side count (faces start
+    equal), then recalc."""
+    from . import types_face_frame
+    coll = self.drawer_split_faces
+    n = 0 if self.drawer_split_look == 'NONE' else int(self.drawer_split_look)
+    with types_face_frame.suspend_recalc():
+        while len(coll) > n:
+            coll.remove(len(coll) - 1)
+        while len(coll) < n:
+            coll.add()
+        for item in coll:
+            item.unlock_size = False
+    types_face_frame.recalculate_face_frame_cabinet(self.id_data)
+
+
+class Face_Frame_Drawer_Split_Face(PropertyGroup):
+    """One face width of a drawer front built to look like several
+    drawers side by side, left to right. unlock_size = the user typed
+    this width (held); the rest share what is left equally."""
+    size: FloatProperty(
+        name="Face Width", default=units.inch(6.0), unit='LENGTH',
+        precision=4, update=_update_cabinet_dim,
+    )  # type: ignore
+    unlock_size: BoolProperty(
+        name="Unlock Face Width",
+        description="Hold this face width; locked faces share the remainder equally",
         default=False, update=_update_cabinet_dim,
     )  # type: ignore
 
@@ -12043,6 +12231,49 @@ class Face_Frame_Opening_Props(PropertyGroup):
     # the division count by _update_drawer_look_divisions; consumed by
     # _build_drawer_look_fronts (front height = opening height + overlays).
     drawer_look_openings: CollectionProperty(type=Face_Frame_Drawer_Look_Opening)  # type: ignore
+    # Side-by-side drawer look: one drawer whose front is built from N
+    # separate faces with an integral stile piece between each pair, all
+    # applied to the drawer box front, so it reads as N drawers in a row.
+    # Each stile piece is cut wider than its face by a groove down each
+    # edge (the shadow line against the neighbouring face). Drawer fronts
+    # only, and ignored while drawer_look_divisions is set. Built by
+    # _build_drawer_split_fronts.
+    drawer_split_look: EnumProperty(
+        name="Side-by-Side Look",
+        description="Build this drawer front as N drawer faces side by side "
+                    "with an integral stile between them (still one drawer)",
+        items=[
+            ('NONE', "None", "One drawer front"),
+            ('2', "2 Drawers", "Two faces, one stile"),
+            ('3', "3 Drawers", "Three faces, two stiles"),
+            ('4', "4 Drawers", "Four faces, three stiles"),
+        ],
+        default='NONE',
+        update=_update_drawer_split_look,
+    )  # type: ignore
+    # Face widths, left to right; synced to the count by
+    # _update_drawer_split_look.
+    drawer_split_faces: CollectionProperty(type=Face_Frame_Drawer_Split_Face)  # type: ignore
+    drawer_split_stile_width: FloatProperty(
+        name="Integral Stile Width",
+        description="Visible face of the stile between two drawer faces",
+        default=units.inch(1.5), min=units.inch(0.25), unit='LENGTH',
+        precision=4, update=_update_cabinet_dim,
+    )  # type: ignore
+    drawer_split_groove_width: FloatProperty(
+        name="Groove Width",
+        description="Width of the groove down each edge of an integral "
+                    "stile. The stile piece is cut two grooves wider than "
+                    "its visible face",
+        default=units.inch(0.09375), min=0.0, unit='LENGTH',
+        precision=4, update=_update_cabinet_dim,
+    )  # type: ignore
+    drawer_split_groove_depth: FloatProperty(
+        name="Groove Depth",
+        description="Depth of the integral stile grooves, from the face",
+        default=units.inch(0.125), min=0.0, unit='LENGTH',
+        precision=4, update=_update_cabinet_dim,
+    )  # type: ignore
     # Door-look door: a single LEFT / RIGHT swing leaf shown as N door
     # panels side by side (doors battened together), still one door.
     # Ignored while drawer_look_divisions is set.
@@ -15486,6 +15717,7 @@ classes = (
     Face_Frame_Interior_Item,
     Face_Frame_Interior_Region_Props,
     Face_Frame_Drawer_Look_Opening,
+    Face_Frame_Drawer_Split_Face,
     Face_Frame_Opening_Props,
     Face_Frame_Splitter_Width,
     Face_Frame_Split_Props,

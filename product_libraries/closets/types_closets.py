@@ -1255,8 +1255,8 @@ def contour_tray_size(bay_width, box_depth):
     when no kit fits. The kit width follows the bay: 24" kits for bays
     24" wide or narrower, 36" kits for wider bays. The kit depth
     follows the drawer box length: 16" kits for 270mm and 350mm boxes,
-    20" kits for 400mm and 450mm boxes, and nothing for a shorter or
-    longer box (or no box at all)."""
+    20" kits for 400mm, 450mm and 500mm boxes, and nothing for a
+    shorter or longer box (or no box at all)."""
     depth_mm = round(box_depth / millimeter(1)) if box_depth > 0.0 else 0
     if depth_mm <= 0:
         return '', "Contour jewelry tray needs a drawer box"
@@ -1265,11 +1265,11 @@ def contour_tray_size(bay_width, box_depth):
                     % depth_mm)
     if depth_mm <= 350:
         kit_d = '16'
-    elif depth_mm <= 450:
+    elif depth_mm <= 500:
         kit_d = '20'
     else:
         return '', ("No contour jewelry tray fits a %dmm drawer box "
-                    "(450mm deepest)" % depth_mm)
+                    "(500mm deepest)" % depth_mm)
     kit_w = '24' if bay_width <= inch(24.0) + inch(0.001) else '36'
     return "%s x %s" % (kit_w, kit_d), ''
 
@@ -5114,7 +5114,11 @@ class ClosetStarter(GeoNodeCage):
         # The cage runs +X, -Y and +Z from its own origin, so its
         # corner is the model's low X, high Y, low Z.
         shift = Vector((lo_x, hi_y, lo_z))
-        cage.location = cage.location + shift
+        # The shift is measured in the cage's own frame; a cage that
+        # is turned (a corner unit's side wing) moves along its turned
+        # axes, not its parent's.
+        cage.location = cage.location + (
+            cage.rotation_euler.to_matrix() @ shift)
         model.location = model.location - shift
         geo = GeoNodeCage(cage)
         geo.set_input('Dim X', hi_x - lo_x)
@@ -10696,6 +10700,8 @@ def serialize_opening(opening):
         # Which way the grain runs on the drawer fronts here, so a
         # copy reads the way the original did.
         'drawer_grain': opening.hb_closet_opening.drawer_grain,
+        # A colour of the opening's own goes with it.
+        'accent_material': opening.hb_closet_opening.accent_material,
         # How the shelves here are cut, so a copy drops into its
         # clips the way the original did.
         'shelf_gaps': [
@@ -10827,6 +10833,8 @@ def apply_opening_data(opening, data, recalc=True):
     dgrain = data.get('drawer_grain')
     if dgrain:
         opening.hb_closet_opening.drawer_grain = dgrain
+    if data.get('accent_material'):
+        opening.hb_closet_opening.accent_material = data['accent_material']
     gaps = data.get('shelf_gaps')
     if gaps:
         _gp = opening.hb_closet_opening
