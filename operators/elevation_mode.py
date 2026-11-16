@@ -2465,7 +2465,35 @@ def set_show_defaults(values):
     _bump_gen()
 
 
+_show_overrides = {}
+
+
+class show_overrides:
+    """`with show_overrides({'PLAN': False}):` -- what a wall shows while
+    another drawing reads it (a sheet that sets its own plan beside the
+    elevation), whatever the room's own choices are. Nothing is written
+    to the scene."""
+
+    def __init__(self, values):
+        self._values = {k: bool(v) for k, v in (values or {}).items()}
+        self._before = None
+
+    def __enter__(self):
+        self._before = dict(_show_overrides)
+        _show_overrides.update(self._values)
+        _bump_gen()
+        return self
+
+    def __exit__(self, *_exc):
+        _show_overrides.clear()
+        _show_overrides.update(self._before or {})
+        _bump_gen()
+        return False
+
+
 def show_option(scene, key):
+    if key in _show_overrides:
+        return _show_overrides[key]
     default = next((d for k, _l, d in SHOW_OPTIONS if k == key), False)
     default = _show_defaults.get(key, default)
     if key in MODE_OPTIONS:
@@ -6301,14 +6329,16 @@ def print_wall(context, filepath, paper='TABLOID',
 
 
 def draw_wall(page, context, wall, W, H, text_scale=PRINT_TEXT_SCALE,
-              title=True):
+              title=True, info=None):
     """Draw a wall's printed page onto `page`, W x H points with its
     origin bottom left: anything with hb_pdf.Page's drawing methods, so
     another add-on can set the drawing into a sheet of its own (inside
     its title block, among its other pages). `title` False leaves the
     strip along the bottom empty for the caller's. Returns the drafting
     scale's label ("1/2\" = 1'-0\""), or None when the wall had to be
-    fitted off scale."""
+    fitted off scale. `info`, a dict, is given where the wall landed:
+    'k' points to the metre and ('ox', 'oy') the wall's start at the
+    floor, so the caller can line other views up on it."""
     global _print_scale
     scene = context.scene
     front = None            # the elevation on screen knows its own
@@ -6321,6 +6351,9 @@ def draw_wall(page, context, wall, W, H, text_scale=PRINT_TEXT_SCALE,
     _print_scale = text_scale
     try:
         view, label = _print_fit(scene, wall, W, H, front)
+        if info is not None:
+            info.update(k=view.k, ox=view.ox, oy=view.oy, label=label,
+                        length=L, height=Hw)
         dims, extra = _print_layout(scene, wall, region, view, front)
         if not _print_linework(page, context, extra, Fi, view, L, Hw):
             _print_outlines(page, extra, Fi, L, Hw)

@@ -161,6 +161,10 @@ class Page:
     def pop(self):
         self._op('Q')
 
+    def translate(self, dx, dy):
+        """Move the origin for what is drawn until the matching pop."""
+        self._op('1 0 0 1', _num(dx), _num(dy), 'cm')
+
 
 class Document:
     def __init__(self):
