@@ -1911,7 +1911,7 @@ def _solve_shelves(interior_obj):
     dim_x, dim_y, dim_z = cage_dims(interior_obj)
     mt = float(prompt(interior_obj, 'Material Thickness', inch(0.75)))
     qty = int(prompt(interior_obj, 'Shelf Quantity', 1))
-    clip_gap = float(prompt(interior_obj, 'Shelf Clip Gap', inch(0.125)))
+    clip_gap = float(prompt(interior_obj, 'Shelf Clip Gap', inch(0.0625)))
     setback = float(prompt(interior_obj, 'Shelf Setback', inch(0.25)))
     blind = blind_reach(interior_obj.parent)
     if blind is not None:
