@@ -64,6 +64,22 @@ def _plain_furniture(page, context, sheet, width, height):
 
 
 # ---- The set -------------------------------------------------------------------
+#
+# Another add-on may add to the rule-made set (a cover sheet of its own
+# view kind): fn(scene, data) changes `data` in place.
+
+_set_extensions = []
+
+
+def register_set_extension(fn):
+    if fn not in _set_extensions:
+        _set_extensions.append(fn)
+
+
+def unregister_set_extension(fn):
+    if fn in _set_extensions:
+        _set_extensions.remove(fn)
+
 
 def default_set(scene):
     """The set made by rule: for each wall with products, its plan strip
@@ -79,7 +95,13 @@ def default_set(scene):
                 for x in section.wall_cuts(scene, wall)]
         for i in range(0, len(cuts), SECTIONS_A_SHEET):
             sheets.append({'views': cuts[i:i + SECTIONS_A_SHEET]})
-    return {'sheets': sheets}
+    data = {'sheets': sheets}
+    for extend in list(_set_extensions):
+        try:
+            extend(scene, data)
+        except Exception as exc:
+            print(f"Drawings: set extension: {exc}")
+    return data
 
 
 def stored_set(scene):
@@ -216,6 +238,17 @@ def compose(context, sheets, index):
                     mx, my = p.anchors['marker']
                     draft.elevation_marker(page, px + mx, py + my,
                                            elev['_mark'], elev['_sheet'])
+    # Any other kind of view is sized by its own drawing: they stand in
+    # a row from the top left of what the others left free.
+    cursor = x0 + 22.0
+    for view in sheet['views']:
+        if view.get('kind') in ('ELEVATION', 'PLAN', 'SECTION'):
+            continue
+        d = views.resolve(context, view, x1 - cursor, y1 - y0)
+        if d is None:
+            continue
+        d.place(page, cursor, y1 - 22.0 - d.height)
+        cursor += d.width + 22.0
     for i, view in enumerate(sections):
         s, scale = _fit_section(context, view, (y1 - y0) - 110.0)
         if s is None:
