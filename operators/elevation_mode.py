@@ -2805,7 +2805,8 @@ def _face_frame_layout(items, Fi):
             out['lower'] += ([g for g in blind if g[1] <= fx0 + MERGE] + low
                              + [g for g in blind if g[0] >= fx1 - MERGE])
             segs = segs + low
-        if ffc is not None and it.obj.get('CLASS_NAME') == 'RefrigeratorCabinet':
+        if ffc is not None and it.obj.get('CLASS_NAME') in (
+                'RefrigeratorCabinet', 'LaundryCabinet'):
             ends = sorted(stiles)
             if ends and getattr(ffc, 'extend_left_stile_to_floor', False):
                 out['legs'].add((it.name, round(ends[0][0], 4)))

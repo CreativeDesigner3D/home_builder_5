@@ -17,9 +17,11 @@ from ....units import inch, meter_to_inch
 
 # Cabinet classes tall enough to need a tip-up chamfer. Refrigerator
 # cabinets started the list; walk-through pantries are built from the
-# plain tall products and hit the ceiling the same way going in.
+# plain tall products and hit the ceiling the same way going in, and a
+# laundry tall is a refrigerator cabinet around a stacked pair.
 WEDGE_CABINET_CLASSES = frozenset({
     'RefrigeratorCabinet',
+    'LaundryCabinet',
     'TallFaceFrameCabinet',
     'BuiltInTallFaceFrameCabinet',
 })

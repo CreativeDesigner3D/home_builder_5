@@ -650,7 +650,8 @@ def draw_wedge(layout, root):
     When enabled the three calc inputs are shown as live props (their
     update callback re-runs recalc, so the chamfer tracks edits); the
     calculator dialog is still available for the guided preview."""
-    if root.get('CLASS_NAME') != 'RefrigeratorCabinet':
+    if root.get('CLASS_NAME') not in ('RefrigeratorCabinet',
+                                      'LaundryCabinet'):
         return
     cab = root.face_frame_cabinet
     box = layout.box()
