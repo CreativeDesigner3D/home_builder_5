@@ -271,6 +271,11 @@ def _drawer_look_on(owner):
     return drawer_look.count(owner.id_data) > 0
 
 
+def _apron_on(owner):
+    from . import opening_apron
+    return opening_apron.wanted(owner.id_data)
+
+
 def _drawer_look():
     """How many drawer fronts a doors opening is shown as. An opening
     that never had the look keeps no prompt for it."""
@@ -491,6 +496,8 @@ def _register_schemas():
         'door_mechanism': P.index_enum('Door Mechanism', ("Standard", "Retracting")),
         'drawer_look': _drawer_look(),
         'drawer_look_top_height': P.length('Drawer Look Top Height'),
+        'add_apron': P.flag('Add Apron'),
+        'apron_height': P.length('Apron Height', units.inch(7.0)),
         'lift_mechanism': P.index_enum('Lift Mechanism', (
             "Stay Lift", "Bi-Fold Lift", "Up and Over", "Vertical Lift")),
         'inset_front': P.flag('Inset Front'),
@@ -556,6 +563,8 @@ OPENING_FIELDS = (
     ('enum', 'drawer_look', "Drawer Look", {'when': _door}),
     ('distance', 'drawer_look_top_height', "Top Front Height",
      {'when': _drawer_look_on}),
+    ('bool', 'add_apron', "Add Apron", {'when': _door}),
+    ('distance', 'apron_height', "Apron Height", {'when': _apron_on}),
     ('enum', 'lift_mechanism', "Lift", {'when': _flip_up}),
     ('bool', 'inset_front', "Inset Front", {'when': _has('Inset Front')}),
     ('group', 'fl_opening_overlays', "Overlays", {

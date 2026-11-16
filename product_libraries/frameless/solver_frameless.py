@@ -2558,6 +2558,8 @@ def solve_insert_parts(insert_obj):
                               thickness)
     if 'Door Swing' in insert_obj:
         _solve_pocket_panels(insert_obj, dim_x, dim_y, dim_z)
+        from . import opening_apron
+        opening_apron.solve(insert_obj, dim_x, dim_z, top)
 
 
 def attach_cage(child_obj, parent_obj):
