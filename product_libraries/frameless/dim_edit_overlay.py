@@ -62,6 +62,11 @@ TICK_PX         = 5
 # Height dims run up the cage's left side this far in (capped at a
 # quarter of the width for narrow cages).
 HEIGHT_DIM_INSET = 0.0762
+# Width dims run across the front this far up, below the middle: the
+# height's value sits at mid height, clear of the width line it would
+# otherwise cross there, and the middle of a cabinet is left to the
+# handle that moves it.
+WIDTH_DIM_FZ = 0.3
 
 # Characters accepted by the typed-distance grammar (parse_typed_distance):
 # digits, decimal point, fractions, feet/inch marks, embedded spaces,
@@ -505,7 +510,7 @@ def compute_labels(context, region, rv3d, lines_out=None):
         elif mode == 'Cabinets':
             dim_x, dim_y, dim_z = _cage_dims(cabinet)
             editable = _cabinet_editable(cabinet)
-            # W across the middle of the front, H up the left side, D
+            # W across the front below the middle, H up the left side, D
             # front to back across the top.
             fx = _height_dim_fx(cabinet)
             depth_pts = _root_depth_points(cabinet)
@@ -515,9 +520,9 @@ def compute_labels(context, region, rv3d, lines_out=None):
                  _pair(_root_anchor_world(cabinet, fx, 0.0),
                        _root_anchor_world(cabinet, fx, 1.0))),
                 (cabinet, 'CAB_W', editable, False, dim_x, "W ",
-                 _root_anchor_world(cabinet, 0.5, 0.5),
-                 _pair(_root_anchor_world(cabinet, 0.0, 0.5),
-                       _root_anchor_world(cabinet, 1.0, 0.5))),
+                 _root_anchor_world(cabinet, 0.5, WIDTH_DIM_FZ),
+                 _pair(_root_anchor_world(cabinet, 0.0, WIDTH_DIM_FZ),
+                       _root_anchor_world(cabinet, 1.0, WIDTH_DIM_FZ))),
                 (cabinet, 'CAB_D', editable, False, dim_y, "D ",
                  depth_pts[1] if depth_pts else None,
                  (depth_pts[0], depth_pts[2]) if depth_pts else None),
@@ -535,9 +540,9 @@ def compute_labels(context, region, rv3d, lines_out=None):
                 dim_x, _dim_y, dim_z = _cage_dims(bay)
                 fx = _height_dim_fx(bay)
                 targets.append((bay, 'BAY_W', blind, False, dim_x, "W ",
-                                _anchor_world(bay, 0.5, 0.5),
-                                _pair(_anchor_world(bay, 0.0, 0.5),
-                                      _anchor_world(bay, 1.0, 0.5))))
+                                _anchor_world(bay, 0.5, WIDTH_DIM_FZ),
+                                _pair(_anchor_world(bay, 0.0, WIDTH_DIM_FZ),
+                                      _anchor_world(bay, 1.0, WIDTH_DIM_FZ))))
                 targets.append((bay, 'BAY_H', False, False, dim_z, "H ",
                                 _anchor_world(bay, fx, 0.5),
                                 _pair(_anchor_world(bay, fx, 0.0),
