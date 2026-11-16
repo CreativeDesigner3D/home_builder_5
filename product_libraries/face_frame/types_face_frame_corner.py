@@ -915,13 +915,17 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
         """Position the clip-back cutter and angled back panel.
 
         The clip is a uniform 45 degree chamfer at the rear (0,0) wall
-        corner; clip_back_amount is the leg cut off each wall. The cutter
+        corner; the leg cut off each wall is calculated for base corners
+        (see corner_accessory_models.clip_back_leg) and typed as
+        clip_back_amount otherwise. The cutter
         is a box whose near face lies on the clip line from (clip, 0) to
         (0, -clip) and which extends toward the corner. When the amount
         is 0 the four clip booleans are disabled and the angled back is
         hidden, so the cabinet is unchanged.
         """
-        clip = cab_props.clip_back_amount
+        clip = corner_accessory_models.clip_back_leg(
+            cab_props, cab_props.corner_type,
+            self.obj.get('CABINET_TYPE') or self.default_cabinet_type)
         height = cab_props.height
         t = cab_props.material_thickness
         active = clip > 0.0

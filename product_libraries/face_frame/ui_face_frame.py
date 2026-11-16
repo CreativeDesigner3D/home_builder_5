@@ -120,7 +120,7 @@ def draw_dimensions(layout, root):
         col.separator()
         col.prop(cab_props, 'left_depth', text="Left Depth")
         col.prop(cab_props, 'right_depth', text="Right Depth")
-        col.prop(cab_props, 'clip_back_amount', text="Clip Back")
+        _draw_clip_back(col, root, cab_props)
         col.separator()
         if cab_props.corner_type == 'PIE_CUT':
             col.label(text="Pie Cut Options")
@@ -180,6 +180,35 @@ def draw_dimensions(layout, root):
         field.prop(cab_props, 'right_depth', text="Right Depth")
         lock_icon = 'UNLOCKED' if cab_props.unlock_right_depth else 'LOCKED'
         right_row.prop(cab_props, 'unlock_right_depth', text="", icon=lock_icon)
+
+
+def _draw_clip_back(col, root, cab_props):
+    """Back clip row. A base corner calculates its clip: the row shows
+    the calculated leg with a lock, and unlocking it gives the typed
+    field. Other corners only have the typed field."""
+    from . import corner_accessory_models as cam
+    cabinet_type = root.get('CABINET_TYPE') or cab_props.cabinet_type
+    corner_type = cab_props.corner_type
+    if corner_type == 'PIE_CUT_DRAWER':
+        return
+    if cabinet_type != 'BASE' or corner_type not in ('PIE_CUT', 'DIAGONAL'):
+        col.prop(cab_props, 'clip_back_amount', text="Clip Back")
+        return
+    auto = cam.clip_back_is_auto(cab_props, corner_type, cabinet_type)
+    row = col.row(align=True)
+    if auto:
+        leg = cam.clip_back_leg(cab_props, corner_type, cabinet_type)
+        value = units.unit_to_string(
+            bpy.context.scene.unit_settings, leg) if leg > 0.0 else "None"
+        split = row.split(factor=0.5, align=True)
+        split.label(text="Clip Back")
+        right = split.row(align=True)
+        right.alignment = 'RIGHT'
+        right.label(text=value)
+    else:
+        row.prop(cab_props, 'clip_back_amount', text="Clip Back")
+    row.prop(cab_props, 'clip_back_auto', text="",
+             icon='LOCKED' if auto else 'UNLOCKED')
 
 
 def _draw_corner_adjustable_shelves(col, cab_props):

@@ -10858,6 +10858,12 @@ class Face_Frame_Cabinet_Props(PropertyGroup):
         default=units.inch(6.0), min=0.0, unit='LENGTH', precision=4,
         update=_update_cabinet_dim,
     )  # type: ignore
+    clip_back_auto: BoolProperty(
+        name="Automatic Clip Back",
+        description="Calculate the back clip of a corner base so the cabinet keeps its standard front-to-back depth, deeper for the large susans. Turn off to type the clip",
+        default=True,
+        update=_update_cabinet_dim,
+    )  # type: ignore
 
     mid_stile_widths: CollectionProperty(type=Face_Frame_Mid_Stile_Width)  # type: ignore
     # Cabinet columns: split turnings applied over stiles, keyed by
