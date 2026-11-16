@@ -798,6 +798,48 @@ def _sheet_materials():
     return materials_closets
 
 
+# Toe kicks and base assemblies are built from structural 3/4" plywood
+# whatever the cabinet's colours (#7fbbc66a): the shop's "18mm Radiata
+# Utility Ply VC" stock (48.5 x 96.5, about 0.72" actual). It is made here rather than added to the
+# materials library, so it never shows in the Exterior / Interior lists.
+STRUCTURAL_PLY_MATERIAL = '18mm Radiata Utility Ply VC'
+STRUCTURAL_PLY_COLOR = (0.80, 0.66, 0.46, 1.0)
+# The kick boards themselves. A Toe Kick Panel and its returns are the
+# finished skin over the board, so they keep the style's finish.
+STRUCTURAL_PLY_ROLES = frozenset({
+    'TOE_KICK', 'LEFT_TOE_KICK', 'RIGHT_TOE_KICK', 'FILLER_KICK',
+})
+
+
+def is_structural_ply_part(part_obj):
+    """True for a part cut from the structural plywood: a toe kick board
+    or any part of a base assembly / ladder base."""
+    if part_obj.get('hb_part_role') in STRUCTURAL_PLY_ROLES:
+        return True
+    cur = part_obj
+    while cur is not None:
+        if cur.get('IS_BASE_ASSEMBLY') or cur.get('IS_FRAMELESS_LADDER_CAGE'):
+            return True
+        cur = cur.parent
+    return False
+
+
+def get_structural_ply_material():
+    """The structural plywood material: the library's when it holds one
+    by that name, otherwise made here."""
+    m = _sheet_materials()
+    mat = m.load_material(STRUCTURAL_PLY_MATERIAL)
+    if mat is None:
+        mat = bpy.data.materials.new(STRUCTURAL_PLY_MATERIAL)
+        mat.use_nodes = True
+        mat.diffuse_color = STRUCTURAL_PLY_COLOR
+        bsdf = mat.node_tree.nodes.get('Principled BSDF')
+        if bsdf is not None:
+            bsdf.inputs['Base Color'].default_value = STRUCTURAL_PLY_COLOR
+            bsdf.inputs['Roughness'].default_value = 0.8
+    return mat
+
+
 def get_sheet_material_enum_items(self, context):
     return _sheet_materials().material_enum_items(self, context)
 
@@ -1219,11 +1261,17 @@ class Frameless_Cabinet_Style(PropertyGroup):
                 and 'CABINET_PART' in cabinet_obj):
             parts.append(cabinet_obj)
 
+        ply_mat = None
         for child in parts:
             part = hb_types.GeoNodeObject(child)
             if child.get('IS_CABINET_FRONT'):
                 top_mat = bottom_mat = front_mat
                 edge = front_edge
+            elif is_structural_ply_part(child):
+                if ply_mat is None:
+                    ply_mat = get_structural_ply_material()
+                top_mat = bottom_mat = ply_mat
+                edge = carcass_edge
             elif finished_interior:
                 top_mat = bottom_mat = finish_mat
                 edge = carcass_edge
