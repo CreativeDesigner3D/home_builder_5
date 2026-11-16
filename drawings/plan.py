@@ -24,12 +24,7 @@ DEFAULT_DEPTH = 44.0 * draft.INCH       # how far into the room the strip shows
 
 
 def _number(obj):
-    """A product's number as short as it reads on a drawing: what
-    follows the last dot of a dotted number."""
-    for key in obj.keys():
-        if key.endswith('UNIT_NUMBER') and obj.get(key):
-            return str(obj[key]).split('.')[-1]
-    return None
+    return views.unit_number(obj)
 
 
 def resolve(context, view, _width, _height):
@@ -85,12 +80,7 @@ def resolve(context, view, _width, _height):
         cy = a[1] + (b[1] - a[1]) * (0.5 if it.kind == 'UPPER' else 0.28)
         number = _number(it.obj)
         if number and (b[0] - a[0]) > 16.0:
-            w, h = 22.0, 7.5
-            out.fill_color(draft.WHITE)
-            out.stroke_color(draft.INK)
-            out.line_width(0.4)
-            out.rect(cx - w / 2, cy - h / 2, w, h, fill=True, stroke=True)
-            draft.text_centered(out, cx, cy - 2.0, number, 5.5, halo=False)
+            views.number_tag(out, cx, cy, number, (b[0] - a[0]) - 3.0)
         elif appliance:
             draft.text_centered(out, cx, cy, it.name.upper()[:12], 5.0)
     # The wall's length over the top, one depth each down the left.
@@ -281,12 +271,7 @@ def resolve_room(context, view, width, height):
         if box['kind'] == 'APPLIANCE':
             draft.text_centered(out, cx, cy - 2.0, box['label'], 5.0)
             continue
-        w = max(16.0, hb_pdf.text_width(box['label'], 5.5) + 6.0)
-        out.fill_color(draft.WHITE)
-        out.stroke_color(draft.INK)
-        out.line_width(0.4)
-        out.rect(cx - w / 2, cy - 3.75, w, 7.5, fill=True, stroke=True)
-        draft.text_centered(out, cx, cy - 2.0, box['label'], 5.5, halo=False)
+        views.number_tag(out, cx, cy, box['label'])
     for a, b, outward, length in parts['dims']:
         pa, pb, po = P(a), P(b), P(outward)
         n = math.hypot(po[0] - pa[0], po[1] - pa[1]) or 1.0

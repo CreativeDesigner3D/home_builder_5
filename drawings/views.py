@@ -109,7 +109,10 @@ def wall_items(scene, wall):
 
 # What a sheet's elevation leaves to the sheet: the plan and the iso are
 # views of their own there, and detail cards are placed by the sheet.
-ELEVATION_SHOWS = {'PLAN': False, 'ISO': False, 'DETAILS': False}
+ELEVATION_SHOWS = {'PLAN': False, 'ISO': False, 'DETAILS': False,
+                   # The units' number tags another add-on hangs on the
+                   # wall: the sheet sets its own, sized to fit.
+                   'UNIT_TAGS': False}
 
 
 def _elevation(context, view, width, height):
@@ -124,11 +127,115 @@ def _elevation(context, view, width, height):
         em.draw_wall(drawing, context, wall, width, height, title=False,
                      info=info)
     k = info['k']
+    try:
+        _elevation_marks(drawing, context, wall, k, info['ox'],
+                         info['oy'])
+    except Exception as exc:
+        print(f"Drawings: elevation marks: {exc}")
     drawing.anchors['wall_start'] = (info['ox'], info['oy'])
     drawing.anchors['wall_top'] = (info['ox'],
                                    info['oy'] + info['height'] * k)
     drawing.info = {'k': k, 'scale': info['label']}
     return drawing
+
+
+# ---- What a sheet's elevation adds to the print ------------------------------
+#
+# Drafting marks placed by rule from the parts themselves: each unit's
+# number in a tag sized to fit it, the lines that show which side a
+# door is hinged, and a label on each adjustable shelf.
+
+DOOR_HINGE = {'LEFT_DOOR': -1, 'RIGHT_DOOR': 1}
+SHELF_ROLES = ('SHELF', 'ADJUSTABLE_SHELF')
+TAG_SIZE, TAG_MIN_SIZE = 5.5, 4.0
+
+
+def unit_number(obj):
+    """The number a unit is known by on the drawings and the parts
+    lists, or None: whatever a numbering add-on stamped on it."""
+    for key in obj.keys():
+        if key.endswith('UNIT_NUMBER') and obj.get(key):
+            return str(obj[key])
+    return None
+
+
+def number_tag(page, cx, cy, text, room=None, size=TAG_SIZE):
+    """A unit's number in a box centred on (cx, cy), set smaller when
+    `room` (the width there is for it) is tight."""
+    from .. import hb_pdf
+    from . import draft
+    if room is not None:
+        while size > TAG_MIN_SIZE and (
+                hb_pdf.text_width(text, size) + 5.0 > room):
+            size -= 0.5
+    w = hb_pdf.text_width(text, size) + 5.0
+    h = size + 2.4
+    page.fill_color(draft.WHITE)
+    page.stroke_color(draft.INK)
+    page.line_width(0.4)
+    page.rect(cx - w / 2, cy - h / 2, w, h, fill=True, stroke=True)
+    draft.text_centered(page, cx, cy - size * 0.36, text, size, halo=False)
+    return w, h
+
+
+def _elevation_marks(drawing, context, wall, k, ox, oy):
+    from mathutils import Vector
+    from . import draft
+    scene = context.scene
+    Fi = em._frame(wall)[1]
+    deps = context.evaluated_depsgraph_get()
+
+    def P(x, z):
+        return (ox + x * k, oy + z * k)
+
+    hinge_lines, shelf_labels, tags = [], [], []
+    for it in wall_items(scene, wall):
+        if it.kind == 'OPENING' or it.obj.get('IS_APPLIANCE'):
+            continue
+        for part in it.obj.children_recursive:
+            role = part.get('hb_part_role')
+            if part.type != 'MESH' or part.hide_render or (
+                    role not in DOOR_HINGE and role not in SHELF_ROLES):
+                continue
+            ev = part.evaluated_get(deps)
+            if ev.data is None or not len(ev.data.vertices):
+                continue
+            pts = [Fi @ (ev.matrix_world @ Vector(c)) for c in ev.bound_box]
+            x0, x1 = min(p.x for p in pts), max(p.x for p in pts)
+            z0, z1 = min(p.z for p in pts), max(p.z for p in pts)
+            if role in DOOR_HINGE:
+                side = DOOR_HINGE[role]
+                hinge, free = (x0, x1) if side < 0 else (x1, x0)
+                mid = P(hinge, (z0 + z1) / 2.0)
+                hinge_lines += [(P(free, z0), mid), (mid, P(free, z1))]
+            else:
+                if z1 - z0 < 1.5 * 0.0254:
+                    boards = [z1]
+                else:
+                    zs = sorted({round((Fi @ (ev.matrix_world @ v.co)).z, 4)
+                                 for v in ev.data.vertices})
+                    boards = [b for a, b in zip(zs[::2], zs[1::2])
+                              if b - a < 1.5 * 0.0254]
+                for z in boards:
+                    shelf_labels.append(P((x0 + x1) / 2.0, z))
+        number = unit_number(it.obj)
+        if number:
+            # Low on what stands on the floor (in its kick), high on
+            # what hangs: clear of the fronts' own marks either way.
+            z = it.z0 if it.kind == 'LOWER' else it.z1
+            cx, cy = P((it.x0 + it.x1) / 2.0, z)
+            cy += 6.0 if it.kind == 'LOWER' else -7.0
+            tags.append((cx, cy, number, (it.x1 - it.x0) * k - 3.0))
+    if hinge_lines:
+        drawing.stroke_color(draft.GREY)
+        drawing.line_width(0.3)
+        drawing.dash(7.0, 2.0)
+        drawing.lines(hinge_lines)
+        drawing.dash()
+    for cx, cy in shelf_labels:
+        draft.text_centered(drawing, cx, cy + 2.0, 'ADJ', 5.0)
+    for cx, cy, number, room in tags:
+        number_tag(drawing, cx, cy, number, room)
 
 
 def register():
