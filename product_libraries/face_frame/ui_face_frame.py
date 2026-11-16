@@ -1607,6 +1607,7 @@ def draw_opening_properties(layout, opening_obj):
                                text="Groove Width")
                 faces_box.prop(op, 'drawer_split_groove_depth',
                                text="Groove Depth")
+                faces_box.prop(op, 'drawer_split_pulls', text="Pulls")
 
         # Tilt-out flag (false fronts only): label-only -- the 2D elevation
         # prints TILT-OUT instead of FALSE. No geometry change.

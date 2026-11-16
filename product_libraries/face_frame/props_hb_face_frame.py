@@ -12274,6 +12274,20 @@ class Face_Frame_Opening_Props(PropertyGroup):
         default=units.inch(0.125), min=0.0, unit='LENGTH',
         precision=4, update=_update_cabinet_dim,
     )  # type: ignore
+    # Which faces carry a pull. It is one drawer, so by default only the
+    # middle of the front is pulled: the middle face of an odd count,
+    # the two faces either side of the centre of an even one.
+    drawer_split_pulls: EnumProperty(
+        name="Pulls",
+        description="Which faces of a side-by-side drawer front get a pull",
+        items=[
+            ('MIDDLE', "Middle", "A pull on the middle face only (the two "
+                                 "middle faces of an even count)"),
+            ('ALL', "Every Face", "A pull on every face"),
+        ],
+        default='MIDDLE',
+        update=_update_cabinet_dim,
+    )  # type: ignore
     # Door-look door: a single LEFT / RIGHT swing leaf shown as N door
     # panels side by side (doors battened together), still one door.
     # Ignored while drawer_look_divisions is set.

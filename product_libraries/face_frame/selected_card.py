@@ -1079,6 +1079,7 @@ def front_detail_fields():
          {'when': _drawer_split_on}),
         ('distance', 'drawer_split_groove_depth', "Groove Depth",
          {'when': _drawer_split_on}),
+        ('enum', 'drawer_split_pulls', "Pulls", {'when': _drawer_split_on}),
         ('enum', 'door_look_divisions', "Door-Look", {'when': _door_look_ok}),
         ('enum', 'door_look_direction', "Door-Look Layout", {'when': _door_look_layout}),
         ('distance', 'door_look_top_height', "Top Door Height", {'when': _door_look_top}),
