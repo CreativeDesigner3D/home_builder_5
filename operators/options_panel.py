@@ -300,6 +300,10 @@ def parse_number(text):
         return float(text)
     except ValueError:
         pass
+    # Arithmetic ("90/4", "3*1.5", "(7-1)/2"), fractions included.
+    value = hb_placement.evaluate_typed_expression(text)
+    if value is not None:
+        return value
     sign = -1.0 if text.startswith('-') else 1.0
     parts = text.lstrip('-').replace('-', ' ').split()
     try:
