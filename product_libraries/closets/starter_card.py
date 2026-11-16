@@ -459,9 +459,17 @@ def fields(root):
         ('distance', 'depth', "Depth"),
     ]
     if not is_filler:
-        # The height again as a pick off the standard list: it reads
-        # Custom when the typed height misses the holes.
-        out.insert(3, ('enum', 'height_standard', "Standard Height"))
+        # The height is a pick off the standard list. The typed field
+        # shows beside it only for a run standing off the holes.
+        def off_holes(_ow=None):
+            return not const.nearest_panel_height_key(sp.height)
+        out[2:3] = [
+            ('enum', 'height_standard', "Height",
+             {'when': lambda _ow: not off_holes()}),
+            ('distance', 'height', "Height", {'when': off_holes}),
+            ('enum', 'height_standard', "Standard Height",
+             {'when': off_holes}),
+        ]
     if hangs:
         # A run its bays hang from: the hang line on its own, and one
         # height written to every bay at once.
