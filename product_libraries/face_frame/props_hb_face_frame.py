@@ -5095,12 +5095,24 @@ GLASS_DOOR_PREV_FINISH_KEY = 'HB_GLASS_DOOR_PREV_FINISH'
 GLASS_TYPE_ITEMS = [
     ('CLEAR_18', "Clear 1/8\"", "Clear glass, 1/8\" thick"),
     ('CLEAR_14', "Clear 1/4\"", "Clear glass, 1/4\" thick"),
-    ('REEDED', "Reeded", "Reeded (fluted) glass"),
+    ('FROSTED', "Frosted 1/8\"", "Frosted / satin-etched glass, 1/8\" thick"),
+    ('FROSTED_14', "Frosted 1/4\"", "Frosted / satin-etched glass, 1/4\" thick"),
+    ('SMOKED_18', "Smoked 1/8\"", "Smoked glass, 1/8\" thick"),
+    ('SMOKED_14', "Smoked 1/4\"", "Smoked glass, 1/4\" thick"),
+    ('MIRROR_18', "Mirror 1/8\"", "Mirror, 1/8\" thick"),
+    ('REEDED', "Reeded", "Vertical reeded (fluted) glass"),
     ('SEEDED', "Seeded", "Seeded glass"),
-    ('FROSTED', "Frosted", "Frosted / satin-etched glass"),
+    ('ARTIQUE', "Artique", "Artique textured glass"),
+    ('HAMMERED', "Hammered", "Hammered textured glass"),
+    ('WATER', "Water", "Water textured glass"),
     ('CUSTOM', "Other", "Glass not in the list - type what it is"),
 ]
 GLASS_TYPE_NAMES = dict((i[0], i[1]) for i in GLASS_TYPE_ITEMS)
+# The plain glasses that also come tempered; textured glass and mirror
+# come one way only.
+GLASS_TEMPERABLE_TYPES = frozenset({
+    'CLEAR_18', 'CLEAR_14', 'FROSTED', 'FROSTED_14', 'SMOKED_18',
+    'SMOKED_14'})
 
 
 def glass_type_label(spec):
@@ -5129,7 +5141,8 @@ def front_glass_door(front_obj, store=None):
         spec = dict(spec)
     return {'type': str(spec.get('type', 'CLEAR_18')),
             'included': bool(spec.get('included', False)),
-            'custom': str(spec.get('custom', '') or '')}
+            'custom': str(spec.get('custom', '') or ''),
+            'tempered': bool(spec.get('tempered', False))}
 
 
 def set_front_glass_door(front_obj, spec, store=None):
@@ -5145,7 +5158,9 @@ def set_front_glass_door(front_obj, spec, store=None):
     store[key] = {'type': kind,
                   'included': bool(spec.get('included', False)),
                   'custom': (str(spec.get('custom', '') or '').strip()
-                             if kind == 'CUSTOM' else '')}
+                             if kind == 'CUSTOM' else ''),
+                  'tempered': (bool(spec.get('tempered', False))
+                               and kind in GLASS_TEMPERABLE_TYPES)}
 
 
 def store_has_glass_door(store):
