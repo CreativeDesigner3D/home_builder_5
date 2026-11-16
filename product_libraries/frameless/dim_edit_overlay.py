@@ -708,6 +708,36 @@ def _resolve_after_split_edit(context, cabinet_bp, calc):
         hb_utils.run_calc_fix(context, cabinet_bp)
 
 
+def _resize_filler_at_joint(context, filler, width):
+    """Set a wall scribe filler's width at its joint with the cabinet
+    beside it, as dragging that joint does: the cabinet gives or takes
+    the difference and the filler's wall end stays where it is. Both
+    keep their minimum widths, so an out-of-range value lands on the
+    nearest one that fits. False when no cabinet is butted to it."""
+    from . import scribe_fit
+    from .operators import op_grab_frameless as grab
+    if not scribe_fit.is_wall_scribe_filler(filler):
+        return False
+    for h in grab.collect_cabinet_handles(context.scene):
+        if h['kind'] != 'JOINT':
+            continue
+        if h['left'] == filler.name:
+            other, sign = h['right'], 1.0
+        elif h['right'] == filler.name:
+            other, sign = h['left'], -1.0
+        else:
+            continue
+        other = bpy.data.objects.get(other)
+        if other is None or not other.get(TAG_CABINET):
+            continue
+        change = width - GeoNodeCage(filler).get_input('Dim X')
+        grab.apply_delta(context, h, grab.start_state(h), change * sign)
+        if scribe_fit.refit(filler):
+            hb_utils.run_calc_fix(context, filler)
+        return True
+    return False
+
+
 def _commit(context, obj, kind, value):
     """Write the typed value through the dialogs' own paths."""
     if kind in wall_run_dims.KINDS:
@@ -735,10 +765,15 @@ def _commit(context, obj, kind, value):
             return False
         name = {'CAB_W': 'Dim X', 'CAB_H': 'Dim Z', 'CAB_D': 'Dim Y'}[kind]
         if obj.get(TAG_FILLER):
-            # A product: its depth is typed as built, and a filler in a
-            # narrow gap goes back on the gap after a width edit, as it
-            # does when the width is typed in its settings.
+            # A product: its depth is typed as built. A typed width is
+            # taken from (or given to) the cabinet the filler stands
+            # against; with no cabinet beside it, a filler in a narrow
+            # gap goes back on the gap, as it does when the width is
+            # typed in its settings.
             from . import scribe_fit, types_products
+            if kind == 'CAB_W' and _resize_filler_at_joint(context, obj,
+                                                           value):
+                return True
             if kind == 'CAB_D':
                 types_products.set_product_depth(obj, value)
             else:
