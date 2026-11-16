@@ -828,7 +828,7 @@ class hb_frameless_OT_update_cabinets_from_style(bpy.types.Operator):
         self._cabinets = []
         for scene in bpy.data.scenes:
             for obj in scene.objects:
-                if obj.get('IS_FRAMELESS_CABINET_CAGE') or obj.get('IS_FRAMELESS_MISC_PART'):
+                if props_hb_frameless.wears_cabinet_style(obj):
                     cab_style_index = obj.get('CABINET_STYLE_INDEX', 0)
                     if cab_style_index == style_index:
                         self._cabinets.append(obj)
@@ -883,7 +883,7 @@ class hb_frameless_OT_update_cabinet_materials(bpy.types.Operator):
         cabinets = []
         for scene in bpy.data.scenes:
             for obj in scene.objects:
-                if obj.get('IS_FRAMELESS_CABINET_CAGE') or obj.get('IS_FRAMELESS_MISC_PART'):
+                if props_hb_frameless.wears_cabinet_style(obj):
                     cab_style_index = obj.get('CABINET_STYLE_INDEX', 0)
                     if cab_style_index == style_index:
                         cabinets.append(obj)

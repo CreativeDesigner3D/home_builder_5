@@ -846,9 +846,24 @@ def get_interior_material_enum_items(self, context):
     return _interior_enum_cache
 
 
+def wears_cabinet_style(obj):
+    """True for an object a frameless cabinet style paints: a cabinet, a
+    loose misc part, or a product placed in a style (a wall scribe
+    filler, which placement styles and stamps CABINET_STYLE_INDEX on).
+    Products left out here kept the colour they were placed in when the
+    style's Exterior changed, so a filler read as the interior white.
+    Face frame products on frameless parts wear face frame styles."""
+    if obj.get('IS_FRAMELESS_CABINET_CAGE') or obj.get('IS_FRAMELESS_MISC_PART'):
+        return True
+    return (bool(obj.get('IS_FRAMELESS_PRODUCT_CAGE'))
+            and not obj.get('IS_FACE_FRAME_PRODUCT_CAGE')
+            and 'CABINET_STYLE_INDEX' in obj)
+
+
 def _cabinets_wearing_style(style):
-    """Every cabinet (and loose misc part) in the project assigned this
-    style, by the index it holds in the main scene's pool."""
+    """Every cabinet (and loose misc part, and styled product) in the
+    project assigned this style, by the index it holds in the main
+    scene's pool."""
     main_scene = hb_project.get_main_scene()
     styles = main_scene.hb_frameless.cabinet_styles
     index = next((i for i, s in enumerate(styles)
@@ -858,8 +873,7 @@ def _cabinets_wearing_style(style):
     found = []
     for scene in bpy.data.scenes:
         for obj in scene.objects:
-            if not (obj.get('IS_FRAMELESS_CABINET_CAGE')
-                    or obj.get('IS_FRAMELESS_MISC_PART')):
+            if not wears_cabinet_style(obj):
                 continue
             if obj.get('CABINET_STYLE_INDEX', 0) == index:
                 found.append(obj)
