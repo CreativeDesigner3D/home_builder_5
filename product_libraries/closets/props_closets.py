@@ -2856,6 +2856,14 @@ class Closets_Scene_Props(PropertyGroup):
         row.operator('hb_closets.randomize_hangers',
                      text="Randomize Hangers", icon='FILE_REFRESH')
         row.operator('hb_closets.install_model_pack', text="", icon='IMPORT')
+        # A host add-on that has more models to download says where.
+        more = pulls_closets.more_models_operator()
+        if more:
+            try:
+                layout.operator(more, text="Get More Hanger Models",
+                                icon='INTERNET')
+            except Exception:
+                pass
 
     # =====================================================================
     # UI: accessories (Options tab)

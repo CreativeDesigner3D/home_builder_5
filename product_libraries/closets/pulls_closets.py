@@ -94,6 +94,20 @@ def _host_hanger_dirs():
     return tuple(out)
 
 
+def more_models_operator():
+    """The operator a host add-on offers for getting more hanger models
+    (its own download dialog, say), or None."""
+    try:
+        from ... import accessory_registry
+    except Exception:
+        return None
+    for item in accessory_registry.get_items(HANGER_HOST):
+        idname = (item or {}).get('more_models_operator')
+        if idname:
+            return idname
+    return None
+
+
 def hanger_dirs():
     """Everywhere a hanger model can come from, in the order a name
     clash is settled: what ships with the library, then what a host
