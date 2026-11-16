@@ -9,6 +9,9 @@ Apron Height is measured down from the top of the doors, so it lines
 up with a drawer front of the same height in the cabinet next door.
 The panel itself hangs from the top of the opening and is shorter by
 the top overlay of the doors.
+
+What stands behind the doors -- shelves, roll-outs, a divided interior
+-- stops under the apron: the room behind it is the sink's.
 """
 
 import bpy
@@ -37,6 +40,16 @@ def height(insert_obj):
         return max(float(insert_obj.get(HEIGHT_KEY, DEFAULT_HEIGHT)), 0.0)
     except (TypeError, ValueError):
         return DEFAULT_HEIGHT
+
+
+def panel_height(insert_obj, dim_z, top_overlay=None):
+    """How far the apron panel hangs down from the top of an opening
+    ``dim_z`` high; 0 for an opening without one."""
+    if not wanted(insert_obj):
+        return 0.0
+    if top_overlay is None:
+        top_overlay = solver_frameless.front_overlays(insert_obj)[0]
+    return max(min(height(insert_obj) - top_overlay, dim_z), 0.0)
 
 
 def aprons(insert_obj):
@@ -77,8 +90,8 @@ def solve(insert_obj, dim_x, dim_z, top_overlay):
     if root is not None:
         mt = float(solver_frameless.prompt(root, 'Material Thickness', mt))
     # Down from the top of the doors, never past the opening's bottom.
-    panel = min(height(insert_obj) - top_overlay, dim_z)
-    if not wanted(insert_obj) or panel <= 0.0 or dim_x <= 0.0:
+    panel = panel_height(insert_obj, dim_z, top_overlay)
+    if panel <= 0.0 or dim_x <= 0.0:
         for obj in existing:
             bpy.data.objects.remove(obj, do_unlink=True)
         return None

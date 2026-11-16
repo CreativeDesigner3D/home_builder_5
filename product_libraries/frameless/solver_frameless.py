@@ -1837,8 +1837,9 @@ def _solve_splitter(splitter_obj, vertical):
 
 def link_dims(parent_obj, child_obj, dims):
     """Where a linked child sits in its parent and how big it is. An
-    interior behind an inset front starts behind the front, and one in
-    a blind corner reaches across behind the blind panel."""
+    interior behind an inset front starts behind the front, one in a
+    blind corner reaches across behind the blind panel, and one behind
+    an apron stops under it."""
     dim_x, dim_y, dim_z = dims
     if not child_obj.get('IS_FRAMELESS_INTERIOR_CAGE'):
         return (0.0, 0.0, 0.0), (dim_x, dim_y, dim_z)
@@ -1852,6 +1853,10 @@ def link_dims(parent_obj, child_obj, dims):
     offset = 0.0
     if parent_obj.get('Inset Front'):
         offset = float(prompt(parent_obj, 'Front Thickness', 0.0))
+    if parent_obj.get('Add Apron'):
+        # The interior stops under an apron behind the doors.
+        from . import opening_apron
+        dim_z -= opening_apron.panel_height(parent_obj, dim_z)
     return (x, offset, 0.0), (dim_x, dim_y - offset, dim_z)
 
 
