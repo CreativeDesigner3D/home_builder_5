@@ -13,7 +13,10 @@ The rules for the cabinet box are the shop's:
 - base and tall cabinets: sides, top and bottom on the front only;
 - wall cabinets: sides on the front, top and bottom edges (the ends of
   a wall side show under and over the cabinet), top and bottom on the
-  front only;
+  front only. The end of a wall side is banded to go with what is seen
+  beside it: on a finished side always in the cabinet banding, on an
+  unfinished one like the top (or bottom) it meets - the cabinet
+  banding where that is finished, the interior's where it is not;
 - backs: none;
 - adjustable shelves: the front only.
 
@@ -143,18 +146,71 @@ def _context_band_edges(obj, role):
     return ()
 
 
+# The end of a wall side and the face of the cabinet it lies beside.
+_SIDE_END_FACES = (('W1', 'BOTTOM'), ('W2', 'TOP'))
+
+
+def interior_banded_edges(obj):
+    """The edges of a part banded in the interior's banding rather than
+    the cabinet's: the top and bottom ends of an unfinished wall side,
+    where the top or bottom they meet is unfinished too."""
+    role = obj.get(solver_frameless.PART_ROLE_KEY)
+    if role not in _SIDE_ROLES:
+        return ()
+    root = solver_frameless.cabinet_root(obj)
+    if (root is None or root.get('Finished Interior', False)
+            or solver_frameless.carcass_kind(root) not in _WALL_KINDS):
+        return ()
+    from .operators import ops_finished_ends
+    side = ops_finished_ends.FINISH_ROLE_SIDES[role]
+    try:
+        if ops_finished_ends.finish_condition(root, side) != 'UNFINISHED':
+            return ()
+        edges = []
+        for socket, face in _SIDE_END_FACES:
+            if (face == 'BOTTOM' and int(
+                    root.get(solver_frameless.FINISHED_BOTTOM_KEY, 0) or 0)):
+                # A panel of finished stock is applied under the cabinet.
+                continue
+            if ops_finished_ends.finish_condition(root, face) == 'UNFINISHED':
+                edges.append(socket)
+        return tuple(edges)
+    except Exception:
+        return ()
+
+
+def _interior_edge(obj):
+    """The interior material of the part's cabinet as banding, or None."""
+    style = _style(obj)
+    if style is None:
+        return None
+    try:
+        from . import props_hb_frameless
+        interior, _ = style.get_interior_material()
+        return props_hb_frameless._sheet_materials().rotated_variant(interior)
+    except Exception:
+        return None
+
+
 def _set_edges(part, obj, edge):
     """Band the edges `obj` is banded on in `edge`; the rest show the
     bare board core."""
     banded = banded_edges(obj)
+    inside = interior_banded_edges(obj)
+    inside_edge = _interior_edge(obj) if inside else None
     core = None
     if banded is not None and len(banded) < len(EDGE_SOCKETS):
         from ..closets import materials_closets
         core = materials_closets.load_core_material()
     for e in EDGE_SOCKETS:
         try:
-            part.set_input('Edge ' + e,
-                           edge if (banded is None or e in banded) else core)
+            if banded is not None and e not in banded:
+                mat = core
+            elif inside_edge is not None and e in inside:
+                mat = inside_edge
+            else:
+                mat = edge
+            part.set_input('Edge ' + e, mat)
         except Exception:
             pass
 
@@ -168,6 +224,13 @@ def apply_edges(obj, edge):
 def _style_edge(obj):
     """The cabinet banding of the style the part's cabinet (or the misc
     part itself) is painted with, or None."""
+    style = _style(obj)
+    return style.get_edge_materials()[0] if style is not None else None
+
+
+def _style(obj):
+    """The style the part's cabinet (or the misc part itself) is painted
+    with, or None."""
     from ... import hb_project
     try:
         styles = hb_project.get_main_scene().hb_frameless.cabinet_styles
@@ -177,8 +240,7 @@ def _style_edge(obj):
         return None
     root = solver_frameless.cabinet_root(obj) or obj
     index = int(root.get('CABINET_STYLE_INDEX', 0))
-    style = styles[index] if 0 <= index < len(styles) else styles[0]
-    return style.get_edge_materials()[0]
+    return styles[index] if 0 <= index < len(styles) else styles[0]
 
 
 def refresh_banding(obj):
@@ -189,7 +251,10 @@ def refresh_banding(obj):
     part = GeoNodeObject(obj)
     core = bpy.data.materials.get('Board Core')
     edge = None
+    inside = interior_banded_edges(obj)
     for e in EDGE_SOCKETS:
+        if e in inside:
+            continue
         try:
             mat = part.get_input('Edge ' + e)
         except Exception:

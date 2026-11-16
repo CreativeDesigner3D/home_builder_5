@@ -673,7 +673,7 @@ class hb_frameless_OT_auto_finish_condition(bpy.types.Operator):
         name="Side",
         items=[('PART', "Selected Parts", "The cabinet sides selected"),
                ('LEFT', "Left", ""), ('RIGHT', "Right", ""),
-               ('BACK', "Back", "")],
+               ('BACK', "Back", ""), ('TOP', "Top", "")],
         default='PART') # type: ignore
 
     @classmethod

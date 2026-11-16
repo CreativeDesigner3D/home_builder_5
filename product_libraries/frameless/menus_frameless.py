@@ -100,8 +100,11 @@ class HOME_BUILDER_MT_finish_condition(bpy.types.Menu):
                             ('BACK', "Back:")):
             _draw_finish_conditions(layout, side, label, auto=True)
             layout.separator()
-        _draw_finish_conditions(layout, 'TOP', "Top:", panels=False)
         from .operators import ops_finished_ends
+        # A wall cabinet's top follows its height until it is set by hand.
+        _draw_finish_conditions(
+            layout, 'TOP', "Top:", panels=False,
+            auto=bool(ops_finished_ends.finished_bottom_cabinets(context)))
         if ops_finished_ends.finished_bottom_cabinets(context):
             layout.separator()
             _draw_bottom_finish(layout, 'BOTTOM', "Bottom:")
@@ -125,7 +128,9 @@ class HOME_BUILDER_MT_carcass_part_commands(bpy.types.Menu):
         elif side is not None:
             _draw_finish_conditions(layout, 'PART', side.title() + " Finish:",
                                     panels=side in ops_finished_ends.PANEL_SIDES,
-                                    auto=side in ('LEFT', 'RIGHT', 'BACK'))
+                                    auto=(side in ('LEFT', 'RIGHT', 'BACK')
+                                          or (side == 'TOP' and ops_finished_ends
+                                              .takes_finished_bottom(obj.parent))))
             layout.separator()
         layout.operator("hb_frameless.cabinet_prompts", text="Cabinet Prompts")
         layout.operator("hb_frameless.finish_interior", text="Finish Interior")

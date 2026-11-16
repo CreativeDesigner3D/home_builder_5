@@ -18,6 +18,10 @@ island, a peninsula) takes the room's default finished back. A room
 with no walls drawn says nothing about what is behind a cabinet, so
 backs are left alone there.
 
+The top of a wall cabinet goes by how high it is: one at or below
+TOP_SEEN_HEIGHT can be looked down on and is finished, a higher one is
+out of sight and stays unfinished.
+
 An end set by hand is left alone until it is handed back to automatic.
 """
 import bpy
@@ -38,12 +42,17 @@ SLACK = units.inch(0.25)
 # wall has to start to the end of this one to close it.
 WALL_JOIN = units.inch(6.0)
 
+# The top of a wall cabinet shows when it is no higher than this.
+TOP_SEEN_HEIGHT = units.inch(72.0)
+
 SIDES = ('LEFT', 'RIGHT')
-# Every face this module settles: the ends, then the back.
-AUTO_SIDES = SIDES + ('BACK',)
+# Every face this module settles: the ends, the back, then the top of a
+# wall cabinet.
+AUTO_SIDES = SIDES + ('BACK', 'TOP')
 # What a face is in before it is first settled here: every carcass part
 # is built finished on its outside face.
-BUILT_AS = {'LEFT': 'FINISHED', 'RIGHT': 'FINISHED', 'BACK': 'FINISHED'}
+BUILT_AS = {'LEFT': 'FINISHED', 'RIGHT': 'FINISHED', 'BACK': 'FINISHED',
+            'TOP': 'FINISHED'}
 AUTO_KEY = 'hb_end_auto_'      # + side.lower(): the condition set here last
 MANUAL_KEY = 'hb_end_manual_'  # + side.lower(): set by hand, leave alone
 
@@ -255,6 +264,18 @@ def side_exposure(cab_obj, side, scan):
     return 'EXPOSED'
 
 
+def takes_auto_top(cab_obj):
+    """A wall cabinet: the one whose top is settled by its height."""
+    return solver_frameless.carcass_kind(cab_obj) == 'UPPER'
+
+
+def top_condition(mw, box):
+    """'FINISHED' for a top low enough to be seen, else 'UNFINISHED'."""
+    top = max((mw @ Vector((x, y, z))).z
+              for x in box[0] for y in box[1] for z in box[2])
+    return 'FINISHED' if top <= TOP_SEEN_HEIGHT + TOUCH else 'UNFINISHED'
+
+
 # ---------------------------------------------------------------------------
 # Applying
 # ---------------------------------------------------------------------------
@@ -288,6 +309,18 @@ def set_manual(cab_obj, side, manual=True):
         del cab_obj[key]
 
 
+def _built_as(cab_obj, side):
+    """The condition a face is in before it is first settled here."""
+    if side == 'TOP':
+        from .operators import ops_finished_ends
+        style = ops_finished_ends._cabinet_style(cab_obj)
+        if style is not None and style.exterior_two_sided():
+            # A board made the same both faces: a top is the interior
+            # material until it is marked.
+            return 'UNFINISHED'
+    return BUILT_AS[side]
+
+
 def _apply(context, cab_obj, side, target):
     """Put the end in ``target``. Returns True when it changed."""
     from .operators import ops_finished_ends
@@ -297,14 +330,17 @@ def _apply(context, cab_obj, side, target):
     key = AUTO_KEY + side.lower()
     # An end that is not the way this left it was set by hand, here or
     # before ends looked after themselves: it stays as it is.
-    last = cab_obj.get(key, BUILT_AS[side])
+    last = cab_obj.get(key, _built_as(cab_obj, side))
     if current != last:
         set_manual(cab_obj, side)
         return False
+    first = key not in cab_obj
     if cab_obj.get(key) != target:
         cab_obj[key] = target
     if current == target:
-        return False
+        # A top settled for the first time: the ends of the sides are
+        # banded to go with it, so the cabinet is painted again.
+        return first and side == 'TOP'
     panels = ('SLAB', '5PIECE')
     if current in panels or target in panels:
         ops_finished_ends.set_finish_condition(context, cab_obj, side, target)
@@ -330,15 +366,17 @@ def recalc_scene(scene=None, context=None):
     from .operators import ops_finished_ends
     scan = Scan(scene)
     # With no walls drawn there is no telling what a back faces.
-    sides = AUTO_SIDES if scan.walls else SIDES
+    sides = SIDES + ('BACK',) if scan.walls else SIDES
     wanted = []
-    for cab_obj, _mw, _box in scan.cabinets:
+    for cab_obj, mw, box in scan.cabinets:
         for side in sides:
             if is_manual(cab_obj, side):
                 continue
             wanted.append((cab_obj, side,
                            target_condition(side_exposure(cab_obj, side, scan),
                                             defaults[side])))
+        if takes_auto_top(cab_obj) and not is_manual(cab_obj, 'TOP'):
+            wanted.append((cab_obj, 'TOP', top_condition(mw, box)))
     changed = []
     was_running = _running
     _running = True
