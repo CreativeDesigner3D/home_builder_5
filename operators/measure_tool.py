@@ -27,6 +27,10 @@ Snapping comes from `hb_snap_engine`, so it follows the same magnet
 menu as everything else, and Ctrl inverts it exactly as it does in
 Blender. X, Y and Z lock the measurement to that world axis.
 
+Lengths read rounded the way the rest of the model does (the nearest
+sixteenth in inches). E switches every measurement on screen to the
+unrounded value and back, for checking a figure against a drawing.
+
 There was a third mode that took two objects and reported the clear
 distance between them. It was dropped: picking two points is direct
 enough that resolving objects, their parts and their axes only added
@@ -143,13 +147,45 @@ def clear_measurements(scene=None):
 
 # ---- Labels -----------------------------------------------------------------
 
+def exact_values(context):
+    return bool(getattr(context.window_manager, 'hb_measure_exact', False))
+
+
+def _trimmed(value, places):
+    text = f"{value:.{places}f}".rstrip('0').rstrip('.')
+    return "0" if text in ("", "-0") else text
+
+
+def exact_length_label(unit_settings, metres):
+    """The length without the model's display rounding. Converted from
+    the exact factors: the shared helpers carry a rounded one, which
+    shows in the fourth place on a long measurement."""
+    if unit_settings.system == 'METRIC':
+        if unit_settings.length_unit == 'METERS':
+            return _trimmed(metres, 5) + "m"
+        return _trimmed(units.meter_to_millimeter(metres), 3) + "mm"
+    if unit_settings.system == 'IMPERIAL':
+        if unit_settings.length_unit == 'FEET':
+            return _trimmed(metres / 0.3048, 4) + "'"
+        return _trimmed(metres / 0.0254, 4) + '"'
+    return _trimmed(metres, 5)
+
+
 def length_label(context, metres):
+    if exact_values(context):
+        return exact_length_label(context.scene.unit_settings, metres)
     return units.unit_to_string(context.scene.unit_settings, metres)
 
 
-def angle_label(degrees):
-    text = f"{degrees:.1f}".rstrip('0').rstrip('.')
-    return f"{text}°"
+def angle_label(degrees, exact=False):
+    return f"{_trimmed(degrees, 3 if exact else 1)}°"
+
+
+def measurement_label(context, m):
+    """A committed measurement's text under the current rounding choice."""
+    if m.kind == 'ANGULAR':
+        return angle_label(m.value, exact_values(context))
+    return length_label(context, m.value)
 
 
 # ---- Geometry ---------------------------------------------------------------
@@ -246,11 +282,14 @@ def _draw_measurement(shader, font_id, region, rv3d, m, s, color):
     points = [_project(region, rv3d, p) for p in m.points]
     if any(p is None for p in points):
         return
+    # Read from the stored value, so the rounding switch reaches the
+    # measurements already on screen.
+    label = measurement_label(bpy.context, m)
     if m.kind == 'ANGULAR':
         _draw_angle(shader, font_id, points[0], points[1], points[2],
-                    m.label, s, color)
+                    label, s, color)
     else:
-        _draw_span(shader, font_id, points[0], points[1], m.label, s, color)
+        _draw_span(shader, font_id, points[0], points[1], label, s, color)
 
 
 # The running operator, so one handler can paint both the committed
@@ -354,7 +393,9 @@ class home_builder_OT_measure(bpy.types.Operator):
             bits.append("[No Snap]")
         if self.last_label:
             bits.append(f"= {self.last_label}")
-        bits.append("Tab: mode | X/Y/Z: axis | Ctrl: snap | "
+        if exact_values(context):
+            bits.append("[Exact]")
+        bits.append("Tab: mode | X/Y/Z: axis | E: exact | Ctrl: snap | "
                     "Backspace: undo | Esc: done")
         context.area.header_text_set("  ".join(b for b in bits if b))
 
@@ -425,7 +466,7 @@ class home_builder_OT_measure(bpy.types.Operator):
         if va.length < 1e-6 or vb.length < 1e-6:
             return None
         degrees = math.degrees(va.angle(vb))
-        label = angle_label(degrees)
+        label = angle_label(degrees, exact_values(context))
         add_measurement(Measurement('ANGULAR', [corner, arm_a, arm_b],
                                     self.scene_name, degrees, label))
         return label
@@ -462,7 +503,8 @@ class home_builder_OT_measure(bpy.types.Operator):
             if all(p is not None for p in placed):
                 va = self.points[1] - self.points[0]
                 vb = self.cursor - self.points[0]
-                text = (angle_label(math.degrees(va.angle(vb)))
+                text = (angle_label(math.degrees(va.angle(vb)),
+                                    exact_values(bpy.context))
                         if va.length > 1e-6 and vb.length > 1e-6 else "")
                 _draw_angle(shader, font_id, placed[0], placed[1], live,
                             text, s, color)
@@ -514,6 +556,16 @@ class home_builder_OT_measure(bpy.types.Operator):
             if event.type in AXES:
                 self.axis = None if self.axis == event.type else event.type
                 self._sample(context, event)
+                self._update_header(context)
+                tag_redraw()
+                return {'RUNNING_MODAL'}
+
+            if event.type == 'E' and not event.ctrl:
+                wm = context.window_manager
+                wm.hb_measure_exact = not wm.hb_measure_exact
+                last = measurements_for(context.scene)
+                if self.last_label and last:
+                    self.last_label = measurement_label(context, last[-1])
                 self._update_header(context)
                 tag_redraw()
                 return {'RUNNING_MODAL'}
@@ -577,6 +629,9 @@ def draw_measure_options(layout, context):
     col.prop(wm, 'hb_measure_mode', text="")
 
     col = layout.column(align=True)
+    col.prop(wm, 'hb_measure_exact')
+
+    col = layout.column(align=True)
     col.separator()
     count = measurement_count(context.scene)
     row = col.row()
@@ -611,6 +666,12 @@ def register():
         items=[('LINEAR', "Distance", "Straight-line distance between two points"),
                ('ANGULAR', "Angle", "Angle at a corner between two arms")],
         default='LINEAR')
+    bpy.types.WindowManager.hb_measure_exact = bpy.props.BoolProperty(
+        name="Exact Values",
+        description=("Show measurements unrounded instead of to the "
+                     "nearest sixteenth. Press E while measuring to switch"),
+        default=False,
+        update=lambda self, context: tag_redraw())
     for cls in classes:
         bpy.utils.register_class(cls)
 
@@ -652,3 +713,4 @@ def unregister():
         except Exception:
             pass
     del bpy.types.WindowManager.hb_measure_mode
+    del bpy.types.WindowManager.hb_measure_exact
