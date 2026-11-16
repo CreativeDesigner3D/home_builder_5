@@ -40,6 +40,8 @@ CABINET_SCHEMA = 'FL_CABINET'
 OPENING_SCHEMA = 'FL_OPENING'
 PRODUCT_SCHEMA = 'FL_PRODUCT'
 MISC_PART_SCHEMA = 'FL_MISC_PART'
+PART_EDGES_SCHEMA = 'FL_PART_EDGES'
+PART_EDGES_GROUP = 'fl_part_edges'
 STYLE_PREFIX = 'FL_STYLE_'
 SCOPE_PREFIX = 'FL_SCOPE_'
 
@@ -471,6 +473,46 @@ def _cage(obj):
     return GeoNodeCage(obj)
 
 
+def _edge_state(socket):
+    """How one edge of a cabinet part is banded."""
+    from ...operators import prop_proxy
+    from . import edgebanding_frameless as eb
+
+    def get(obj):
+        return eb.edge_state(obj, socket)
+
+    def set(obj, value):
+        eb.set_edge_state(obj, socket, value)
+    return prop_proxy.computed(get, set, type='ENUM',
+                               items=list(eb.EDGE_STATES))
+
+
+def _edge_summary(owner):
+    from . import edgebanding_frameless as eb
+    obj = owner.id_data
+    count = sum(1 for e in eb.EDGE_SOCKETS if eb.edge_state(obj, e) != 'NONE')
+    return "%d of %d" % (count, len(eb.EDGE_SOCKETS))
+
+
+def edge_blocks(context, part_obj):
+    """The Edgebanding group of a cabinet part: each edge by where it
+    lies in the cabinet, banded or not and in which banding."""
+    from ...operators import options_panel, prop_proxy
+    from . import edgebanding_frameless as eb
+    if not eb.takes_edge_override(part_obj):
+        return []
+    labels = eb.edge_labels(part_obj)
+    order = ("Front", "Back", "Top", "Bottom", "Left", "Right")
+    sockets = sorted(eb.EDGE_SOCKETS, key=lambda e: (
+        order.index(labels[e]) if labels[e] in order else len(order)))
+    fields = tuple(('enum', 'edge_' + e.lower(), labels[e] + " Edge")
+                   for e in sockets)
+    return options_panel.field_blocks(context, (
+        ('group', PART_EDGES_GROUP, "Edgebanding",
+         {'summary': _edge_summary, 'fields': fields}),
+    ), prop_proxy.owner(part_obj, PART_EDGES_SCHEMA))
+
+
 def _register_schemas():
     from ...operators import prop_proxy as P
     P.register(CABINET_SCHEMA, {
@@ -523,11 +565,15 @@ def _register_schemas():
         'height': P.node_input('Thickness'),
         'height_off_floor': P.height_off_floor(),
     }, after=_solve_product)
+    P.register(PART_EDGES_SCHEMA, {
+        'edge_' + socket.lower(): _edge_state(socket)
+        for socket in ('W1', 'W2', 'L1', 'L2')})
 
 
 def _unregister_schemas():
     from ...operators import prop_proxy
-    for key in (CABINET_SCHEMA, OPENING_SCHEMA, PRODUCT_SCHEMA, MISC_PART_SCHEMA):
+    for key in (CABINET_SCHEMA, OPENING_SCHEMA, PRODUCT_SCHEMA,
+                MISC_PART_SCHEMA, PART_EDGES_SCHEMA):
         prop_proxy.unregister(key)
 
 
@@ -939,6 +985,7 @@ def _interior_page(context, out, part_obj, opening_obj, bay_obj):
             out.insert(start + 1, size)     # under the picture
     out.extend(accessory_blocks(context, part_obj or host))
     if real:
+        out.extend(edge_blocks(context, part_obj))
         _quick(out, _menu_actions(context, part_obj, skip=(
             'hb_frameless.interior_prompts', 'HOME_BUILDER_MT_interior_change')))
     _footer(out, 'hb_frameless.interior_prompts' if real else None)
@@ -993,6 +1040,7 @@ def _part_page(context, out, part_obj):
     front = bool(part_obj.get('IS_CABINET_FRONT'))
     if front:
         out.extend(accessory_blocks(context, part_obj))
+    out.extend(edge_blocks(context, part_obj))
     _quick(out, _menu_actions(context, part_obj,
                               skip=('hb_frameless.door_front_prompts',)))
     _footer(out, 'hb_frameless.door_front_prompts' if front else None)

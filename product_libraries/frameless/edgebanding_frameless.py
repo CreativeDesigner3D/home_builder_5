@@ -35,6 +35,11 @@ tops, bottoms and backs have the front (or, on a back, the right end)
 on L2 with W1 at the bottom and W2 at the top of a side; shelves,
 splitters (fixed shelves, divisions, drawer-bank splitters) and both
 stretchers have the front on L1. _FRONT_ON_L1 turns those round.
+
+Any one edge of a cabinet part can be set by hand over its rule
+(EDGE_STATES): banded in the cabinet banding, banded in the interior's,
+or left bare. The choice is kept on the part and read by the same
+functions, so it holds through a restyle.
 """
 
 import bpy
@@ -119,10 +124,66 @@ def is_bandable_misc_part(obj):
     return bool(obj.get(MISC_TAG))
 
 
+# One edge set by hand, kept on the part as OVERRIDE_KEY + socket.
+OVERRIDE_KEY = 'hb_edge_'
+EDGE_STATES = (
+    ('CABINET', "Banded"),
+    ('INTERIOR', "Banded, Interior Color"),
+    ('NONE', "Not Banded"),
+)
+_STATE_KEYS = tuple(key for key, _label in EDGE_STATES)
+
+
+def takes_edge_override(obj):
+    """A board of a cabinet whose edges can be set one by one: not a
+    misc part (it has its own ticks) and not a door or drawer front
+    (banded by its style)."""
+    return (obj is not None
+            and bool(obj.get(solver_frameless.PART_ROLE_KEY))
+            and not is_bandable_misc_part(obj)
+            and not obj.get('IS_CABINET_FRONT')
+            and solver_frameless.cabinet_root(obj) is not None
+            and _has_edges(obj))
+
+
+def _has_edges(obj):
+    """Whether the part is a board with the four edge sockets."""
+    from ...hb_types import GeoNodeObject
+    try:
+        GeoNodeObject(obj).get_input('Edge ' + EDGE_SOCKETS[0])
+    except Exception:
+        return False
+    return True
+
+
+def edge_override(obj, socket):
+    """The state an edge was set to by hand, or '' while it follows
+    its rule."""
+    value = obj.get(OVERRIDE_KEY + socket, '')
+    return value if value in _STATE_KEYS else ''
+
+
+def _overrides(obj):
+    return {e: edge_override(obj, e) for e in EDGE_SOCKETS
+            if edge_override(obj, e)}
+
+
 def banded_edges(obj):
     """The edge sockets (of W1 W2 L1 L2) a part is banded on, or None
     for all four. A misc part bands the edges ticked on it; any other
-    part what its role always does (BAND_EDGES)."""
+    part what its role always does (BAND_EDGES), but for an edge set
+    by hand."""
+    edges = _rule_banded_edges(obj)
+    over = _overrides(obj)
+    if not over:
+        return edges
+    if edges is None:
+        edges = EDGE_SOCKETS
+    return tuple(e for e in EDGE_SOCKETS
+                 if (over[e] != 'NONE' if e in over else e in edges))
+
+
+def _rule_banded_edges(obj):
     if is_bandable_misc_part(obj):
         return tuple(e for e in EDGE_SOCKETS if obj.get(MISC_FLAG + e))
     role = obj.get(solver_frameless.PART_ROLE_KEY)
@@ -153,7 +214,100 @@ _SIDE_END_FACES = (('W1', 'BOTTOM'), ('W2', 'TOP'))
 def interior_banded_edges(obj):
     """The edges of a part banded in the interior's banding rather than
     the cabinet's: the top and bottom ends of an unfinished wall side,
-    where the top or bottom they meet is unfinished too."""
+    where the top or bottom they meet is unfinished too, and any edge
+    set to it by hand."""
+    edges = _rule_interior_edges(obj)
+    over = _overrides(obj)
+    if not over:
+        return edges
+    return tuple(e for e in EDGE_SOCKETS
+                 if (over[e] == 'INTERIOR' if e in over else e in edges))
+
+
+def edge_state(obj, socket, rule=False):
+    """How one edge is banded, as EDGE_STATES names it; `rule` for what
+    it would be with nothing set by hand."""
+    banded = _rule_banded_edges(obj) if rule else banded_edges(obj)
+    if banded is not None and socket not in banded:
+        return 'NONE'
+    inside = _rule_interior_edges(obj) if rule else interior_banded_edges(obj)
+    return 'INTERIOR' if socket in inside else 'CABINET'
+
+
+def set_edge_state(obj, socket, state):
+    """Set one edge by hand and re-band the part. Setting it to what
+    its rule gives hands it back to the rule."""
+    if state not in _STATE_KEYS or socket not in EDGE_SOCKETS:
+        return
+    key = OVERRIDE_KEY + socket
+    if state == edge_state(obj, socket, rule=True):
+        if key in obj:
+            del obj[key]
+    else:
+        obj[key] = state
+    # From the style rather than what the part wears: an edge taken
+    # back from the interior's banding still wears that.
+    edge = _native_edge(obj)
+    if edge is None:
+        refresh_banding(obj)
+        return
+    from ...hb_types import GeoNodeObject
+    _set_edges(GeoNodeObject(obj), obj, edge)
+
+
+def _native_edge(obj):
+    """The banding the part's style gives its kind of part: a loose
+    shelf its shelf banding, the rest the cabinet banding."""
+    style = _style(obj)
+    if style is None:
+        return None
+    try:
+        if is_loose_shelf(obj):
+            root = solver_frameless.cabinet_root(obj)
+            return style.get_shelf_edge_material(
+                bool(root is not None and root.get('Finished Interior', False)))
+        return style.get_edge_materials()[0]
+    except Exception:
+        return None
+
+
+# Which way an edge faces in its cabinet, front being -Y.
+_FACINGS = (("Right", "Left"), ("Back", "Front"), ("Top", "Bottom"))
+
+
+def edge_labels(obj):
+    """{socket: "Front" / "Back" / "Left" / "Right" / "Top" / "Bottom"}:
+    where each edge of a part lies in its cabinet. W1 and L1 are the
+    edges at the part's origin, W2 and L2 the far ones along its length
+    and width, turned round by its mirrors."""
+    from mathutils import Vector
+    from ...hb_types import GeoNodeObject
+    root = solver_frameless.cabinet_root(obj)
+    if root is None:
+        return {e: e for e in EDGE_SOCKETS}
+    part = GeoNodeObject(obj)
+
+    def mirrored(axis):
+        try:
+            return bool(part.get_input('Mirror ' + axis))
+        except Exception:
+            return False
+
+    basis = (root.matrix_world.inverted() @ obj.matrix_world).to_3x3()
+    labels = {}
+    for far, near, local, axis in (('W2', 'W1', (1.0, 0.0, 0.0), 'X'),
+                                   ('L2', 'L1', (0.0, 1.0, 0.0), 'Y')):
+        way = basis @ Vector(local)
+        if mirrored(axis):
+            way = -way
+        i = max(range(3), key=lambda n: abs(way[n]))
+        plus, minus = _FACINGS[i]
+        labels[far], labels[near] = ((plus, minus) if way[i] > 0.0
+                                     else (minus, plus))
+    return labels
+
+
+def _rule_interior_edges(obj):
     role = obj.get(solver_frameless.PART_ROLE_KEY)
     if role not in _SIDE_ROLES:
         return ()
