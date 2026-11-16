@@ -139,9 +139,10 @@ def clip_back_leg(cab_props, corner_type, cabinet_type):
 
     Calculated corners hold a fixed front-to-back depth whatever the
     wall widths: the clip line sits that far behind the middle of the
-    diagonal face frame, or behind the inside corner where the two
-    frames of a pie cut meet. Everything else uses the typed amount,
-    except the drawer corner, which has no clip.
+    diagonal face frame. A pie cut is measured the same way, from the
+    diagonal line between the outer ends of its two frames. Everything
+    else uses the typed amount, except the drawer corner, which has no
+    clip.
     """
     if corner_type == 'PIE_CUT_DRAWER':
         # The drawer box runs back into the corner: never clipped.
@@ -158,10 +159,7 @@ def clip_back_leg(cab_props, corner_type, cabinet_type):
                                   cab_props.width) >= 32.0 - 1e-6):
             target = CLIP_FRONT_TO_BACK_DEEP
     ld, rd = cab_props.left_depth, cab_props.right_depth
-    if corner_type == 'DIAGONAL':
-        reach = (ld + cab_props.width + cab_props.depth + rd) / 2.0
-    else:
-        reach = ld + rd
+    reach = (ld + cab_props.width + cab_props.depth + rd) / 2.0
     leg = reach - target * math.sqrt(2.0)
     return leg if leg >= CLIP_MIN_LEG else 0.0
 
@@ -184,9 +182,22 @@ def _pie_center(R, x_lo, y_lo, fx, fy, outer_x, outer_y, clip):
             return None
         out.append(c)
     cx, cy = out
-    # Clipped back corner: keep the tray off the angled back.
-    if clip > 0.0 and (cx + cy - clip) / math.sqrt(2.0) < R + WALL_CLEAR:
-        return None
+    if clip > 0.0:
+        # Clipped back corner: slide the tray out along the bisector
+        # until it is WALL_CLEAR off the angled back. The standard
+        # depths are sized to their tray, so when that leaves no room
+        # the tray may take up the clearance at the back.
+        root2 = math.sqrt(2.0)
+        for clear in (WALL_CLEAR, 0.0):
+            k = max(0.0, (clip + root2 * (R + clear) - cx - cy) / 2.0)
+            nx, ny = cx + k, cy + k
+            if (nx <= fx + 1e-6 and ny <= fy + 1e-6
+                    and nx + R <= outer_x + 1e-6
+                    and ny + R <= outer_y + 1e-6):
+                cx, cy = nx, ny
+                break
+        else:
+            return None
     return cx, cy, fx - cx, fy - cy
 
 
