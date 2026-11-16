@@ -1339,8 +1339,10 @@ class _GrabBaseMixin:
         context.area.tag_redraw()
         # Register with the HUD's modal registry so the Disable button
         # can ask us to exit. Cleared in _cleanup.
-        from ....operators.viewport_hud import register_active_modal
+        from ....operators.viewport_hud import register_active_modal, raise_panels
         register_active_modal(self)
+        # This handler was added after the panels': put them back on top.
+        raise_panels()
         self._exit_requested = False
         self._exit_timer = None
         _live_grabs.add(self)
