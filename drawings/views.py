@@ -135,6 +135,7 @@ def register():
     from . import plan, section
     register_view_kind('ELEVATION', _elevation)
     register_view_kind('PLAN', plan.resolve)
+    register_view_kind('ROOM_PLAN', plan.resolve_room)
     register_view_kind('SECTION', section.resolve)
     handlers = bpy.app.handlers
     if _on_change not in handlers.depsgraph_update_post:

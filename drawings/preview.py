@@ -71,6 +71,30 @@ def _draw():
         return
     region = bpy.context.region
     try:
+        # A sheet that needs painting is painted before anything is
+        # drawn here, and the viewport put back after: painting binds
+        # another framebuffer, and a draw already begun in this one came
+        # out blank for that frame (the sheet flickered while zooming).
+        if st['compiled']:
+            i = st['page']
+            comp = st['compiled'][i]
+            fit = min((region.width - 40.0) / comp.width,
+                      (region.height - 60.0) / comp.height)
+            f = max(fit * st['zoom'], 0.01)
+            want = min(max(f * 1.25, MIN_TEXTURE), MAX_TEXTURE)
+            st['want'] = want
+            if i in st['stale'] or st['tex'].get(i) is None:
+                viewport = gpu.state.viewport_get()
+                scissor = gpu.state.scissor_get()
+                try:
+                    fresh = (gpu_painter.render(comp, want), want)
+                finally:
+                    gpu.state.viewport_set(*viewport)
+                    gpu.state.scissor_set(*scissor)
+                # The old texture stays up until the new one is whole.
+                _free(st, i)
+                st['tex'][i] = fresh
+                st['stale'].discard(i)
         uni = gpu.shader.from_builtin('UNIFORM_COLOR')
         back = batch_for_shader(uni, 'TRI_FAN', {'pos': [
             (0, 0), (region.width, 0), (region.width, region.height),
@@ -87,18 +111,6 @@ def _draw():
                 st.get('error') or "no wall with products in this room")
                 + "   |   Esc: close")
             return
-        i = st['page']
-        comp = st['compiled'][i]
-        fit = min((region.width - 40.0) / comp.width,
-                  (region.height - 60.0) / comp.height)
-        f = max(fit * st['zoom'], 0.01)
-        want = min(max(f * 1.25, MIN_TEXTURE), MAX_TEXTURE)
-        have = st['tex'].get(i)
-        if i in st['stale'] or have is None:
-            _free(st, i)
-            st['tex'][i] = (gpu_painter.render(comp, want), want)
-            st['stale'].discard(i)
-        st['want'] = want
         w, h = comp.width * f, comp.height * f
         x = (region.width - w) / 2.0 + st['pan'][0]
         y = (region.height - h) / 2.0 + st['pan'][1]
@@ -181,7 +193,8 @@ class HOME_BUILDER_OT_drawings_preview(bpy.types.Operator):
         # A sheet zoomed well past its texture is painted again, sharp.
         have = st['tex'].get(st['page'])
         want = st.get('want')
-        if have and want and not st['drag'] and (
+        settled = time.perf_counter() - st.get('zoomed', 0.0) > 0.4
+        if have and want and not st['drag'] and settled and (
                 abs(want - have[1]) / have[1] > 0.3):
             st['stale'].add(st['page'])
             area.tag_redraw()
@@ -230,6 +243,7 @@ class HOME_BUILDER_OT_drawings_preview(bpy.types.Operator):
             st['pan'][0] = cx - (cx - st['pan'][0]) * k
             st['pan'][1] = cy - (cy - st['pan'][1]) * k
             st['zoom'] = new
+            st['zoomed'] = time.perf_counter()
         elif event.type == 'MIDDLEMOUSE' and press:
             st['drag'] = (event.mouse_x, event.mouse_y)
         elif event.type == 'HOME' and press:

@@ -196,3 +196,47 @@ def rotated_label(page, x, y, text, size):
     """Text reading down the page from (x, y)."""
     page.fill_color(INK)
     page.text(x, y, text, size, angle=-math.pi / 2.0)
+
+
+def dim_aligned(page, a, b, offset, text, size=7.0):
+    """A dimension along a-b, standing off it by the vector `offset`:
+    its value level, over a break in the line."""
+    ox, oy = offset
+    p, q = (a[0] + ox, a[1] + oy), (b[0] + ox, b[1] + oy)
+    length = math.hypot(q[0] - p[0], q[1] - p[1])
+    if length < 1e-6:
+        return
+    ux, uy = (q[0] - p[0]) / length, (q[1] - p[1]) / length
+    w = hb_pdf.text_width(text, size) + 6.0
+    # How much of the line a level value covers where it crosses it.
+    cover = min(length - 8.0, abs(ux) * w + abs(uy) * (size + 4.0))
+    mid = ((p[0] + q[0]) / 2.0, (p[1] + q[1]) / 2.0)
+    page.stroke_color(GREY)
+    page.line_width(0.4)
+    if cover > 0.0:
+        h = cover / 2.0
+        page.lines([(p, (mid[0] - ux * h, mid[1] - uy * h)),
+                    ((mid[0] + ux * h, mid[1] + uy * h), q)])
+    else:
+        page.lines([(p, q)])
+    n = math.hypot(ox, oy) or 1.0
+    nx, ny = ox / n, oy / n
+    for end, start in ((p, a), (q, b)):
+        # A slash across the line, and the extension line back to the wall.
+        sx, sy = (ux + nx) * 2.5, (uy + ny) * 2.5
+        page.lines([((end[0] - sx, end[1] - sy), (end[0] + sx, end[1] + sy)),
+                    ((start[0] + nx * 3.0, start[1] + ny * 3.0),
+                     (end[0] + nx * 4.0, end[1] + ny * 4.0))])
+    text_centered(page, mid[0], mid[1] - size * 0.35, text, size)
+
+
+def elevation_marker_toward(page, cx, cy, direction, mark, sheet):
+    """On a plan: the elevation that looks along `direction` from here."""
+    dx, dy = direction
+    n = math.hypot(dx, dy) or 1.0
+    dx, dy = dx / n, dy / n
+    px, py = -dy, dx
+    page.fill_color(MARK)
+    page.polygon([(cx + px * 17, cy + py * 17), (cx - px * 17, cy - py * 17),
+                  (cx + dx * 17, cy + dy * 17)], fill=True)
+    _bubble(page, cx, cy, 11.0, mark, f"PG{sheet}")

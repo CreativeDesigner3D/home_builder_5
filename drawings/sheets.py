@@ -85,12 +85,19 @@ def default_set(scene):
     """The set made by rule: for each wall with products, its plan strip
     over its elevation, then its sections on the sheets after."""
     sheets = []
-    for wall in em.room_walls(scene):
-        if not any(it.kind != 'OPENING'
-                   for it in views.wall_items(scene, wall)):
-            continue
-        sheets.append({'views': [{'kind': 'ELEVATION', 'wall': wall.name},
-                                 {'kind': 'PLAN', 'wall': wall.name}]})
+    walls = [wall for wall in em.room_walls(scene)
+             if any(it.kind != 'OPENING'
+                    for it in views.wall_items(scene, wall))]
+    # A room with products on more than one wall gets a plan of the
+    # whole room; a single wall's plan strip rides over its elevation.
+    whole_room = len(walls) > 1
+    if whole_room:
+        sheets.append({'views': [{'kind': 'ROOM_PLAN'}]})
+    for wall in walls:
+        on_sheet = [{'kind': 'ELEVATION', 'wall': wall.name}]
+        if not whole_room:
+            on_sheet.append({'kind': 'PLAN', 'wall': wall.name})
+        sheets.append({'views': on_sheet})
         cuts = [{'kind': 'SECTION', 'wall': wall.name, 'x': x}
                 for x in section.wall_cuts(scene, wall)]
         for i in range(0, len(cuts), SECTIONS_A_SHEET):
@@ -152,6 +159,8 @@ def drawing_set(scene):
                 view['_cuts'] = cuts.get(wall, [])
             elif view.get('kind') == 'PLAN' and wall in letters:
                 view['_mark'], view['_looks_from'] = letters[wall]
+            elif view.get('kind') == 'ROOM_PLAN':
+                view['_marks'] = dict(letters)
     return sheets
 
 
@@ -238,11 +247,27 @@ def compose(context, sheets, index):
                     mx, my = p.anchors['marker']
                     draft.elevation_marker(page, px + mx, py + my,
                                            elev['_mark'], elev['_sheet'])
+    for view in by_kind.get('ROOM_PLAN', [])[:1]:
+        room = views.resolve(context, view, column_x - x0 if elevations
+                             else x1 - x0, (y1 - y0) - 50.0)
+        if room is None:
+            continue
+        room.place(page, x0, y0 + 50.0)
+        draft.view_title(page, x0 + 40.0, y0 + 30.0, 'P', view['_sheet'],
+                         f"PLAN: {scene.name.upper()}",
+                         _scale_text(room.info.get('scale')))
+        for wall_name, (mark, number) in view.get('_marks', {}).items():
+            at = room.anchors.get('marker:' + wall_name)
+            if at is not None:
+                draft.elevation_marker_toward(
+                    page, x0 + at[0], y0 + 50.0 + at[1], (at[2], at[3]),
+                    mark, number)
     # Any other kind of view is sized by its own drawing: they stand in
     # a row from the top left of what the others left free.
     cursor = x0 + 22.0
     for view in sheet['views']:
-        if view.get('kind') in ('ELEVATION', 'PLAN', 'SECTION'):
+        if view.get('kind') in ('ELEVATION', 'PLAN', 'SECTION',
+                                'ROOM_PLAN'):
             continue
         d = views.resolve(context, view, x1 - cursor, y1 - y0)
         if d is None:
