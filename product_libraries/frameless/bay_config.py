@@ -194,10 +194,168 @@ def _config(kind):
     return prop_proxy.computed(get, set, type='ENUM', items=items(kind))
 
 
+# ---- Front heights -------------------------------------------------------------
+#
+# The bay's fronts typed by height, as the Door/Drawer Sizes dialog types
+# them: a typed height is held and the fronts left free share what is
+# left. Where doors stand with drawers or pullouts only the others are
+# offered, and the doors take up the rest.
+
+FRONT_ROWS = 8
+
+_KIND_NAMES = {'DRAWER': "Drawer", 'PULLOUT': "Pullout", 'LIFT': "Lift Up Door",
+               'FALSE_FRONT': "False Front"}
+_PLACES = {2: ("Top", "Bottom"), 3: ("Top", "Middle", "Bottom"),
+           4: ("Top", "Second", "Third", "Bottom")}
+
+
+def _splitter(bay_obj):
+    from .operators.ops_opening import front_height_splitter
+    return front_height_splitter(bay_obj)
+
+
+def _kind_name(token):
+    if token.startswith('D') and (token[1:].isdigit() or token == 'D?'):
+        return "Door"
+    return _KIND_NAMES.get(token, "Front")
+
+
+def front_rows(bay_obj):
+    """The fronts the page offers, top to bottom:
+    ``(index, label, height, held)``, index being the opening's place in
+    the bay's splitter."""
+    from . import solver_frameless
+    from .operators.ops_opening import front_height_rows
+    splitter = _splitter(bay_obj)
+    if splitter is None:
+        return []
+    parts = solver_frameless.split_parts(splitter)
+    rows = []
+    for i, _label, height, held, has_front in front_height_rows(splitter):
+        if not has_front:
+            continue
+        opening = parts.get(('OPENING', i))
+        leaves = _leaf_openings(opening) if opening is not None else []
+        token = _token(leaves[0] if leaves else opening)
+        name = _kind_name(token)
+        if len(leaves) > 1 and name != "Door":
+            # Fronts side by side across the row, sized together.
+            name += "s"
+        rows.append((i, name, height, held))
+    if len(rows) < 2:
+        return []
+    names = {r[1] for r in rows}
+    if "Door" in names and len(names) > 1:
+        rows = [r for r in rows if r[1] != "Door"]
+    out = []
+    for name in dict.fromkeys(r[1] for r in rows):
+        same = [r for r in rows if r[1] == name]
+        places = _PLACES.get(len(same))
+        for n, (i, _name, height, held) in enumerate(same):
+            if len(same) == 1:
+                label = name
+            elif places:
+                label = "%s %s" % (places[n], name)
+            else:
+                label = "%s %d" % (name, n + 1)
+            out.append((i, label, height, held))
+    out.sort(key=lambda r: r[0])
+    return out
+
+
+def _heights(splitter):
+    from .operators.ops_opening import front_height_rows
+    rows = front_height_rows(splitter)
+    return [r[2] for r in rows], [r[3] for r in rows]
+
+
+def set_front(context, bay_obj, index, value):
+    """Hold front ``index`` at ``value``. With every front then held, one
+    is let go to take up the difference: the bottom one, or the one above
+    it when the bottom was typed."""
+    from .operators.ops_opening import set_front_heights
+    splitter = _splitter(bay_obj)
+    if splitter is None:
+        return
+    heights, holds = _heights(splitter)
+    if not 1 <= index <= len(heights):
+        return
+    heights[index - 1] = float(value)
+    holds[index - 1] = True
+    count = len(heights)
+    if count > 1 and all(holds):
+        release = count - 1 if index == count else count
+        holds[release - 1] = False
+    set_front_heights(context, splitter,
+                      [h if held else None for h, held in zip(heights, holds)])
+
+
+def release_front(context, bay_obj, index):
+    """Let front ``index`` go back to sharing what the held ones leave."""
+    from .operators.ops_opening import set_front_heights
+    splitter = _splitter(bay_obj)
+    if splitter is None:
+        return
+    heights, holds = _heights(splitter)
+    if 1 <= index <= len(heights):
+        holds[index - 1] = False
+    set_front_heights(context, splitter,
+                      [h if held else None for h, held in zip(heights, holds)])
+
+
+def _front(index):
+    from ...operators import prop_proxy
+
+    def get(obj):
+        for i, _label, height, _held in front_rows(obj):
+            if i == index:
+                return float(height)
+        return 0.0
+
+    def set(obj, value):
+        set_front(bpy.context, obj, index, value)
+    return prop_proxy.computed(get, set, unit='LENGTH', precision=4,
+                               hard_min=0.0)
+
+
+class hb_frameless_OT_release_front_height(bpy.types.Operator):
+    bl_idname = "hb_frameless.release_front_height"
+    bl_label = "Let Height Share"
+    bl_description = ("Stop holding this front's height; it shares what the "
+                      "held fronts leave")
+    bl_options = {'UNDO', 'INTERNAL'}
+
+    bay_name: bpy.props.StringProperty()
+    index: bpy.props.IntProperty()
+
+    def execute(self, context):
+        bay_obj = bpy.data.objects.get(self.bay_name)
+        if bay_obj is None:
+            return {'CANCELLED'}
+        release_front(context, bay_obj, self.index)
+        return {'FINISHED'}
+
+
 def register_schemas():
     from ...operators import prop_proxy
     for kind in PRESETS:
-        prop_proxy.register(SCHEMA_PREFIX + kind, {'config': _config(kind)})
+        props = {'config': _config(kind)}
+        for i in range(1, FRONT_ROWS + 1):
+            props['front_%d' % i] = _front(i)
+        prop_proxy.register(SCHEMA_PREFIX + kind, props)
+
+
+def register():
+    bpy.utils.register_class(hb_frameless_OT_release_front_height)
+    register_schemas()
+
+
+def unregister():
+    unregister_schemas()
+    try:
+        bpy.utils.unregister_class(hb_frameless_OT_release_front_height)
+    except RuntimeError:
+        pass
 
 
 def unregister_schemas():

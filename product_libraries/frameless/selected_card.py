@@ -804,7 +804,7 @@ def _register_schemas():
     from ...operators import prop_proxy as P
     from . import solver_frameless
     from . import bay_config
-    bay_config.register_schemas()
+    bay_config.register()
     P.register(CABINET_SCHEMA, {
         'width': _cabinet_width(),
         'anchor_side': _anchor_side(),
@@ -898,7 +898,7 @@ def _register_schemas():
 def _unregister_schemas():
     from ...operators import prop_proxy
     from . import bay_config
-    bay_config.unregister_schemas()
+    bay_config.unregister()
     for key in (CABINET_SCHEMA, OPENING_SCHEMA, PRODUCT_SCHEMA,
                 MISC_PART_SCHEMA, PART_EDGES_SCHEMA, FRONT_SCHEMA):
         prop_proxy.unregister(key)
@@ -1575,7 +1575,35 @@ def _bay_fields(bay_obj):
         ('enum', 'config', "Configuration"),
         ('value', lambda _o, b=bay_obj: _bay_size(b), "Size (W x H)"),
         ('gap', None, None),
-    ) + quick
+    ) + _front_fields(bay_obj) + quick
+
+
+def _front_fields(bay_obj):
+    """The fronts typed by height, top to bottom. A typed height is held
+    (its padlock lets it go again); the fronts left free share the rest."""
+    from . import bay_config
+    try:
+        rows = bay_config.front_rows(bay_obj)
+    except Exception:
+        rows = []
+    rows = [r for r in rows if r[0] <= bay_config.FRONT_ROWS]
+    if not rows:
+        return ()
+
+    def chip(index):
+        def action(owner):
+            for i, _label, _height, held in bay_config.front_rows(owner.id_data):
+                if i == index and held:
+                    return ('hb_frameless.release_front_height',
+                            {'bay_name': owner.id_data.name, 'index': index},
+                            'lock', "Held. Click to let it share what is left")
+            return None
+        return action
+    fields = [('label', None, "Front Heights")]
+    fields += [('distance', 'front_%d' % i, label, {'action': chip(i)})
+               for i, label, _height, _held in rows]
+    fields.append(('gap', None, None))
+    return tuple(fields)
 
 
 def _bay_page(context, out, bay_obj, title):
