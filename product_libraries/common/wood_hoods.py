@@ -471,6 +471,10 @@ _CUSTOM_DEFAULTS = {
     'bottom_molding_width': inch(1.5),
     'bottom_molding_thickness': inch(0.75),
     'bottom_molding_depth': 0.0,    # side returns stop here; 0 = full depth
+    # Edge profile cut into the strip's top and bottom front edges:
+    # 'CABINET' follows the hood's cabinet style, else an edge profile
+    # name ('Square' = plain square edges).
+    'bottom_molding_edge': 'CABINET',
     'fan_cutout_width': inch(30.0),  # opening in the bottom liner shelf
     'fan_cutout_depth': inch(12.0),
     'fan_cutout_offset': 0.0,        # shift the opening front (+) / back (-)
@@ -763,6 +767,22 @@ def _update_fan_unit(self, context):
 
 
 _molding_profile_items_cache = []
+_bottom_edge_items_cache = []
+
+
+def _bottom_molding_edge_items(self, context):
+    """Edge choices for the bottom molding: follow the cabinet style,
+    or one of the door edge profiles."""
+    global _bottom_edge_items_cache
+    items = [('CABINET', "Cabinet Style",
+              "Use the edge profile of the hood's cabinet style")]
+    try:
+        from ..face_frame.props_hb_face_frame import EDGE_PROFILE_ITEMS
+        items += [i for i in EDGE_PROFILE_ITEMS if i[0] != 'None']
+    except Exception:
+        items.append(('Square', "Square", ""))
+    _bottom_edge_items_cache = items
+    return _bottom_edge_items_cache
 
 
 def _mantle_molding_profile_items(self, context):
@@ -1049,6 +1069,88 @@ def _mantle_molding_sweep(hood_obj, name, ref, W, y_face, band, flip):
     return True
 
 
+def bottom_molding_edge_name(hood_obj, opts=None):
+    """The edge profile on the bottom molding's top and bottom edges:
+    the hood's own pick, or the cabinet style's edge profile when it
+    follows the style. 'Square' when neither names one."""
+    if opts is None:
+        opts = _get_custom_opts(hood_obj)
+    name = str(opts.get('bottom_molding_edge') or 'CABINET')
+    if name == 'CABINET':
+        name = None
+        try:
+            from ..face_frame.props_hb_face_frame import (
+                cabinet_style_edge_profile)
+            name = cabinet_style_edge_profile(_hood_style(hood_obj))
+        except Exception:
+            name = None
+    if not name or name == 'None':
+        return 'Square'
+    return name
+
+
+def _edged_strip_section(edge_name, height, thickness):
+    """Cross-section of a strip ``height`` tall standing ``thickness``
+    proud, with the named edge profile cut into the top and bottom of
+    its outer face: [(d, z), ...] with d out from the face it is
+    applied to and z up from the strip bottom. None for a square edge,
+    an unknown name, or a strip too short to take the cut twice."""
+    from . import door_profiles
+    try:
+        sec = door_profiles.named_edge_section(edge_name, thickness)
+    except Exception:
+        sec = None
+    if not sec or len(sec) < 2:
+        return None
+    if max(u for u, v in sec) * 2.0 >= height:
+        return None
+    loop = [(thickness - v, u) for (u, v) in reversed(sec)]
+    loop += [(thickness - v, height - u) for (u, v) in sec]
+    out = []
+    for pt in loop:
+        if not out or (abs(out[-1][0] - pt[0]) > 1e-7
+                       or abs(out[-1][1] - pt[1]) > 1e-7):
+            out.append(pt)
+    if len(out) > 1 and (abs(out[0][0] - out[-1][0]) < 1e-7
+                         and abs(out[0][1] - out[-1][1]) < 1e-7):
+        out.pop()
+    return out if len(out) >= 4 else None
+
+
+def _loft_part(hood_obj, name, loop_a, loop_b):
+    """Static part between two matching planar outlines (3D points),
+    capped at both ends, faces wound outward."""
+    import bmesh
+    n = len(loop_a)
+    faces = [tuple(range(n)), tuple(range(2 * n - 1, n - 1, -1))]
+    for i in range(n):
+        j = (i + 1) % n
+        faces.append((i, n + i, n + j, j))
+    obj = _mesh_part(hood_obj, name, list(loop_a) + list(loop_b), faces)
+    bm = bmesh.new()
+    bm.from_mesh(obj.data)
+    bmesh.ops.recalc_face_normals(bm, faces=bm.faces[:])
+    bm.to_mesh(obj.data)
+    bm.free()
+    obj.data.update()
+    return obj
+
+
+def _edged_wrap(hood_obj, prefix, tag, W, y_face, z0, section, y_back=0.0):
+    """_molding_wrap for a strip with a shaped cross-section
+    (``section`` from _edged_strip_section): the same three mitred
+    parts, the edge cut carried around the front corners."""
+    m_th = max(d for d, z in section)
+    y_back = min(max(y_back, y_face + m_th), 0.0)
+    fl = [(-d, y_face - d, z0 + z) for d, z in section]
+    fr = [(W + d, y_face - d, z0 + z) for d, z in section]
+    bl = [(-d, y_back, z0 + z) for d, z in section]
+    br = [(W + d, y_back, z0 + z) for d, z in section]
+    _loft_part(hood_obj, prefix + " F" + tag, fl, fr)
+    _loft_part(hood_obj, prefix + " L" + tag, bl, fl)
+    _loft_part(hood_obj, prefix + " R" + tag, fr, br)
+
+
 def _bottom_molding(hood_obj, opts, W, y_face):
     """Bottom molding: one strip of material wrapping the bottom of the
     hood -- across the front and back along both sides to the wall,
@@ -1062,6 +1164,12 @@ def _bottom_molding(hood_obj, opts, W, y_face):
     # so they clear whatever stands beside the hood.
     dep = max(opts.get('bottom_molding_depth', 0.0), 0.0)
     y_back = 0.0 if dep <= 0.0 else y_face - m_th + dep
+    section = _edged_strip_section(
+        bottom_molding_edge_name(hood_obj, opts), m_w, m_th)
+    if section is not None:
+        _edged_wrap(hood_obj, "Hood Bottom Molding", "",
+                    W, y_face, 0.0, section, y_back=y_back)
+        return
     _molding_wrap(hood_obj, "Hood Bottom Molding", "",
                   W, y_face, 0.0, m_w, m_th, y_back=y_back)
 
@@ -2505,6 +2613,11 @@ class HOME_BUILDER_OT_wood_hood_prompts(bpy.types.Operator):
         description="How far back the side returns run, measured from "
                     "the molding's front face. Zero runs them the full "
                     "depth to the wall")  # type: ignore
+    bottom_molding_edge: EnumProperty(
+        name="Bottom Molding Edges", items=_bottom_molding_edge_items,
+        description="Edge profile on the top and bottom of the bottom "
+                    "molding: the cabinet style's, or one picked for "
+                    "this hood")  # type: ignore
     fan_cutout_width: FloatProperty(
         name="Fan Cutout Width", unit='LENGTH', precision=5,
         default=_CUSTOM_DEFAULTS['fan_cutout_width'],
@@ -2655,6 +2768,11 @@ class HOME_BUILDER_OT_wood_hood_prompts(bpy.types.Operator):
         self.bottom_molding_thickness = opts['bottom_molding_thickness']
         self.bottom_molding_depth = max(
             float(opts.get('bottom_molding_depth', 0.0)), 0.0)
+        try:
+            self.bottom_molding_edge = str(
+                opts.get('bottom_molding_edge') or 'CABINET')
+        except TypeError:
+            self.bottom_molding_edge = 'CABINET'
         self.fan_cutout_width = opts['fan_cutout_width']
         self.fan_cutout_depth = opts['fan_cutout_depth']
         self.fan_cutout_offset = opts['fan_cutout_offset']
@@ -2723,6 +2841,7 @@ class HOME_BUILDER_OT_wood_hood_prompts(bpy.types.Operator):
                 'bottom_molding_width': self.bottom_molding_width,
                 'bottom_molding_thickness': self.bottom_molding_thickness,
                 'bottom_molding_depth': self.bottom_molding_depth,
+                'bottom_molding_edge': self.bottom_molding_edge,
                 'fan_cutout_width': self.fan_cutout_width,
                 'fan_cutout_depth': self.fan_cutout_depth,
                 'fan_cutout_offset': self.fan_cutout_offset,
@@ -2876,6 +2995,9 @@ class HOME_BUILDER_OT_wood_hood_prompts(bpy.types.Operator):
         sub.prop(self, 'bottom_molding_width', text="W")
         sub.prop(self, 'bottom_molding_thickness', text="T")
         sub.prop(self, 'bottom_molding_depth', text="D")
+        row = col.row()
+        row.active = self.include_bottom_molding
+        row.prop(self, 'bottom_molding_edge', text="Edges")
 
     def _draw_front(self, box):
         col = box.column(align=True)
