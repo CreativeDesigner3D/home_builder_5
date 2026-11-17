@@ -1482,10 +1482,10 @@ def _opening_page(context, out, opening_obj):
     if menus:
         out.append(('actions', tuple(menus)))
     if interior is not None or _items().accessory_host(opening_obj) is not None:
+        # The interior's settings are all on its own page.
         out.append(('actions', (
             _act("Edit Interior", 'hb_frameless.show_interior_page',
-                 {'opening_name': opening_obj.name}, 'cab_interior'),
-            ("Interior Options", 'hb_frameless.interior_prompts', None, None))))
+                 {'opening_name': opening_obj.name}, 'cab_interior'),)))
     out.extend(accessory_blocks(context, opening_obj))
     _quick(out, _menu_actions(context, opening_obj, skip=(
         'hb_frameless.opening_prompts', 'HOME_BUILDER_MT_opening_change',
@@ -1518,7 +1518,7 @@ def _interior_page(context, out, part_obj, opening_obj, bay_obj):
         out.extend(edge_blocks(context, part_obj))
         _quick(out, _menu_actions(context, part_obj, skip=(
             'hb_frameless.interior_prompts', 'HOME_BUILDER_MT_interior_change')))
-    _footer(out, 'hb_frameless.interior_prompts' if real else None)
+    _footer(out, None)
 
 
 def _drawer_page(context, out, part_obj, drawers):
