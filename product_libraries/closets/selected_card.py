@@ -107,6 +107,16 @@ def blocks(context, item):
             context, starter_card.page_fields(root), starter_card.owner(root)))
         _actions(context, out, root)
         return out
+    if kind == 'bay':
+        # Bays mode: the bay's own page, what it is built as and its
+        # sizes on top, the rest in folds.
+        from . import bay_card
+        out.extend(options_panel.field_blocks(
+            context, bay_card.page_fields(bay_obj), bay_card.owner(bay_obj)))
+        # Bay Configuration is the dropdown at the top of the page.
+        _actions(context, out, bay_obj,
+                 skip=('HOME_BUILDER_MT_closet_change_bay',))
+        return out
     out.extend(options_panel.field_blocks(context, (
         ('group', STARTER_GROUP, f"Closet  ({sp.closet_type.title()})",
          {'icon': 'closet_starter',
@@ -137,17 +147,18 @@ def blocks(context, item):
 QUICK_FOLD = 'cl_quick_actions'
 
 
-def _actions(context, out, picked):
+def _actions(context, out, picked, skip=()):
     """The commands of what is picked, from its right-click menu, in a
     Quick Actions fold that stays closed until opened, then All Actions
     at the foot."""
     from ...operators import options_panel, generic_page, quick_actions
     menu = generic_page.menu_id(context.active_object) or generic_page.menu_id(picked)
     if menu:
-        fold = quick_actions.fields(quick_actions.from_menu(context, menu),
-                                    fold=QUICK_FOLD)
+        fold = quick_actions.fields(
+            quick_actions.from_menu(context, menu, skip=skip), fold=QUICK_FOLD)
         if fold:
-            out.append(('gap', None))
+            if out and out[-1] != ('gap', None):
+                out.append(('gap', None))
             out.extend(options_panel.field_blocks(context, fold, picked))
     if out and out[-1] != ('gap', None):
         out.append(('gap', None))

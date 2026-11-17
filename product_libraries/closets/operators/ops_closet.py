@@ -4364,6 +4364,12 @@ class hb_closets_OT_change_bay(bpy.types.Operator):
         for root in roots:
             _apply_finish(root)
             _apply_selection_shading(context, root)
+        from .. import bay_card
+        for bay in bays:
+            try:
+                bay_card.remember_config(bay, self.config)
+            except ReferenceError:
+                pass
         _reselect_cages(context, bays)
         if applied > 1:
             self.report({'INFO'}, f"Changed {applied} bays")

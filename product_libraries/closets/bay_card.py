@@ -110,6 +110,66 @@ def _set_height_standard(bay, value):
         types_closets.recalculate_closet_starter(root)
 
 
+# ---- What the bay is built as ----------------------------------------------
+# A bay keeps the standard configuration it was last built as, with a
+# note of the parts that made it; once its parts change (a shelf or a
+# drawer added, an opening changed) it reads as Custom.
+
+CONFIG_KEY = 'hb_bay_config'
+CONFIG_PARTS_KEY = 'hb_bay_config_parts'
+CUSTOM = 'CUSTOM'
+
+
+def _parts_note(bay):
+    import re
+    names = sorted(re.sub(r'\.\d+$', '', o.name) for o in bay.children_recursive)
+    return "|".join(names)
+
+
+def remember_config(bay, config):
+    """Note that ``bay`` has just been built as ``config``."""
+    bay[CONFIG_KEY] = str(config)
+    bay[CONFIG_PARTS_KEY] = _parts_note(bay)
+
+
+def config_of(bay):
+    key = bay.get(CONFIG_KEY)
+    if key and bay.get(CONFIG_PARTS_KEY) == _parts_note(bay):
+        return key
+    return CUSTOM
+
+
+def _config_items():
+    return ([(cid, label) for group in types_closets.BAY_CONFIG_GROUPS
+             for cid, label in group] + [(CUSTOM, "Custom")])
+
+
+def _get_config(bay):
+    key = config_of(bay)
+    return key if key in dict(_config_items()) else CUSTOM
+
+
+def _set_config(bay, value):
+    """Rebuild the bay as a standard configuration, as Bay
+    Configuration does, and leave it picked."""
+    if value == CUSTOM or value == _get_config(bay):
+        return
+    context = bpy.context
+    with context.temp_override(active_object=bay, object=bay,
+                               selected_objects=[bay]):
+        bpy.ops.hb_closets.change_bay(config=value)
+    try:
+        layer = context.view_layer
+        if layer.objects.get(bay.name) is bay:
+            for o in list(layer.objects):
+                if o is not bay and o.select_get(view_layer=layer):
+                    o.select_set(False, view_layer=layer)
+            bay.select_set(True, view_layer=layer)
+            layer.objects.active = bay
+    except Exception:
+        pass
+
+
 def _ensure():
     from ...operators import prop_proxy as P
     if SCHEMA in P._schemas:
@@ -120,6 +180,8 @@ def _ensure():
             P, props_closets.Closet_Bay_Props, _bp, name)
         for name in _OWN}
     props.update({
+        'config': P.computed(_get_config, _set_config, type='ENUM',
+                             items=_config_items()),
         'top_opening': P.computed(_get_top, _set_top, unit='LENGTH',
                                   precision=4, hard_min=units.inch(1.0)),
         'height_standard': P.computed(
@@ -178,6 +240,18 @@ def _construction_fields(bay):
         ('distance', 'bottom_shelf_inset', "Bottom Shelf Inset",
          {'when': lambda _ow: bp.floor_mounted and not bp.remove_bottom}),
     )
+
+
+def _construction_summary(bay):
+    bp = _bp(bay)
+    said = []
+    if bp.remove_bottom:
+        said.append("No bottom")
+    if bp.remove_cleat:
+        said.append("No cleat")
+    if bp.double_panel_right:
+        said.append("Double panel")
+    return ", ".join(said)
 
 
 def _opening_fields(bay):
@@ -240,7 +314,8 @@ def fields(bay):
         ('locked', 'depth', "Depth", {'unlock': 'unlock_depth'}),
         ('bool', 'floor_mounted', "Floor Mounted"),
         ('group', 'cl_bay_more', "Construction",
-         {'fields': _construction_fields(bay)}),
+         {'summary': lambda _ow: _construction_summary(bay),
+          'fields': _construction_fields(bay)}),
     ]
     # Only a bay with a shelf across it (or a double hang) has a top
     # opening to size.
@@ -259,4 +334,13 @@ def fields(bay):
             'summary': lambda _ow: ("Centered" if bp.include_center_back
                                     else _dist(bp.center_back_location)),
             'fields': _divider_fields(bay)}))
+    return tuple(out)
+
+
+def page_fields(bay):
+    """The bay's own page, laid out as a cabinet bay's: what it is built
+    as, its sizes, then the rest in folds."""
+    out = [('enum', 'config', "Configuration")] + list(fields(bay))
+    at = next((i for i, f in enumerate(out) if f[0] == 'group'), len(out))
+    out.insert(at, ('gap', None, None))
     return tuple(out)
