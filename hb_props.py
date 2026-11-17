@@ -1185,7 +1185,19 @@ def _darken_door_type_symbols(*_args):
             obj.color = (0.0, 0.0, 0.0, 1.0)
 
 
-_LOAD_HANDLERS = (_match_library_to_contents, _darken_door_type_symbols)
+@bpy.app.handlers.persistent
+def _quiet_cutters(_dummy=None):
+    """Wall, floor and ceiling cutters stay out of the rendered viewport
+    in projects saved before they did."""
+    try:
+        from . import cutters
+        cutters.keep_all_out_of_renders()
+    except Exception:
+        pass
+
+
+_LOAD_HANDLERS = (_match_library_to_contents, _darken_door_type_symbols,
+                  _quiet_cutters)
 
 
 def register():
