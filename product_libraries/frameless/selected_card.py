@@ -983,7 +983,9 @@ def _cabinet_fields(root):
         ('text', 'name', "Name"),
         ('distance', 'width', "Width"),
         ('distance', 'height', "Height"),
-        ('distance', 'depth', "Depth"),
+        # An angled front's depth is its deeper end, kept by the cabinet
+        # dialog (Properties) with the two end depths.
+        ('distance', 'depth', "Depth", {'when': _square_front}),
         ('distance', 'height_off_floor', "Above Floor", {'when': _hung}),
         ('distance', 'top_off_floor', "Top Above Floor", {'when': _hung}),
         ('enum', 'upper_height_anchor', "Height Keeps", {'when': _hung}),
@@ -1336,9 +1338,39 @@ _OPTION_GROUPS = (
 _OPTION_GROUP_MIN = 7
 
 
+def _square_front(owner):
+    """False for a cabinet with an angled front (end depths set)."""
+    from . import solver_frameless
+    return owner.id_data.get(solver_frameless.FRONT_LEFT_DEPTH_KEY) is None
+
+
+# Stamped on a support frame with the Base Molding On Legs value the room
+# molding was last rebuilt for, so a page edit rebuilds it only on change.
+_LEG_BASE_APPLIED = 'hb_leg_base_molding_applied'
+
+
+def _product_solve(obj, context):
+    """Solve a product after a page edit, plus what its options dialog
+    did beyond the solve: a support frame whose Base Molding On Legs
+    changed rebuilds the room's molding, which runs round its legs."""
+    from ...operators import generic_page
+    generic_page._solve(obj, context)
+    if obj.get('PART_TYPE') != 'SUPPORT_FRAME':
+        return
+    from . import types_products
+    leg_base = bool(obj.get(types_products.LEG_BASE_MOLDING_KEY, False))
+    if obj.get(_LEG_BASE_APPLIED) is not None and \
+            bool(obj.get(_LEG_BASE_APPLIED)) == leg_base:
+        return
+    obj[_LEG_BASE_APPLIED] = leg_base
+    from ...molding import ops as molding_ops
+    context.view_layer.update()
+    molding_ops.apply_scene_packages(context.scene)
+
+
 def product_option_blocks(context, root):
     from ...operators import generic_page, options_panel
-    owner, fields = generic_page.prompt_owner(root)
+    owner, fields = generic_page.prompt_owner(root, after=_product_solve)
     if owner is None:
         return []
     buckets = {}
@@ -1348,7 +1380,7 @@ def product_option_blocks(context, root):
         buckets.setdefault(label, []).append(field)
     if len(fields) < _OPTION_GROUP_MIN or len(buckets) < 2:
         return generic_page.prompt_blocks(context, root, 'fl_product_prompts',
-                                          "Options")
+                                          "Options", after=_product_solve)
     order = ["Options"] + [name for name, _test in _OPTION_GROUPS]
     groups = tuple(
         ('group', 'fl_product_' + name.lower().replace(' ', '_'), name,

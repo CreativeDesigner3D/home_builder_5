@@ -315,8 +315,16 @@ def fields(bay):
     def off_holes():
         return not const.nearest_panel_height_key(bp.height)
 
+    def last_sharing():
+        return _ops()._last_sharing_bay(bay)
+
     out = [
-        ('locked', 'width', "Width", {'unlock': 'unlock_width'}),
+        # The last bay sharing the run width takes whatever is left
+        # over: its width reads only, with no padlock to open.
+        ('locked', 'width', "Width",
+         {'unlock': 'unlock_width', 'when': lambda _ow: not last_sharing()}),
+        ('distance', 'width', "Width",
+         {'readonly': True, 'when': lambda _ow: last_sharing()}),
         # The height is a pick off the standard list; the typed field
         # shows only for a bay standing off the holes.
         ('locked', 'height', "Height",

@@ -231,6 +231,10 @@ def _set_width(root, value):
 def _after(root, context):
     # A run moved by its origin has nothing to solve, and the run's own
     # properties solve themselves; the views only need drawing again.
+    # A typed rail height holds only for the write that typed it (the
+    # dialogs held it for their session): a height changed on a page
+    # afterwards takes the rail with it, as the next dialog did.
+    root['hb_rail_typed'] = False
     _ops()._redraw_viewports(context)
 
 
