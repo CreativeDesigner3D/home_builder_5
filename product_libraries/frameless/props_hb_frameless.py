@@ -2445,6 +2445,14 @@ class Frameless_Scene_Props(PropertyGroup):
                                       unit='LENGTH',
                        update=update_back_tongue_length)# type: ignore
 
+    back_inset: FloatProperty(name="Back Inset",
+                              description="How far a captured back stands in from the back edge of the sides, "
+                                          "bottom and top. The grooves move with it",
+                              default=units.inch(.03125),
+                              min=0.0,
+                              unit='LENGTH',
+                       update=update_back_tongue_length)# type: ignore
+
     default_toe_kick_height: FloatProperty(name="Default Toe Kick Height",
                                                  description="",
                                                  default=units.inch(4),
@@ -2947,6 +2955,8 @@ class Frameless_Scene_Props(PropertyGroup):
         row.prop(self,'default_carcass_part_thickness',text="Material Thickness")
         row = size_box.row()
         row.prop(self,'back_tongue_length',text="Back Tongue")
+        row = size_box.row()
+        row.prop(self,'back_inset',text="Back Inset")
         size_box = layout.box()
         row = size_box.row()
         row.label(text="Finished Ends:")
