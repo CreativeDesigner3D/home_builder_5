@@ -222,10 +222,21 @@ def fields(bay):
     cls = types_closets.WRAP_CLASS_REGISTRY.get(
         root.get('CLASS_NAME', '') if root is not None else '',
         types_closets.ClosetStarter)
+
+    def off_holes():
+        return not const.nearest_panel_height_key(bp.height)
+
     out = [
         ('locked', 'width', "Width", {'unlock': 'unlock_width'}),
-        ('locked', 'height', "Height", {'unlock': 'unlock_height'}),
-        ('enum', 'height_standard', "Standard Height"),
+        # The height is a pick off the standard list; the typed field
+        # shows only for a bay standing off the holes.
+        ('locked', 'height', "Height",
+         {'unlock': 'unlock_height', 'pick': 'height_standard',
+          'when': lambda _ow: not off_holes()}),
+        ('locked', 'height', "Height",
+         {'unlock': 'unlock_height', 'when': lambda _ow: off_holes()}),
+        ('enum', 'height_standard', "Standard Height",
+         {'when': lambda _ow: off_holes()}),
         ('locked', 'depth', "Depth", {'unlock': 'unlock_depth'}),
         ('bool', 'floor_mounted', "Floor Mounted"),
         ('group', 'cl_bay_more', "Construction",

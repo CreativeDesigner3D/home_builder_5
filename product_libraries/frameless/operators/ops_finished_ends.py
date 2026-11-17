@@ -288,8 +288,9 @@ class hb_frameless_OT_update_finished_end(bpy.types.Operator):
         if not self.cabinet_obj:
             return {'CANCELLED'}
         
-        # Try to detect which side based on object name
-        obj_name = context.object.name.upper()
+        # With no side asked for, take it from the object's name.
+        obj_name = ('' if self.properties.is_property_set('side')
+                    else context.object.name.upper())
         if 'LEFT' in obj_name:
             self.side = 'LEFT'
         elif 'RIGHT' in obj_name:
@@ -673,7 +674,7 @@ class hb_frameless_OT_auto_finish_condition(bpy.types.Operator):
         name="Side",
         items=[('PART', "Selected Parts", "The cabinet sides selected"),
                ('LEFT', "Left", ""), ('RIGHT', "Right", ""),
-               ('BACK', "Back", "")],
+               ('BACK', "Back", ""), ('TOP', "Top", "")],
         default='PART') # type: ignore
 
     @classmethod

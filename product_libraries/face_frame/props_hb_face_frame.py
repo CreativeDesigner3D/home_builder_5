@@ -5095,12 +5095,24 @@ GLASS_DOOR_PREV_FINISH_KEY = 'HB_GLASS_DOOR_PREV_FINISH'
 GLASS_TYPE_ITEMS = [
     ('CLEAR_18', "Clear 1/8\"", "Clear glass, 1/8\" thick"),
     ('CLEAR_14', "Clear 1/4\"", "Clear glass, 1/4\" thick"),
-    ('REEDED', "Reeded", "Reeded (fluted) glass"),
+    ('FROSTED', "Frosted 1/8\"", "Frosted / satin-etched glass, 1/8\" thick"),
+    ('FROSTED_14', "Frosted 1/4\"", "Frosted / satin-etched glass, 1/4\" thick"),
+    ('SMOKED_18', "Smoked 1/8\"", "Smoked glass, 1/8\" thick"),
+    ('SMOKED_14', "Smoked 1/4\"", "Smoked glass, 1/4\" thick"),
+    ('MIRROR_18', "Mirror 1/8\"", "Mirror, 1/8\" thick"),
+    ('REEDED', "Reeded", "Vertical reeded (fluted) glass"),
     ('SEEDED', "Seeded", "Seeded glass"),
-    ('FROSTED', "Frosted", "Frosted / satin-etched glass"),
+    ('ARTIQUE', "Artique", "Artique textured glass"),
+    ('HAMMERED', "Hammered", "Hammered textured glass"),
+    ('WATER', "Water", "Water textured glass"),
     ('CUSTOM', "Other", "Glass not in the list - type what it is"),
 ]
 GLASS_TYPE_NAMES = dict((i[0], i[1]) for i in GLASS_TYPE_ITEMS)
+# The plain glasses that also come tempered; textured glass and mirror
+# come one way only.
+GLASS_TEMPERABLE_TYPES = frozenset({
+    'CLEAR_18', 'CLEAR_14', 'FROSTED', 'FROSTED_14', 'SMOKED_18',
+    'SMOKED_14'})
 
 
 def glass_type_label(spec):
@@ -5129,7 +5141,8 @@ def front_glass_door(front_obj, store=None):
         spec = dict(spec)
     return {'type': str(spec.get('type', 'CLEAR_18')),
             'included': bool(spec.get('included', False)),
-            'custom': str(spec.get('custom', '') or '')}
+            'custom': str(spec.get('custom', '') or ''),
+            'tempered': bool(spec.get('tempered', False))}
 
 
 def set_front_glass_door(front_obj, spec, store=None):
@@ -5145,7 +5158,9 @@ def set_front_glass_door(front_obj, spec, store=None):
     store[key] = {'type': kind,
                   'included': bool(spec.get('included', False)),
                   'custom': (str(spec.get('custom', '') or '').strip()
-                             if kind == 'CUSTOM' else '')}
+                             if kind == 'CUSTOM' else ''),
+                  'tempered': (bool(spec.get('tempered', False))
+                               and kind in GLASS_TEMPERABLE_TYPES)}
 
 
 def store_has_glass_door(store):
@@ -10843,6 +10858,12 @@ class Face_Frame_Cabinet_Props(PropertyGroup):
         default=units.inch(6.0), min=0.0, unit='LENGTH', precision=4,
         update=_update_cabinet_dim,
     )  # type: ignore
+    clip_back_auto: BoolProperty(
+        name="Automatic Clip Back",
+        description="Calculate the back clip of a corner base so the cabinet keeps its standard front-to-back depth, deeper for the large susans. Turn off to type the clip",
+        default=True,
+        update=_update_cabinet_dim,
+    )  # type: ignore
 
     mid_stile_widths: CollectionProperty(type=Face_Frame_Mid_Stile_Width)  # type: ignore
     # Cabinet columns: split turnings applied over stiles, keyed by
@@ -12273,6 +12294,20 @@ class Face_Frame_Opening_Props(PropertyGroup):
         description="Depth of the integral stile grooves, from the face",
         default=units.inch(0.125), min=0.0, unit='LENGTH',
         precision=4, update=_update_cabinet_dim,
+    )  # type: ignore
+    # Which faces carry a pull. It is one drawer, so by default only the
+    # middle of the front is pulled: the middle face of an odd count,
+    # the two faces either side of the centre of an even one.
+    drawer_split_pulls: EnumProperty(
+        name="Pulls",
+        description="Which faces of a side-by-side drawer front get a pull",
+        items=[
+            ('MIDDLE', "Middle", "A pull on the middle face only (the two "
+                                 "middle faces of an even count)"),
+            ('ALL', "Every Face", "A pull on every face"),
+        ],
+        default='MIDDLE',
+        update=_update_cabinet_dim,
     )  # type: ignore
     # Door-look door: a single LEFT / RIGHT swing leaf shown as N door
     # panels side by side (doors battened together), still one door.

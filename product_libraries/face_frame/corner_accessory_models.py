@@ -107,6 +107,63 @@ def susan_diameter(style, cabinet_type, width):
     return 28.0 if w >= 34.0 - 1e-6 else 24.0
 
 
+# Standard corner base: front of the face frame to the clipped back,
+# measured square to the clip. The deeper figure makes room for the
+# 32" trays and the bearing-mounted sets.
+CLIP_FRONT_TO_BACK = inch(29.5)
+CLIP_FRONT_TO_BACK_DEEP = inch(33.5)
+CLIP_MIN_LEG = inch(1.0)     # a smaller calculated clip is left square
+_CLIP_LEGACY_DEFAULT = inch(6.0)
+
+
+def clip_back_is_auto(cab_props, corner_type, cabinet_type):
+    """True when the back clip is calculated rather than typed. Only
+    base pie-cut and diagonal corners calculate; a cabinet saved before
+    the automatic flag existed keeps a clip that was typed on it."""
+    if cabinet_type != 'BASE' or corner_type not in ('PIE_CUT', 'DIAGONAL'):
+        return False
+    if not getattr(cab_props, 'clip_back_auto', True):
+        return False
+    try:
+        legacy = (not cab_props.is_property_set('clip_back_auto')
+                  and cab_props.is_property_set('clip_back_amount')
+                  and abs(cab_props.clip_back_amount
+                          - _CLIP_LEGACY_DEFAULT) > 1e-5)
+    except (AttributeError, TypeError):
+        legacy = False
+    return not legacy
+
+
+def clip_back_leg(cab_props, corner_type, cabinet_type):
+    """Leg the back clip takes off each wall side (0 = no clip).
+
+    Calculated corners hold a fixed front-to-back depth whatever the
+    wall widths: the clip line sits that far behind the middle of the
+    diagonal face frame. A pie cut is measured the same way, from the
+    diagonal line between the outer ends of its two frames. Everything
+    else uses the typed amount, except the drawer corner, which has no
+    clip.
+    """
+    if corner_type == 'PIE_CUT_DRAWER':
+        # The drawer box runs back into the corner: never clipped.
+        return 0.0
+    typed = max(getattr(cab_props, 'clip_back_amount', 0.0), 0.0)
+    if not clip_back_is_auto(cab_props, corner_type, cabinet_type):
+        return typed
+    target = CLIP_FRONT_TO_BACK
+    spec = SUSAN_OPTIONS.get(getattr(cab_props, 'interior_option', 'NONE'))
+    if spec is not None:
+        style = spec[0]
+        if (style in ('SUPER', 'NOT_SO_LAZY')
+                or susan_diameter(style, cabinet_type,
+                                  cab_props.width) >= 32.0 - 1e-6):
+            target = CLIP_FRONT_TO_BACK_DEEP
+    ld, rd = cab_props.left_depth, cab_props.right_depth
+    reach = (ld + cab_props.width + cab_props.depth + rd) / 2.0
+    leg = reach - target * math.sqrt(2.0)
+    return leg if leg >= CLIP_MIN_LEG else 0.0
+
+
 def _pie_center(R, x_lo, y_lo, fx, fy, outer_x, outer_y, clip):
     """Center (x, y depth-positive) and notch offsets for a pie-cut tray
     of radius R: as close to the middle of the cavity as the back walls
@@ -125,9 +182,22 @@ def _pie_center(R, x_lo, y_lo, fx, fy, outer_x, outer_y, clip):
             return None
         out.append(c)
     cx, cy = out
-    # Clipped back corner: keep the tray off the angled back.
-    if clip > 0.0 and (cx + cy - clip) / math.sqrt(2.0) < R + WALL_CLEAR:
-        return None
+    if clip > 0.0:
+        # Clipped back corner: slide the tray out along the bisector
+        # until it is WALL_CLEAR off the angled back. The standard
+        # depths are sized to their tray, so when that leaves no room
+        # the tray may take up the clearance at the back.
+        root2 = math.sqrt(2.0)
+        for clear in (WALL_CLEAR, 0.0):
+            k = max(0.0, (clip + root2 * (R + clear) - cx - cy) / 2.0)
+            nx, ny = cx + k, cy + k
+            if (nx <= fx + 1e-6 and ny <= fy + 1e-6
+                    and nx + R <= outer_x + 1e-6
+                    and ny + R <= outer_y + 1e-6):
+                cx, cy = nx, ny
+                break
+        else:
+            return None
     return cx, cy, fx - cx, fy - cy
 
 
@@ -141,11 +211,23 @@ def _diagonal_center(R, x_lo, y_lo, line, outer_x, outer_y, clip):
     slack = d - (nx * bx + ny * by) - R
     if slack < 0.0:
         return None
-    k = slack / (nx + ny) / 2.0
+    k_hi = slack / (nx + ny)
+    k_lo = 0.0
+    if clip > 0.0:
+        # A clipped back, not the walls, can be what the tray backs on
+        # to: keep it WALL_CLEAR off the angled back. The standard
+        # depths are sized to their tray, so when that leaves no room
+        # the tray may take up the clearances at the back and the frame.
+        root2 = math.sqrt(2.0)
+        k_lo = max(0.0, (clip + root2 * (R + WALL_CLEAR) - bx - by) / 2.0)
+        if k_lo > k_hi:
+            k_lo = max(0.0, (clip + root2 * R - bx - by) / 2.0)
+            k_hi = (slack + WALL_CLEAR) / (nx + ny)
+            if k_lo > k_hi + inch(0.01):
+                return None
+    k = (k_lo + k_hi) / 2.0
     cx, cy = bx + k, by + k
     if cx + R > outer_x or cy + R > outer_y:
-        return None
-    if clip > 0.0 and (cx + cy - clip) / math.sqrt(2.0) < R + WALL_CLEAR:
         return None
     return cx, cy, None, None
 
@@ -169,7 +251,7 @@ def susan_layout(cab_props, corner_type, cabinet_type, l_scribe=0.0,
     y_lo = r_scribe + t + WALL_CLEAR
     outer_x = width - t - WALL_CLEAR
     outer_y = depth - t - WALL_CLEAR
-    clip = max(getattr(cab_props, 'clip_back_amount', 0.0), 0.0)
+    clip = clip_back_leg(cab_props, corner_type, cabinet_type)
     if clip > 0.0:
         clip += t
 
@@ -412,10 +494,14 @@ def _susan_not_so_lazy(bm, lay, height):
     _slab(bm, poly, top, top + shelf_t, 0)
     # Pan hooks hang from the upper shelf along its round edge; the
     # arrester rail at mid level keeps the hanging pans from swinging.
-    a0 = math.atan2(-sy, math.sqrt(max(R * R - sy * sy, 0.0)))
-    a1 = math.atan2(-math.sqrt(max(R * R - sx * sx, 0.0)), sx)
-    if a1 <= a0:
-        a1 += 2.0 * math.pi
+    if lay['notch'] is None:
+        # Full-round tray (diagonal cabinet): hooks and rail go all round.
+        a0, a1 = 0.0, 2.0 * math.pi
+    else:
+        a0 = math.atan2(-sy, math.sqrt(max(R * R - sy * sy, 0.0)))
+        a1 = math.atan2(-math.sqrt(max(R * R - sx * sx, 0.0)), sx)
+        if a1 <= a0:
+            a1 += 2.0 * math.pi
     pad = math.radians(12.0)
     hook_r = R - inch(1.25)
     hook_len = inch(2.5)

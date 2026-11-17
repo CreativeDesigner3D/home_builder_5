@@ -62,6 +62,11 @@ TICK_PX         = 5
 # Height dims run up the cage's left side this far in (capped at a
 # quarter of the width for narrow cages).
 HEIGHT_DIM_INSET = 0.0762
+# Width dims run across the front this far up, below the middle: the
+# height's value sits at mid height, clear of the width line it would
+# otherwise cross there, and the middle of a cabinet is left to the
+# handle that moves it.
+WIDTH_DIM_FZ = 0.3
 
 # Characters accepted by the typed-distance grammar (parse_typed_distance):
 # digits, decimal point, fractions, feet/inch marks, embedded spaces,
@@ -505,7 +510,7 @@ def compute_labels(context, region, rv3d, lines_out=None):
         elif mode == 'Cabinets':
             dim_x, dim_y, dim_z = _cage_dims(cabinet)
             editable = _cabinet_editable(cabinet)
-            # W across the middle of the front, H up the left side, D
+            # W across the front below the middle, H up the left side, D
             # front to back across the top.
             fx = _height_dim_fx(cabinet)
             depth_pts = _root_depth_points(cabinet)
@@ -515,9 +520,9 @@ def compute_labels(context, region, rv3d, lines_out=None):
                  _pair(_root_anchor_world(cabinet, fx, 0.0),
                        _root_anchor_world(cabinet, fx, 1.0))),
                 (cabinet, 'CAB_W', editable, False, dim_x, "W ",
-                 _root_anchor_world(cabinet, 0.5, 0.5),
-                 _pair(_root_anchor_world(cabinet, 0.0, 0.5),
-                       _root_anchor_world(cabinet, 1.0, 0.5))),
+                 _root_anchor_world(cabinet, 0.5, WIDTH_DIM_FZ),
+                 _pair(_root_anchor_world(cabinet, 0.0, WIDTH_DIM_FZ),
+                       _root_anchor_world(cabinet, 1.0, WIDTH_DIM_FZ))),
                 (cabinet, 'CAB_D', editable, False, dim_y, "D ",
                  depth_pts[1] if depth_pts else None,
                  (depth_pts[0], depth_pts[2]) if depth_pts else None),
@@ -535,9 +540,9 @@ def compute_labels(context, region, rv3d, lines_out=None):
                 dim_x, _dim_y, dim_z = _cage_dims(bay)
                 fx = _height_dim_fx(bay)
                 targets.append((bay, 'BAY_W', blind, False, dim_x, "W ",
-                                _anchor_world(bay, 0.5, 0.5),
-                                _pair(_anchor_world(bay, 0.0, 0.5),
-                                      _anchor_world(bay, 1.0, 0.5))))
+                                _anchor_world(bay, 0.5, WIDTH_DIM_FZ),
+                                _pair(_anchor_world(bay, 0.0, WIDTH_DIM_FZ),
+                                      _anchor_world(bay, 1.0, WIDTH_DIM_FZ))))
                 targets.append((bay, 'BAY_H', False, False, dim_z, "H ",
                                 _anchor_world(bay, fx, 0.5),
                                 _pair(_anchor_world(bay, fx, 0.0),
@@ -708,6 +713,36 @@ def _resolve_after_split_edit(context, cabinet_bp, calc):
         hb_utils.run_calc_fix(context, cabinet_bp)
 
 
+def _resize_filler_at_joint(context, filler, width):
+    """Set a wall scribe filler's width at its joint with the cabinet
+    beside it, as dragging that joint does: the cabinet gives or takes
+    the difference and the filler's wall end stays where it is. Both
+    keep their minimum widths, so an out-of-range value lands on the
+    nearest one that fits. False when no cabinet is butted to it."""
+    from . import scribe_fit
+    from .operators import op_grab_frameless as grab
+    if not scribe_fit.is_wall_scribe_filler(filler):
+        return False
+    for h in grab.collect_cabinet_handles(context.scene):
+        if h['kind'] != 'JOINT':
+            continue
+        if h['left'] == filler.name:
+            other, sign = h['right'], 1.0
+        elif h['right'] == filler.name:
+            other, sign = h['left'], -1.0
+        else:
+            continue
+        other = bpy.data.objects.get(other)
+        if other is None or not other.get(TAG_CABINET):
+            continue
+        change = width - GeoNodeCage(filler).get_input('Dim X')
+        grab.apply_delta(context, h, grab.start_state(h), change * sign)
+        if scribe_fit.refit(filler):
+            hb_utils.run_calc_fix(context, filler)
+        return True
+    return False
+
+
 def _commit(context, obj, kind, value):
     """Write the typed value through the dialogs' own paths."""
     if kind in wall_run_dims.KINDS:
@@ -735,10 +770,15 @@ def _commit(context, obj, kind, value):
             return False
         name = {'CAB_W': 'Dim X', 'CAB_H': 'Dim Z', 'CAB_D': 'Dim Y'}[kind]
         if obj.get(TAG_FILLER):
-            # A product: its depth is typed as built, and a filler in a
-            # narrow gap goes back on the gap after a width edit, as it
-            # does when the width is typed in its settings.
+            # A product: its depth is typed as built. A typed width is
+            # taken from (or given to) the cabinet the filler stands
+            # against; with no cabinet beside it, a filler in a narrow
+            # gap goes back on the gap, as it does when the width is
+            # typed in its settings.
             from . import scribe_fit, types_products
+            if kind == 'CAB_W' and _resize_filler_at_joint(context, obj,
+                                                           value):
+                return True
             if kind == 'CAB_D':
                 types_products.set_product_depth(obj, value)
             else:

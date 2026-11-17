@@ -439,6 +439,11 @@ class Face_Frame_Steel_Support_Props(PropertyGroup):
     thickness: FloatProperty(
         name="Thickness", default=inch(0.375), min=inch(0.0625),
         unit='LENGTH', precision=4, update=_update)  # type: ignore
+    cabinet_prep: BoolProperty(
+        name="Cabinet Prep",
+        description="The cabinet is prepped for the support at the shop "
+                    "(off: the support ships loose for the installer)",
+        default=True)  # type: ignore
 
 
 def draw_props(layout, sp):
@@ -460,6 +465,8 @@ def draw_props(layout, sp):
     col.separator()
     col.prop(sp, 'bar_width')
     col.prop(sp, 'thickness')
+    col.separator()
+    col.prop(sp, 'cabinet_prep')
 
 
 def add_support(cab, shape='FLAT', exits='BACK'):

@@ -688,16 +688,19 @@ def _solve_tall(root, parts, p, dim_x, dim_y, dim_z):
 def _solve_upper(root, parts, p, dim_x, dim_y, dim_z):
     mt = p.mt
     inner = dim_x - mt * 2.0
-    _solve_sides(parts, p, dim_x, dim_y, dim_z, 0.0)
+    # A panel applied under the cabinet is part of its height: the box
+    # stands on it.
+    fb = finished_bottom_thickness(root)
+    _solve_sides(parts, p, dim_x, dim_y, dim_z, fb)
 
     part = parts.get('BOTTOM')
     if part is not None:
-        set_part(part, (mt, 0.0, 0.0), length=inner, width=dim_y,
+        set_part(part, (mt, 0.0, fb), length=inner, width=dim_y,
                  thickness=mt)
 
     part = parts.get('BACK')
     if part is not None:
-        _set_back(part, p, inner, mt, dim_z - mt, bottom=True, top=True)
+        _set_back(part, p, inner, fb + mt, dim_z - mt, bottom=True, top=True)
 
     part = parts.get('TOP')
     if part is not None:
@@ -706,15 +709,30 @@ def _solve_upper(root, parts, p, dim_x, dim_y, dim_z):
 
     part = parts.get('BAY')
     if part is not None:
-        set_cage(part, (mt, -dim_y, mt), dim_x=inner, dim_y=dim_y - mt,
-                 dim_z=dim_z - mt * 2.0)
+        set_cage(part, (mt, -dim_y, fb + mt), dim_x=inner, dim_y=dim_y - mt,
+                 dim_z=dim_z - fb - mt * 2.0)
 
 
 # Finished bottom on an upper: an applied panel of finished stock under
 # the carcass, full width to the outside of the sides, with an optional
-# LED groove routed in its underside behind the front.
+# LED groove routed in its underside behind the front. The panel is
+# inside the cabinet's height (the box is that much shorter), and the
+# bottom fronts come down over its front edge unless told not to.
 FINISHED_BOTTOM_KEY = 'Finished Bottom'      # 0 none, 1 1/4 in, 2 3/4 in
 FINISHED_BOTTOM_THICKNESS = {1: inch(0.25), 2: inch(0.75)}
+FB_DOORS_COVER_KEY = 'Finished Bottom Doors Cover'
+
+
+def finished_bottom_thickness(root):
+    """Thickness of the panel applied under an upper cabinet, 0 with
+    none."""
+    if root is None or carcass_kind(root) != 'UPPER':
+        return 0.0
+    try:
+        number = int(prompt(root, FINISHED_BOTTOM_KEY, 0) or 0)
+    except (TypeError, ValueError):
+        return 0.0
+    return FINISHED_BOTTOM_THICKNESS.get(number, 0.0)
 FB_LED_KEY = 'Finished Bottom LED Route'
 FB_LED_WIDTH_KEY = 'LED Route Width'
 FB_LED_DEPTH_KEY = 'LED Route Depth'
@@ -739,7 +757,7 @@ def _solve_finished_bottom(root, parts, p, dim_x, dim_y, dim_z):
             'Finished Bottom', 'FINISHED_BOTTOM', finish=(False, True)).obj
         parts['FINISHED_BOTTOM'] = panel
         _paint_like_cabinet(root, panel)
-    set_part(panel, (0.0, -dim_y, -t), length=dim_x, width=dim_y, thickness=t)
+    set_part(panel, (0.0, -dim_y, 0.0), length=dim_x, width=dim_y, thickness=t)
 
     led = bool(prompt(root, FB_LED_KEY, False))
     mod = panel.modifiers.get(FB_LED_MOD_NAME)
@@ -1837,8 +1855,9 @@ def _solve_splitter(splitter_obj, vertical):
 
 def link_dims(parent_obj, child_obj, dims):
     """Where a linked child sits in its parent and how big it is. An
-    interior behind an inset front starts behind the front, and one in
-    a blind corner reaches across behind the blind panel."""
+    interior behind an inset front starts behind the front, one in a
+    blind corner reaches across behind the blind panel, and one behind
+    an apron stops under it."""
     dim_x, dim_y, dim_z = dims
     if not child_obj.get('IS_FRAMELESS_INTERIOR_CAGE'):
         return (0.0, 0.0, 0.0), (dim_x, dim_y, dim_z)
@@ -1852,6 +1871,10 @@ def link_dims(parent_obj, child_obj, dims):
     offset = 0.0
     if parent_obj.get('Inset Front'):
         offset = float(prompt(parent_obj, 'Front Thickness', 0.0))
+    if parent_obj.get('Add Apron'):
+        # The interior stops under an apron behind the doors.
+        from . import opening_apron
+        dim_z -= opening_apron.panel_height(parent_obj, dim_z)
     return (x, offset, 0.0), (dim_x, dim_y - offset, dim_z)
 
 
@@ -2037,10 +2060,35 @@ def _room_light_rail(scene):
                0.0)
 
 
+def _bottom_row_cabinet(insert_obj, root):
+    """The outermost cabinet holding ``insert_obj`` (a stacked upper
+    nests one cabinet in another) when the opening is in its bottom row,
+    else None."""
+    # Height of the opening over the bottom of the outermost cabinet;
+    # a panel applied under a cabinet lifts its box by the panel.
+    z = 0.0
+    lift = 0.0
+    obj = insert_obj
+    outer = root
+    while obj is not None:
+        if obj.get('IS_FRAMELESS_CABINET_CAGE'):
+            outer = obj
+            lift += finished_bottom_thickness(obj)
+            if not (obj.parent is not None
+                    and cabinet_root(obj.parent) is not None):
+                break
+        z += obj.location.z
+        obj = obj.parent
+    bottom = float(prompt(insert_obj, 'Bottom Thickness', inch(0.75)))
+    if z > bottom + lift + inch(0.0625):
+        return None                 # an opening further up the cabinet
+    return outer
+
+
 def light_rail_door_drop(insert_obj):
-    """How far a front reaches below its opening's bottom board to cover
-    the room's light rail: the rail height on the bottom row of a hung
-    upper cabinet, 0 everywhere else."""
+    """How far a front reaches below its cabinet to cover the room's
+    light rail: the rail height on the bottom row of a hung upper
+    cabinet, 0 everywhere else."""
     root = cabinet_root(insert_obj)
     if root is None or root.get('CABINET_TYPE') != 'UPPER':
         return 0.0
@@ -2048,25 +2096,23 @@ def light_rail_door_drop(insert_obj):
     drop = _room_light_rail(scenes[0]) if scenes else 0.0
     if drop <= 0.0:
         return 0.0
-    # Height of the opening over the bottom of the outermost cabinet (a
-    # stacked upper nests one cabinet in another), and that cabinet's
-    # height off the floor.
-    z = 0.0
-    obj = insert_obj
-    outer = root
-    while obj is not None:
-        if obj.get('IS_FRAMELESS_CABINET_CAGE'):
-            outer = obj
-            if not (obj.parent is not None
-                    and cabinet_root(obj.parent) is not None):
-                break
-        z += obj.location.z
-        obj = obj.parent
-    if outer.location.z < LIGHT_RAIL_MIN_MOUNT:
+    outer = _bottom_row_cabinet(insert_obj, root)
+    if outer is None or outer.location.z < LIGHT_RAIL_MIN_MOUNT:
         return 0.0
-    bottom = float(prompt(insert_obj, 'Bottom Thickness', inch(0.75)))
-    if z > bottom + inch(0.0625):
-        return 0.0                  # an opening further up the cabinet
+    return drop
+
+
+def finished_bottom_door_drop(insert_obj):
+    """How far a front reaches below its opening's bottom board to cover
+    the front edge of a panel applied under its cabinet: the panel's
+    thickness on the bottom row, 0 where there is no panel or the
+    cabinet's fronts are set to stop above it."""
+    root = cabinet_root(insert_obj)
+    drop = finished_bottom_thickness(root)
+    if drop <= 0.0 or not bool(root.get(FB_DOORS_COVER_KEY, True)):
+        return 0.0
+    if _bottom_row_cabinet(insert_obj, root) is None:
+        return 0.0
     return drop
 
 
@@ -2092,8 +2138,9 @@ def front_overlays(insert_obj):
     overlay splits the neighbouring board with the front next door; a
     full overlay covers the board less the reveal. A side with a typed
     overlay takes that value instead (not on an inset front). The bottom
-    of a hung upper's lowest fronts also takes the room's light rail,
-    where its doors are set to cover it.
+    of a hung upper's lowest fronts also takes a panel applied under the
+    cabinet, and the room's light rail, where its doors are set to cover
+    them.
     """
     inset = bool(insert_obj.get('Inset Front', False))
     inset_reveal = float(prompt(insert_obj, 'Inset Reveal', inch(0.125)))
@@ -2113,7 +2160,8 @@ def front_overlays(insert_obj):
     bottom = overlay('Half Overlay Bottom', 'Bottom Thickness',
                      'Bottom Reveal', 0.0)
     if not inset and insert_obj.get('Typed Overlay Bottom') is None:
-        bottom += light_rail_door_drop(insert_obj)
+        bottom += (finished_bottom_door_drop(insert_obj)
+                   + light_rail_door_drop(insert_obj))
     return (overlay('Half Overlay Top', 'Top Thickness', 'Top Reveal', inch(0.0625)),
             bottom,
             overlay('Half Overlay Left', 'Left Thickness', 'Left Reveal', inch(0.0625)),
@@ -2558,6 +2606,8 @@ def solve_insert_parts(insert_obj):
                               thickness)
     if 'Door Swing' in insert_obj:
         _solve_pocket_panels(insert_obj, dim_x, dim_y, dim_z)
+        from . import opening_apron
+        opening_apron.solve(insert_obj, dim_x, dim_z, top)
 
 
 def attach_cage(child_obj, parent_obj):

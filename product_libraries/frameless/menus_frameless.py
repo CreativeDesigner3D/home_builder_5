@@ -2,52 +2,6 @@ import bpy
 from ... import hb_utils, units
 from ..common import appliance_geo
 
-class HOME_BUILDER_MT_applied_ends(bpy.types.Menu):
-    bl_label = "Applied Ends"
-
-    def draw(self, context):
-        layout = self.layout
-        layout.label(text="Slab Panels:")
-        layout.operator("hb_frameless.add_applied_end", text="Add Left Slab").side = 'LEFT'
-        layout.operator("hb_frameless.add_applied_end", text="Add Right Slab").side = 'RIGHT'
-        layout.operator("hb_frameless.add_applied_end", text="Add Back Slab").side = 'BACK'
-        layout.operator("hb_frameless.add_applied_end", text="Add Both Sides Slab").side = 'BOTH'
-        layout.separator()
-        layout.label(text="End Legs (1-1/2 in):")
-        for side, text in (('LEFT', "Add Left End Leg"), ('RIGHT', "Add Right End Leg"),
-                           ('BOTH', "Add Both End Legs")):
-            op = layout.operator("hb_frameless.add_applied_end", text=text)
-            op.side = side
-            op.thickness = units.inch(1.5)
-        layout.separator()
-        cabinet = hb_utils.get_cabinet_bp(context.object)
-        sides = [s for s in ('LEFT', 'RIGHT', 'BACK') if cabinet is not None and any(
-            c.get('IS_APPLIED_END_' + s) and not c.get('IS_APPLIED_PANEL_5PIECE')
-            for c in cabinet.children)]
-        if sides:
-            layout.label(text="End Panel Options:")
-            for side in sides:
-                layout.operator("hb_frameless.applied_end_prompts",
-                                text=side.title() + " End...").side = side
-            layout.separator()
-        layout.label(text="5-Piece Panels:")
-        op = layout.operator("hb_frameless.update_finished_end", text="Left 5-Piece...")
-        op.side = 'LEFT'
-        op.finished_end_type = '5PIECE'
-        op = layout.operator("hb_frameless.update_finished_end", text="Right 5-Piece...")
-        op.side = 'RIGHT'
-        op.finished_end_type = '5PIECE'
-        op = layout.operator("hb_frameless.update_finished_end", text="Back 5-Piece...")
-        op.side = 'BACK'
-        op.finished_end_type = '5PIECE'
-        layout.separator()
-        layout.label(text="Remove:")
-        layout.operator("hb_frameless.remove_applied_end", text="Remove Left").side = 'LEFT'
-        layout.operator("hb_frameless.remove_applied_end", text="Remove Right").side = 'RIGHT'
-        layout.operator("hb_frameless.remove_applied_end", text="Remove Back").side = 'BACK'
-        layout.operator("hb_frameless.remove_applied_end", text="Remove Both Sides").side = 'BOTH'
-
-
 class HOME_BUILDER_MT_applied_end_commands(bpy.types.Menu):
     bl_label = "Applied End Commands"
 
@@ -90,18 +44,43 @@ def _draw_bottom_finish(layout, side, label):
                         text=name).panel = ident
 
 
+def _draw_panel_options(layout, cabinet, side):
+    """The sizes of the panel applied to ``side``, when there is one: a
+    slab's thickness, reach and height, or a five-piece's rails and
+    stiles."""
+    if cabinet is None:
+        return
+    panel = next((c for c in cabinet.children
+                  if c.get('IS_APPLIED_END_' + side)), None)
+    if panel is None:
+        return
+    if panel.get('IS_APPLIED_PANEL_5PIECE'):
+        op = layout.operator("hb_frameless.update_finished_end",
+                             text="5-Piece Panel Options...")
+        op.side = side
+        op.finished_end_type = '5PIECE'
+    else:
+        layout.operator("hb_frameless.applied_end_prompts",
+                        text="End Panel Options...").side = side
+
+
 class HOME_BUILDER_MT_finish_condition(bpy.types.Menu):
     """A side's finish condition on every selected cabinet."""
     bl_label = "Finish Condition"
 
     def draw(self, context):
         layout = self.layout
+        from .operators import ops_finished_ends
+        cabinet = hb_utils.get_cabinet_bp(context.object)
         for side, label in (('LEFT', "Left End:"), ('RIGHT', "Right End:"),
                             ('BACK', "Back:")):
             _draw_finish_conditions(layout, side, label, auto=True)
+            _draw_panel_options(layout, cabinet, side)
             layout.separator()
-        _draw_finish_conditions(layout, 'TOP', "Top:", panels=False)
-        from .operators import ops_finished_ends
+        # A wall cabinet's top follows its height until it is set by hand.
+        _draw_finish_conditions(
+            layout, 'TOP', "Top:", panels=False,
+            auto=bool(ops_finished_ends.finished_bottom_cabinets(context)))
         if ops_finished_ends.finished_bottom_cabinets(context):
             layout.separator()
             _draw_bottom_finish(layout, 'BOTTOM', "Bottom:")
@@ -125,7 +104,9 @@ class HOME_BUILDER_MT_carcass_part_commands(bpy.types.Menu):
         elif side is not None:
             _draw_finish_conditions(layout, 'PART', side.title() + " Finish:",
                                     panels=side in ops_finished_ends.PANEL_SIDES,
-                                    auto=side in ('LEFT', 'RIGHT', 'BACK'))
+                                    auto=(side in ('LEFT', 'RIGHT', 'BACK')
+                                          or (side == 'TOP' and ops_finished_ends
+                                              .takes_finished_bottom(obj.parent))))
             layout.separator()
         layout.operator("hb_frameless.cabinet_prompts", text="Cabinet Prompts")
         layout.operator("hb_frameless.finish_interior", text="Finish Interior")
@@ -150,7 +131,6 @@ class HOME_BUILDER_MT_cabinet_commands(bpy.types.Menu):
         layout.separator()
         layout.operator("hb_frameless.drop_cabinet_to_countertop", text="Drop to Countertop")
         layout.separator()
-        layout.menu("HOME_BUILDER_MT_applied_ends", text="Applied Ends")
         layout.menu("HOME_BUILDER_MT_finish_condition", text="Finish Condition")
         layout.operator("hb_frameless.finish_interior", text="Finish Interior")
         
@@ -494,8 +474,6 @@ class HOME_BUILDER_MT_leg_commands(bpy.types.Menu):
         layout = self.layout
         layout.operator("hb_frameless.product_prompts", text="Leg Prompts")
         layout.separator()
-        layout.menu("HOME_BUILDER_MT_applied_ends", text="Applied Ends")
-        layout.separator()
         layout.operator("hb_frameless.delete_product", text="Delete Leg")
 
 
@@ -506,7 +484,6 @@ class HOME_BUILDER_MT_part_commands(bpy.types.Menu):
         layout = self.layout
         layout.operator("hb_frameless.product_prompts", text="Part Prompts")
         layout.separator()
-        # Hide Applied Ends for misc parts (they have no cage with openings)
         obj = context.object
         is_misc = False
         if obj:
@@ -516,9 +493,6 @@ class HOME_BUILDER_MT_part_commands(bpy.types.Menu):
                     is_misc = True
                     break
                 current = current.parent
-        if not is_misc:
-            layout.menu("HOME_BUILDER_MT_applied_ends", text="Applied Ends")
-            layout.separator()
         if is_misc:
             layout.operator("hb_frameless.convert_to_door_panel", text="Convert to Door Panel")
             layout.separator()
@@ -557,7 +531,6 @@ class HOME_BUILDER_MT_appliance_commands(bpy.types.Menu):
 
 
 classes = (
-    HOME_BUILDER_MT_applied_ends,
     HOME_BUILDER_MT_finish_condition,
     HOME_BUILDER_MT_carcass_part_commands,
     HOME_BUILDER_MT_cabinet_commands,

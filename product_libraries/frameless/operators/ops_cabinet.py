@@ -98,6 +98,9 @@ class hb_frameless_OT_cabinet_prompts(bpy.types.Operator):
         description="A panel of finished stock applied under the upper",
         items=[('0', "None", ""), ('1', "1/4\" Panel", ""), ('2', "3/4\" Panel", "")],
         default='0') # type: ignore
+    fb_doors_cover: bpy.props.BoolProperty(
+        name="Doors Cover Panel", default=True,
+        description="The bottom doors and drawer fronts come down over the front edge of the panel") # type: ignore
     fb_led_route: bpy.props.BoolProperty(
         name="LED Route", default=False,
         description="Route a groove for an LED strip in the panel's underside") # type: ignore
@@ -185,6 +188,7 @@ class hb_frameless_OT_cabinet_prompts(bpy.types.Operator):
         self.front_right_depth = float(cabinet_bp.get(
             solver_frameless.FRONT_RIGHT_DEPTH_KEY, self.cabinet_depth))
         self.finished_bottom = str(int(cabinet_bp.get(solver_frameless.FINISHED_BOTTOM_KEY, 0)))
+        self.fb_doors_cover = bool(cabinet_bp.get(solver_frameless.FB_DOORS_COVER_KEY, True))
         self.fb_led_route = bool(cabinet_bp.get(solver_frameless.FB_LED_KEY, False))
         self.fb_led_width = float(cabinet_bp.get(solver_frameless.FB_LED_WIDTH_KEY, units.inch(0.875)))
         self.fb_led_depth = float(cabinet_bp.get(solver_frameless.FB_LED_DEPTH_KEY, units.inch(0.375)))
@@ -275,6 +279,9 @@ class hb_frameless_OT_cabinet_prompts(bpy.types.Operator):
         if self._is_upper() and (self.finished_bottom != '0'
                                  or solver_frameless.FINISHED_BOTTOM_KEY in obj):
             obj[solver_frameless.FINISHED_BOTTOM_KEY] = int(self.finished_bottom)
+            if (not self.fb_doors_cover
+                    or solver_frameless.FB_DOORS_COVER_KEY in obj):
+                obj[solver_frameless.FB_DOORS_COVER_KEY] = self.fb_doors_cover
             obj[solver_frameless.FB_LED_KEY] = self.fb_led_route
             obj[solver_frameless.FB_LED_WIDTH_KEY] = self.fb_led_width
             obj[solver_frameless.FB_LED_DEPTH_KEY] = self.fb_led_depth
@@ -379,6 +386,7 @@ class hb_frameless_OT_cabinet_prompts(bpy.types.Operator):
             row.label(text="Finished Bottom:")
             row.prop(self, 'finished_bottom', text="")
             if self.finished_bottom != '0':
+                col.prop(self, 'fb_doors_cover')
                 col.prop(self, 'fb_led_route')
                 if self.fb_led_route:
                     for prop, label in (('fb_led_width', "Width:"),

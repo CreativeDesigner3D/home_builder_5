@@ -184,6 +184,138 @@ class TypingTarget(Enum):
 # Whole number, dash, fraction: "155-15/16" (a leading '-' is a sign).
 _COMPOUND_RE = re.compile(r'^-?(\d+(?:\.\d+)?)-(\d+(?:\.\d+)?/\d+(?:\.\d+)?)$')
 
+
+# ---- Arithmetic in a typed distance ---------------------------------------
+# "36-1.5", "(96-3)/2", "24\"+3/4", "12*3": a typed value may be a sum.
+# Every measurement keeps the meaning it has typed alone -- a fraction, a
+# whole and a fraction ("5 3/4", or CAD style "5-3/4" with no spaces), feet
+# and inches, a unit mark -- and the operators work between them. A dash
+# with a space on either side always subtracts.
+
+_NUM = r'(?:\d+(?:\.\d*)?|\.\d+)'
+_FRAC = _NUM + r'/' + _NUM
+# One measurement, most specific form first.
+_INCHES = r'(?:' + _NUM + r'(?:(?:\s+|-)' + _FRAC + r')|' + _FRAC + r'|' + _NUM + r')'
+_FEET_INCHES_RE = re.compile(
+    r"(" + _NUM + r")\s*(?:'|ft\b)(?:-?\s*(" + _INCHES + r")(?![\d./])\s*(?:\"|in\b)?)?",
+    re.IGNORECASE)
+_UNIT_MARK = r"\s*(\"|in\b|mm\b|cm\b|m\b)?"
+_LITERAL_RE = re.compile(r"(" + _INCHES + r")" + _UNIT_MARK, re.IGNORECASE)
+# The same with no dash form, for "12-6/2": a dash before something that
+# is not a proper fraction subtracts.
+_PLAIN_LITERAL_RE = re.compile(
+    r"(" + _NUM + r"\s+" + _FRAC + r"|" + _FRAC + r"|" + _NUM + r")" + _UNIT_MARK,
+    re.IGNORECASE)
+_DASH_FRACTION_RE = re.compile(r'^' + _NUM + r'-(' + _NUM + r')/(' + _NUM + r')$')
+_UNIT_METRES = {'"': 0.0254, 'in': 0.0254, 'mm': 0.001, 'cm': 0.01, 'm': 1.0}
+
+
+def _mixed_number(text):
+    """A plain number, a fraction, or a whole and a fraction."""
+    text = text.strip()
+    whole = 0.0
+    m = re.match(r'^(' + _NUM + r')(?:\s+|-)(' + _FRAC + r')$', text)
+    if m:
+        whole, text = float(m.group(1)), m.group(2)
+    if '/' in text:
+        num, den = text.split('/')
+        return whole + float(num) / float(den)
+    return float(text)
+
+
+def evaluate_typed_expression(text, unit_metres=None):
+    """Work out typed arithmetic. A bare number is in the field's own
+    unit; with ``unit_metres`` (the size of that unit) a measurement
+    may carry a unit mark and is converted to it. Returns the result in
+    the field's unit, or None when the text is not a full expression."""
+    text = text.strip()
+    pos = 0
+    n = len(text)
+
+    def skip():
+        nonlocal pos
+        while pos < n and text[pos].isspace():
+            pos += 1
+
+    def literal():
+        nonlocal pos
+        if unit_metres:
+            m = _FEET_INCHES_RE.match(text, pos)
+            if m:
+                pos = m.end()
+                value = float(m.group(1)) * 0.3048
+                if m.group(2):
+                    value += _mixed_number(m.group(2)) * 0.0254
+                return value / unit_metres
+        m = _LITERAL_RE.match(text, pos)
+        if m:
+            dash = _DASH_FRACTION_RE.match(m.group(1))
+            if dash and float(dash.group(1)) >= float(dash.group(2)):
+                m = _PLAIN_LITERAL_RE.match(text, pos)
+        if not m:
+            raise ValueError(text)
+        value = _mixed_number(m.group(1))
+        unit = m.group(2)
+        if unit:
+            if not unit_metres:
+                raise ValueError(text)
+            pos = m.end()
+            return value * _UNIT_METRES[unit.lower()] / unit_metres
+        pos = m.end(1)
+        return value
+
+    def factor():
+        nonlocal pos
+        skip()
+        if pos < n and text[pos] in '+-':
+            sign = -1.0 if text[pos] == '-' else 1.0
+            pos += 1
+            return sign * factor()
+        if pos < n and text[pos] == '(':
+            pos += 1
+            value = expr()
+            skip()
+            if pos >= n or text[pos] != ')':
+                raise ValueError(text)
+            pos += 1
+            return value
+        return literal()
+
+    def term():
+        nonlocal pos
+        value = factor()
+        while True:
+            skip()
+            if pos < n and text[pos] in '*/':
+                op = text[pos]
+                pos += 1
+                other = factor()
+                value = value * other if op == '*' else value / other
+            else:
+                return value
+
+    def expr():
+        nonlocal pos
+        value = term()
+        while True:
+            skip()
+            if pos < n and text[pos] in '+-':
+                op = text[pos]
+                pos += 1
+                other = term()
+                value = value + other if op == '+' else value - other
+            else:
+                return value
+
+    try:
+        result = expr()
+        skip()
+        if pos != n:
+            return None
+        return result
+    except (ValueError, ZeroDivisionError, RecursionError):
+        return None
+
 # Keys that trigger number input
 NUMBER_KEYS = {
     'ZERO': '0', 'ONE': '1', 'TWO': '2', 'THREE': '3', 'FOUR': '4',
@@ -447,6 +579,7 @@ class PlacementMixin:
         - Plain numbers (interpreted based on scene units)
         - Feet and inches: 5'6" or 5' 6" or 5'6
         - Fractions: 5/8 or 5 3/4
+        - Arithmetic: 36-1.5, (96-3)/2, 24"+3/4, 12*3
         - Explicit units: 24" or 24in or 600mm or 0.6m
         
         Returns None if parsing fails.
@@ -457,7 +590,15 @@ class PlacementMixin:
         value_str = value_str.strip()
         if not value_str:
             return None
-            
+
+        # Arithmetic between measurements; anything it cannot read as a
+        # whole falls through to the single-value forms below.
+        if any(c in value_str for c in '+-*/()'):
+            unit = self._number_to_scene_units(1.0)
+            number = evaluate_typed_expression(value_str, unit)
+            if number is not None:
+                return number * unit
+
         try:
             # Check for feet/inches notation: 5'6" or 5' 6"
             if "'" in value_str:

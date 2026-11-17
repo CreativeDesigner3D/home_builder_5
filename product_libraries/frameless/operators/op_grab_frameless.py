@@ -1029,8 +1029,10 @@ class hb_frameless_OT_grab(bpy.types.Operator):
             "between two cabinets, or (Openings mode) a divider  |  "
             "Type: size  |  "
             "Shift: no snap  |  Enter / Esc: done")
-        from ....operators.viewport_hud import register_active_modal
+        from ....operators.viewport_hud import register_active_modal, raise_panels
         register_active_modal(self)
+        # This handler was added after the panels': put them back on top.
+        raise_panels()
         self._exit_requested = False
         self._exit_timer = None
         _live_grabs.add(self)

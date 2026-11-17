@@ -577,6 +577,7 @@ STEEL_SUPPORT_FIELDS = (
     ('distance', 'top_offset', "Down From Top"),
     ('distance', 'bar_width', "Bar Width"),
     ('distance', 'thickness', "Thickness"),
+    ('bool', 'cabinet_prep', "Cabinet Prep"),
 )
 
 

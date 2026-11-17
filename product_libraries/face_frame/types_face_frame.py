@@ -601,6 +601,16 @@ def drawer_split_stile_piece_width(op_props):
             + 2.0 * max(0.0, op_props.drawer_split_groove_width))
 
 
+def drawer_split_pull_faces(n, op_props):
+    """Indices (left to right) of the faces of an n-face side-by-side
+    drawer front that carry a pull."""
+    if getattr(op_props, 'drawer_split_pulls', 'MIDDLE') == 'ALL':
+        return set(range(n))
+    if n % 2:
+        return {n // 2}
+    return {n // 2 - 1, n // 2}
+
+
 def drawer_split_face_widths(width, op_props):
     """Face widths, left to right, of a side-by-side drawer front
     ``width`` wide, or None when the look is off or does not fit. Typed
@@ -14637,7 +14647,8 @@ class FaceFrameCabinet(GeoNodeCage):
                 and _door_look_hinge_ok(op_props)
             )
             # Side-by-side drawer look: one drawer front built from N
-            # faces with integral stiles between; a pull per face.
+            # faces with integral stiles between; pulls on the middle
+            # face(s), or on every face when asked.
             split_faces = None
             if (not drawer_look and leaf['role'] == PART_ROLE_DRAWER_FRONT
                     and drawer_split_look_allowed(opening_obj)):
@@ -14921,7 +14932,7 @@ class FaceFrameCabinet(GeoNodeCage):
         tiled edge to edge across the front. A stile piece is cut two
         grooves wider than its visible face, with a groove down each
         edge of the face. ``face_ws`` runs left to right as seen from
-        the front; each face gets its own pull.
+        the front; the faces named by drawer_split_pull_faces get a pull.
         """
         length, width, thickness = leaf['part_dims']
         n = len(face_ws)
@@ -14945,7 +14956,9 @@ class FaceFrameCabinet(GeoNodeCage):
         lead['HB_DRAWER_SPLIT_FACES'] = n
         lead['HB_DRAWER_SPLIT_INDEX'] = order[0] + 1
         front.set_input('Width', face_ws[order[0]])
-        if pulls_on:
+        pull_faces = (drawer_split_pull_faces(n, op_props) if pulls_on
+                      else set())
+        if order[0] in pull_faces:
             self._add_drawer_look_pull(lead, length, face_ws[order[0]],
                                        thickness, scene_props)
         y = face_ws[order[0]]
@@ -14982,7 +14995,7 @@ class FaceFrameCabinet(GeoNodeCage):
             panel.set_input('Length', length)
             panel.set_input('Width', face_ws[i])
             panel.set_input('Thickness', thickness)
-            if pulls_on:
+            if i in pull_faces:
                 self._add_drawer_look_pull(panel.obj, length, face_ws[i],
                                            thickness, scene_props)
             y += face_ws[i]

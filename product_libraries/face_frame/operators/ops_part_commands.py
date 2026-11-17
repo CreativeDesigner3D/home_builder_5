@@ -2461,6 +2461,10 @@ class hb_face_frame_OT_make_glass_door(bpy.types.Operator):
         description="The glass ships with the cabinets (otherwise the "
                     "door is prepped for glass supplied by others)",
         default=False)  # type: ignore
+    tempered: BoolProperty(
+        name="Tempered",
+        description="Tempered safety glass (clear, frosted and smoked only)",
+        default=False)  # type: ignore
     both: BoolProperty(
         name="Both Doors",
         description="Apply to every door in the opening, not just this one",
@@ -2480,6 +2484,7 @@ class hb_face_frame_OT_make_glass_door(bpy.types.Operator):
             self.glass_type = spec['type']
             self.included = spec['included']
             self.custom = spec.get('custom', '')
+            self.tempered = spec.get('tempered', False)
             # Editing one glass leaf of a pair: only that leaf by
             # default, so a single glass door stays single.
             others = [f for f in _opening_door_fronts(_frame_store(door))
@@ -2490,8 +2495,11 @@ class hb_face_frame_OT_make_glass_door(bpy.types.Operator):
     def draw(self, context):
         col = self.layout.column(align=True)
         col.prop(self, 'glass_type')
+        from .. import props_hb_face_frame as _props
         if self.glass_type == 'CUSTOM':
             col.prop(self, 'custom')
+        if self.glass_type in _props.GLASS_TEMPERABLE_TYPES:
+            col.prop(self, 'tempered')
         col.prop(self, 'included')
         stores = {_frame_store(d).name for d in _glass_door_candidates(context)}
         pair = any(len(_opening_door_fronts(_frame_store(d))) > 1
@@ -2510,7 +2518,7 @@ class hb_face_frame_OT_make_glass_door(bpy.types.Operator):
         if not targets:
             return {'CANCELLED'}
         spec = {'type': self.glass_type, 'included': self.included,
-                'custom': self.custom}
+                'custom': self.custom, 'tempered': self.tempered}
         n = 0
         with types_face_frame.suspend_recalc():
             for store, fronts in targets:

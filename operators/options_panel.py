@@ -300,6 +300,10 @@ def parse_number(text):
         return float(text)
     except ValueError:
         pass
+    # Arithmetic ("90/4", "3*1.5", "(7-1)/2"), fractions included.
+    value = hb_placement.evaluate_typed_expression(text)
+    if value is not None:
+        return value
     sign = -1.0 if text.startswith('-') else 1.0
     parts = text.lstrip('-').replace('-', ' ').split()
     try:
@@ -1515,8 +1519,14 @@ def _field_entries(context, field, owner, x, top, row_w, row_h, s):
             options['custom_toggle'] = custom
     elif fkind == 'locked':
         chip_prop, glyph = options.get('unlock'), 'lock'
-        fkind = 'distance'
-        options['readonly'] = not getattr(owner, chip_prop, False)
+        pick = options.get('pick')
+        if pick:
+            # The value as a pick off a list: choosing one takes the
+            # value over, so the list is open behind a closed padlock.
+            fkind, prop = 'enum', pick
+        else:
+            fkind = 'distance'
+            options['readonly'] = not getattr(owner, chip_prop, False)
     remove = options.get('remove')
     # A command about the value, at the row's end: fn(owner) ->
     # (operator, kwargs, icon, tip), or None while it has none.

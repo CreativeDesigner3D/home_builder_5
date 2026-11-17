@@ -484,6 +484,10 @@ def support_frame_parts(frame_obj):
     return product_parts(frame_obj)
 
 
+# How far a wrapped leg stands proud of the frame it carries.
+LEG_REVEAL_KEY = 'Leg Reveal'
+
+
 def recalculate_support_frame(obj):
     """Solve the support frame at or above ``obj``."""
     recalculate_product(support_frame_root(obj))
@@ -513,40 +517,55 @@ def _solve_support_frame(root, parts, dim_x, dim_y, dim_z):
         on, leg_type = legs[role]
         return on and leg_type == LEG_TYPE_WRAPPED
 
+    # A wrapped leg can stand proud of the frame: each side of the frame
+    # that runs into one is held back from the leg's outside face by the
+    # reveal, so the cage stays the leg-to-leg size.
+    if LEG_REVEAL_KEY not in root:
+        root.home_builder.add_property(LEG_REVEAL_KEY, 'DISTANCE', 0.0)
+    reveal = max(float(_prompt(root, LEG_REVEAL_KEY, 0.0)), 0.0)
+
+    def side_reveal(*roles):
+        return reveal if any(wrapped(r) for r in roles) else 0.0
+
+    rv_l = side_reveal('FRONT_LEFT_LEG', 'BACK_LEFT_LEG')
+    rv_r = side_reveal('FRONT_RIGHT_LEG', 'BACK_RIGHT_LEG')
+    rv_f = side_reveal('FRONT_LEFT_LEG', 'FRONT_RIGHT_LEG')
+    rv_b = side_reveal('BACK_LEFT_LEG', 'BACK_RIGHT_LEG')
+
     # How much each corner takes out of the rail running into it: the leg
     # itself where the leg wraps the frame, otherwise just the rail it
-    # butts against.
-    fl_y = leg_d if wrapped('FRONT_LEFT_LEG') else mt
-    fr_y = leg_d if wrapped('FRONT_RIGHT_LEG') else mt
-    bl_y = leg_d if wrapped('BACK_LEFT_LEG') else mt
-    br_y = leg_d if wrapped('BACK_RIGHT_LEG') else mt
-    bl_x = leg_w if wrapped('BACK_LEFT_LEG') else 0.0
-    br_x = leg_w if wrapped('BACK_RIGHT_LEG') else 0.0
-    fl_x = leg_w if wrapped('FRONT_LEFT_LEG') else 0.0
-    fr_x = leg_w if wrapped('FRONT_RIGHT_LEG') else 0.0
+    # butts against (held back with that rail).
+    fl_y = leg_d if wrapped('FRONT_LEFT_LEG') else mt + rv_f
+    fr_y = leg_d if wrapped('FRONT_RIGHT_LEG') else mt + rv_f
+    bl_y = leg_d if wrapped('BACK_LEFT_LEG') else mt + rv_b
+    br_y = leg_d if wrapped('BACK_RIGHT_LEG') else mt + rv_b
+    bl_x = leg_w if wrapped('BACK_LEFT_LEG') else rv_l
+    br_x = leg_w if wrapped('BACK_RIGHT_LEG') else rv_r
+    fl_x = leg_w if wrapped('FRONT_LEFT_LEG') else rv_l
+    fr_x = leg_w if wrapped('FRONT_RIGHT_LEG') else rv_r
 
     part = parts.get('LEFT_RAIL')
     if part is not None:
         _finish_faces(part, LEFT_MIRRORED_FINISH)
-        _set_part(part, (0.0, -bl_y, 0.0),
+        _set_part(part, (rv_l, -bl_y, 0.0),
                   length=dim_y - fl_y - bl_y, width=dim_z, thickness=mt,
                   visible=bool(get('Left Rail', True)))
 
     part = parts.get('RIGHT_RAIL')
     if part is not None:
-        _set_part(part, (dim_x, -br_y, 0.0),
+        _set_part(part, (dim_x - rv_r, -br_y, 0.0),
                   length=dim_y - fr_y - br_y, width=dim_z, thickness=mt,
                   visible=bool(get('Right Rail', True)))
 
     part = parts.get('FRONT_RAIL')
     if part is not None:
-        _set_part(part, (fl_x, -dim_y, 0.0),
+        _set_part(part, (fl_x, -(dim_y - rv_f), 0.0),
                   length=dim_x - fl_x - fr_x, width=dim_z, thickness=mt,
                   visible=bool(get('Front Rail', True)))
 
     part = parts.get('BACK_RAIL')
     if part is not None:
-        _set_part(part, (bl_x, 0.0, 0.0),
+        _set_part(part, (bl_x, -rv_b, 0.0),
                   length=dim_x - bl_x - br_x, width=dim_z, thickness=mt,
                   visible=bool(get('Back Rail', True)))
 
@@ -558,20 +577,21 @@ def _solve_support_frame(root, parts, dim_x, dim_y, dim_z):
         if spacing > 0.0:
             count = int(math.floor((dim_x - mt * 2.0 - spacing) / spacing)) + 1
             count = max(count, 0)
-        _set_part(part, (spacing, -mt, 0.0),
-                  length=dim_y - mt * 2.0, width=dim_z, thickness=mt,
-                  visible=count > 0)
+        _set_part(part, (spacing, -(mt + rv_b), 0.0),
+                  length=dim_y - mt * 2.0 - rv_f - rv_b, width=dim_z,
+                  thickness=mt, visible=count > 0)
         _set_array(part, count, -spacing)
 
     # Legs hang from the top of the frame down to the floor. An inset leg
     # sits inside the rails by their thickness; a wrapped leg sits at the
-    # frame's outside face, with the rails stopped short of it above.
+    # cage's outside face, with the rails stopped short of it above.
+    in_l, in_r = mt + rv_l, dim_x - mt - rv_r
+    in_f, in_b = -(dim_y - mt - rv_f), -(mt + rv_b)
     leg_specs = {
-        'FRONT_LEFT_LEG': ((mt, -(dim_y - mt)), (0.0, -dim_y), leg_w, leg_d),
-        'FRONT_RIGHT_LEG': ((dim_x - mt, -(dim_y - mt)), (dim_x, -dim_y),
-                            leg_d, leg_w),
-        'BACK_LEFT_LEG': ((mt, -mt), (0.0, 0.0), leg_d, leg_w),
-        'BACK_RIGHT_LEG': ((dim_x - mt, -mt), (dim_x, 0.0), leg_w, leg_d),
+        'FRONT_LEFT_LEG': ((in_l, in_f), (0.0, -dim_y), leg_w, leg_d),
+        'FRONT_RIGHT_LEG': ((in_r, in_f), (dim_x, -dim_y), leg_d, leg_w),
+        'BACK_LEFT_LEG': ((in_l, in_b), (0.0, 0.0), leg_d, leg_w),
+        'BACK_RIGHT_LEG': ((in_r, in_b), (dim_x, 0.0), leg_w, leg_d),
     }
     for role, (inset_xy, wrapped_xy, width, thickness) in leg_specs.items():
         part = parts.get(role)
@@ -614,6 +634,7 @@ class SupportFrame(Product):
         self.add_property('Leg Width', 'DISTANCE', inch(3.5))
         self.add_property('Leg Depth', 'DISTANCE', inch(3.5))
         self.add_property('Leg Height', 'DISTANCE', inch(34.5))
+        self.add_property(LEG_REVEAL_KEY, 'DISTANCE', 0.0)
         self.add_property('Front Left Leg Type', 'COMBOBOX', 0, combobox_items=["Inset", "Wrapped"])
         self.add_property('Front Right Leg Type', 'COMBOBOX', 0, combobox_items=["Inset", "Wrapped"])
         self.add_property('Back Left Leg Type', 'COMBOBOX', 0, combobox_items=["Inset", "Wrapped"])

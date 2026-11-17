@@ -3,6 +3,7 @@ from .. import types_frameless
 from .. import solver_frameless
 from .. import props_hb_frameless
 from .. import drawer_look
+from .. import opening_apron
 from .... import hb_utils, hb_types, units
 from . import ops_interior
 
@@ -732,6 +733,14 @@ class hb_frameless_OT_opening_prompts(bpy.types.Operator):
         name="Top Front Height",
         description="Height of the top drawer look front; 0 makes the fronts equal",
         default=0.0, min=0.0, unit='LENGTH', precision=4) # type: ignore
+    add_apron: bpy.props.BoolProperty(
+        name="Add Apron",
+        description="A fixed panel across the top of the opening, behind the doors; the doors stay full height",
+        default=False) # type: ignore
+    apron_height: bpy.props.FloatProperty(
+        name="Apron Height",
+        description="Height of the apron, measured down from the top of the doors",
+        default=opening_apron.DEFAULT_HEIGHT, min=0.0, unit='LENGTH', precision=4) # type: ignore
     lift_mechanism: bpy.props.EnumProperty(
         name="Lift Mechanism",
         items=[('0', "Stay Lift", "Front tilts up on its top edge"),
@@ -770,6 +779,8 @@ class hb_frameless_OT_opening_prompts(bpy.types.Operator):
             self.drawer_look = str(drawer_look.count(opening_bp))
             self.drawer_look_top_height = float(
                 opening_bp.get(drawer_look.TOP_HEIGHT_KEY, 0.0))
+            self.add_apron = opening_apron.wanted(opening_bp)
+            self.apron_height = opening_apron.height(opening_bp)
         self.lift_mechanism = str(int(opening_bp.get('Lift Mechanism', 0)))
         if 'Inset Front' in opening_bp:
             self.inset_front = opening_bp['Inset Front']
@@ -799,6 +810,10 @@ class hb_frameless_OT_opening_prompts(bpy.types.Operator):
             if (drawer_look.TOP_HEIGHT_KEY in self.opening.obj
                     or self.drawer_look_top_height > 0.0):
                 self.opening.obj[drawer_look.TOP_HEIGHT_KEY] = self.drawer_look_top_height
+            # And the apron.
+            if opening_apron.ADD_KEY in self.opening.obj or self.add_apron:
+                self.opening.obj[opening_apron.ADD_KEY] = self.add_apron
+                self.opening.obj[opening_apron.HEIGHT_KEY] = self.apron_height
         if self._is_flip_up():
             self.opening.obj['Lift Mechanism'] = int(self.lift_mechanism)
         if 'Inset Front' in self.opening.obj:
@@ -835,6 +850,12 @@ class hb_frameless_OT_opening_prompts(bpy.types.Operator):
                 row = box.row()
                 row.label(text="Top Front Height:")
                 row.prop(self, 'drawer_look_top_height', text="")
+            row = box.row()
+            row.prop(self, 'add_apron')
+            if self.add_apron:
+                row = box.row()
+                row.label(text="Apron Height:")
+                row.prop(self, 'apron_height', text="")
 
         if self._is_flip_up():
             row = box.row()

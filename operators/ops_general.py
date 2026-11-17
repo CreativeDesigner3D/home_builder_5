@@ -27,6 +27,11 @@ class HB_MT_call_menu_wrapper(bpy.types.Menu):
         layout = self.layout
         layout.operator_context = 'INVOKE_DEFAULT'
         obj = context.object
+        # A copied cabinet can be pasted from any right-click in a room,
+        # whatever was under the click.
+        from . import cabinet_clipboard
+        if cabinet_clipboard.draw_paste_item(layout, context):
+            layout.separator()
         if (obj and "MENU_ID" in obj and obj["MENU_ID"]
                 and hasattr(bpy.types, obj["MENU_ID"])):
             layout.menu_contents(obj["MENU_ID"])
