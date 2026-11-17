@@ -284,8 +284,48 @@ def carcass_parts(root):
     return parts
 
 
+# How far the box stands in from the cabinet's left face, as last solved
+# (the thickness of an applied left end).
+CARCASS_SHIFT_KEY = 'hb_carcass_shift'
+
+# An applied end never squeezes the box narrower than this.
+APPLIED_END_MIN_BOX = inch(3.0)
+
+
+def applied_end_insets(root, parts, kind, dim_x, dim_y):
+    """(left, right) width the applied end panels take out of the box.
+
+    An applied end is part of the cabinet's width: the box is made
+    narrower by the panel's thickness and the panel stands inside the
+    width the cabinet was given. Corner cabinets and cabinets with an
+    angled front or back keep their panels outside.
+    """
+    if kind not in STRAIGHT_KINDS:
+        return 0.0, 0.0
+    if int(prompt(root, ANGLED_BACK_KEY, 0) or 0):
+        return 0.0, 0.0
+    mt = float(prompt(root, 'Material Thickness', inch(0.75)))
+    depths = angled_front_depths(root, dim_y, mt)
+    if depths is not None and any(abs(d - dim_y) > 1e-6 for d in depths):
+        return 0.0, 0.0
+    insets = []
+    for role in ('APPLIED_END_LEFT', 'APPLIED_END_RIGHT'):
+        part = parts.get(role)
+        t = 0.0
+        if part is not None and not part.hide_viewport:
+            try:
+                t = max(float(GeoNodeCutpart(part).get_input('Thickness')),
+                        0.0)
+            except Exception:
+                t = 0.0
+        insets.append(t)
+    if dim_x - insets[0] - insets[1] < APPLIED_END_MIN_BOX:
+        return 0.0, 0.0
+    return insets[0], insets[1]
+
+
 def _solve_applied_ends(root, parts, p, dim_x, dim_y, dim_z):
-    """Applied end panels on the cabinet's outside faces."""
+    """Applied end panels on the box's outside faces."""
     # An applied back stands behind the cabinet, so an applied end runs
     # back over its edge, and the back meets that end instead of
     # stopping short of it.
@@ -1610,6 +1650,16 @@ def recalculate_cabinet(obj):
     prompts = _Prompts(root)
     dims = (cage.get_input('Dim X'), cage.get_input('Dim Y'),
             cage.get_input('Dim Z'))
+    # Applied ends stand inside the cabinet's width: the box is solved
+    # at what is left between them, from its own left face, and then
+    # moved over by the left panel. Whatever the last solve moved goes
+    # back first, so a part this solve does not place stays put.
+    left_in, right_in = applied_end_insets(root, parts, kind, dims[0], dims[1])
+    moved = float(root.get(CARCASS_SHIFT_KEY, 0.0) or 0.0)
+    if moved:
+        for part_obj in parts.values():
+            part_obj.location.x -= moved
+    dims = (dims[0] - left_in - right_in, dims[1], dims[2])
     _SOLVERS[kind](root, parts, prompts, *dims)
     if kind == 'UPPER':
         _solve_finished_bottom(root, parts, prompts, *dims)
@@ -1619,6 +1669,12 @@ def recalculate_cabinet(obj):
         _solve_angled_back(root, parts, prompts, *dims)
     _solve_blind_corner(root, parts, prompts, *dims)
     _solve_applied_ends(root, parts, prompts, *dims)
+    if left_in:
+        # Read again: the solve can add parts (a finished bottom).
+        for part_obj in carcass_parts(root).values():
+            part_obj.location.x += left_in
+    if left_in or moved:
+        root[CARCASS_SHIFT_KEY] = left_in
     try:
         sync_cage_kick_clear(root, kind)
     except Exception:
