@@ -328,6 +328,62 @@ def _toe_kick_type():
         items=[(str(i), label) for i, label in enumerate(TOE_KICK_TYPES)])
 
 
+# Which part of a cabinet stays put when its width is typed, as on a face
+# frame cabinet: the left edge (the cabinet grows to the right, as it
+# always has), the centreline, or the right edge. Kept on the cabinet.
+ANCHOR_KEY = 'HB_ANCHOR_SIDE'
+ANCHOR_SIDES = (('LEFT', "Left"), ('CENTER', "Center"), ('RIGHT', "Right"))
+_ANCHOR_SHARE = {'CENTER': 0.5, 'RIGHT': 1.0}
+
+
+def _anchor_side():
+    from ...operators import prop_proxy
+
+    def get(obj):
+        value = obj.get(ANCHOR_KEY, 'LEFT')
+        return value if value in _ANCHOR_SHARE or value == 'LEFT' else 'LEFT'
+
+    def set(obj, value):
+        if value == 'LEFT':
+            obj.pop(ANCHOR_KEY, None)
+        else:
+            obj[ANCHOR_KEY] = value
+    return prop_proxy.computed(get, set, type='ENUM', items=list(ANCHOR_SIDES))
+
+
+def _width_axis(obj):
+    """The way the cabinet's width grows, in its parent's space."""
+    from mathutils import Vector
+    axis = obj.matrix_basis.to_3x3() @ Vector((1.0, 0.0, 0.0))
+    return axis.normalized() if axis.length > 1e-9 else Vector((1.0, 0.0, 0.0))
+
+
+def _cabinet_width():
+    """The cabinet's width. Anchored right the cabinet moves by the
+    change so its right edge holds; anchored centre by half of it."""
+    from ...operators import prop_proxy
+
+    def get(obj):
+        try:
+            return float(_cage(obj).get_input('Dim X'))
+        except Exception:
+            return 0.0
+
+    def set(obj, value):
+        cage = _cage(obj)
+        old = float(cage.get_input('Dim X'))
+        share = _ANCHOR_SHARE.get(obj.get(ANCHOR_KEY, 'LEFT'), 0.0)
+        if share and not obj.get('IS_CORNER_CABINET'):
+            obj.location -= _width_axis(obj) * ((float(value) - old) * share)
+        cage.set_input('Dim X', float(value))
+    return prop_proxy.computed(get, set, unit='LENGTH', precision=4,
+                               hard_min=0.0)
+
+
+def _straight(owner):
+    return not owner.id_data.get('IS_CORNER_CABINET')
+
+
 def _cabinet_height():
     """The cabinet's height; an upper keeps its top or bottom in place
     by the room's setting."""
@@ -748,7 +804,8 @@ def _register_schemas():
     from ...operators import prop_proxy as P
     from . import solver_frameless
     P.register(CABINET_SCHEMA, {
-        'width': P.node_input('Dim X'),
+        'width': _cabinet_width(),
+        'anchor_side': _anchor_side(),
         'depth': P.node_input('Dim Y'),
         'height': _cabinet_height(),
         'height_off_floor': P.height_off_floor(),
@@ -878,6 +935,7 @@ def _cabinet_fields(root):
          {'when': _houses_appliance}),
         ('distance', 'blind_opening_width', "Door Opening Width",
          {'when': _blind_corner}),
+        ('choices', 'anchor_side', "Anchor", {'cols': 3, 'when': _straight}),
         ('gap', None, None),
         ('group', 'fl_cab_corner', "Corner", {
             'icon': 'cab_corner', 'when': _has('Left Depth'), 'fields': (
