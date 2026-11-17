@@ -67,6 +67,7 @@ _last_hover_key = None     # layout index of the widget under the cursor
 # selection (or picked whatever sits behind the button) by the time the
 # button runs; the click puts this back first.
 _surface_selection = None
+_eat_keeps_selection = False
 _addon_keymaps = []        # [(keymap, keymap_item), ...] for cleanup
 _last_room = None          # name of the last room scene the HUD drew in
 _room_views = {}           # room name -> how that room was last being looked at
@@ -2251,11 +2252,12 @@ def _grab_surface_selection(context):
         return None
 
 
-def _restore_surface_selection(context):
+def _restore_surface_selection(context, snap=None):
     """Undo what the active tool's click-select did to the selection on a
     press that landed on HUD surface. A press on the HUD never means to
     select through it, so the selection from before the press stands."""
-    snap = _surface_selection
+    if snap is None:
+        snap = _surface_selection
     if snap is None:
         return
     scene_name, names, active_name = snap
@@ -2565,7 +2567,18 @@ def _hud_event_poll(context):
             and context.region.type == 'WINDOW')
 
 
-def _eat_click():
+def _tag_view3d_redraw(context):
+    try:
+        for area in context.window.screen.areas:
+            if area.type == 'VIEW_3D':
+                area.tag_redraw()
+    except Exception:
+        pass
+
+
+def _eat_click(keep_selection=False):
+    global _eat_keeps_selection
+    _eat_keeps_selection = keep_selection
     try:
         bpy.ops.home_builder.hud_eat_click('INVOKE_DEFAULT')
     except Exception as ex:
@@ -2577,19 +2590,33 @@ class home_builder_OT_hud_eat_click(bpy.types.Operator):
     click select never selects through it. Lives from the press to the
     next event after the release: the release itself passes on (a
     button waiting for it still gets it), only the CLICK made of it is
-    stopped, and anything else ends it untouched."""
+    stopped, and anything else ends it untouched.
+
+    Some tools select on the release itself rather than on a CLICK (a
+    transform tool's fallback select), which cannot be stopped here
+    without also taking the release from whoever waits for it. For a
+    press on the selection box the selection is instead put back as it
+    stood once the release has gone through."""
     bl_idname = "home_builder.hud_eat_click"
     bl_label = "Home Builder HUD Click Guard"
     bl_options = {'INTERNAL'}
 
     def invoke(self, context, event):
         self.released = False
+        self.snap = (_grab_surface_selection(context)
+                     if _eat_keeps_selection else None)
         context.window_manager.modal_handler_add(self)
         return {'RUNNING_MODAL'}
+
+    def _keep_selection(self, context):
+        if self.snap is not None:
+            _restore_surface_selection(context, self.snap)
+            _tag_view3d_redraw(context)
 
     def modal(self, context, event):
         if event.type == 'LEFTMOUSE':
             if event.value == 'CLICK':
+                self._keep_selection(context)
                 return {'FINISHED'}             # taken: no select
             if event.value == 'CLICK_DRAG':
                 # A drag begun on the HUD (a value, the header): not a
@@ -2599,6 +2626,8 @@ class home_builder_OT_hud_eat_click(bpy.types.Operator):
                 self.released = True
                 return {'PASS_THROUGH'}
         if self.released or event.type in {'ESC', 'RIGHTMOUSE'}:
+            if self.released:
+                self._keep_selection(context)
             return {'FINISHED', 'PASS_THROUGH'}
         return {'PASS_THROUGH'}
 
@@ -2623,6 +2652,10 @@ class home_builder_OT_hud_click(bpy.types.Operator):
         mx, my = event.mouse_region_x, event.mouse_region_y
 
         if click_hits_widget(context, area, mx, my):
+            # A press on the selection box acts at the press and never
+            # selects, so what is selected then is kept past the release.
+            box = selection_inspector.rect(context, area)
+            on_inspector = box is not None and point_in_rect(mx, my, box)
             _restore_surface_selection(context)
             try:
                 return self._route(context, event, area, region, mx, my)
@@ -2634,7 +2667,7 @@ class home_builder_OT_hud_click(bpy.types.Operator):
                 # Blender's click select runs on the CLICK its keymap
                 # makes of this press's release -- after the press was
                 # taken here -- and picked whatever sat behind the HUD.
-                _eat_click()
+                _eat_click(keep_selection=on_inspector)
         return self._route(context, event, area, region, mx, my)
 
     def _route(self, context, event, area, region, mx, my):
