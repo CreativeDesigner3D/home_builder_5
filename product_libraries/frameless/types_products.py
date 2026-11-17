@@ -1,5 +1,6 @@
 import bpy
 import math
+import re
 from ...hb_types import GeoNodeCage, GeoNodeCutpart, CabinetPartModifier
 from ... import units
 from ...units import inch
@@ -2007,6 +2008,46 @@ def _solve_base_assembly_capped(root, parts, dim_x, dim_y, dim_z, mt,
         if part is not None:
             _set_part(part, (x, y_cap, 0.0),
                       length=cap_len, width=dim_z, thickness=skin_t)
+
+    _name_base_frame(parts, cond_l, cond_r, ext_l + gap_l, ext_r + gap_r,
+                     gap, finish_rear)
+
+
+def _inch_text(value):
+    """A length as the shop reads it in a part name: 1.5", 0.25"."""
+    return "%g\"" % round(value / inch(1.0), 4)
+
+
+def _rename_part(obj, name):
+    """Give a part a new name, leaving it alone when it already has it
+    (Blender's .001 suffix aside), so a re-solve doesn't churn names."""
+    if obj is None:
+        return
+    if re.sub(r'\.\d{3}$', '', obj.name) != name:
+        obj.name = name
+
+
+def _name_base_frame(parts, cond_l, cond_r, tab_l, tab_r, gap, finish_rear):
+    """Name the frame parts so the cut list says how to put it
+    together without a drawing: how far each wall-end sleeper sets in
+    from the end of the kick face (its tab), the gap left behind the
+    back rail, and whether each full end is finished or flush."""
+    _rename_part(parts.get('BASE_FRONT'), "Front Toe Kick")
+    if finish_rear:
+        back = "Back Toe Kick[Finished]"
+    else:
+        back = "Back Toe Kick[%s Gap]" % _inch_text(gap)
+    _rename_part(parts.get('BASE_BACK'), back)
+    for role, side, cond, tab in (('BASE_LEFT_END', "Left", cond_l, tab_l),
+                                  ('BASE_RIGHT_END', "Right", cond_r, tab_r)):
+        if cond == END_WALL:
+            name = "%s Sleeper[%s Tab]" % (side, _inch_text(tab))
+        elif cond == END_FINISHED:
+            name = "%s Finished End" % side
+        else:
+            name = "%s Flush End" % side
+        _rename_part(parts.get(role), name)
+    _rename_part(parts.get('BASE_SUPPORT'), "Sleeper")
 
 
 class BaseAssembly(Product):
