@@ -31,7 +31,6 @@ from ... import hb_utils, hb_project, units
 
 SOURCE_KEY = 'FRAMELESS'
 
-CABINET_GROUP = 'fl_cabinet'
 BAY_GROUP = 'fl_bay'
 OPENING_GROUP = 'fl_opening'
 PRODUCT_GROUP = 'fl_product'
@@ -56,10 +55,6 @@ TOE_KICK_TYPES = ("Notch Ends to Floor", "Ladder Style", "Floating",
 
 FINISHED_BOTTOMS = ("None", "1/4\" Panel", "3/4\" Panel")
 
-# Prompts that take more than a write -- a toe kick type swaps parts, a
-# finished interior repaints the cabinet: the Toe Kick group and the
-# dialog handle them.
-_DIALOG_ONLY = ('Toe Kick Type', 'Finished Interior')
 
 
 # ---- Finding what is picked -------------------------------------------------
@@ -382,53 +377,145 @@ def _fb_summary(owner):
 
 def _construction_summary(owner):
     obj = owner.id_data
-    said = [label for key, label in (('Remove Bottom', "No bottom"),
-                                     ('Finished Interior', "Finished interior"))
-            if obj.get(key)]
-    return ", ".join(said) or "Standard"
+    said = []
+    if 'Toe Kick Height' in obj:
+        kind = int(obj.get('Toe Kick Type', 0) or 0)
+        name = TOE_KICK_TYPES[kind] if 0 <= kind < len(TOE_KICK_TYPES) else ""
+        said.append(f"{_dist(obj['Toe Kick Height'])} kick" +
+                    (f" ({name})" if name else ""))
+    said.extend(label for key, label in (('Remove Bottom', "No bottom"),
+                                         ('Finished Interior', "Finished interior"))
+                if obj.get(key))
+    return " · ".join(said) or "Standard"
 
 
-def _angles_shown():
-    """Angled fronts and backs are offered on every cabinet only while
-    the cabinet dialog offers them too; a cabinet already angled always
-    shows its own."""
-    from .operators import ops_cabinet
-    return bool(ops_cabinet.SHOW_ANGLED_OPTIONS)
+def _leg_levelers(owner):
+    return 'Leg Leveler Inset' in owner.id_data and int(
+        owner.id_data.get('Toe Kick Type', 0) or 0) == 3
 
 
-def _front_angled(owner):
+def _stretchers(owner):
+    return 'Stretcher Width' in owner.id_data and int(
+        owner.id_data.get('Base Top Construction', 0) or 0) == 1
+
+
+def _sink_top(owner):
+    return 'Sink Apron Width' in owner.id_data and int(
+        owner.id_data.get('Base Top Construction', 0) or 0) == 2
+
+
+# ---- Finished ends ------------------------------------------------------------
+# Each side's finish as the right-click Finish Condition menu sets it. An
+# end picked here stays as picked; Follow Neighbors hands it back to
+# finishing itself from what is beside it.
+
+_PANEL_CONDITIONS = ('LEFT', 'RIGHT', 'BACK')
+
+
+def _finish_condition(side):
+    from ...operators import prop_proxy
+    from .operators import ops_finished_ends as fe
+
+    def get(obj):
+        return fe.finish_condition(obj, side) or 'UNFINISHED'
+
+    def set(obj, value):
+        if value == get(obj):
+            return
+        context = bpy.context
+        if not fe.set_finish_condition(context, obj, side, value):
+            return
+        from . import exposure
+        if side in exposure.AUTO_SIDES:
+            exposure.set_manual(obj, side)
+        fe._paint(obj)
+        hb_utils.run_calc_fix(context, obj)
+    items = [(key, label) for key, label, _tip in fe.FINISH_CONDITIONS
+             if side in _PANEL_CONDITIONS or key in ('UNFINISHED', 'FINISHED')]
+    return prop_proxy.computed(get, set, type='ENUM', items=items)
+
+
+def _finish_side(side):
+    def shown(owner):
+        from .operators import ops_finished_ends as fe
+        return fe.finish_condition(owner.id_data, side) is not None
+    return shown
+
+
+def _top_finish_shown(owner):
+    """A top shows on a wall or tall cabinet; a base top is under the
+    countertop."""
     from . import solver_frameless
-    return solver_frameless.FRONT_LEFT_DEPTH_KEY in owner.id_data
+    return (_finish_side('TOP')(owner) and solver_frameless.carcass_kind(
+        owner.id_data) not in ('BASE', 'CORNER_BASE', 'LAP_DRAWER'))
 
 
-def _show_angled_front(owner):
-    from . import solver_frameless
-    obj = owner.id_data
-    if obj.get('IS_CORNER_CABINET') or (
-            solver_frameless.carcass_kind(obj)
-            not in solver_frameless.STRAIGHT_KINDS):
-        return False
-    return _angles_shown() or _front_angled(owner)
+def _manual(side):
+    def test(owner):
+        from . import exposure
+        return exposure.is_manual(owner.id_data, side)
+    return test
 
 
-def _back_angled(owner):
-    return bool(owner.id_data.get('Angled Back'))
+def _ends_summary(owner):
+    from .operators import ops_finished_ends as fe
+    words = {'FINISHED': "finished", 'SLAB': "slab panel",
+             '5PIECE': "5-piece panel"}
+    said = []
+    for side, name in (('LEFT', "Left"), ('RIGHT', "Right"), ('BACK', "Back")):
+        cond = fe.finish_condition(owner.id_data, side)
+        if cond in words:
+            said.append(f"{name} {words[cond]}")
+    return ", ".join(said) or "Unfinished"
 
 
-def _show_angled_back(owner):
-    if owner.id_data.get('IS_CORNER_CABINET'):
-        return False
-    return _angles_shown() or _back_angled(owner)
+def _ends_fields():
+    fields = []
+    for side, prop, label in (('LEFT', 'left_finish', "Left End"),
+                              ('RIGHT', 'right_finish', "Right End"),
+                              ('BACK', 'back_finish', "Back")):
+        fields.append(('enum', prop, label, {'when': _finish_side(side)}))
+        fields.append(('actions', (
+            _act(f"{label}: Follow Neighbors",
+                 'hb_frameless.auto_finish_condition', {'side': side}),),
+            None, {'when': _manual(side)}))
+    fields.append(('enum', 'top_finish', "Top", {'when': _top_finish_shown}))
+    fields.extend((
+        ('enum', 'finished_bottom', "Bottom Panel", {'when': _upper_box}),
+        ('bool', 'fb_doors_cover', "Doors Cover Panel", {'when': _fb_on}),
+        ('bool', 'fb_led_route', "LED Route", {'when': _fb_on}),
+        ('distance', 'fb_led_width', "Route Width", {'when': _fb_led}),
+        ('distance', 'fb_led_depth', "Route Depth", {'when': _fb_led}),
+        ('distance', 'fb_led_inset', "Route From Front", {'when': _fb_led}),
+    ))
+    return tuple(fields)
 
 
-def _angled_front_summary(owner):
-    if not _front_angled(owner):
-        return "Square"
-    return f"{_dist(owner.front_left_depth)} / {_dist(owner.front_right_depth)}"
+# ---- Quick actions -------------------------------------------------------------
+
+def _cabinets_selected(_owner):
+    return _count('cabinet') >= 2
 
 
-def _angled_back_summary(owner):
-    return ("None", "Left", "Right")[int(owner.id_data.get('Angled Back', 0) or 0) % 3]
+def _one_cabinet(owner):
+    return not _cabinets_selected(owner)
+
+
+def _quick_fields(owner, rows):
+    """The quick actions a page leads with, a row at a time: each row is
+    (action, when) pairs and keeps the ones that apply. Every one is
+    also on the right-click menu, and so in All Actions."""
+    kept = []
+    for row in rows:
+        for action, when in row:
+            try:
+                if when is not None and not when(owner):
+                    continue
+            except Exception:
+                continue
+            kept.append(action)
+    from ...operators import quick_actions
+    return quick_actions.fields(kept)
 
 
 def _finished_interior():
@@ -472,51 +559,6 @@ def _finished_bottom():
     return prop_proxy.computed(
         get, set, type='ENUM',
         items=[(str(i), label) for i, label in enumerate(FINISHED_BOTTOMS)])
-
-
-def _angled_front():
-    """Switching the angle on starts both ends at the cabinet's depth."""
-    from ...operators import prop_proxy
-    from . import solver_frameless
-    left, right = (solver_frameless.FRONT_LEFT_DEPTH_KEY,
-                   solver_frameless.FRONT_RIGHT_DEPTH_KEY)
-
-    def get(obj):
-        return left in obj
-
-    def set(obj, value):
-        if value and left not in obj:
-            depth = float(_cage(obj).get_input('Dim Y'))
-            obj[left] = depth
-            obj[right] = depth
-        elif not value:
-            obj.pop(left, None)
-            obj.pop(right, None)
-    return prop_proxy.computed(get, set, type='BOOLEAN')
-
-
-def _front_depth(side):
-    """One end of an angled front. The cabinet is as deep as its deeper
-    end."""
-    from ...operators import prop_proxy
-    from . import solver_frameless
-    keys = {'left': solver_frameless.FRONT_LEFT_DEPTH_KEY,
-            'right': solver_frameless.FRONT_RIGHT_DEPTH_KEY}
-
-    def get(obj):
-        try:
-            return float(obj.get(keys[side], _cage(obj).get_input('Dim Y')))
-        except Exception:
-            return 0.0
-
-    def set(obj, value):
-        if keys['left'] not in obj:
-            return
-        obj[keys[side]] = float(value)
-        _cage(obj).set_input('Dim Y', max(float(obj[keys['left']]),
-                                           float(obj[keys['right']])))
-    return prop_proxy.computed(get, set, unit='LENGTH', precision=4,
-                               hard_min=0.0)
 
 
 def _upper_height_anchor():
@@ -729,12 +771,18 @@ def _register_schemas():
         'fb_led_width': P.length(solver_frameless.FB_LED_WIDTH_KEY, units.inch(0.875)),
         'fb_led_depth': P.length(solver_frameless.FB_LED_DEPTH_KEY, units.inch(0.375)),
         'fb_led_inset': P.length(solver_frameless.FB_LED_INSET_KEY, units.inch(1.5)),
-        'angled_front': _angled_front(),
-        'front_left_depth': _front_depth('left'),
-        'front_right_depth': _front_depth('right'),
-        'angled_back': P.index_enum('Angled Back', ("None", "Left", "Right")),
-        'angled_back_width': P.length('Angled Back Width', units.inch(12.0)),
-        'angled_back_depth': P.length('Angled Back Depth', units.inch(12.0)),
+        'left_depth': P.length('Left Depth'),
+        'right_depth': P.length('Right Depth'),
+        'material_thickness': P.length('Material Thickness', units.inch(0.75)),
+        'leg_leveler_inset': P.length('Leg Leveler Inset'),
+        'base_top_construction': P.index_enum(
+            'Base Top Construction', ("Full Top", "Stretchers", "Sink")),
+        'stretcher_width': P.length('Stretcher Width'),
+        'sink_apron_width': P.length('Sink Apron Width'),
+        'left_finish': _finish_condition('LEFT'),
+        'right_finish': _finish_condition('RIGHT'),
+        'back_finish': _finish_condition('BACK'),
+        'top_finish': _finish_condition('TOP'),
         'upper_height_anchor': _upper_height_anchor(),
     }, after=_solve)
     P.register(OPENING_SCHEMA, {
@@ -797,58 +845,79 @@ def _unregister_schemas():
 
 # ---- Fields -----------------------------------------------------------------
 
-CABINET_FIELDS = (
-    ('distance', 'width', "Width"),
-    ('distance', 'height', "Height"),
-    ('distance', 'depth', "Depth"),
-    ('distance', 'height_off_floor', "Above Floor", {'when': _hung}),
-    ('distance', 'top_off_floor', "Top Above Floor", {'when': _hung}),
-    ('enum', 'upper_height_anchor', "Height Keeps", {'when': _hung}),
-    ('distance', 'appliance_opening_width', "Appliance Opening Width",
-     {'when': _houses_appliance}),
-    ('distance', 'appliance_opening_height', "Appliance Opening Height",
-     {'when': _houses_appliance}),
-    ('distance', 'blind_opening_width', "Door Opening Width",
-     {'when': _blind_corner}),
-    ('group', 'fl_cab_kick', "Toe Kick", {'icon': 'cab_construction', 'when': _kicked, 'fields': (
-        ('enum', 'toe_kick_type', "Type"),
-        ('distance', 'toe_kick_height', "Height"),
-        ('distance', 'toe_kick_setback', "Setback"),
-        ('bool', 'flush_toe_kick', "Flush Toe Kick"),
-        ('bool', 'toe_kick_panel', "Kick Panel"),
-        ('distance', 'toe_kick_panel_thickness', "Panel Thickness", {'when': _kick_panel}),
-        ('distance', 'toe_kick_end_inset', "Hold In From Ends"),
-    )}),
-    ('group', 'fl_cab_construction', "Construction", {
-        'icon': 'cab_construction', 'summary': _construction_summary, 'fields': (
-            ('bool', 'remove_bottom', "Remove Bottom", {'when': _has('Remove Bottom')}),
-            ('bool', 'finished_interior', "Finished Interior"),
-        )}),
-    ('group', 'fl_cab_finished_bottom', "Finished Bottom", {
-        'icon': 'cab_construction', 'when': _upper_box, 'summary': _fb_summary,
-        'fields': (
-            ('enum', 'finished_bottom', "Panel"),
-            ('bool', 'fb_doors_cover', "Doors Cover Panel", {'when': _fb_on}),
-            ('bool', 'fb_led_route', "LED Route", {'when': _fb_on}),
-            ('distance', 'fb_led_width', "Route Width", {'when': _fb_led}),
-            ('distance', 'fb_led_depth', "Route Depth", {'when': _fb_led}),
-            ('distance', 'fb_led_inset', "Route From Front", {'when': _fb_led}),
-        )}),
-    ('group', 'fl_cab_angled_front', "Angled Front", {
-        'icon': 'cab_construction', 'when': _show_angled_front,
-        'summary': _angled_front_summary, 'fields': (
-            ('bool', 'angled_front', "Angled Front"),
-            ('distance', 'front_left_depth', "Left Depth", {'when': _front_angled}),
-            ('distance', 'front_right_depth', "Right Depth", {'when': _front_angled}),
-        )}),
-    ('group', 'fl_cab_angled_back', "Angled Back", {
-        'icon': 'cab_construction', 'when': _show_angled_back,
-        'summary': _angled_back_summary, 'fields': (
-            ('enum', 'angled_back', "Corner"),
-            ('distance', 'angled_back_width', "Along Back", {'when': _back_angled}),
-            ('distance', 'angled_back_depth', "Down Side", {'when': _back_angled}),
-        )}),
-)
+def _cabinet_fields(root):
+    """The cabinet page, laid out as the face frame cabinet's: its size,
+    the quick actions, then the rest in folds that say what is set in
+    them. Every command is also in All Actions at the foot."""
+    quick = _quick_fields(root, (
+        ((_act("Duplicate", 'hb_frameless.duplicate_cabinet', None,
+               'duplicate'), _one_cabinet),
+         (_act("Copy Cabinet", 'home_builder.copy_cabinet'), _one_cabinet)),
+        ((_act("Equal Widths", 'hb_frameless.equalize_cabinet_widths'),
+          _cabinets_selected),
+         (_act("Adjust Cabinet Sizes",
+               'hb_frameless.adjust_multiple_cabinet_widths'), None)),
+        ((_act("Create Cabinet Group", 'hb_frameless.create_cabinet_group'),
+          _cabinets_selected),),
+        ((_act("Drop to Countertop", 'hb_frameless.drop_cabinet_to_countertop'),
+          _hung),
+         (_act("Hide Cabinet", 'hb_general.hide',
+               {'scope': 'PRODUCT', 'isolate': False}), None)),
+    ))
+    return (
+        ('distance', 'width', "Width"),
+        ('distance', 'height', "Height"),
+        ('distance', 'depth', "Depth"),
+        ('distance', 'height_off_floor', "Above Floor", {'when': _hung}),
+        ('distance', 'top_off_floor', "Top Above Floor", {'when': _hung}),
+        ('enum', 'upper_height_anchor', "Height Keeps", {'when': _hung}),
+        ('distance', 'appliance_opening_width', "Appliance Opening Width",
+         {'when': _houses_appliance}),
+        ('distance', 'appliance_opening_height', "Appliance Opening Height",
+         {'when': _houses_appliance}),
+        ('distance', 'blind_opening_width', "Door Opening Width",
+         {'when': _blind_corner}),
+        ('gap', None, None),
+    ) + quick + (
+        ('gap', None, None),
+        ('group', 'fl_cab_corner', "Corner", {
+            'icon': 'cab_corner', 'when': _has('Left Depth'), 'fields': (
+                ('distance', 'left_depth', "Left Depth"),
+                ('distance', 'right_depth', "Right Depth"),
+            )}),
+        ('group', 'fl_cab_construction', "Construction", {
+            'icon': 'cab_construction', 'summary': _construction_summary,
+            'fields': (
+                ('enum', 'toe_kick_type', "Toe Kick", {'when': _has('Toe Kick Type')}),
+                ('distance', 'toe_kick_height', "Kick Height", {'when': _kicked}),
+                ('distance', 'toe_kick_setback', "Kick Setback",
+                 {'when': _has('Toe Kick Setback')}),
+                ('bool', 'flush_toe_kick', "Flush Toe Kick",
+                 {'when': _has('Flush Toe Kick')}),
+                ('bool', 'toe_kick_panel', "Kick Panel",
+                 {'when': _has('Toe Kick Panel')}),
+                ('distance', 'toe_kick_panel_thickness', "Kick Panel Thickness",
+                 {'when': _kick_panel}),
+                ('distance', 'toe_kick_end_inset', "Kick Inset From Ends",
+                 {'when': _has('Toe Kick End Inset')}),
+                ('distance', 'leg_leveler_inset', "Leg Leveler Inset",
+                 {'when': _leg_levelers}),
+                ('enum', 'base_top_construction', "Top",
+                 {'when': _has('Base Top Construction')}),
+                ('distance', 'stretcher_width', "Stretcher Width",
+                 {'when': _stretchers}),
+                ('distance', 'sink_apron_width', "Sink Apron Width",
+                 {'when': _sink_top}),
+                ('distance', 'material_thickness', "Carcass Thickness",
+                 {'when': _has('Material Thickness')}),
+                ('bool', 'remove_bottom', "Remove Bottom",
+                 {'when': _has('Remove Bottom')}),
+                ('bool', 'finished_interior', "Finished Interior"),
+            )}),
+        ('group', 'fl_cab_ends', "Finished Ends & Back", {
+            'summary': _ends_summary, 'fields': _ends_fields()}),
+    )
+
 
 OPENING_FIELDS = (
     ('enum', 'door_swing', "Door Swing", {'when': _door}),
@@ -1410,20 +1479,10 @@ def _size_value(context, obj):
 
 
 def _cabinet_page(context, out, root):
-    from ...operators import options_panel, prop_proxy, generic_page
-    label = _type_label(root)
-    out.extend(options_panel.field_blocks(context, (
-        ('group', CABINET_GROUP, f"Cabinet  ({label})" if label else "Cabinet",
-         {'icon': 'cab_cabinet', 'summary': _size_summary,
-          'fields': CABINET_FIELDS}),
-    ), prop_proxy.owner(root, CABINET_SCHEMA)))
-    out.extend(generic_page.prompt_blocks(
-        context, root, 'fl_cabinet_prompts', "All Cabinet Prompts",
-        open_first=False, exclude=_DIALOG_ONLY))
-    _quick(out, _menu_actions(context, root,
-                              skip=('hb_frameless.cabinet_prompts',)))
-    # Every setting of the cabinet dialog is on the page above.
-    _footer(out, None)
+    from ...operators import options_panel, prop_proxy
+    out.extend(options_panel.field_blocks(
+        context, _cabinet_fields(root), prop_proxy.owner(root, CABINET_SCHEMA)))
+    _footer(out, 'hb_frameless.cabinet_prompts')
 
 
 def _bay_page(context, out, bay_obj, title):
