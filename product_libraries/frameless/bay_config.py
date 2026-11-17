@@ -171,6 +171,35 @@ def apply(bay_obj, key):
     with bpy.context.temp_override(active_object=bay_obj, object=bay_obj,
                                    selected_objects=[bay_obj]):
         bpy.ops.hb_frameless.change_bay_opening(opening_type=key)
+    keep_picked(bpy.context, bay_obj)
+
+
+def keep_picked(context, obj):
+    """After a rebuild: give the cabinet's new cages the look of the
+    selection mode (they come in plain, so the mode's own cages would be
+    hidden and unclickable), and leave ``obj`` picked and active so the
+    page stays on it."""
+    from ... import hb_utils
+    try:
+        layer = context.view_layer
+        for o in list(layer.objects):
+            if o.select_get(view_layer=layer):
+                o.select_set(False, view_layer=layer)
+        obj.select_set(True, view_layer=layer)
+        layer.objects.active = obj
+    except Exception as ex:
+        print('Home Builder: could not pick %s: %s' % (obj.name, ex))
+    cabinet = hb_utils.get_cabinet_bp(obj)
+    if cabinet is not None:
+        # Cages start hidden, as the mode leaves those it does not offer
+        # (and an outer opening around the insert it offers), then the
+        # mode shows its own again.
+        for o in cabinet.children_recursive:
+            if 'IS_GEONODE_CAGE' in o and o is not obj:
+                o.display_type = 'WIRE'
+                o.hide_viewport = True
+        from .operators.ops_interior import show_in_selection_mode
+        show_in_selection_mode(context, cabinet)
 
 
 # ---- The page's field ---------------------------------------------------------
@@ -440,14 +469,7 @@ def set_front_kind(context, opening_obj, value):
         with context.temp_override(active_object=outer, object=outer,
                                    selected_objects=[outer]):
             bpy.ops.hb_frameless.change_opening_type(opening_type=opening_type)
-    try:
-        layer = context.view_layer
-        for o in list(context.selected_objects or ()):
-            o.select_set(False)
-        outer.select_set(True)
-        layer.objects.active = outer
-    except Exception:
-        pass
+    keep_picked(context, front_opening(outer))
 
 
 def opening_front_row(opening_obj):
