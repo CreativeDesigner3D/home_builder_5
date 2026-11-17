@@ -427,6 +427,8 @@ OPTION_PAGES = {
             ('gap', None, None),
             ('bool', 'equal_drawer_stack_heights', "Equal Drawer Stack Heights"),
             ('distance', 'top_drawer_front_height', "Top Drawer Front Height"),
+            ('actions', (("Apply to Existing Cabinets",
+                          'hb_frameless.update_drawer_front_height_prompts'),), None),
         ),
     },
     # Drawer boxes: whether new cabinets get them, and which box system
