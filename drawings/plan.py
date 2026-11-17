@@ -215,11 +215,14 @@ def resolve_room(context, view, width, height):
     y0, y1 = min(p[1] for p in pts), max(p[1] for p in pts)
     pad = 60.0              # points round the room for its dimensions
     k, label = None, None
+    chosen = view.get('scale')
     for n, text in ROOM_SCALES:
+        if chosen and n != chosen and chosen in dict(ROOM_SCALES):
+            continue
         k = 72.0 / 0.0254 / n
         label = text + " = 1'-0\""
-        if ((x1 - x0) * k + 2 * pad <= width
-                and (y1 - y0) * k + 2 * pad <= height):
+        if chosen == n or ((x1 - x0) * k + 2 * pad <= width
+                           and (y1 - y0) * k + 2 * pad <= height):
             break
     else:
         k = min((width - 2 * pad) / max(x1 - x0, 1e-6),

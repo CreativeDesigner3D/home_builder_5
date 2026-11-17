@@ -8,6 +8,12 @@ again a moment after each change.
 
 Over the preview: Left / Right = sheet, wheel = zoom, middle drag =
 pan, Home = fit, R = read again, P = write the PDF, Esc = close.
+
+The set can be changed there too, and the changes are kept with the
+room: drag a view to move it, [ and ] draw the view under the cursor at
+the next drafting scale down or up, Ctrl+click on an elevation cuts a
+section there, X over a section removes it, T keeps a wall's sections
+on its elevation's sheet, Backspace puts the room's set back to the rule.
 """
 
 import os
@@ -51,6 +57,7 @@ def _read(context, st):
         st['error'] = str(exc)
     st['pages'] = pages
     st['compiled'] = [gpu_painter.Compiled(p) for p in pages]
+    st['placed'] = [list((p.info or {}).get('placed', ())) for p in pages]
     st['page'] = min(st.get('page', 0), max(len(pages) - 1, 0))
     st['stale'] = set(range(len(pages)))
     st['scene'] = context.scene.name
@@ -115,10 +122,29 @@ def _draw():
         x = (region.width - w) / 2.0 + st['pan'][0]
         y = (region.height - h) / 2.0 + st['pan'][1]
         draw_texture_2d(st['tex'][i][0].texture_color, (x, y), w, h)
+        st['rect'] = (x, y, f)
+        move = st.get('move')
+        if move and move.get('now'):
+            # The view being dragged, as an outline where it will land.
+            dx = move['now'][0] - move['start'][0]
+            dy = move['now'][1] - move['start'][1]
+            bx0, by0, bx1, by1 = move['box']
+            ghost = batch_for_shader(uni, 'LINE_LOOP', {'pos': [
+                (x + bx0 * f + dx, y + by0 * f + dy),
+                (x + bx1 * f + dx, y + by0 * f + dy),
+                (x + bx1 * f + dx, y + by1 * f + dy),
+                (x + bx0 * f + dx, y + by1 * f + dy)]})
+            uni.bind()
+            uni.uniform_float('color', (0.1, 0.45, 0.95, 1.0))
+            ghost.draw(uni)
         blf.draw(0, "Sheet %d of %d   |   Left / Right: sheet   wheel: zoom   "
                     "middle drag: pan   Home: fit   R: read again   P: PDF   "
                     "Esc: close   (%s)" % (i + 1, len(st['compiled']),
                                            st.get('note', '')))
+        blf.position(0, 14.0, 28.0, 0.0)
+        blf.draw(0, "Drag: move a view   [ ]: its scale   Ctrl+click an "
+                    "elevation: cut a section   X: remove a section   "
+                    "T: sections with their elevation   Backspace: reset")
     except Exception as exc:        # never break the viewport
         if st.get('draw_error') != repr(exc):
             st['draw_error'] = repr(exc)
@@ -177,6 +203,35 @@ class HOME_BUILDER_OT_drawings_preview(bpy.types.Operator):
                 return area
         return None
 
+    def _hit(self, event, region):
+        """The placed view under the cursor (the smallest, where they
+        overlap) and the cursor in sheet points."""
+        st = _st
+        rect = st.get('rect')
+        placed = st.get('placed') or []
+        if not rect or st['page'] >= len(placed):
+            return None, None
+        x, y, f = rect
+        sx = (event.mouse_x - region.x - x) / f
+        sy = (event.mouse_y - region.y - y) / f
+        best = None
+        for item in placed[st['page']]:
+            bx0, by0, bx1, by1 = item['box']
+            if bx0 - 4 <= sx <= bx1 + 4 and by0 - 4 <= sy <= by1 + 4:
+                area_ = (bx1 - bx0) * (by1 - by0)
+                if best is None or area_ < best[0]:
+                    best = (area_, item)
+        return (best[1] if best else None), (sx, sy)
+
+    def _edited(self, context, note):
+        st = _st
+        try:
+            bpy.ops.ed.undo_push(message="Drawings: " + note)
+        except Exception:
+            pass
+        _read(context, st)
+        st['note'] = note
+
     def _tick(self, context, area):
         """Follow the model: read it again once it has stopped changing
         and nothing else is in the middle of an action."""
@@ -223,9 +278,63 @@ class HOME_BUILDER_OT_drawings_preview(bpy.types.Operator):
                 and event.value == 'RELEASE':
             st['drag'] = None
             return {'RUNNING_MODAL'}
+        move = st.get('move')
+        if move and event.type == 'MOUSEMOVE':
+            move['now'] = (event.mouse_x, event.mouse_y)
+            area.tag_redraw()
+            return {'RUNNING_MODAL'}
+        if move and event.type == 'LEFTMOUSE' and event.value == 'RELEASE':
+            st['move'] = None
+            now = move.get('now') or move['start']
+            f = (st.get('rect') or (0, 0, 1.0))[2]
+            dx = (now[0] - move['start'][0]) / f
+            dy = (now[1] - move['start'][1]) / f
+            if abs(dx) > 1.0 or abs(dy) > 1.0:
+                sheets.move_view(context.scene, move['key'], dx, dy)
+                self._edited(context, "view moved")
+            area.tag_redraw()
+            return {'RUNNING_MODAL'}
         if not over:
             return {'PASS_THROUGH'}
         press = event.value == 'PRESS'
+        scene = context.scene
+        if event.type == 'LEFTMOUSE' and press:
+            item, at = self._hit(event, region)
+            if item and event.ctrl and item['kind'] == 'ELEVATION' \
+                    and item.get('origin') and item.get('k'):
+                wall = bpy.data.objects.get(item['wall'] or '')
+                x_cut = (at[0] - item['origin'][0]) / item['k']
+                if wall is not None and x_cut > 0.0:
+                    sheets.add_cut(scene, wall, round(x_cut, 4))
+                    self._edited(context, "section added")
+            elif item and item.get('key'):
+                st['move'] = {'key': item['key'], 'box': item['box'],
+                              'start': (event.mouse_x, event.mouse_y)}
+            area.tag_redraw()
+            return {'RUNNING_MODAL'}
+        if press and event.type in ('LEFT_BRACKET', 'RIGHT_BRACKET', 'X',
+                                    'DEL', 'T', 'BACK_SPACE'):
+            item, _at = self._hit(event, region)
+            if event.type == 'BACK_SPACE':
+                sheets.reset_edits(scene)
+                self._edited(context, "set back to the rule")
+            elif item is None:
+                pass
+            elif event.type in ('LEFT_BRACKET', 'RIGHT_BRACKET'):
+                if item.get('key') and item.get('n'):
+                    n = sheets.step_scale(scene, item['key'], item['n'],
+                                          event.type == 'RIGHT_BRACKET')
+                    self._edited(context, "scale 1:%d" % n)
+            elif event.type in ('X', 'DEL'):
+                wall = bpy.data.objects.get(item.get('wall') or '')
+                if item['kind'] == 'SECTION' and wall is not None:
+                    sheets.remove_cut(scene, wall, item.get('x') or 0.0)
+                    self._edited(context, "section removed")
+            elif event.type == 'T' and item.get('wall'):
+                sheets.toggle_together(scene, item['wall'])
+                self._edited(context, "sections moved")
+            area.tag_redraw()
+            return {'RUNNING_MODAL'}
         count = max(len(st['compiled']), 1)
         if event.type == 'ESC' and press:
             return self._close(context)

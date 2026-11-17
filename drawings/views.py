@@ -125,7 +125,7 @@ def _elevation(context, view, width, height):
     info = {}
     with em.show_overrides(ELEVATION_SHOWS):
         em.draw_wall(drawing, context, wall, width, height, title=False,
-                     info=info)
+                     info=info, scale=view.get('scale'))
     k = info['k']
     try:
         _elevation_marks(drawing, context, wall, k, info['ox'],

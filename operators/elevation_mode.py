@@ -5457,9 +5457,10 @@ def layout_pads(wall, dims, extra):
     return (sx(0.0) - x0, x1 - sx(length), sy(0.0) - y0, y1 - sy(height))
 
 
-def _print_fit(scene, wall, W, H, extra=None):
+def _print_fit(scene, wall, W, H, extra=None, scale=None):
     """(view, scale label) that fits the wall and every dimension on the
-    page at the largest drafting scale that will go."""
+    page at the largest drafting scale that will go, or at `scale` (the
+    n of 1:n, one of PRINT_SCALES) whether it goes or not."""
     _F, Fi, L, Hw = _frame(wall)
     region = _PrintRegion(W, H)
     area_w = W - 2 * PRINT_MARGIN
@@ -5493,7 +5494,7 @@ def _print_fit(scene, wall, W, H, extra=None):
     label = None
     for n, text in PRINT_SCALES:
         pt_per_m = 72.0 / 0.0254 / n
-        if pt_per_m <= k:
+        if (n == scale) if scale else (pt_per_m <= k):
             k, label = pt_per_m, f"{text} = 1'-0\""
             break
     # The iso to the left of the elevation, the plan above it.
@@ -6329,7 +6330,7 @@ def print_wall(context, filepath, paper='TABLOID',
 
 
 def draw_wall(page, context, wall, W, H, text_scale=PRINT_TEXT_SCALE,
-              title=True, info=None):
+              title=True, info=None, scale=None):
     """Draw a wall's printed page onto `page`, W x H points with its
     origin bottom left: anything with hb_pdf.Page's drawing methods, so
     another add-on can set the drawing into a sheet of its own (inside
@@ -6338,7 +6339,8 @@ def draw_wall(page, context, wall, W, H, text_scale=PRINT_TEXT_SCALE,
     scale's label ("1/2\" = 1'-0\""), or None when the wall had to be
     fitted off scale. `info`, a dict, is given where the wall landed:
     'k' points to the metre and ('ox', 'oy') the wall's start at the
-    floor, so the caller can line other views up on it."""
+    floor, so the caller can line other views up on it. `scale` (the n
+    of 1:n) draws at that drafting scale instead of the one that fits."""
     global _print_scale
     scene = context.scene
     front = None            # the elevation on screen knows its own
@@ -6350,7 +6352,7 @@ def draw_wall(page, context, wall, W, H, text_scale=PRINT_TEXT_SCALE,
     region = _PrintRegion(W, H)
     _print_scale = text_scale
     try:
-        view, label = _print_fit(scene, wall, W, H, front)
+        view, label = _print_fit(scene, wall, W, H, front, scale)
         if info is not None:
             info.update(k=view.k, ox=view.ox, oy=view.oy, label=label,
                         length=L, height=Hw)
