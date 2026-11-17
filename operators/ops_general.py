@@ -849,10 +849,11 @@ classes = (
 )
 
 
-# H / Alt+H in Object Mode run the product-aware hide and Show All
-# Hidden. H goes by the selection: the cabinet cage hides the whole
-# cabinet (as the context menu's Hide does), a part hides that part.
-# Shift+H (hide unselected) keeps its stock binding.
+# H / Shift+H / Alt+H in Object Mode run the product-aware hide, isolate
+# and Show All Hidden. Both go by the selection: the cabinet cage stands
+# for the whole cabinet (as the context menu's Hide does), a part for
+# that part. Stock Shift+H kept only the selected cage, so the cabinet's
+# own parts were hidden along with everything else.
 _addon_keymaps = []
 
 
@@ -864,6 +865,11 @@ def _register_keymaps():
     kmi = km.keymap_items.new(HB_GENERAL_OT_hide.bl_idname, 'H', 'PRESS')
     kmi.properties.scope = 'AUTO'
     kmi.properties.isolate = False
+    _addon_keymaps.append((km, kmi))
+    kmi = km.keymap_items.new(HB_GENERAL_OT_hide.bl_idname, 'H', 'PRESS',
+                              shift=True)
+    kmi.properties.scope = 'AUTO'
+    kmi.properties.isolate = True
     _addon_keymaps.append((km, kmi))
     kmi = km.keymap_items.new(HB_GENERAL_OT_show_all_hidden.bl_idname,
                               'H', 'PRESS', alt=True)
