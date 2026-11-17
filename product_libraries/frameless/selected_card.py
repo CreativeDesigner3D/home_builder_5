@@ -501,7 +501,7 @@ def _one_cabinet(owner):
     return not _cabinets_selected(owner)
 
 
-def _quick_fields(owner, rows):
+def _quick_fields(owner, rows, fold='fl_quick_actions'):
     """The quick actions a page leads with, a row at a time: each row is
     (action, when) pairs and keeps the ones that apply. Every one is
     also on the right-click menu, and so in All Actions."""
@@ -515,7 +515,7 @@ def _quick_fields(owner, rows):
                 continue
             kept.append(action)
     from ...operators import quick_actions
-    return quick_actions.fields(kept)
+    return quick_actions.fields(kept, fold=fold)
 
 
 def _finished_interior():
@@ -847,8 +847,9 @@ def _unregister_schemas():
 
 def _cabinet_fields(root):
     """The cabinet page, laid out as the face frame cabinet's: its size,
-    the quick actions, then the rest in folds that say what is set in
-    them. Every command is also in All Actions at the foot."""
+    then the rest in folds that say what is set in them, and last the
+    quick actions in a fold of their own. Every command is also in All
+    Actions at the foot."""
     quick = _quick_fields(root, (
         ((_act("Duplicate", 'hb_frameless.duplicate_cabinet', None,
                'duplicate'), _one_cabinet),
@@ -877,8 +878,6 @@ def _cabinet_fields(root):
          {'when': _houses_appliance}),
         ('distance', 'blind_opening_width', "Door Opening Width",
          {'when': _blind_corner}),
-        ('gap', None, None),
-    ) + quick + (
         ('gap', None, None),
         ('group', 'fl_cab_corner', "Corner", {
             'icon': 'cab_corner', 'when': _has('Left Depth'), 'fields': (
@@ -916,7 +915,7 @@ def _cabinet_fields(root):
             )}),
         ('group', 'fl_cab_ends', "Finished Ends & Back", {
             'summary': _ends_summary, 'fields': _ends_fields()}),
-    )
+    ) + quick
 
 
 OPENING_FIELDS = (

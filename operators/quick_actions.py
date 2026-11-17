@@ -88,13 +88,20 @@ def blocks(actions, title=TITLE):
     return out
 
 
-def fields(actions, title=TITLE):
+def fields(actions, title=TITLE, fold=None):
     """The same, in the field vocabulary a page's field list is written
-    in."""
+    in. With ``fold`` (a key for the page to remember it by) they come
+    as one fold, closed until opened, so they take a line until wanted."""
     out = []
     groups = sectioned(actions)
     if not groups:
         return ()
+    if fold:
+        count = sum(len(group) for _name, group in groups)
+        inner = fields(actions, title)[1:]
+        return (('group', fold, title, {
+            'summary': lambda _owner, n=count: "%d" % n,
+            'fields': inner}),)
     out.append(('label', None, title))
     for name, group in groups:
         out.append(('hints', lambda _context, name=name: (name,), None))
