@@ -32,6 +32,7 @@ from . import gpu_painter, sheets, views
 DESK = (0.32, 0.33, 0.35, 1.0)
 TICK = 0.3                  # seconds between looks at the model
 MIN_TEXTURE, MAX_TEXTURE = 1.5, 4.0     # pixels to the point
+QUIET_TICKS = 2             # ticks after a reading that changes are its own
 
 _st = {}
 
@@ -60,8 +61,15 @@ def _read(context, st):
     st['placed'] = [list((p.info or {}).get('placed', ())) for p in pages]
     st['page'] = min(st.get('page', 0), max(len(pages) - 1, 0))
     st['stale'] = set(range(len(pages)))
+    for i in [i for i in st.get('tex', {}) if i >= len(pages)]:
+        _free(st, i)
     st['scene'] = context.scene.name
     st['gen'] = st['seen_gen'] = views.model_generation()
+    # Reading the model stirs the dependency graph (a hidden part shown
+    # while its shape is taken), and that can be reported a moment
+    # later: for the next ticks a change is our own, not the user's,
+    # so one reading can never set off the next.
+    st['quiet'] = QUIET_TICKS
     st['note'] = f"read in {time.perf_counter() - started:.2f} s"
 
 
@@ -71,6 +79,41 @@ def _free(st, index=None):
             st['tex'].pop(i)[0].free()
 
 
+def _fit(st, comp, region):
+    """(pixels to the point the sheet shows at, pixels to the point its
+    texture wants)."""
+    fit = min((region.width - 40.0) / comp.width,
+              (region.height - 60.0) / comp.height)
+    f = max(fit * st['zoom'], 0.01)
+    return f, min(max(f * 1.25, MIN_TEXTURE), MAX_TEXTURE)
+
+
+def _paint(st, area):
+    """Paint the sheet on show into its texture when it has none or its
+    drawing changed. Called by the operator, between the viewport's
+    draws; the texture already up stays until the new one is whole."""
+    region = _region(area) if area is not None else None
+    if region is None or not st.get('compiled'):
+        return False
+    i = st['page']
+    if i not in st['stale'] and st['tex'].get(i) is not None:
+        return False
+    comp = st['compiled'][i]
+    _f, want = _fit(st, comp, region)
+    try:
+        fresh = (gpu_painter.render(comp, want), want)
+    except Exception as exc:
+        st['stale'].discard(i)          # do not try every tick
+        st['note'] = f"could not paint: {exc}"
+        print("Drawings preview: paint:", exc)
+        return False
+    _free(st, i)
+    st['tex'][i] = fresh
+    st['stale'].discard(i)
+    area.tag_redraw()
+    return True
+
+
 def _draw():
     st = _st
     area = bpy.context.area
@@ -78,30 +121,14 @@ def _draw():
         return
     region = bpy.context.region
     try:
-        # A sheet that needs painting is painted before anything is
-        # drawn here, and the viewport put back after: painting binds
-        # another framebuffer, and a draw already begun in this one came
-        # out blank for that frame (the sheet flickered while zooming).
+        # Nothing is painted into a texture from here: that binds
+        # another framebuffer in the middle of the viewport's own draw,
+        # and the frame it happened in came out as the bare 3D view.
+        # The operator paints (_paint); this only shows what is ready.
         if st['compiled']:
             i = st['page']
             comp = st['compiled'][i]
-            fit = min((region.width - 40.0) / comp.width,
-                      (region.height - 60.0) / comp.height)
-            f = max(fit * st['zoom'], 0.01)
-            want = min(max(f * 1.25, MIN_TEXTURE), MAX_TEXTURE)
-            st['want'] = want
-            if i in st['stale'] or st['tex'].get(i) is None:
-                viewport = gpu.state.viewport_get()
-                scissor = gpu.state.scissor_get()
-                try:
-                    fresh = (gpu_painter.render(comp, want), want)
-                finally:
-                    gpu.state.viewport_set(*viewport)
-                    gpu.state.scissor_set(*scissor)
-                # The old texture stays up until the new one is whole.
-                _free(st, i)
-                st['tex'][i] = fresh
-                st['stale'].discard(i)
+            f, st['want'] = _fit(st, comp, region)
         uni = gpu.shader.from_builtin('UNIFORM_COLOR')
         back = batch_for_shader(uni, 'TRI_FAN', {'pos': [
             (0, 0), (region.width, 0), (region.width, region.height),
@@ -121,8 +148,11 @@ def _draw():
         w, h = comp.width * f, comp.height * f
         x = (region.width - w) / 2.0 + st['pan'][0]
         y = (region.height - h) / 2.0 + st['pan'][1]
-        draw_texture_2d(st['tex'][i][0].texture_color, (x, y), w, h)
         st['rect'] = (x, y, f)
+        if st['tex'].get(i) is None:
+            blf.draw(0, "Drawings: preparing the sheet...")
+            return
+        draw_texture_2d(st['tex'][i][0].texture_color, (x, y), w, h)
         move = st.get('move')
         if move and move.get('now'):
             # The view being dragged, as an outline where it will land.
@@ -175,6 +205,7 @@ class HOME_BUILDER_OT_drawings_preview(bpy.types.Operator):
         st.update(area=context.area.as_pointer(), tex={}, zoom=1.0,
                   pan=[0.0, 0.0], page=0, drag=None)
         _read(context, st)
+        _paint(st, context.area)
         st['handle'] = bpy.types.SpaceView3D.draw_handler_add(
             _draw, (), 'WINDOW', 'POST_PIXEL')
         st['timer'] = context.window_manager.event_timer_add(
@@ -237,11 +268,15 @@ class HOME_BUILDER_OT_drawings_preview(bpy.types.Operator):
         and nothing else is in the middle of an action."""
         st = _st
         gen = views.model_generation()
+        if st.get('quiet', 0) > 0 and context.scene.name == st['scene']:
+            st['quiet'] -= 1
+            st['gen'] = st['seen_gen'] = gen
         changed = gen != st['gen'] or context.scene.name != st['scene']
         settled = gen == st.get('seen_gen')
         st['seen_gen'] = gen
         busy = len(context.window.modal_operators) > 1
-        if changed and settled and not busy and not st['drag']:
+        if changed and settled and not busy and not st['drag'] \
+                and not st.get('move'):
             _read(context, st)
             area.tag_redraw()
             return
@@ -255,6 +290,17 @@ class HOME_BUILDER_OT_drawings_preview(bpy.types.Operator):
             area.tag_redraw()
 
     def modal(self, context, event):
+        result = self._handle(context, event)
+        if _st:
+            # Whatever the event changed (the sheet on show, its
+            # drawing, the zoom) is painted here, between draws.
+            try:
+                _paint(_st, self._area(context))
+            except Exception as exc:
+                print("Drawings preview: paint:", exc)
+        return result
+
+    def _handle(self, context, event):
         st = _st
         if not st:
             return {'CANCELLED'}

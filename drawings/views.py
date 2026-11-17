@@ -87,6 +87,12 @@ def resolve(context, view, width, height):
         return hit
     with reading():
         drawing = resolver(context, view, width, height)
+        # Settle what the reading stirred while it still counts as a
+        # reading, so it is not taken for a change to the model later.
+        try:
+            context.view_layer.update()
+        except Exception:
+            pass
     if len(_cache) > 200:
         _cache.clear()
     # Stale generations are dropped as new ones arrive.
