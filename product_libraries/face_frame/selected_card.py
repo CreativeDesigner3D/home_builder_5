@@ -825,6 +825,10 @@ def _cabinet_fields(root, cab):
                 ('locked', 'bottom_rail_width', "Bottom Rail", {'unlock': 'unlock_bottom_rail'}),
                 ('locked', 'left_stile_width', "Left Stile", {'unlock': 'unlock_left_stile'}),
                 ('locked', 'right_stile_width', "Right Stile", {'unlock': 'unlock_right_stile'}),
+                ('bool', 'gothic_stile_left', "Gothic Left Stile"),
+                ('bool', 'gothic_stile_right', "Gothic Right Stile"),
+                ('number', 'gothic_ball_cuts', "Ball Cuts", {'when': _gothic_stile}),
+                ('distance', 'gothic_route_stop', "Route Stop", {'when': _gothic_stile}),
                 ('distance', 'left_scribe', "Left Scribe", {'when': _scribes}),
                 ('distance', 'right_scribe', "Right Scribe", {'when': _scribes}),
                 ('distance', 'top_scribe', "Top Scribe", {'when': _scribes}),
@@ -878,6 +882,10 @@ def _gothic(cab):
 
 def _turned(cab):
     return _deco(cab) and not _clip(cab)
+
+
+def _gothic_stile(cab):
+    return cab.gothic_stile_left or cab.gothic_stile_right
 
 
 def _wood_top(cab):

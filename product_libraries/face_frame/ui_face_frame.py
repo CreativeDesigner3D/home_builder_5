@@ -529,6 +529,16 @@ def draw_construction(layout, cab_props):
                          text="Transition Detail Height")
                 col.prop(cab_props, 'decorative_corner_block_run',
                          text="Square Block Run")
+        # Gothic stiles: ball cuts down a widened end stile (the flat
+        # face frame counterpart of the Gothic clipped corner).
+        col = dcbox.column(align=True)
+        col.label(text="Gothic Stiles")
+        row = col.row(align=True)
+        row.prop(cab_props, 'gothic_stile_left', text="Left", toggle=True)
+        row.prop(cab_props, 'gothic_stile_right', text="Right", toggle=True)
+        if cab_props.gothic_stile_left or cab_props.gothic_stile_right:
+            col.prop(cab_props, 'gothic_ball_cuts', text="Ball Cuts")
+            col.prop(cab_props, 'gothic_route_stop', text="Route Stop")
 
     # Furniture wood top sits at the bottom - a finishing option layered
     # on after the carcass, ends, and any extensions are set.

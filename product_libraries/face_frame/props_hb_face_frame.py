@@ -29,6 +29,7 @@ from ... import hb_utils
 from . import finish_colors, wood_materials, style_options, shelf_nosing
 from . import wood_top_edge
 from . import decorative_corner
+from . import gothic_stile
 from . import cabinet_column
 from ..common import bun_foot
 
@@ -8718,6 +8719,53 @@ def _update_decorative_corners(self, context):
     _update_cabinet_dim(self, context)
 
 
+def _sync_gothic_stile(cab_props, side):
+    """Widen an end stile when it becomes a Gothic stile.
+
+    Switching one on sets the stile to the typical Gothic width and
+    unlocks it, so the width can then be changed by hand (up to the
+    widest the design is made) and a style re-apply leaves it alone.
+    Switching it off re-locks a stile this unlocked, provided it still
+    holds the width set here; a width changed by hand since is kept.
+    """
+    if side == 'LEFT':
+        on = cab_props.gothic_stile_left
+        attr, lock_attr = 'left_stile_width', 'unlock_left_stile'
+    else:
+        on = cab_props.gothic_stile_right
+        attr, lock_attr = 'right_stile_width', 'unlock_right_stile'
+    root = cab_props.id_data
+    stamp = 'HB_GOTHIC_STILE_%s' % side
+    width = gothic_stile.DEFAULT_WIDTH
+    if on:
+        if root.get(stamp):
+            return
+        if getattr(cab_props, lock_attr):
+            root[stamp] = 'USER_UNLOCKED'
+        else:
+            root[stamp] = 'UNLOCKED_BY_GOTHIC'
+            setattr(cab_props, lock_attr, True)
+        if getattr(cab_props, attr) < width - 1e-7:
+            setattr(cab_props, attr, width)
+        return
+    was = root.get(stamp)
+    if not was:
+        return
+    del root[stamp]
+    if abs(getattr(cab_props, attr) - width) > 1e-7:
+        return
+    if was == 'UNLOCKED_BY_GOTHIC':
+        setattr(cab_props, lock_attr, False)
+        if not root.get('STYLE_NAME'):
+            _recompute_blind_stile_width(cab_props, side)
+
+
+def _update_gothic_stiles(self, context):
+    _sync_gothic_stile(self, 'LEFT')
+    _sync_gothic_stile(self, 'RIGHT')
+    _update_cabinet_dim(self, context)
+
+
 def _update_garage_bottom(self, context):
     """Full-width garage bottom sync (blind appliance garage, the
     "3-opening" configuration): one front spans the entire garage
@@ -10266,6 +10314,34 @@ class Face_Frame_Cabinet_Props(PropertyGroup):
         default=decorative_corner.DEFAULT_ROUTE_STOP,
         unit='LENGTH', precision=4, min=0.0,
         description="How far short of each end of the corner the ball "
+                    "cuts stop",
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    # ---- Gothic stiles: ball cuts routed down a widened end stile
+    # (gothic_stile.py and types_face_frame._apply_gothic_stiles). ----
+    gothic_stile_left: BoolProperty(
+        name="Gothic Left Stile", default=False,
+        description="Route ball cuts down the left end stile. Switching "
+                    "it on widens the stile to 3\"",
+        update=_update_gothic_stiles,
+    )  # type: ignore
+    gothic_stile_right: BoolProperty(
+        name="Gothic Right Stile", default=False,
+        description="Route ball cuts down the right end stile. Switching "
+                    "it on widens the stile to 3\"",
+        update=_update_gothic_stiles,
+    )  # type: ignore
+    gothic_ball_cuts: IntProperty(
+        name="Ball Cuts", default=gothic_stile.DEFAULT_BALL_CUTS,
+        min=1, max=9,
+        description="Ball cuts routed down each Gothic stile, centred "
+                    "across it",
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    gothic_route_stop: FloatProperty(
+        name="Route Stop", default=gothic_stile.DEFAULT_ROUTE_STOP,
+        unit='LENGTH', precision=4, min=0.0,
+        description="How far short of each end of the stile the ball "
                     "cuts stop",
         update=_update_cabinet_dim,
     )  # type: ignore

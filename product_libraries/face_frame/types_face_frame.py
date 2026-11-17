@@ -45,6 +45,7 @@ from . import wood_top_edge
 from . import wood_top_shape
 from ..common import countertop_common
 from . import decorative_corner
+from . import gothic_stile
 from . import cabinet_column
 from . import bar_storage
 from . import accessory_models
@@ -4294,6 +4295,10 @@ class FaceFrameCabinet(GeoNodeCage):
         # frame arrises. No-op + cleanup when Square / unset.
         self._apply_corner_treatment(layout)
 
+        # Gothic stiles: ball cuts routed down the end stiles. No-op +
+        # cleanup when neither end is Gothic.
+        self._apply_gothic_stiles(layout)
+
         # Inset frame profile: the overlay's edge detail around every
         # opening. No-op + cleanup for square-edged overlays.
         self._apply_frame_profile(layout)
@@ -8481,6 +8486,19 @@ class FaceFrameCabinet(GeoNodeCage):
             if mod.object is not cutter:
                 mod.object = cutter
         self._cleanup_corner_treatment(live_keys)
+
+    def _apply_gothic_stiles(self, layout):
+        """Route the ball cuts down the end stiles switched to Gothic
+        (gothic_stile.py). Cleans up when none are."""
+        stiles = {}
+        for child in self.obj.children:
+            role = child.get('hb_part_role')
+            if role == PART_ROLE_LEFT_STILE:
+                stiles['LEFT'] = child
+            elif role == PART_ROLE_RIGHT_STILE:
+                stiles['RIGHT'] = child
+        gothic_stile.apply(self.obj, self.obj.face_frame_cabinet, stiles,
+                           matrix_to_root, GeoNodeCutpart)
 
     # =====================================================================
     # Inset frame profile (Beaded / Metro / Chamfer around every opening)
