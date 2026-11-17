@@ -100,6 +100,13 @@ def blocks(context, item):
     _fold_for(context, kind)
 
     from . import starter_card
+    if kind == 'starter':
+        # Starters mode: the closet's own page, its size on top and its
+        # parts in folds, with nothing of a bay or opening under it.
+        out.extend(options_panel.field_blocks(
+            context, starter_card.page_fields(root), starter_card.owner(root)))
+        _actions(context, out, root)
+        return out
     out.extend(options_panel.field_blocks(context, (
         ('group', STARTER_GROUP, f"Closet  ({sp.closet_type.title()})",
          {'icon': 'closet_starter',
@@ -122,17 +129,30 @@ def blocks(context, item):
               'summary': lambda _ow: opening_card.fill_text(opening_obj),
               'fields': opening_card.fields(opening_obj)}),
         ), opening_card.owner(opening_obj)))
-    # The commands of what is picked: its right-click menu.
     picked = {'starter': root, 'bay': bay_obj, 'opening': opening_obj}[kind]
+    _actions(context, out, picked)
+    return out
+
+
+QUICK_FOLD = 'cl_quick_actions'
+
+
+def _actions(context, out, picked):
+    """The commands of what is picked, from its right-click menu, in a
+    Quick Actions fold that stays closed until opened, then All Actions
+    at the foot."""
+    from ...operators import options_panel, generic_page, quick_actions
     menu = generic_page.menu_id(context.active_object) or generic_page.menu_id(picked)
     if menu:
-        # Every command of the menu, in the sections every library uses.
-        from ...operators import quick_actions
-        page = quick_actions.blocks(quick_actions.from_menu(context, menu))
-        if page:
+        fold = quick_actions.fields(quick_actions.from_menu(context, menu),
+                                    fold=QUICK_FOLD)
+        if fold:
             out.append(('gap', None))
-            out.extend(page)
-    return out
+            out.extend(options_panel.field_blocks(context, fold, picked))
+    if out and out[-1] != ('gap', None):
+        out.append(('gap', None))
+    out.append(('actions', (("All Actions", 'home_builder.all_actions',
+                             None, None),)))
 
 
 def crumbs(context, item):

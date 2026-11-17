@@ -181,6 +181,53 @@ def _set_corner_hang(root, value):
     _ops()._set_corner_mounting(root, False, const.millimeter(int(value)))
 
 
+# Which part of a run stays put when its width is typed, as on a
+# cabinet: the left end (the run grows to the right, as it always has),
+# the centre, or the right end. Kept on the run.
+ANCHOR_KEY = 'HB_ANCHOR_SIDE'
+ANCHOR_SIDES = (('LEFT', "Left"), ('CENTER', "Center"), ('RIGHT', "Right"))
+_ANCHOR_SHARE = {'CENTER': 0.5, 'RIGHT': 1.0}
+
+
+def _get_anchor(root):
+    value = root.get(ANCHOR_KEY, 'LEFT')
+    return value if value in _ANCHOR_SHARE else 'LEFT'
+
+
+def _set_anchor(root, value):
+    if value in _ANCHOR_SHARE:
+        root[ANCHOR_KEY] = value
+    else:
+        root.pop(ANCHOR_KEY, None)
+
+
+def _anchored(root):
+    """A straight run; a corner unit is placed by its corner."""
+    return not getattr(_cls(root), 'is_corner', False)
+
+
+def _get_width(root):
+    return float(_sp(root).width)
+
+
+def _set_width(root, value):
+    """The run's width. Anchored right the run moves by the change so
+    its right end holds; anchored centre by half of it."""
+    sp = _sp(root)
+    value = float(value)
+    share = _ANCHOR_SHARE.get(root.get(ANCHOR_KEY), 0.0)
+    if share and _anchored(root):
+        shift = (value - float(sp.width)) * share
+        if _on_wall(root):
+            sp.wall_offset = float(sp.wall_offset) - shift
+        else:
+            from mathutils import Vector
+            axis = root.matrix_basis.to_3x3() @ Vector((1.0, 0.0, 0.0))
+            if axis.length > 1e-9:
+                root.location -= axis.normalized() * shift
+    sp.width = value
+
+
 def _after(root, context):
     # A run moved by its origin has nothing to solve, and the run's own
     # properties solve themselves; the views only need drawing again.
@@ -199,6 +246,10 @@ def _ensure():
     y_get, y_set = _axis(1)
     z_get, z_set = _axis(2)
     props.update({
+        'width': P.computed(_get_width, _set_width, unit='LENGTH',
+                            precision=4, hard_min=0.0),
+        'anchor_side': P.computed(_get_anchor, _set_anchor, type='ENUM',
+                                  items=list(ANCHOR_SIDES)),
         'name': P.computed(lambda root: root.name,
                            lambda root, value: setattr(root, 'name',
                                                        str(value)),
@@ -496,8 +547,17 @@ def fields(root):
         out.append(('group', 'cl_st_rail', "Hang Rail", {
             'summary': lambda _ow: "Removed" if sp.remove_hang_rail else "",
             'fields': _rail_fields(root)}))
+    def panels_said(_ow):
+        said = []
+        for side, name in (('left', "Left"), ('right', "Right")):
+            if getattr(sp, 'turn_off_%s_panel' % side, False):
+                said.append(name + " off")
+            elif getattr(sp, side + '_finished_end', False):
+                said.append(name + " finished")
+        return ", ".join(said)
     out.append(('group', 'cl_st_panels', "Panels",
-                {'fields': _panel_fields(root, is_corner)}))
+                {'summary': panels_said,
+                 'fields': _panel_fields(root, is_corner)}))
     if getattr(cls, 'has_applied_back', False):
         out.append(('group', 'cl_st_back', "Applied Back", {'fields': (
             ('bool', 'back_to_floor', "Back To Floor"),
@@ -512,4 +572,19 @@ def fields(root):
         out.append(('group', 'cl_st_ctop', "Countertop", {
             'summary': lambda _ow: "On" if sp.include_countertop else "Off",
             'fields': _countertop_fields(root)}))
+    return tuple(out)
+
+
+
+def page_fields(root):
+    """The starter's own page, laid out as a cabinet's: its size and
+    anchor first, then each part of it in a fold that says what is set
+    in it."""
+    out = list(fields(root))
+    at = next((i for i, f in enumerate(out) if f[0] == 'group'), len(out))
+    out[at:at] = [
+        ('choices', 'anchor_side', "Anchor",
+         {'cols': 3, 'when': lambda ow: _anchored(ow.id_data)}),
+        ('gap', None, None),
+    ]
     return tuple(out)
