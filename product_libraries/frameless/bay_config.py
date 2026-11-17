@@ -273,10 +273,13 @@ def set_front(context, bay_obj, index, value):
     """Hold front ``index`` at ``value``. With every front then held, one
     is let go to take up the difference: the bottom one, or the one above
     it when the bottom was typed."""
-    from .operators.ops_opening import set_front_heights
     splitter = _splitter(bay_obj)
-    if splitter is None:
-        return
+    if splitter is not None:
+        set_splitter_front(context, splitter, index, value)
+
+
+def set_splitter_front(context, splitter, index, value):
+    from .operators.ops_opening import set_front_heights
     heights, holds = _heights(splitter)
     if not 1 <= index <= len(heights):
         return
@@ -292,10 +295,13 @@ def set_front(context, bay_obj, index, value):
 
 def release_front(context, bay_obj, index):
     """Let front ``index`` go back to sharing what the held ones leave."""
-    from .operators.ops_opening import set_front_heights
     splitter = _splitter(bay_obj)
-    if splitter is None:
-        return
+    if splitter is not None:
+        release_splitter_front(context, splitter, index)
+
+
+def release_splitter_front(context, splitter, index):
+    from .operators.ops_opening import set_front_heights
     heights, holds = _heights(splitter)
     if 1 <= index <= len(heights):
         holds[index - 1] = False
@@ -326,14 +332,177 @@ class hb_frameless_OT_release_front_height(bpy.types.Operator):
     bl_options = {'UNDO', 'INTERNAL'}
 
     bay_name: bpy.props.StringProperty()
+    splitter_name: bpy.props.StringProperty()
     index: bpy.props.IntProperty()
 
     def execute(self, context):
+        splitter = bpy.data.objects.get(self.splitter_name) \
+            if self.splitter_name else None
+        if splitter is not None:
+            release_splitter_front(context, splitter, self.index)
+            return {'FINISHED'}
         bay_obj = bpy.data.objects.get(self.bay_name)
         if bay_obj is None:
             return {'CANCELLED'}
         release_front(context, bay_obj, self.index)
         return {'FINISHED'}
+
+
+# ---- An opening's front ---------------------------------------------------------
+#
+# An opening holds its front as an insert, itself an opening; a page
+# picked on either shows the same front. Changing the front rebuilds the
+# outer opening, as Change Opening does.
+
+OPENING_TAG = 'IS_FRAMELESS_OPENING_CAGE'
+_SPLITTER_TAGS = ('IS_FRAMELESS_SPLITTER_VERTICAL_CAGE',
+                  'IS_FRAMELESS_SPLITTER_HORIZONTAL_CAGE')
+
+FRONT_KINDS = (
+    ('DOOR', "Door"),
+    ('FLIP_UP_DOOR', "Lift Up Door"),
+    ('SINGLE_DRAWER', "Drawer"),
+    ('PULLOUT', "Pullout"),
+    ('FALSE_FRONT', "False Front"),
+    ('APPLIANCE', "Appliance"),
+    ('OPEN_WITH_SHELVES', "Open with Shelves"),
+    ('OPEN', "Open"),
+    ('SPLIT', "Split"),
+)
+_KIND_OF_TOKEN = {'LIFT': 'FLIP_UP_DOOR', 'DRAWER': 'SINGLE_DRAWER',
+                  'PULLOUT': 'PULLOUT', 'FALSE_FRONT': 'FALSE_FRONT',
+                  'APPLIANCE': 'APPLIANCE', 'SHELVES': 'OPEN_WITH_SHELVES'}
+_WIDE_DOOR = 24 * 0.0254     # wider than this a new door is a pair
+
+
+def outer_opening(opening_obj):
+    """The opening a splitter (or the bay) holds, around its insert."""
+    o = opening_obj
+    while o.parent is not None and o.parent.get(OPENING_TAG) \
+            and not any(o.parent.get(t) for t in _SPLITTER_TAGS):
+        o = o.parent
+    return o
+
+
+def front_opening(opening_obj):
+    """The insert that carries the front's settings: the opening itself
+    or the one opening inside it."""
+    o = opening_obj
+    while True:
+        if 'Door Swing' in o or any(
+                c.get(t) for c in o.children for t in _SPLITTER_TAGS):
+            return o
+        kids = [c for c in o.children if c.get(OPENING_TAG)]
+        if len(kids) != 1:
+            return o
+        o = kids[0]
+
+
+def is_split(opening_obj):
+    return any(c.get(t) for c in outer_opening(opening_obj).children_recursive
+               for t in _SPLITTER_TAGS)
+
+
+def front_kind(opening_obj):
+    outer = outer_opening(opening_obj)
+    if is_split(outer):
+        return 'SPLIT'
+    leaves = _leaf_openings(outer) or [outer]
+    token = _token(leaves[0])
+    if _kind_name(token) == "Door":
+        return 'DOOR'
+    return _KIND_OF_TOKEN.get(token, 'OPEN')
+
+
+def set_front_kind(context, opening_obj, value):
+    """Rebuild the opening with another front. The outer opening is left
+    picked, as the insert the page was on is replaced."""
+    if value == 'SPLIT' or value == front_kind(opening_obj):
+        return
+    outer = outer_opening(opening_obj)
+    opening_type = value
+    if value == 'DOOR':
+        from ...hb_types import GeoNodeObject
+        try:
+            width = float(GeoNodeObject(outer).get_input('Dim X'))
+        except Exception:
+            width = 0.0
+        opening_type = 'DOUBLE_DOORS' if width > _WIDE_DOOR else 'LEFT_DOOR'
+    parent = outer.parent
+    if parent is not None and parent.get('IS_FRAMELESS_BAY_CAGE')             and opening_type in SIGNATURES:
+        # The bay's only opening: rebuilt from the bay, as a layout of
+        # one front, so no insert is left nested in the old one.
+        with context.temp_override(active_object=parent, object=parent,
+                                   selected_objects=[parent]):
+            bpy.ops.hb_frameless.change_bay_opening(opening_type=opening_type)
+        outer = next((c for c in parent.children if c.get(OPENING_TAG)), parent)
+    else:
+        with context.temp_override(active_object=outer, object=outer,
+                                   selected_objects=[outer]):
+            bpy.ops.hb_frameless.change_opening_type(opening_type=opening_type)
+    try:
+        layer = context.view_layer
+        for o in list(context.selected_objects or ()):
+            o.select_set(False)
+        outer.select_set(True)
+        layer.objects.active = outer
+    except Exception:
+        pass
+
+
+def opening_front_row(opening_obj):
+    """(splitter, index, height, held) for an opening that is one of
+    several fronts in a stack, else None."""
+    from . import solver_frameless
+    from .operators.ops_opening import front_height_rows
+    outer = outer_opening(opening_obj)
+    splitter = outer.parent
+    if splitter is None or not splitter.get(solver_frameless.SPLITTER_VERTICAL_TAG):
+        return None
+    index = next((key[1] for key, o in
+                  solver_frameless.split_parts(splitter).items()
+                  if key[0] == 'OPENING' and o == outer), None)
+    if index is None:
+        return None
+    rows = front_height_rows(splitter)
+    if sum(1 for r in rows if r[4]) < 2:
+        return None
+    for i, _label, height, held, has_front in rows:
+        if i == index and has_front:
+            return splitter, index, height, held
+    return None
+
+
+def _opening_front_type():
+    from ...operators import prop_proxy
+
+    def get(obj):
+        return front_kind(obj)
+
+    def set(obj, value):
+        set_front_kind(bpy.context, obj, value)
+    return prop_proxy.computed(get, set, type='ENUM', items=list(FRONT_KINDS))
+
+
+def _opening_front_height():
+    from ...operators import prop_proxy
+
+    def get(obj):
+        row = opening_front_row(obj)
+        return float(row[2]) if row else 0.0
+
+    def set(obj, value):
+        row = opening_front_row(obj)
+        if row is not None:
+            set_splitter_front(bpy.context, row[0], row[1], value)
+    return prop_proxy.computed(get, set, unit='LENGTH', precision=4,
+                               hard_min=0.0)
+
+
+def opening_props():
+    """The opening page's front fields, for its schema."""
+    return {'front_type': _opening_front_type(),
+            'front_height': _opening_front_height()}
 
 
 def register_schemas():

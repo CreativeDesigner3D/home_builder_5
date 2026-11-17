@@ -297,6 +297,11 @@ def _drawer_look():
 # ---- Schemas ----------------------------------------------------------------
 
 def _solve(obj, context):
+    try:
+        obj.name
+    except ReferenceError:
+        # Rebuilt away by the change (a new front replaces its insert).
+        return
     hb_utils.run_calc_fix(context, obj)
 
 
@@ -845,6 +850,7 @@ def _register_schemas():
         'upper_height_anchor': _upper_height_anchor(),
     }, after=_solve)
     P.register(OPENING_SCHEMA, {
+        **bay_config.opening_props(),
         'door_swing': P.index_enum('Door Swing', ("Left", "Right", "Double"), 2),
         'door_mechanism': P.index_enum('Door Mechanism', ("Standard", "Retracting")),
         'drawer_look': _drawer_look(),
@@ -980,16 +986,54 @@ def _cabinet_fields(root):
     ) + quick
 
 
+def _in_stack(owner):
+    from . import bay_config
+    return bay_config.opening_front_row(owner.id_data) is not None
+
+
+def _front_height_chip(owner):
+    from . import bay_config
+    row = bay_config.opening_front_row(owner.id_data)
+    if row is None or not row[3]:
+        return None
+    return ('hb_frameless.release_front_height',
+            {'splitter_name': row[0].name, 'index': row[1]},
+            'lock', "Held. Click to let it share what is left")
+
+
+def _front_details(owner):
+    return (_door(owner) or _has('Inset Front')(owner))
+
+
+def _front_summary(owner):
+    from . import bay_config
+    kind = bay_config.front_kind(owner.id_data)
+    return dict(bay_config.FRONT_KINDS).get(kind, "")
+
+
 OPENING_FIELDS = (
-    ('enum', 'door_swing', "Door Swing", {'when': _door}),
+    ('value', lambda o: _bay_size(o.id_data), "Size (W x H)"),
+    ('enum', 'front_type', "Front"),
+    ('enum', 'door_swing', "Hinge Side", {'when': _door}),
     ('enum', 'door_mechanism', "Mechanism", {'when': _door}),
-    ('enum', 'drawer_look', "Drawer Look", {'when': _door}),
-    ('distance', 'drawer_look_top_height', "Top Front Height",
-     {'when': _drawer_look_on}),
-    ('bool', 'add_apron', "Add Apron", {'when': _door}),
-    ('distance', 'apron_height', "Apron Height", {'when': _apron_on}),
     ('enum', 'lift_mechanism', "Lift", {'when': _flip_up}),
-    ('bool', 'inset_front', "Inset Front", {'when': _has('Inset Front')}),
+    ('distance', 'front_height', "Front Height",
+     {'when': _in_stack, 'action': _front_height_chip}),
+    ('gap', None, None),
+)
+
+OPENING_FOLDS = (
+    ('group', 'fl_opening_front', "Front Details", {
+        'when': _front_details,
+        'summary': _front_summary,
+        'fields': (
+            ('enum', 'drawer_look', "Drawer Look", {'when': _door}),
+            ('distance', 'drawer_look_top_height', "Top Front Height",
+             {'when': _drawer_look_on}),
+            ('bool', 'add_apron', "Add Apron", {'when': _door}),
+            ('distance', 'apron_height', "Apron Height", {'when': _apron_on}),
+            ('bool', 'inset_front', "Inset Front", {'when': _has('Inset Front')}),
+        )}),
     ('group', 'fl_opening_overlays', "Overlays", {
         'when': _has('Half Overlay Top'),
         'summary': _overlay_summary,
@@ -1625,31 +1669,63 @@ def _bay_page(context, out, bay_obj, title):
     _footer(out, None)
 
 
+def _in_splitter(owner):
+    from . import bay_config
+    outer = bay_config.outer_opening(owner.id_data)
+    return outer.parent is not None and any(
+        outer.parent.get(t) for t in bay_config._SPLITTER_TAGS)
+
+
+def _stacked_fronts(owner):
+    from .operators.ops_opening import front_height_splitter
+    try:
+        return front_height_splitter(owner.id_data) is not None
+    except Exception:
+        return False
+
+
+def _opening_quick(opening_obj, has_interior):
+    actions = [
+        ((_act("Edit Opening Sizes", 'hb_frameless.edit_splitter_openings'),
+          _in_splitter),
+         (_act("Edit Door/Drawer Sizes", 'hb_frameless.edit_front_heights'),
+          _stacked_fronts)),
+    ]
+    if has_interior and hasattr(bpy.types, 'HOME_BUILDER_MT_interior_change'):
+        actions.append(((_menu("Change Interior",
+                               'HOME_BUILDER_MT_interior_change'), None),))
+    actions += [
+        ((_act("Split Vertical", 'hb_frameless.custom_vertical_splitter'), None),
+         (_act("Split Horizontal", 'hb_frameless.custom_horizontal_splitter'),
+          None)),
+        ((_act("Finish Interior", 'hb_frameless.finish_interior'), None),),
+    ]
+    return _quick_fields(opening_obj, actions, fold='fl_opening_quick_actions')
+
+
 def _opening_page(context, out, opening_obj):
-    from ...operators import options_panel, prop_proxy, generic_page
-    out.extend(options_panel.field_blocks(
-        context, OPENING_FIELDS, prop_proxy.owner(opening_obj, OPENING_SCHEMA)))
-    # What is inside, said here; changed from the menu beside it.
-    interior = _interior_of(opening_obj)
-    if _items().drawer_opening_for(opening_obj) is None:
+    """The opening page, laid out as the face frame opening's: its size
+    and front, what is inside, the front's details and overlays in folds,
+    and the quick actions folded at the foot."""
+    from ...operators import options_panel, prop_proxy
+    from . import bay_config
+    front = bay_config.front_opening(opening_obj)
+    owner = prop_proxy.owner(front, OPENING_SCHEMA)
+    out.extend(options_panel.field_blocks(context, OPENING_FIELDS, owner))
+    # What is inside, said here; its settings are on its own page.
+    interior = _interior_of(front)
+    has_interior = (interior is not None
+                    or _items().accessory_host(front) is not None)
+    if _items().drawer_opening_for(front) is None and not bay_config.is_split(front):
         out.append(('value', ("Interior", _interior_summary(interior))))
-    menus = []
-    if hasattr(bpy.types, 'HOME_BUILDER_MT_opening_change'):
-        menus.append(_menu("Change Opening", 'HOME_BUILDER_MT_opening_change'))
-    if (interior is not None or _items().accessory_host(opening_obj) is not None) \
-            and hasattr(bpy.types, 'HOME_BUILDER_MT_interior_change'):
-        menus.append(_menu("Change Interior", 'HOME_BUILDER_MT_interior_change'))
-    if menus:
-        out.append(('actions', tuple(menus)))
-    if interior is not None or _items().accessory_host(opening_obj) is not None:
-        # The interior's settings are all on its own page.
+    if has_interior:
         out.append(('actions', (
             _act("Edit Interior", 'hb_frameless.show_interior_page',
-                 {'opening_name': opening_obj.name}, 'cab_interior'),)))
-    out.extend(accessory_blocks(context, opening_obj))
-    _quick(out, _menu_actions(context, opening_obj, skip=(
-        'hb_frameless.opening_prompts', 'HOME_BUILDER_MT_opening_change',
-        'HOME_BUILDER_MT_interior_change')))
+                 {'opening_name': front.name}, 'cab_interior'),)))
+    out.extend(options_panel.field_blocks(context, OPENING_FOLDS, owner))
+    out.extend(accessory_blocks(context, front))
+    out.extend(options_panel.field_blocks(
+        context, _opening_quick(front, has_interior), owner))
     # Every setting of the opening dialog is on the page above.
     _footer(out, None)
 
