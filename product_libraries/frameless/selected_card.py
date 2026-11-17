@@ -684,7 +684,7 @@ def _edge_summary(owner):
 
 
 def edge_blocks(context, part_obj):
-    """The Edgebanding group of a cabinet part: each edge by where it
+    """The Edgebanding group of a cabinet or product part: each edge by where it
     lies in the cabinet, banded or not and in which banding."""
     from ...operators import options_panel, prop_proxy
     from . import edgebanding_frameless as eb
@@ -1581,6 +1581,11 @@ def _product_page(context, out, root):
         out.extend(options_panel.field_blocks(
             context, MISC_BAND_FIELDS, prop_proxy.owner(root, schema)))
     out.extend(product_option_blocks(context, root))
+    # One part of the product picked (a filler's face, a toe skin, a
+    # ceiling closure board): its edges can be set one by one.
+    part_obj = context.active_object
+    if part_obj is not None and part_obj is not root:
+        out.extend(edge_blocks(context, part_obj))
     _quick(out, _menu_actions(context, root,
                               skip=('hb_frameless.product_prompts',)))
     _footer(out, None)

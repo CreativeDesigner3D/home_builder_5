@@ -36,7 +36,7 @@ on L2 with W1 at the bottom and W2 at the top of a side; shelves,
 splitters (fixed shelves, divisions, drawer-bank splitters) and both
 stretchers have the front on L1. _FRONT_ON_L1 turns those round.
 
-Any one edge of a cabinet part can be set by hand over its rule
+Any one edge of a cabinet or product part can be set by hand over its rule
 (EDGE_STATES): banded in the cabinet banding, banded in the interior's,
 or left bare. The choice is kept on the part and read by the same
 functions, so it holds through a restyle.
@@ -134,15 +134,28 @@ EDGE_STATES = (
 _STATE_KEYS = tuple(key for key, _label in EDGE_STATES)
 
 
+def owner_root(obj):
+    """The cabinet a part is in, or else the product (a filler, a
+    ceiling closure, a base assembly) it belongs to, or None."""
+    root = solver_frameless.cabinet_root(obj)
+    if root is not None:
+        return root
+    while obj is not None:
+        if obj.get('IS_FRAMELESS_PRODUCT_CAGE'):
+            return obj
+        obj = obj.parent
+    return None
+
+
 def takes_edge_override(obj):
-    """A board of a cabinet whose edges can be set one by one: not a
-    misc part (it has its own ticks) and not a door or drawer front
-    (banded by its style)."""
+    """A board of a cabinet or product whose edges can be set one by
+    one: not a misc part (it has its own ticks) and not a door or
+    drawer front (banded by its style)."""
     return (obj is not None
             and bool(obj.get(solver_frameless.PART_ROLE_KEY))
             and not is_bandable_misc_part(obj)
             and not obj.get('IS_CABINET_FRONT')
-            and solver_frameless.cabinet_root(obj) is not None
+            and owner_root(obj) is not None
             and _has_edges(obj))
 
 
@@ -282,7 +295,7 @@ def edge_labels(obj):
     and width, turned round by its mirrors."""
     from mathutils import Vector
     from ...hb_types import GeoNodeObject
-    root = solver_frameless.cabinet_root(obj)
+    root = owner_root(obj)
     if root is None:
         return {e: e for e in EDGE_SOCKETS}
     part = GeoNodeObject(obj)
@@ -392,7 +405,7 @@ def _style(obj):
         return None
     if not len(styles):
         return None
-    root = solver_frameless.cabinet_root(obj) or obj
+    root = owner_root(obj) or obj
     index = int(root.get('CABINET_STYLE_INDEX', 0))
     return styles[index] if 0 <= index < len(styles) else styles[0]
 

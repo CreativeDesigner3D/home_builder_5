@@ -533,6 +533,7 @@ class HOME_BUILDER_MT_appliance_commands(bpy.types.Menu):
 
 
 classes = (
+    HOME_BUILDER_MT_applied_end_commands,
     HOME_BUILDER_MT_finish_condition,
     HOME_BUILDER_MT_carcass_part_commands,
     HOME_BUILDER_MT_cabinet_commands,
