@@ -1768,6 +1768,25 @@ def apply_style_colors(context):
         if tint is not None:
             tinted += 1
 
+    # Frameless cabinets wear their own cabinet style's colour the same
+    # way (a face frame product built on frameless parts was reached
+    # through its own stamp above).
+    for cage in [o for o in bpy.data.objects
+                 if o.get('IS_FRAMELESS_CABINET_CAGE')]:
+        tint = _frameless_style_tint(cage) if on else None
+        part_colour = (_NO_STYLE_TINT if tint is None
+                       else (tint[0], tint[1], tint[2], 1.0))
+        _paint_cage(cage, tint, context)
+        for child in cage.children_recursive:
+            if child.get('IS_2D_ANNOTATION'):
+                child.color = note_colour
+            elif _is_cage(child):
+                _paint_cage(child, tint, context)
+            else:
+                child.color = part_colour
+        if tint is not None:
+            tinted += 1
+
     # Panels on a standalone appliance wear the style stamped on it (a
     # housed one was reached through its cabinet above). Only the panel
     # run is tinted, not the appliance model behind it.
@@ -1819,6 +1838,45 @@ def apply_style_colors(context):
     return tinted
 
 
+def _frameless_style_tint(cage):
+    """The viewport RGB of a frameless cabinet: its cabinet style's place
+    in the frameless style pool picks from the same palette the face
+    frame styles use, so the first style is white and each one after
+    takes the next colour. A cabinet with no style reads as the first."""
+    index = 0
+    name = cage.get('CABINET_STYLE_NAME')
+    if name:
+        try:
+            from ... import hb_project
+            pool = hb_project.get_main_scene().hb_frameless.cabinet_styles
+            index = max(next((i for i, style in enumerate(pool)
+                              if style.name == name), 0), 0)
+        except Exception:
+            index = 0
+    return style_viewport_color(style_palette_color(index))
+
+
+def _other_library_tint(obj):
+    """The style colour of something that is not a face frame cabinet:
+    a frameless cabinet wears its own style's colour, and a frameless
+    product or a closet (neither has a cabinet style) wears the first
+    style's white. None for anything else."""
+    cur = obj
+    while cur is not None:
+        if cur.get('IS_FRAMELESS_CABINET_CAGE'):
+            return _frameless_style_tint(cur)
+        if cur.get('IS_FRAMELESS_PRODUCT_CAGE'):
+            return STYLE_COLOR_PALETTE[0]
+        cur = cur.parent
+    try:
+        from ..closets import types_closets
+        if types_closets.find_starter_root(obj) is not None:
+            return STYLE_COLOR_PALETTE[0]
+    except Exception:
+        pass
+    return None
+
+
 def style_color_for_object(obj, context=None, highlight=None):
     """The colour ``obj`` should wear under style colours, or None.
 
@@ -1858,8 +1916,10 @@ def style_color_for_object(obj, context=None, highlight=None):
         while root is not None and not _is_styled_bare_part(root):
             root = root.parent
     if root is None:
-        return None
-    tint = _style_tint_for_cabinet(root, props.cabinet_styles)
+        # The other libraries follow the same rule with their own styles.
+        tint = _other_library_tint(obj)
+    else:
+        tint = _style_tint_for_cabinet(root, props.cabinet_styles)
     if tint is None:
         return None
     if highlight is None:
