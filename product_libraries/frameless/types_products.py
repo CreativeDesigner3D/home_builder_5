@@ -1210,38 +1210,32 @@ def _paint_product(root):
     style.apply_materials_to_cabinet(root)
 
 
-def _solve_filler_bottom_return(root, parts, dim_x, depth, mt, on):
-    """The bottom return of a filler with no kick under it: a panel
-    lying behind the face's bottom edge, from the face back to the wall,
-    made when the option is switched on and removed when it is off. Its
-    underside is finished when the bottom of the cabinet beside the
-    filler is."""
-    part = parts.get('FILLER_BOTTOM_RETURN')
+def _solve_filler_return(root, parts, role, name, z, dim_x, depth, mt, on,
+                         finish):
+    """A return lying behind a filler face's bottom (or top) edge, from
+    the face back to the wall, made when ``on`` and removed when not.
+    ``finish`` is (Finish Top, Finish Bottom). True when the part was
+    made or its finish changed, so the filler wants a repaint."""
+    part = parts.get(role)
     if not on:
         if part is not None:
-            parts.pop('FILLER_BOTTOM_RETURN')
+            parts.pop(role)
             bpy.data.objects.remove(part, do_unlink=True)
-        return
+        return False
     made = part is None
     if made:
         new = CabinetPart()
-        new.create('Bottom Return')
+        new.create(name)
         part = new.obj
         part.parent = root
-        part[PART_ROLE_KEY] = 'FILLER_BOTTOM_RETURN'
+        part[PART_ROLE_KEY] = role
         new.set_input('Mirror Y', True)
-        parts['FILLER_BOTTOM_RETURN'] = part
-    from . import scribe_fit
-    finished = scribe_fit.bottom_return_finished(root)
-    repaint = made or bool(part.get('Finish Bottom')) != finished
-    part['Finish Top'] = False
-    part['Finish Bottom'] = finished
-    _set_part(part, (0.0, 0.0, 0.0), length=dim_x, width=depth, thickness=mt)
-    if repaint:
-        try:
-            _paint_product(root)
-        except Exception:
-            pass
+        parts[role] = part
+    changed = made or (bool(part.get('Finish Top')), bool(
+        part.get('Finish Bottom'))) != tuple(finish)
+    part['Finish Top'], part['Finish Bottom'] = finish
+    _set_part(part, (0.0, 0.0, z), length=dim_x, width=depth, thickness=mt)
+    return changed
 
 
 def _solve_corner_filler(root, parts, dim_x, dim_y, dim_z):
@@ -1261,12 +1255,24 @@ def _solve_corner_filler(root, parts, dim_x, dim_y, dim_z):
     # Off over a separate toe kick platform, which runs on under it.
     kick_on = bool(root.get('Toe Kick Piece', True))
     face_y = -dim_y + (0.0 if on_doors else FRONT_THICKNESS)
+    from . import scribe_fit
     # Under an upper only: a base or tall stands on its kick or the floor.
+    # Its underside is finished when the cabinet beside it shows its
+    # bottom.
     bottom_on = bool(root.get(BOTTOM_RETURN_KEY, False)) and tkh <= 0.0
-    _solve_filler_bottom_return(root, parts, dim_x, -(face_y + mt), mt,
-                                bottom_on)
-    # The return leg stands on the bottom return.
+    repaint = _solve_filler_return(
+        root, parts, 'FILLER_BOTTOM_RETURN', 'Bottom Return', 0.0, dim_x,
+        -(face_y + mt), mt, bottom_on,
+        (False, scribe_fit.bottom_return_finished(root)))
+    # Over an upper or tall whose top is finished, a top return closes
+    # the filler over the top the same way, finished on its top face.
+    top_on = scribe_fit.top_return_wanted(root)
+    repaint = _solve_filler_return(
+        root, parts, 'FILLER_TOP_RETURN', 'Top Return', dim_z - mt, dim_x,
+        -(face_y + mt), mt, top_on, (True, False)) or repaint
+    # The return leg stands on the bottom return, under the top one.
     leg_z = tkh + (mt if bottom_on else 0.0)
+    leg_top = dim_z - (mt if top_on else 0.0)
 
     part = parts.get('FILLER_FACE')
     if part is not None:
@@ -1283,6 +1289,9 @@ def _solve_corner_filler(root, parts, dim_x, dim_y, dim_z):
     # has no return cleat unless asked for; one in the door plane always
     # has one. Fillers built before the option keep theirs.
     cleat_on = on_doors or bool(root.get(FILLER_RETURN_CLEAT_KEY, True))
+    # The cleat is finished stock only where the face stands in the door
+    # plane; behind a face flush with the case it is unfinished.
+    cleat_finish = (False, on_doors)
     # The return is inside the filler's own width, so it lies against
     # the cabinet side rather than into the cabinet.
     for role, x, on in (('FILLER_LEFT_RETURN', 0.0, not cab_right),
@@ -1292,9 +1301,23 @@ def _solve_corner_filler(root, parts, dim_x, dim_y, dim_z):
             # A side panel's width runs toward -Y from where it is set,
             # so it is set at its back edge to run from the face's back
             # toward the wall.
+            if (bool(part.get('Finish Top')),
+                    bool(part.get('Finish Bottom', True))) != cleat_finish:
+                part['Finish Top'], part['Finish Bottom'] = cleat_finish
+                repaint = True
             _set_part(part, (x, face_y + mt + ret, leg_z),
-                      length=dim_z - leg_z, width=ret, thickness=mt,
+                      length=leg_top - leg_z, width=ret, thickness=mt,
                       visible=on and cleat_on)
+
+    # The face is banded by where it stands (edgebanding_frameless):
+    # repaint when that, or a return's finish, has changed.
+    signature = scribe_fit.finish_signature(root)
+    if repaint or root.get(scribe_fit.FINISH_SIGNATURE_KEY) != signature:
+        root[scribe_fit.FINISH_SIGNATURE_KEY] = signature
+        try:
+            _paint_product(root)
+        except Exception:
+            pass
 
     # The cage is what gets clicked, so it is drawn back to the filler
     # itself: to the face when that stands behind the door plane, and up

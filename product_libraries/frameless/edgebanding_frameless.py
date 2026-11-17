@@ -73,6 +73,13 @@ BAND_EDGES = {
     'TOE_KICK': (),
     'LEFT_TOE_KICK': (),
     'RIGHT_TOE_KICK': (),
+    # A wall scribe filler's face bands only the edges that show, which
+    # depend on where it stands (scribe_fit.face_band_edges); its kick
+    # piece and return cleats show none.
+    'FILLER_FACE': (),
+    'FILLER_KICK': (),
+    'FILLER_LEFT_RETURN': (),
+    'FILLER_RIGHT_RETURN': (),
 }
 
 # Roles whose front edge is their L1 socket.
@@ -212,7 +219,17 @@ def _rule_banded_edges(obj):
 
 def _context_band_edges(obj, role):
     """Edges banded beyond a part's usual ones because of the cabinet
-    it is in: a wall cabinet's side shows its top and bottom ends."""
+    it is in: a wall cabinet's side shows its top and bottom ends; a
+    filler face the edges its kind and placement show."""
+    if role == 'FILLER_FACE':
+        root = owner_root(obj)
+        if root is None:
+            return ()
+        from . import scribe_fit
+        try:
+            return scribe_fit.face_band_edges(root)
+        except Exception:
+            return ()
     if role in _SIDE_ROLES:
         root = solver_frameless.cabinet_root(obj)
         if root is not None and solver_frameless.carcass_kind(root) in _WALL_KINDS:

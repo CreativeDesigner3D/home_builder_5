@@ -134,15 +134,79 @@ def bottom_return_finished(filler):
     return ops_finished_ends.finish_condition(cabinet, 'BOTTOM') == 'FINISHED'
 
 
+def filler_kind(filler):
+    """'BASE', 'UPPER' or 'TALL': the kind of cabinet a wall scribe
+    filler stands beside, or else what its name or toe kick says."""
+    cabinet = neighbour_cabinet(filler)
+    if cabinet is not None:
+        from . import solver_frameless
+        kind = solver_frameless.carcass_kind(cabinet) or ''
+        if 'UPPER' in kind:
+            return 'UPPER'
+        if kind == 'TALL':
+            return 'TALL'
+        return 'BASE'
+    name = filler.name
+    for word, kind in (('Upper', 'UPPER'), ('Tall', 'TALL'), ('Base', 'BASE')):
+        if word in name:
+            return kind
+    if float(filler.get('Toe Kick Height', 0.0) or 0.0) > 0.0:
+        return 'BASE'
+    return 'UPPER'
+
+
+def top_return_wanted(filler):
+    """Whether an upper or tall filler closes over its top: it does when
+    the top of the cabinet beside it is finished."""
+    if filler.get('PART_TYPE') != 'CORNER_FILLER':
+        return False
+    cabinet = neighbour_cabinet(filler)
+    if cabinet is None or filler_kind(filler) == 'BASE':
+        return False
+    from .operators import ops_finished_ends
+    try:
+        return ops_finished_ends.finish_condition(cabinet, 'TOP') == 'FINISHED'
+    except Exception:
+        return False
+
+
+# The face's edge sockets: W1 its bottom, W2 its top, L1 its left long
+# edge, L2 its right one (measured on the face as built).
+_FACE_BOTTOM, _FACE_TOP, _FACE_LEFT, _FACE_RIGHT = 'W1', 'W2', 'L1', 'L2'
+
+
+def face_band_edges(filler):
+    """The edges of a filler's face that are banded. A face flush with
+    the doors shows the long edge toward the cabinet; one flush with the
+    case shows none of it. An upper or tall face shows its bottom edge,
+    and its top edge when it has a top return. The wall edge never
+    shows."""
+    edges = []
+    if bool(filler.get('Flush With Doors', True)):
+        edges.append(_FACE_RIGHT if bool(filler.get('Cabinet On Right', True))
+                     else _FACE_LEFT)
+    if filler_kind(filler) != 'BASE':
+        edges.append(_FACE_BOTTOM)
+        if top_return_wanted(filler):
+            edges.append(_FACE_TOP)
+    return tuple(edges)
+
+
+# What a filler's banding and return finishes were last painted from.
+FINISH_SIGNATURE_KEY = 'hb_filler_finish'
+
+
+def finish_signature(filler):
+    return '%d|%d|%s' % (bottom_return_finished(filler),
+                         top_return_wanted(filler),
+                         ''.join(face_band_edges(filler)))
+
+
 def sync_bottom_return(filler):
-    """Re-solve a filler whose bottom return's finish no longer matches
-    the cabinet beside it. True when it changed."""
-    if not filler.get(types_products.BOTTOM_RETURN_KEY):
-        return False
-    part = types_products.product_parts(filler).get('FILLER_BOTTOM_RETURN')
-    if part is None:
-        return False
-    if bool(part.get('Finish Bottom')) == bottom_return_finished(filler):
+    """Re-solve a filler whose returns or banding no longer match the
+    cabinet beside it (its bottom or top finished, its kind). True when
+    it changed."""
+    if filler.get(FINISH_SIGNATURE_KEY) == finish_signature(filler):
         return False
     types_products.recalculate_product(filler)
     return True
