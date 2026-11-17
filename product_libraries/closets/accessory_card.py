@@ -333,7 +333,7 @@ def _fields(cage, acc_def, owner):
 
 
 def blocks(context, cage):
-    from ...operators import generic_page, options_panel, prop_proxy, quick_actions
+    from ...operators import options_panel, prop_proxy
     acc_def = _def(cage)
     out = [('head', (cage.name, False, None))]
     if acc_def is None:
@@ -359,13 +359,9 @@ def blocks(context, cage):
             out.append(('actions', ((
                 "Fit Opening To Accessory",
                 'hb_closets.fit_opening_to_accessory', {}, None),)))
-    menu = generic_page.menu_id(context.active_object) or generic_page.menu_id(cage)
     # The accessory's dialog is this page.
-    page = quick_actions.blocks(quick_actions.from_menu(
-        context, menu, skip=('hb_closets.accessory_prompts',)))
-    if page:
-        out.append(('gap', None))
-        out.extend(page)
+    from .selected_card import _actions
+    _actions(context, out, cage, skip=('hb_closets.accessory_prompts',))
     return out
 
 

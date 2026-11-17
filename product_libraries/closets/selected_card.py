@@ -32,8 +32,9 @@ _last_kind = None
 
 def find(context):
     """(kind, root, bay_obj, opening_obj) for a picked closet or part of
-    one, or None. `kind` is 'starter', 'bay' or 'opening' -- the
-    nearest of them above what was clicked."""
+    one, or None. `kind` is 'part' for a piece of the run picked in
+    Parts mode (the active object), else 'starter', 'bay' or
+    'opening' -- the nearest of them above what was clicked."""
     obj = context.active_object
     if obj is None or not obj.select_get():
         return None
@@ -48,6 +49,9 @@ def find(context):
         elif bay is None and o.get(types_closets.TAG_BAY_CAGE):
             bay = o
         o = o.parent
+    from . import part_page
+    if part_page.is_part(obj, root):
+        return ('part', root, bay, opening)
     if opening is not None:
         return ('opening', root, bay, opening)
     if bay is not None:
@@ -64,7 +68,7 @@ def _fold_for(context, kind):
     _last_kind = kind
     from ...operators import options_panel
     primary = {'starter': STARTER_GROUP, 'bay': BAY_GROUP,
-               'opening': OPENING_GROUP}[kind]
+               'opening': OPENING_GROUP}.get(kind)
     for key in (STARTER_GROUP, BAY_GROUP, OPENING_GROUP):
         method = 'group:' + key
         if bool(options_panel.section_expanded(context, method)) != (key == primary):
@@ -96,10 +100,21 @@ def blocks(context, item):
         trail.append(_bay_label(bay_obj))
     if opening_obj is not None:
         trail.append(_opening_label(bay_obj, opening_obj))
+    part = context.active_object if kind == 'part' else None
+    if part is not None:
+        from . import part_page
+        trail.append(part_page.label(part))
     out = [('head', (" › ".join(trail), False, None))]
     _fold_for(context, kind)
 
     from . import starter_card
+    if kind == 'part':
+        # Parts mode: the part's own page, its size and what builds it.
+        from . import part_page
+        shown = part_page.blocks(context, part, root, bay_obj, opening_obj)
+        out.extend(shown)
+        _actions(context, out, part, skip=part_page.ON_PAGE)
+        return out
     if kind == 'starter':
         # Starters mode: the closet's own page, its size on top and its
         # parts in folds, with nothing of a bay or opening under it.
@@ -186,6 +201,9 @@ def crumbs(context, item):
     if opening_obj is not None:
         out.append((_opening_label(bay_obj, opening_obj),
                     (op, {'name': opening_obj.name, 'level': 'Openings'})))
+    if kind == 'part' and context.active_object is not None:
+        from . import part_page
+        out.append((part_page.label(context.active_object), None))
     out[-1] = (out[-1][0], None)
     return out
 

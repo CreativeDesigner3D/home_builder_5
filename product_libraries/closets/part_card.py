@@ -283,7 +283,7 @@ def _bay_top_part(root, entry):
 # ---- The page ---------------------------------------------------------------
 
 def blocks(context, item):
-    from ...operators import generic_page, options_panel, prop_proxy, quick_actions
+    from ...operators import options_panel, prop_proxy
     kind, obj = item
     if kind == 'accessory':
         from . import accessory_card
@@ -307,14 +307,11 @@ def blocks(context, item):
     else:
         out.extend(options_panel.field_blocks(
             context, MISC_FIELDS, prop_proxy.owner(obj, MISC_SCHEMA)))
-    menu = generic_page.menu_id(context.active_object) or generic_page.menu_id(obj)
     # The part's dialog is this page.
-    page = quick_actions.blocks(quick_actions.from_menu(context, menu, skip=(
+    from .selected_card import _actions
+    _actions(context, out, obj, skip=(
         'hb_closets.slab_countertop_prompts', 'hb_closets.bay_countertop_prompts',
-        'hb_closets.wall_rod_prompts', 'hb_closets.misc_part_prompts')))
-    if page:
-        out.append(('gap', None))
-        out.extend(page)
+        'hb_closets.wall_rod_prompts', 'hb_closets.misc_part_prompts'))
     return out
 
 
