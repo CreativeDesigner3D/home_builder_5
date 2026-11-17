@@ -9,7 +9,7 @@ route through it, so the dropdowns are the whole UI.
 import bpy
 import mathutils
 
-from . import adapters, engine, packages
+from . import adapters, engine, inserts, packages
 from .. import hb_types, hb_utils, units
 
 MOLDING_TAG = 'IS_HB_MOLDING_SWEEP'
@@ -37,11 +37,16 @@ def clear_scene_molding(scene, molding_type=None):
         doomed.append(obj)
         if bevel is not None and bevel.get('IS_HB_MOLDING_PROFILE'):
             doomed.append(bevel)
+        doomed.extend(c for c in obj.children
+                      if c.get(inserts.INSERT_TAG))
     for obj in doomed:
         data = obj.data
         bpy.data.objects.remove(obj, do_unlink=True)
         if data is not None and data.users == 0:
-            bpy.data.curves.remove(data)
+            if isinstance(data, bpy.types.Mesh):
+                bpy.data.meshes.remove(data)
+            else:
+                bpy.data.curves.remove(data)
 
 
 def _resolve_stack(stack, opts):
@@ -356,6 +361,27 @@ def _spawn_sweep_piece(scene, molding_type, chain, runs, material, parent,
         size=size)
     if profile is None:
         return None
+    # A profile with an insert (dentil, rope) is swept with its base
+    # outline and the insert is built along the run. The profile object
+    # keeps its own name, which is what the run is known by.
+    insert = inserts.insert_spec(profile)
+    if insert is not None and insert.get('base'):
+        category = profile_ref.replace("\\", "/").split("/")[:-1]
+        base = packages.make_profile_object(
+            "/".join(category + [insert['base']]), fallback_key,
+            f"Molding_Profile_{fallback_key}", scene.collection,
+            height=height, size=size)
+        if base is not None and base.type == 'CURVE':
+            old = profile.data
+            profile.data = base.data
+            bpy.data.objects.remove(base, do_unlink=True)
+            if old.users == 0:
+                bpy.data.curves.remove(old)
+        elif base is not None:
+            bpy.data.objects.remove(base, do_unlink=True)
+            insert = None
+        else:
+            insert = None
     curve = bpy.data.curves.new("MoldingSweep", type='CURVE')
     curve.dimensions = '2D'
     curve.bevel_mode = 'OBJECT'
@@ -373,6 +399,7 @@ def _spawn_sweep_piece(scene, molding_type, chain, runs, material, parent,
     profile.parent = sweep
 
     wrote = 0
+    local_runs = []
     for run_pts, run_cyclic in runs:
         local = []
         for p in run_pts:
@@ -396,11 +423,14 @@ def _spawn_sweep_piece(scene, molding_type, chain, runs, material, parent,
         spline.use_cyclic_u = run_cyclic
         if material is not None:
             spline.material_index = _material_slot(curve, material)
+        local_runs.append((local, run_cyclic))
         wrote += 1
     if wrote == 0:
         bpy.data.objects.remove(sweep, do_unlink=True)
         bpy.data.objects.remove(profile, do_unlink=True)
         return None
+    if insert is not None:
+        inserts.build(sweep, insert, local_runs, material)
     return sweep
 
 
