@@ -52,6 +52,8 @@ TAG_INTERIOR = 'IS_FRAMELESS_INTERIOR_CAGE'
 TOE_KICK_TYPES = ("Notch Ends to Floor", "Ladder Style", "Floating",
                   "Leg Levelers")
 
+FINISHED_BOTTOMS = ("None", "1/4\" Panel", "3/4\" Panel")
+
 # Prompts that take more than a write -- a toe kick type swaps parts, a
 # finished interior repaints the cabinet: the Toe Kick group and the
 # dialog handle them.
@@ -347,6 +349,191 @@ def _cabinet_height():
                                hard_min=0.0)
 
 
+def _upper_box(owner):
+    """A straight upper cabinet: the one kind a panel is applied under."""
+    from . import solver_frameless
+    obj = owner.id_data
+    return (not obj.get('IS_CORNER_CABINET')
+            and solver_frameless.carcass_kind(obj) == 'UPPER')
+
+
+def _fb_on(owner):
+    from . import solver_frameless
+    return _upper_box(owner) and bool(
+        owner.id_data.get(solver_frameless.FINISHED_BOTTOM_KEY))
+
+
+def _fb_led(owner):
+    from . import solver_frameless
+    return _fb_on(owner) and bool(
+        owner.id_data.get(solver_frameless.FB_LED_KEY))
+
+
+def _fb_summary(owner):
+    from . import solver_frameless
+    number = int(owner.id_data.get(solver_frameless.FINISHED_BOTTOM_KEY, 0) or 0)
+    text = FINISHED_BOTTOMS[number] if 0 <= number < len(FINISHED_BOTTOMS) else ""
+    if number and owner.id_data.get(solver_frameless.FB_LED_KEY):
+        text += ", LED route"
+    return text
+
+
+def _construction_summary(owner):
+    obj = owner.id_data
+    said = [label for key, label in (('Remove Bottom', "No bottom"),
+                                     ('Finished Interior', "Finished interior"))
+            if obj.get(key)]
+    return ", ".join(said) or "Standard"
+
+
+def _angles_shown():
+    """Angled fronts and backs are offered on every cabinet only while
+    the cabinet dialog offers them too; a cabinet already angled always
+    shows its own."""
+    from .operators import ops_cabinet
+    return bool(ops_cabinet.SHOW_ANGLED_OPTIONS)
+
+
+def _front_angled(owner):
+    from . import solver_frameless
+    return solver_frameless.FRONT_LEFT_DEPTH_KEY in owner.id_data
+
+
+def _show_angled_front(owner):
+    from . import solver_frameless
+    obj = owner.id_data
+    if obj.get('IS_CORNER_CABINET') or (
+            solver_frameless.carcass_kind(obj)
+            not in solver_frameless.STRAIGHT_KINDS):
+        return False
+    return _angles_shown() or _front_angled(owner)
+
+
+def _back_angled(owner):
+    return bool(owner.id_data.get('Angled Back'))
+
+
+def _show_angled_back(owner):
+    if owner.id_data.get('IS_CORNER_CABINET'):
+        return False
+    return _angles_shown() or _back_angled(owner)
+
+
+def _angled_front_summary(owner):
+    if not _front_angled(owner):
+        return "Square"
+    return f"{_dist(owner.front_left_depth)} / {_dist(owner.front_right_depth)}"
+
+
+def _angled_back_summary(owner):
+    return ("None", "Left", "Right")[int(owner.id_data.get('Angled Back', 0) or 0) % 3]
+
+
+def _finished_interior():
+    """Finishing the interior repaints the cabinet in its style."""
+    from ...operators import prop_proxy
+
+    def get(obj):
+        return bool(obj.get('Finished Interior', False))
+
+    def set(obj, value):
+        if bool(value) == bool(obj.get('Finished Interior', False)):
+            return
+        obj['Finished Interior'] = bool(value)
+        try:
+            styles = hb_project.get_main_scene().hb_frameless.cabinet_styles
+            if len(styles):
+                index = int(obj.get('CABINET_STYLE_INDEX', 0) or 0)
+                style = styles[index] if index < len(styles) else styles[0]
+                style.assign_style_to_cabinet(obj)
+        except Exception as ex:
+            print('Home Builder: repainting %s failed: %s' % (obj.name, ex))
+    return prop_proxy.computed(get, set, type='BOOLEAN')
+
+
+def _finished_bottom():
+    """The panel applied under an upper. A cabinet that never had one
+    keeps no prompt for it until one is picked."""
+    from ...operators import prop_proxy
+    from . import solver_frameless
+    key = solver_frameless.FINISHED_BOTTOM_KEY
+
+    def get(obj):
+        try:
+            return str(int(obj.get(key, 0) or 0))
+        except (TypeError, ValueError):
+            return '0'
+
+    def set(obj, value):
+        if int(value) or key in obj:
+            obj[key] = int(value)
+    return prop_proxy.computed(
+        get, set, type='ENUM',
+        items=[(str(i), label) for i, label in enumerate(FINISHED_BOTTOMS)])
+
+
+def _angled_front():
+    """Switching the angle on starts both ends at the cabinet's depth."""
+    from ...operators import prop_proxy
+    from . import solver_frameless
+    left, right = (solver_frameless.FRONT_LEFT_DEPTH_KEY,
+                   solver_frameless.FRONT_RIGHT_DEPTH_KEY)
+
+    def get(obj):
+        return left in obj
+
+    def set(obj, value):
+        if value and left not in obj:
+            depth = float(_cage(obj).get_input('Dim Y'))
+            obj[left] = depth
+            obj[right] = depth
+        elif not value:
+            obj.pop(left, None)
+            obj.pop(right, None)
+    return prop_proxy.computed(get, set, type='BOOLEAN')
+
+
+def _front_depth(side):
+    """One end of an angled front. The cabinet is as deep as its deeper
+    end."""
+    from ...operators import prop_proxy
+    from . import solver_frameless
+    keys = {'left': solver_frameless.FRONT_LEFT_DEPTH_KEY,
+            'right': solver_frameless.FRONT_RIGHT_DEPTH_KEY}
+
+    def get(obj):
+        try:
+            return float(obj.get(keys[side], _cage(obj).get_input('Dim Y')))
+        except Exception:
+            return 0.0
+
+    def set(obj, value):
+        if keys['left'] not in obj:
+            return
+        obj[keys[side]] = float(value)
+        _cage(obj).set_input('Dim Y', max(float(obj[keys['left']]),
+                                           float(obj[keys['right']])))
+    return prop_proxy.computed(get, set, unit='LENGTH', precision=4,
+                               hard_min=0.0)
+
+
+def _upper_height_anchor():
+    """Which edge of an upper stays put when its height is typed: a
+    setting of the room, shown beside the height it steers."""
+    from ...operators import prop_proxy
+
+    def _props():
+        return hb_project.get_settings_scene(bpy.context).hb_frameless
+
+    def get(obj):
+        return _props().upper_height_anchor
+
+    def set(obj, value):
+        _props().upper_height_anchor = value
+    items = [('TOP', "Top"), ('BOTTOM', "Bottom")]
+    return prop_proxy.computed(get, set, type='ENUM', items=items)
+
+
 def _top_off_floor():
     from ...operators import prop_proxy
 
@@ -515,6 +702,7 @@ def edge_blocks(context, part_obj):
 
 def _register_schemas():
     from ...operators import prop_proxy as P
+    from . import solver_frameless
     P.register(CABINET_SCHEMA, {
         'width': P.node_input('Dim X'),
         'depth': P.node_input('Dim Y'),
@@ -532,6 +720,20 @@ def _register_schemas():
         'toe_kick_panel_thickness': P.length('Toe Kick Panel Thickness', units.inch(0.375)),
         'toe_kick_end_inset': P.length('Toe Kick End Inset'),
         'remove_bottom': P.flag('Remove Bottom'),
+        'finished_interior': _finished_interior(),
+        'finished_bottom': _finished_bottom(),
+        'fb_doors_cover': P.flag(solver_frameless.FB_DOORS_COVER_KEY, True),
+        'fb_led_route': P.flag(solver_frameless.FB_LED_KEY),
+        'fb_led_width': P.length(solver_frameless.FB_LED_WIDTH_KEY, units.inch(0.875)),
+        'fb_led_depth': P.length(solver_frameless.FB_LED_DEPTH_KEY, units.inch(0.375)),
+        'fb_led_inset': P.length(solver_frameless.FB_LED_INSET_KEY, units.inch(1.5)),
+        'angled_front': _angled_front(),
+        'front_left_depth': _front_depth('left'),
+        'front_right_depth': _front_depth('right'),
+        'angled_back': P.index_enum('Angled Back', ("None", "Left", "Right")),
+        'angled_back_width': P.length('Angled Back Width', units.inch(12.0)),
+        'angled_back_depth': P.length('Angled Back Depth', units.inch(12.0)),
+        'upper_height_anchor': _upper_height_anchor(),
     }, after=_solve)
     P.register(OPENING_SCHEMA, {
         'door_swing': P.index_enum('Door Swing', ("Left", "Right", "Double"), 2),
@@ -585,6 +787,7 @@ CABINET_FIELDS = (
     ('distance', 'depth', "Depth"),
     ('distance', 'height_off_floor', "Above Floor", {'when': _hung}),
     ('distance', 'top_off_floor', "Top Above Floor", {'when': _hung}),
+    ('enum', 'upper_height_anchor', "Height Keeps", {'when': _hung}),
     ('distance', 'appliance_opening_width', "Appliance Opening Width",
      {'when': _houses_appliance}),
     ('distance', 'appliance_opening_height', "Appliance Opening Height",
@@ -600,7 +803,35 @@ CABINET_FIELDS = (
         ('distance', 'toe_kick_panel_thickness', "Panel Thickness", {'when': _kick_panel}),
         ('distance', 'toe_kick_end_inset', "Hold In From Ends"),
     )}),
-    ('bool', 'remove_bottom', "Remove Bottom", {'when': _has('Remove Bottom')}),
+    ('group', 'fl_cab_construction', "Construction", {
+        'icon': 'cab_construction', 'summary': _construction_summary, 'fields': (
+            ('bool', 'remove_bottom', "Remove Bottom", {'when': _has('Remove Bottom')}),
+            ('bool', 'finished_interior', "Finished Interior"),
+        )}),
+    ('group', 'fl_cab_finished_bottom', "Finished Bottom", {
+        'icon': 'cab_construction', 'when': _upper_box, 'summary': _fb_summary,
+        'fields': (
+            ('enum', 'finished_bottom', "Panel"),
+            ('bool', 'fb_doors_cover', "Doors Cover Panel", {'when': _fb_on}),
+            ('bool', 'fb_led_route', "LED Route", {'when': _fb_on}),
+            ('distance', 'fb_led_width', "Route Width", {'when': _fb_led}),
+            ('distance', 'fb_led_depth', "Route Depth", {'when': _fb_led}),
+            ('distance', 'fb_led_inset', "Route From Front", {'when': _fb_led}),
+        )}),
+    ('group', 'fl_cab_angled_front', "Angled Front", {
+        'icon': 'cab_construction', 'when': _show_angled_front,
+        'summary': _angled_front_summary, 'fields': (
+            ('bool', 'angled_front', "Angled Front"),
+            ('distance', 'front_left_depth', "Left Depth", {'when': _front_angled}),
+            ('distance', 'front_right_depth', "Right Depth", {'when': _front_angled}),
+        )}),
+    ('group', 'fl_cab_angled_back', "Angled Back", {
+        'icon': 'cab_construction', 'when': _show_angled_back,
+        'summary': _angled_back_summary, 'fields': (
+            ('enum', 'angled_back', "Corner"),
+            ('distance', 'angled_back_width', "Along Back", {'when': _back_angled}),
+            ('distance', 'angled_back_depth', "Down Side", {'when': _back_angled}),
+        )}),
 )
 
 OPENING_FIELDS = (
@@ -913,7 +1144,8 @@ def _cabinet_page(context, out, root):
         open_first=False, exclude=_DIALOG_ONLY))
     _quick(out, _menu_actions(context, root,
                               skip=('hb_frameless.cabinet_prompts',)))
-    _footer(out, 'hb_frameless.cabinet_prompts')
+    # Every setting of the cabinet dialog is on the page above.
+    _footer(out, None)
 
 
 def _bay_page(context, out, bay_obj, title):
