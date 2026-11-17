@@ -42,6 +42,8 @@ PRODUCT_SCHEMA = 'FL_PRODUCT'
 MISC_PART_SCHEMA = 'FL_MISC_PART'
 PART_EDGES_SCHEMA = 'FL_PART_EDGES'
 PART_EDGES_GROUP = 'fl_part_edges'
+FRONT_SCHEMA = 'FL_FRONT'
+DOOR_STYLE_PREFIX = 'FL_DOOR_STYLE_'
 STYLE_PREFIX = 'FL_STYLE_'
 SCOPE_PREFIX = 'FL_SCOPE_'
 
@@ -766,7 +768,21 @@ def _register_schemas():
         'depth': P.node_input('Width'),
         'height': P.node_input('Thickness'),
         'height_off_floor': P.height_off_floor(),
+        **{'band_' + socket.lower(): _misc_band(socket)
+           for socket in ('W1', 'W2', 'L1', 'L2')},
     }, after=_solve_product)
+    P.register(FRONT_SCHEMA, {
+        'hinge': _front_hinge(),
+        'handle': _front_handle(),
+        'left_stile': _frame_input('Left Stile Width'),
+        'right_stile': _frame_input('Right Stile Width'),
+        'top_rail': _frame_input('Top Rail Width'),
+        'bottom_rail': _frame_input('Bottom Rail Width'),
+        'add_mid_rail': _frame_input('Add Mid Rail', 'BOOLEAN'),
+        'mid_rail_width': _frame_input('Mid Rail Width'),
+        'center_mid_rail': _frame_input('Center Mid Rail', 'BOOLEAN'),
+        'mid_rail_location': _frame_input('Mid Rail Location'),
+    }, after=_solve_front)
     P.register(PART_EDGES_SCHEMA, {
         'edge_' + socket.lower(): _edge_state(socket)
         for socket in ('W1', 'W2', 'L1', 'L2')})
@@ -775,7 +791,7 @@ def _register_schemas():
 def _unregister_schemas():
     from ...operators import prop_proxy
     for key in (CABINET_SCHEMA, OPENING_SCHEMA, PRODUCT_SCHEMA,
-                MISC_PART_SCHEMA, PART_EDGES_SCHEMA):
+                MISC_PART_SCHEMA, PART_EDGES_SCHEMA, FRONT_SCHEMA):
         prop_proxy.unregister(key)
 
 
@@ -864,6 +880,287 @@ PRODUCT_FIELDS = (
     ('distance', 'height', "Height"),
     ('distance', 'depth', "Depth"),
     ('distance', 'height_off_floor', "Above Floor"),
+)
+
+
+# ---- Fronts -----------------------------------------------------------------
+# A door or drawer front's own settings: the style it wears, its hinge
+# and handle, where its pull sits, and a five piece door's frame.
+
+def _solve_front(obj, context):
+    from . import solver_frameless
+    solver_frameless.recalculate_cabinet(obj)
+    obj.update_tag()
+
+
+def _front_insert(front):
+    from .operators import ops_front
+    return ops_front._front_insert(front)
+
+
+def _frame_mod(front):
+    """The five piece door modifier on a front, or None for a slab."""
+    for mod in front.modifiers:
+        if (mod.type == 'NODES' and 'Door Style' in mod.name and mod.node_group
+                and 'CPM_5PIECEDOOR' in mod.node_group.name):
+            return mod
+    return None
+
+
+def _framed(owner):
+    return _frame_mod(owner.id_data) is not None
+
+
+def _mid_railed(owner):
+    return _framed(owner) and bool(owner.add_mid_rail)
+
+
+def _mid_rail_placed(owner):
+    return _mid_railed(owner) and not bool(owner.center_mid_rail)
+
+
+def _hinged(owner):
+    insert = _front_insert(owner.id_data)
+    return insert is not None and 'Door Swing' in insert
+
+
+def _frame_input(name, kind='FLOAT'):
+    """An input of the front's five piece door modifier."""
+    from ...operators import prop_proxy
+    from ...hb_types import CabinetPartModifier
+    cast = bool if kind == 'BOOLEAN' else float
+
+    def _cpm(obj):
+        mod = _frame_mod(obj)
+        if mod is None or name not in mod.node_group.interface.items_tree:
+            return None
+        cpm = CabinetPartModifier(obj)
+        cpm.mod = mod
+        return cpm
+
+    def get(obj):
+        cpm = _cpm(obj)
+        try:
+            return cast(cpm.get_input(name)) if cpm is not None else cast(0)
+        except Exception:
+            return cast(0)
+
+    def set(obj, value):
+        cpm = _cpm(obj)
+        if cpm is not None:
+            cpm.set_input(name, cast(value))
+    if kind == 'BOOLEAN':
+        return prop_proxy.computed(get, set, type='BOOLEAN')
+    return prop_proxy.computed(get, set, unit='LENGTH', precision=4,
+                               hard_min=0.0)
+
+
+def _front_hinge():
+    """Which way the doors of the front's opening swing; kept on the
+    doors insert, shown on the door."""
+    from ...operators import prop_proxy
+
+    def get(obj):
+        insert = _front_insert(obj)
+        try:
+            return str(int(insert.get('Door Swing', 2)))
+        except (AttributeError, TypeError, ValueError):
+            return '2'
+
+    def set(obj, value):
+        insert = _front_insert(obj)
+        if insert is not None and 'Door Swing' in insert:
+            insert['Door Swing'] = int(value)
+    return prop_proxy.computed(get, set, type='ENUM', items=[
+        ('0', "Left"), ('1', "Right"), ('2', "Double")])
+
+
+def _front_handle():
+    """How the front is opened: the room's handle, or one of its own."""
+    from ...operators import prop_proxy
+    from . import edge_pulls
+
+    def get(obj):
+        value = obj.get(edge_pulls.HANDLE_KEY, '') or 'DEFAULT'
+        return value if value in known else 'DEFAULT'
+
+    def set(obj, value):
+        if value == 'DEFAULT':
+            obj.pop(edge_pulls.HANDLE_KEY, None)
+        else:
+            obj[edge_pulls.HANDLE_KEY] = value
+    items = [('DEFAULT', "Room Default")] + [
+        (key, label) for key, label, _tip in edge_pulls.HANDLE_TYPES]
+    known = {key for key, _label in items}
+    return prop_proxy.computed(get, set, type='ENUM', items=items)
+
+
+def _door_styles():
+    try:
+        return list(hb_project.get_main_scene().hb_frameless.door_styles)
+    except Exception:
+        return []
+
+
+def _door_style_schema(names):
+    from ...operators import prop_proxy
+    key = DOOR_STYLE_PREFIX + str(abs(hash(tuple(names))))
+
+    def get(obj):
+        try:
+            index = int(obj.get('DOOR_STYLE_INDEX', 0))
+        except (TypeError, ValueError):
+            index = 0
+        return str(index if 0 <= index < len(names) else 0)
+
+    def set(obj, value):
+        styles = _door_styles()
+        index = int(value)
+        if not 0 <= index < len(styles):
+            return
+        if index == int(obj.get('DOOR_STYLE_INDEX', -1)):
+            return
+        obj['DOOR_STYLE_INDEX'] = index
+        styles[index].assign_style_to_front(obj)
+    if key not in prop_proxy._schemas:
+        prop_proxy.register(key, {
+            'door_style': prop_proxy.computed(
+                get, set, type='ENUM',
+                items=[(str(i), n) for i, n in enumerate(names)]),
+        }, after=_solve_front)
+    return key
+
+
+# The pull prompts a front shows: where the pull sits, then how far along
+# that edge. Only the vertical location of the place in use is offered.
+_PULL_VERTICAL = ('Base Pull Vertical Location', 'Tall Pull Vertical Location',
+                  'Upper Pull Vertical Location')
+
+
+def _pull_blocks(context, front):
+    from ...operators import generic_page, options_panel
+    if 'Pull Location' not in front:
+        return []
+    try:
+        place = int(front.get('Pull Location', 0))
+    except (TypeError, ValueError):
+        place = 0
+    wanted = ['Pull Location', 'Handle Horizontal Location']
+    if 0 <= place < len(_PULL_VERTICAL):
+        wanted.insert(1, _PULL_VERTICAL[place])
+    owner, fields = generic_page.prompt_owner(
+        front, exclude=[k for k in generic_page.prompt_keys(front)
+                        if k not in wanted])
+    if owner is None:
+        return []
+    names = {'Pull Location': "Location",
+             'Handle Horizontal Location': "Horizontal Location"}
+    names.update({key: "Vertical Location" for key in _PULL_VERTICAL})
+    fields = tuple((kind, ident, names.get(label, label))
+                   for kind, ident, label in fields)
+    return options_panel.field_blocks(context, (
+        ('group', 'fl_front_pull', "Pull", {'fields': fields}),
+    ), owner)
+
+
+FRONT_FIELDS = (
+    ('enum', 'hinge', "Hinge", {'when': _hinged}),
+    ('enum', 'handle', "Handle"),
+)
+
+FRONT_FRAME_FIELDS = (
+    ('group', 'fl_front_frame', "Frame Sizes", {'when': _framed, 'fields': (
+        ('distance', 'left_stile', "Left Stile"),
+        ('distance', 'right_stile', "Right Stile"),
+        ('distance', 'top_rail', "Top Rail"),
+        ('distance', 'bottom_rail', "Bottom Rail"),
+    )}),
+    ('group', 'fl_front_mid_rail', "Mid Rail", {'when': _framed, 'fields': (
+        ('bool', 'add_mid_rail', "Add Mid Rail"),
+        ('distance', 'mid_rail_width', "Width", {'when': _mid_railed}),
+        ('bool', 'center_mid_rail', "Center Mid Rail", {'when': _mid_railed}),
+        ('distance', 'mid_rail_location', "Location", {'when': _mid_rail_placed}),
+    )}),
+)
+
+
+def front_blocks(context, front):
+    """Everything the front's dialog held, on the page."""
+    from ...operators import options_panel, prop_proxy
+    out = []
+    names = [style.name for style in _door_styles()]
+    if names:
+        out.extend(options_panel.field_blocks(context, (
+            ('enum', 'door_style', "Door Style"),
+        ), prop_proxy.owner(front, _door_style_schema(names))))
+    owner = prop_proxy.owner(front, FRONT_SCHEMA)
+    out.extend(options_panel.field_blocks(context, FRONT_FIELDS, owner))
+    out.extend(_pull_blocks(context, front))
+    out.extend(options_panel.field_blocks(context, FRONT_FRAME_FIELDS, owner))
+    return out
+
+
+# ---- Product options --------------------------------------------------------
+# A product's prompts, folded by what they are about instead of one long
+# list. A product with only a few keeps the single Options group.
+
+_OPTION_GROUPS = (
+    ("Legs", lambda key: 'Leg' in key),
+    ("LED Routing", lambda key: 'LED' in key),
+    ("Finish", lambda key: 'Finish' in key or 'Skin' in key),
+    ("Cleats", lambda key: 'Cleat' in key),
+)
+_OPTION_GROUP_MIN = 7
+
+
+def product_option_blocks(context, root):
+    from ...operators import generic_page, options_panel
+    owner, fields = generic_page.prompt_owner(root)
+    if owner is None:
+        return []
+    buckets = {}
+    for field in fields:
+        label = next((name for name, test in _OPTION_GROUPS if test(field[2])),
+                     "Options")
+        buckets.setdefault(label, []).append(field)
+    if len(fields) < _OPTION_GROUP_MIN or len(buckets) < 2:
+        return generic_page.prompt_blocks(context, root, 'fl_product_prompts',
+                                          "Options")
+    order = ["Options"] + [name for name, _test in _OPTION_GROUPS]
+    groups = tuple(
+        ('group', 'fl_product_' + name.lower().replace(' ', '_'), name,
+         {'icon': 'settings', 'fields': tuple(buckets[name])})
+        for name in order if name in buckets)
+    return options_panel.field_blocks(context, groups, owner)
+
+
+def _misc_band(socket):
+    """One edge of a misc part: banded or bare."""
+    from ...operators import prop_proxy
+    from . import edgebanding_frameless as eb
+
+    def get(obj):
+        return bool(obj.get(eb.MISC_FLAG + socket))
+
+    def set(obj, value):
+        obj[eb.MISC_FLAG + socket] = bool(value)
+        eb.refresh_banding(obj)
+    return prop_proxy.computed(get, set, type='BOOLEAN')
+
+
+def _band_summary(owner):
+    from . import edgebanding_frameless as eb
+    on = [e for e in eb.EDGE_SOCKETS if owner.id_data.get(eb.MISC_FLAG + e)]
+    return ", ".join(on) if on else "None"
+
+
+MISC_BAND_FIELDS = (
+    ('group', 'fl_misc_banding', "Edgebanding", {'summary': _band_summary, 'fields': (
+        ('bool', 'band_w1', "W1"),
+        ('bool', 'band_w2', "W2"),
+        ('bool', 'band_l1', "L1"),
+        ('bool', 'band_l2', "L2"),
+    )}),
 )
 
 
@@ -1193,7 +1490,8 @@ def _opening_page(context, out, opening_obj):
     _quick(out, _menu_actions(context, opening_obj, skip=(
         'hb_frameless.opening_prompts', 'HOME_BUILDER_MT_opening_change',
         'HOME_BUILDER_MT_interior_change')))
-    _footer(out, 'hb_frameless.opening_prompts')
+    # Every setting of the opening dialog is on the page above.
+    _footer(out, None)
 
 
 def _interior_page(context, out, part_obj, opening_obj, bay_obj):
@@ -1257,12 +1555,16 @@ def _drawer_page(context, out, part_obj, drawers):
     _add_fold(context, out, 'drawer', drawers,
               "Add Accessory" if one
               else "Add Accessory to %d Drawers" % len(drawers))
+    if one and part_obj.get('IS_CABINET_FRONT'):
+        out.append(('gap', None))
+        out.append(('label', "Front"))
+        out.extend(front_blocks(context, part_obj))
     if one:
         _quick(out, _menu_actions(context, part_obj, skip=(
             'hb_frameless.drawer_interior', 'hb_frameless.toggle_front_open',
-            'hb_frameless.door_front_prompts')))
-    _footer(out, 'hb_frameless.door_front_prompts'
-            if part_obj.get('IS_CABINET_FRONT') else 'hb_frameless.opening_prompts')
+            'hb_frameless.door_front_prompts',
+            'hb_frameless.set_front_handle_type')))
+    _footer(out, None)
 
 
 def _part_page(context, out, part_obj):
@@ -1271,11 +1573,13 @@ def _part_page(context, out, part_obj):
         out.append(size)
     front = bool(part_obj.get('IS_CABINET_FRONT'))
     if front:
+        out.extend(front_blocks(context, part_obj))
         out.extend(accessory_blocks(context, part_obj))
     out.extend(edge_blocks(context, part_obj))
-    _quick(out, _menu_actions(context, part_obj,
-                              skip=('hb_frameless.door_front_prompts',)))
-    _footer(out, 'hb_frameless.door_front_prompts' if front else None)
+    _quick(out, _menu_actions(context, part_obj, skip=(
+        'hb_frameless.door_front_prompts',
+        'hb_frameless.set_front_handle_type')))
+    _footer(out, None)
 
 
 def _product_page(context, out, root):
@@ -1292,9 +1596,12 @@ def _product_page(context, out, root):
         ('group', PRODUCT_GROUP, label or "Product",
          {'icon': 'cab_parts', 'summary': _size_summary, 'fields': PRODUCT_FIELDS}),
     ), prop_proxy.owner(root, schema)))
-    out.extend(generic_page.prompt_blocks(context, root, 'fl_product_prompts',
-                                          "Options"))
-    _quick(out, _menu_actions(context, root))
+    if root.get('IS_FRAMELESS_MISC_PART'):
+        out.extend(options_panel.field_blocks(
+            context, MISC_BAND_FIELDS, prop_proxy.owner(root, schema)))
+    out.extend(product_option_blocks(context, root))
+    _quick(out, _menu_actions(context, root,
+                              skip=('hb_frameless.product_prompts',)))
     _footer(out, None)
 
 
