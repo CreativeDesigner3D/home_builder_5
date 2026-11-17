@@ -1488,15 +1488,17 @@ def _menu_actions(context, obj, skip=(), limit=8):
                                    skip=skip, limit=limit)
 
 
-def _quick(out, picked, title=None):
-    """The page's quick actions, in the sections every library uses."""
-    from ...operators import quick_actions
-    page = quick_actions.blocks(picked, title or quick_actions.TITLE)
-    if not page:
+def _quick(out, picked, title=None, owner=None):
+    """The page's quick actions, in the sections every library uses,
+    in a fold of their own that stays closed until opened."""
+    from ...operators import options_panel, quick_actions
+    fold = quick_actions.fields(picked, title or quick_actions.TITLE,
+                                fold='fl_quick_actions')
+    if not fold:
         return
     if out and out[-1] != ('gap', None):
         out.append(('gap', None))
-    out.extend(page)
+    out.extend(options_panel.field_blocks(bpy.context, fold, owner))
 
 
 def _footer(out, prompts_op):
@@ -1767,6 +1769,7 @@ def _drawer_page(context, out, part_obj, drawers):
         size = _size_value(context, part_obj)
         if size:
             out.append(size)
+        out.extend(_front_opening_blocks(context, drawers[0]))
     options = ops_cabinet.drawer_box_construction_options()
     if options:
         out.append(accessory_place._option_pick(
@@ -1803,18 +1806,117 @@ def _drawer_page(context, out, part_obj, drawers):
     _footer(out, None)
 
 
+# ---- Carcass parts -------------------------------------------------------------
+# A side, back, top or bottom shows how that face of its cabinet is
+# finished, as the face frame side and back pages do; the cabinet page
+# has every face at once.
+
+_SIDE_FINISH = {'LEFT': ('left_finish', "Finished End"),
+                'RIGHT': ('right_finish', "Finished End"),
+                'BACK': ('back_finish', "Back")}
+_OTHER_SIDE = {'LEFT': ('RIGHT', "Right"), 'RIGHT': ('LEFT', "Left")}
+
+
+def _carcass_side(part_obj):
+    from . import solver_frameless
+    from .operators import ops_finished_ends as fe
+    side = fe.FINISH_ROLE_SIDES.get(part_obj.get(solver_frameless.PART_ROLE_KEY))
+    cabinet = hb_utils.get_cabinet_bp(part_obj)
+    if side is None or cabinet is None \
+            or not cabinet.get('IS_FRAMELESS_CABINET_CAGE'):
+        return None, None
+    return side, cabinet
+
+
+def _panel_options(side):
+    """The applied panel's own sizes, while the side has one."""
+    def action(owner):
+        from .operators import ops_finished_ends as fe
+        cond = fe.finish_condition(owner.id_data, side)
+        if cond == '5PIECE':
+            return ('hb_frameless.update_finished_end',
+                    {'side': side, 'finished_end_type': '5PIECE'},
+                    'settings', "5-Piece Panel Options")
+        if cond == 'SLAB':
+            return ('hb_frameless.applied_end_prompts', {'side': side},
+                    'settings', "End Panel Options")
+        return None
+    return action
+
+
+def _carcass_fields(side, cabinet):
+    if side in _SIDE_FINISH:
+        prop, label = _SIDE_FINISH[side]
+        fields = [('enum', prop, label, {'action': _panel_options(side)})]
+        fields.append(('actions', (
+            _act("Follow Neighbors", 'hb_frameless.auto_finish_condition',
+                 {'side': side}),), None, {'when': _manual(side)}))
+        if side in _OTHER_SIDE:
+            from .operators import ops_finished_ends as fe
+            other, name = _OTHER_SIDE[side]
+            cond = fe.finish_condition(cabinet, side) or 'UNFINISHED'
+            fields.append(('actions', (
+                _act("Apply to %s Side" % name,
+                     'hb_frameless.set_finish_condition',
+                     {'side': other, 'condition': cond}),), None))
+        return tuple(fields)
+    if side == 'TOP':
+        return (('enum', 'top_finish', "Top", {'when': _top_finish_shown}),)
+    if side == 'BOTTOM':
+        return (
+            ('enum', 'finished_bottom', "Bottom Panel", {'when': _upper_box}),
+            ('bool', 'fb_doors_cover', "Doors Cover Panel", {'when': _fb_on}),
+            ('bool', 'fb_led_route', "LED Route", {'when': _fb_on}),
+            ('distance', 'fb_led_width', "Route Width", {'when': _fb_led}),
+            ('distance', 'fb_led_depth', "Route Depth", {'when': _fb_led}),
+            ('distance', 'fb_led_inset', "Route From Front", {'when': _fb_led}),
+        )
+    return ()
+
+
+# Commands the page shows as fields: left out of its quick actions.
+_ON_PAGE = ('hb_frameless.door_front_prompts',
+            'hb_frameless.set_front_handle_type',
+            'hb_frameless.set_finish_condition',
+            'hb_frameless.auto_finish_condition',
+            'hb_frameless.set_finished_bottom_panel',
+            'hb_frameless.applied_end_prompts',
+            'hb_frameless.update_finished_end')
+
+
+def _front_opening_blocks(context, part_obj):
+    """For a front: its opening's Front, hinge side and height, as on
+    the opening page."""
+    from ...operators import options_panel, prop_proxy
+    from . import bay_config
+    opening = hb_utils.get_opening_bp(part_obj)
+    if opening is None:
+        return []
+    owner = prop_proxy.owner(bay_config.front_opening(opening), OPENING_SCHEMA)
+    return list(options_panel.field_blocks(context, OPENING_FIELDS[1:], owner))
+
+
 def _part_page(context, out, part_obj):
+    from ...operators import options_panel, prop_proxy
     size = _size_value(context, part_obj)
     if size:
         out.append(size)
+    side, cabinet = _carcass_side(part_obj)
+    if side is not None:
+        fields = _carcass_fields(side, cabinet)
+        shown = options_panel.field_blocks(
+            context, fields, prop_proxy.owner(cabinet, CABINET_SCHEMA))
+        if shown:
+            out.extend(shown)
+            out.append(('gap', None))
     front = bool(part_obj.get('IS_CABINET_FRONT'))
     if front:
+        out.extend(_front_opening_blocks(context, part_obj))
         out.extend(front_blocks(context, part_obj))
         out.extend(accessory_blocks(context, part_obj))
     out.extend(edge_blocks(context, part_obj))
-    _quick(out, _menu_actions(context, part_obj, skip=(
-        'hb_frameless.door_front_prompts',
-        'hb_frameless.set_front_handle_type')))
+    _quick(out, _menu_actions(context, part_obj, skip=_ON_PAGE),
+           owner=part_obj)
     _footer(out, None)
 
 
