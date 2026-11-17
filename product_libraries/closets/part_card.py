@@ -1,6 +1,7 @@
 """Closet parts that stand on their own, on the viewport panel's
 SELECTED tab: a slab countertop, a countertop placed over some of a
-run's bays, a rod hung on a bare wall and a misc part.
+run's bays, a rod hung on a bare wall, a misc part and an accessory (its page is
+accessory_card's).
 
 Each had a dialog of its own. Its settings are fields here instead, in
 groups that fold, and every change shows as it is made. The part's
@@ -32,6 +33,10 @@ def find(context):
     obj = context.active_object
     if obj is None or not obj.select_get():
         return None
+    from . import accessory_card
+    cage = accessory_card.cage_of(obj)
+    if cage is not None:
+        return ('accessory', cage)
     slab = _ops()._slab_of(obj)
     if slab is not None:
         return ('slab', slab)
@@ -116,6 +121,9 @@ def _register_schemas():
                           unit='LENGTH', precision=4, hard_min=0.0)
 
     props = {
+        'name': P.computed(lambda o: o.name,
+                           lambda o, v: setattr(o, 'name', str(v)) if v else None,
+                           type='STRING'),
         'length': P.node_input('Length'),
         'width': P.node_input('Width'),
         'l_left_depth': l_value(types_closets.PROP_LOOSE_L_LEFT),
@@ -194,6 +202,7 @@ def _place_summary(owner):
 
 
 MISC_FIELDS = (
+    ('text', 'name', "Part Name"),
     ('distance', 'length', "Length"),
     ('distance', 'width', "Width"),
     # Thickness comes from the board the part is cut from.
@@ -276,6 +285,9 @@ def _bay_top_part(root, entry):
 def blocks(context, item):
     from ...operators import generic_page, options_panel, prop_proxy, quick_actions
     kind, obj = item
+    if kind == 'accessory':
+        from . import accessory_card
+        return accessory_card.blocks(context, obj)
     out = [('head', (obj.name, False, None))]
     if kind == 'slab':
         out.extend(options_panel.field_blocks(
@@ -326,5 +338,7 @@ def unregister():
         selected_tab.unregister_source(SOURCE_KEY)
         prop_proxy.unregister(WALL_ROD_SCHEMA)
         prop_proxy.unregister(MISC_SCHEMA)
+        from . import accessory_card
+        accessory_card.unregister()
     except Exception:
         pass
