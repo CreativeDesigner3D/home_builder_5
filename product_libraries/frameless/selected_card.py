@@ -805,12 +805,26 @@ def edge_blocks(context, part_obj):
     ), prop_proxy.owner(part_obj, PART_EDGES_SCHEMA))
 
 
+def _name_prop():
+    """The product's own name, which the cut list and reports carry. A
+    misc part is its own product, so its part takes the same name."""
+    from ...operators import prop_proxy as P
+
+    def set_name(obj, value):
+        value = str(value).strip()
+        if value:
+            obj.name = value
+    return P.computed(lambda obj: obj.name, set_name, type='STRING',
+                      solve=False)
+
+
 def _register_schemas():
     from ...operators import prop_proxy as P
     from . import solver_frameless
     from . import bay_config
     bay_config.register()
     P.register(CABINET_SCHEMA, {
+        'name': _name_prop(),
         'width': _cabinet_width(),
         'anchor_side': _anchor_side(),
         'depth': P.node_input('Dim Y'),
@@ -870,6 +884,7 @@ def _register_schemas():
         'overlay_right': _overlay_amount('Right'),
     }, after=_solve)
     P.register(PRODUCT_SCHEMA, {
+        'name': _name_prop(),
         'width': P.node_input('Dim X'),
         'depth': _product_depth(),
         'height': P.node_input('Dim Z'),
@@ -877,6 +892,7 @@ def _register_schemas():
     }, after=_solve_product)
     # A misc part is a cut part: its size is length, width and thickness.
     P.register(MISC_PART_SCHEMA, {
+        'name': _name_prop(),
         'width': P.node_input('Length'),
         'depth': P.node_input('Width'),
         'height': P.node_input('Thickness'),
@@ -933,6 +949,7 @@ def _cabinet_fields(root):
                {'scope': 'PRODUCT', 'isolate': False}), None)),
     ))
     return (
+        ('text', 'name', "Name"),
         ('distance', 'width', "Width"),
         ('distance', 'height', "Height"),
         ('distance', 'depth', "Depth"),
@@ -1050,6 +1067,7 @@ OPENING_FOLDS = (
 )
 
 PRODUCT_FIELDS = (
+    ('text', 'name', "Name"),
     ('distance', 'width', "Width"),
     ('distance', 'height', "Height"),
     ('distance', 'depth', "Depth"),
