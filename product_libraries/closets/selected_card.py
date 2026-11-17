@@ -117,6 +117,16 @@ def blocks(context, item):
         _actions(context, out, bay_obj,
                  skip=('HOME_BUILDER_MT_closet_change_bay',))
         return out
+    if kind == 'opening':
+        # Openings mode: the opening's own page.
+        from . import opening_card
+        out.extend(options_panel.field_blocks(
+            context, opening_card.page_fields(opening_obj),
+            opening_card.owner(opening_obj)))
+        # Change Opening is the dropdown at the top of the page.
+        _actions(context, out, opening_obj,
+                 skip=('HOME_BUILDER_MT_closet_change_opening',))
+        return out
     out.extend(options_panel.field_blocks(context, (
         ('group', STARTER_GROUP, f"Closet  ({sp.closet_type.title()})",
          {'icon': 'closet_starter',

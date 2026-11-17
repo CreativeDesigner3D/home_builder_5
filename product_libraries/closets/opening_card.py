@@ -367,12 +367,79 @@ def _after(obj, context):
     context.view_layer.objects.active = root
 
 
+# ---- What the opening is built as ---------------------------------------------
+# Read from what it holds: its door, then drawers, rods, trays, cubbies
+# or shelves. Picking another rebuilds it as Change Opening does;
+# Drawers asks for its count and sizes, as the menu's Add Drawers does.
+
+_DOOR_CONFIGS = {'LEFT': 'DOOR_LEFT', 'RIGHT': 'DOOR_RIGHT',
+                 'DOUBLE': 'DOOR_DOUBLE', 'LIFT_UP': 'DOOR_LIFT_UP',
+                 'TILT_OUT': 'DOOR_TILT_OUT'}
+
+
+def _config_items():
+    return (list(types_closets.OPENING_CONFIGS)
+            + [('DRAWERS', "Drawers..."), ('EMPTY', "Empty"),
+               ('CUSTOM', "Custom")])
+
+
+def config_of(obj):
+    op = _pg(obj)
+    swing = op.door_swing or ''
+    if swing == 'TILT_OUT':
+        return 'DOOR_TILT_OUT'
+    if int(op.drawer_qty):
+        return 'DRAWERS'
+    if swing in _DOOR_CONFIGS:
+        return _DOOR_CONFIGS[swing]
+    rods = len(_rods(obj))
+    if rods >= 2:
+        return 'DOUBLE_HANG'
+    if rods == 1:
+        return 'HANG_ROD'
+    if int(op.rollout_qty):
+        return 'ROLLOUTS'
+    if int(op.cubby_cols) > 1 or int(op.cubby_rows) > 1:
+        return 'CUBBIES'
+    if int(op.slant_qty):
+        return 'CUSTOM'
+    if int(op.adj_shelf_qty):
+        return 'ADJ_SHELVES'
+    return 'EMPTY'
+
+
+def _set_config(obj, value):
+    if value == 'CUSTOM' or value == config_of(obj):
+        return
+    context = bpy.context
+    with context.temp_override(active_object=obj, object=obj,
+                               selected_objects=[obj]):
+        if value == 'EMPTY':
+            bpy.ops.hb_closets.clear_opening()
+        elif value == 'DRAWERS':
+            bpy.ops.hb_closets.add_drawers('INVOKE_DEFAULT', clear_first=True)
+        else:
+            bpy.ops.hb_closets.change_opening(config=value)
+    try:
+        layer = context.view_layer
+        if layer.objects.get(obj.name) is obj:
+            for o in list(layer.objects):
+                if o is not obj and o.select_get(view_layer=layer):
+                    o.select_set(False, view_layer=layer)
+            obj.select_set(True, view_layer=layer)
+            layer.objects.active = obj
+    except Exception:
+        pass
+
+
 def _ensure():
     from ...operators import prop_proxy as P
     if SCHEMA in P._schemas:
         return
     ops = _ops()
     props = {
+        'config': P.computed(config_of, _set_config, type='ENUM',
+                             items=_config_items()),
         'fill': P.computed(_fill, _set_fill, type='ENUM',
                            items=[i[:2] for i in ops._OPENING_FILL_ITEMS]),
         'shelf_qty': P.computed(
@@ -652,3 +719,12 @@ def fields(obj):
             'summary': lambda _ow: "On" if op.add_back else "Off",
             'fields': _back_fields(obj)}),
     )
+
+
+def page_fields(obj):
+    """The opening's own page, laid out as a cabinet opening's: what it
+    is built as, its size and color, then each part of it in a fold."""
+    out = [('enum', 'config', "Configuration")] + list(fields(obj))
+    at = next((i for i, f in enumerate(out) if f[0] == 'group'), len(out))
+    out.insert(at, ('gap', None, None))
+    return tuple(out)
