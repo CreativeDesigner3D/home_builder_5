@@ -803,6 +803,8 @@ def edge_blocks(context, part_obj):
 def _register_schemas():
     from ...operators import prop_proxy as P
     from . import solver_frameless
+    from . import bay_config
+    bay_config.register_schemas()
     P.register(CABINET_SCHEMA, {
         'width': _cabinet_width(),
         'anchor_side': _anchor_side(),
@@ -895,6 +897,8 @@ def _register_schemas():
 
 def _unregister_schemas():
     from ...operators import prop_proxy
+    from . import bay_config
+    bay_config.unregister_schemas()
     for key in (CABINET_SCHEMA, OPENING_SCHEMA, PRODUCT_SCHEMA,
                 MISC_PART_SCHEMA, PART_EDGES_SCHEMA, FRONT_SCHEMA):
         prop_proxy.unregister(key)
@@ -1542,23 +1546,54 @@ def _cabinet_page(context, out, root):
     _footer(out, 'hb_frameless.cabinet_prompts')
 
 
+def _has_splitter(owner):
+    return any(c.get('IS_FRAMELESS_SPLITTER_VERTICAL_CAGE')
+               or c.get('IS_FRAMELESS_SPLITTER_HORIZONTAL_CAGE')
+               for c in owner.id_data.children_recursive)
+
+
+def _has_fronts(owner):
+    from .operators.ops_opening import front_height_splitter
+    try:
+        return front_height_splitter(owner.id_data) is not None
+    except Exception:
+        return False
+
+
+def _bay_fields(bay_obj):
+    """The bay page, laid out as the face frame bay's: what it is built
+    as, its size, and the quick actions folded at the foot. A frameless
+    bay is the cabinet's whole box, so its size follows the cabinet."""
+    quick = _quick_fields(bay_obj, (
+        ((_act("Edit Opening Sizes", 'hb_frameless.edit_splitter_openings'),
+          _has_splitter),
+         (_act("Edit Door/Drawer Sizes", 'hb_frameless.edit_front_heights'),
+          _has_fronts)),
+        ((_act("Finish Interior", 'hb_frameless.finish_interior'), None),),
+    ), fold='fl_bay_quick_actions')
+    return (
+        ('enum', 'config', "Configuration"),
+        ('value', lambda _o, b=bay_obj: _bay_size(b), "Size (W x H)"),
+        ('gap', None, None),
+    ) + quick
+
+
 def _bay_page(context, out, bay_obj, title):
-    from ...operators import options_panel, generic_page
-    out.extend(options_panel.field_blocks(context, (
-        ('value', lambda _o, b=bay_obj: _bay_size(b), "Size"),
-    ), bay_obj))
-    from . import solver_frameless
+    from ...operators import options_panel, prop_proxy
+    from . import bay_config, solver_frameless
+    page = list(options_panel.field_blocks(
+        context, _bay_fields(bay_obj),
+        prop_proxy.owner(bay_obj, bay_config.schema_key(bay_obj))))
     root = solver_frameless.cabinet_root(bay_obj)
     if root is not None and root.get('IS_BLIND_CORNER'):
         # A blind corner's bay is its door opening: the one bay width
         # that is typed rather than read.
-        from ...operators import prop_proxy
-        out.extend(options_panel.field_blocks(context, (
-            ('distance', 'blind_opening_width', "Opening Width"),
-        ), prop_proxy.owner(root, CABINET_SCHEMA)))
-    out.extend(generic_page.prompt_blocks(
-        context, bay_obj, 'fl_bay_prompts', "Bay Prompts", open_first=False))
-    _quick(out, _menu_actions(context, bay_obj))
+        blocks = options_panel.field_blocks(context, (
+            ('distance', 'blind_opening_width', "Door Opening Width"),
+        ), prop_proxy.owner(root, CABINET_SCHEMA))
+        at = next((i for i, b in enumerate(page) if b[0] == 'gap'), len(page))
+        page[at:at] = blocks
+    out.extend(page)
     _footer(out, None)
 
 
