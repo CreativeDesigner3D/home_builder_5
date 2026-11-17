@@ -351,6 +351,19 @@ def _assemble_front_raw(chain, facts):
             width, depth, _ = cage_dims(obj)
             fl = _xy(mw @ mathutils.Vector((0.0, -depth, 0.0)))
             fr = _xy(mw @ mathutils.Vector((width, -depth, 0.0)))
+            # A clipped front corner turns the path along its 45 degree
+            # clip: up the side to the clip, across it, on along the
+            # front (listed left to right).
+            clips = f.get('clips') or {}
+            sl = min(clips.get('left', 0.0) or 0.0, width, depth)
+            sr = min(clips.get('right', 0.0) or 0.0, width, depth)
+
+            def _loc(x, y):
+                return _xy(mw @ mathutils.Vector((x, y, 0.0)))
+            left_pts = ([_loc(0.0, -depth + sl), _loc(sl, -depth)]
+                        if sl > 0.0 else [fl])
+            right_pts = ([_loc(width - sr, -depth), _loc(width, -depth + sr)]
+                         if sr > 0.0 else [fr])
             bl = _xy(mw @ mathutils.Vector((0.0, 0.0, 0.0)))
             br = _xy(mw @ mathutils.Vector((width, 0.0, 0.0)))
             if prev_ref is not None:
@@ -362,20 +375,27 @@ def _assemble_front_raw(chain, facts):
             else:
                 left_first = True
             if left_first:
-                ordered = ((fl, 'left', bl), (fr, 'right', br))
+                ordered = ((fl, 'left', bl, sl > 0.0),
+                           (fr, 'right', br, sr > 0.0))
+                member_pts = left_pts + right_pts
             else:
-                ordered = ((fr, 'right', br), (fl, 'left', bl))
+                ordered = ((fr, 'right', br, sr > 0.0),
+                           (fl, 'left', bl, sl > 0.0))
+                member_pts = (list(reversed(right_pts))
+                              + list(reversed(left_pts)))
             if first_straight is None:
                 fn = front_normal_xy(obj)
                 if fn.length > 1e-6:
                     first_straight = (len(points), fn)
-            points.extend([ordered[0][0], ordered[1][0]])
+            points.extend(member_pts)
             if i == 0:
                 terminals[0] = {'obj': obj, 'side': ordered[0][1],
-                                'back': ordered[0][2]}
+                                'back': ordered[0][2],
+                                'clipped': ordered[0][3]}
             if i == n - 1:
                 terminals[1] = {'obj': obj, 'side': ordered[1][1],
-                                'back': ordered[1][2]}
+                                'back': ordered[1][2],
+                                'clipped': ordered[1][3]}
         spans.append((obj, start_idx, len(points)))
 
     _mitre_junctions(points, spans, facts)
@@ -403,6 +423,10 @@ def _mitre_junctions(points, spans, facts):
     for (obj_a, start_a, end_a), (obj_b, start_b, end_b) in zip(
             spans, spans[1:]):
         if facts[id(obj_a)].get('corner') or facts[id(obj_b)].get('corner'):
+            continue
+        # A clipped corner's own clip is the turn; its end segment is
+        # not the member's front line, so there is nothing to mitre.
+        if facts[id(obj_a)].get('clips') or facts[id(obj_b)].get('clips'):
             continue
         if end_a - start_a < 2 or end_b - start_b < 2:
             continue
@@ -446,11 +470,27 @@ def chain_sweep_points(chain, facts, face_offset, end_offset):
     if len(raw) < 2:
         return None
 
+    # A finished end whose front corner is clipped wraps round the clip:
+    # the side runs back from the clip to the rear, so the rear point
+    # joins the path before the offset and the path mitres there.
+    wrapped = set()
+    for side_idx in (0, 1):
+        term = terminals[side_idx]
+        if (term is None or not term.get('clipped')
+                or not facts[id(term['obj'])].get(
+                    'finished_%s' % term['side'], False)):
+            continue
+        if side_idx == 0:
+            raw.insert(0, term['back'])
+        else:
+            raw.append(term['back'])
+        wrapped.add(side_idx)
+
     off = offset_polyline_right(raw, face_offset)
 
     for side_idx in (0, 1):
         term = terminals[side_idx]
-        if term is None:
+        if term is None or side_idx in wrapped:
             continue
         outward = (raw[0] - raw[1]) if side_idx == 0 else (raw[-1] - raw[-2])
         if outward.length < 1e-6:

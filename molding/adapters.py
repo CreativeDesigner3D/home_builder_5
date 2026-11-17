@@ -524,6 +524,22 @@ def finish_material(obj):
     return None
 
 
+def _front_clips(obj):
+    """{'left': size, 'right': size} for the front corners a cabinet
+    has clipped off at 45 degrees (decorative corner styles that clip
+    rather than turn a post), read from what the cabinet built, or None.
+    Crown and light rail follow the clip round the corner."""
+    if obj.get('DECORATIVE_CORNER_STYLE') not in ('CLIPPED', 'GOTHIC'):
+        return None
+    size = float(obj.get('DECORATIVE_CORNER_SIZE') or 0.0)
+    if size <= 0.0:
+        return None
+    corners = str(obj.get('DECORATIVE_CORNERS') or '').split(',')
+    clips = {'left': size if 'FRONT_LEFT' in corners else 0.0,
+             'right': size if 'FRONT_RIGHT' in corners else 0.0}
+    return clips if (clips['left'] or clips['right']) else None
+
+
 def build_facts(scene, members):
     """FACTS dict (keyed by id(obj)) for the engine, covering every
     member: role, corner data, kick config, finished ends."""
@@ -620,6 +636,7 @@ def build_facts(scene, members):
                 crown_mount = {'rail_width': rail, 'door_overlay': overlay}
             facts[id(obj)] = {'role': 'CABINET', 'corner': corner,
                               'kick': kick,
+                              'clips': _front_clips(obj),
                               'crown_mount': crown_mount,
                               'back_off': _finished_back_offset(obj),
                               'back_span': _finished_back_span(obj),
