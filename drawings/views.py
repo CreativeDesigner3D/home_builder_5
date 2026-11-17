@@ -9,6 +9,7 @@ Drawings are cached until the model changes, so a sheet that is looked
 at again, or two sheets that show the same wall, cost one reading.
 """
 
+import contextlib
 import json
 
 import bpy
@@ -22,6 +23,7 @@ INCH_SCALE = 72.0 / 0.0254 / 12.0           # 1" = 1'
 _kinds = {}
 _cache = {}
 _model_gen = 0
+_scene_gens = {}            # scene name -> how often that room changed
 _reading = 0
 
 
@@ -38,10 +40,81 @@ def unregister_view_kind(kind):
     _cache.clear()
 
 
-def model_generation():
+def model_generation(scene=None):
     """Rises whenever the model changes: what a cached drawing is good
-    until."""
-    return _model_gen
+    until. With a scene, only that room's changes count, so a change in
+    one room leaves the drawings of the others good."""
+    if scene is None:
+        return _model_gen
+    return _scene_gens.get(scene.name, 0)
+
+
+def _project_generation(scene):
+    """A room's own changes and those of the scene that holds what the
+    whole project shares (its styles)."""
+    from .. import hb_project
+    try:
+        main = hb_project.get_main_scene()
+    except Exception:
+        main = None
+    own = _scene_gens.get(scene.name, 0)
+    if main is None or main == scene:
+        return (own,)
+    return (own, _scene_gens.get(main.name, 0))
+
+
+@contextlib.contextmanager
+def showing_cages(rooms):
+    """A room that is not on screen keeps its products' cages switched
+    off, and nothing switched off is measured: show them while the
+    rooms are read, and put them back after."""
+    hidden = []
+    with reading():
+        for room in rooms:
+            for obj in room.objects:
+                if obj.get('IS_GEONODE_CAGE') and obj.hide_viewport:
+                    obj.hide_viewport = False
+                    hidden.append(obj)
+        if hidden:
+            for room in rooms:
+                try:
+                    room.view_layers[0].update()
+                except Exception:
+                    pass
+            em._bump_gen()
+        try:
+            yield
+        finally:
+            for obj in hidden:
+                try:
+                    obj.hide_viewport = True
+                except ReferenceError:
+                    pass
+            layers = {room.view_layers[0] for room in rooms
+                      if room.view_layers}
+            for layer in layers:
+                try:
+                    layer.update()
+                except Exception:
+                    pass
+            em._bump_gen()
+
+
+@contextlib.contextmanager
+def in_room(context, room):
+    """A context whose scene is `room`, whichever room is on screen."""
+    if context.scene == room:
+        yield context
+        return
+    layer = room.view_layers[0]
+    with context.temp_override(scene=room, view_layer=layer):
+        with reading():
+            layer.update()
+        em._bump_gen()
+        try:
+            yield bpy.context
+        finally:
+            em._bump_gen()
 
 
 class reading:
@@ -60,16 +133,20 @@ class reading:
 
 
 @bpy.app.handlers.persistent
-def _on_change(*_args):
+def _on_change(scene=None, *_args):
     global _model_gen
     if not _reading:
         _model_gen += 1
+        name = getattr(scene, 'name', None)
+        if name:
+            _scene_gens[name] = _scene_gens.get(name, 0) + 1
 
 
 @bpy.app.handlers.persistent
 def _on_load(*_args):
     global _model_gen
     _model_gen += 1
+    _scene_gens.clear()
     _cache.clear()
 
 
@@ -79,7 +156,7 @@ def resolve(context, view, width, height):
     if resolver is None:
         return None
     settings = {k: v for k, v in view.items() if not k.startswith('_')}
-    key = (context.scene.name, _model_gen,
+    key = (context.scene.name, _project_generation(context.scene),
            json.dumps(settings, sort_keys=True, default=str),
            round(width), round(height))
     hit = _cache.get(key)

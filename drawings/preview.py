@@ -47,9 +47,8 @@ def _read(context, st):
     started = time.perf_counter()
     names = []
     try:
-        made = sheets.drawing_set(context.scene)
-        pages = [sheets.compose(context, made, i) for i in range(len(made))]
-        names = [sheets.sheet_name(context.scene, s) for s in made]
+        pages = sheets.compose_project(context)
+        names = [(p.info or {}).get('name') or "Sheet" for p in pages]
         st['error'] = None
     except Exception as exc:
         import traceback
@@ -57,13 +56,33 @@ def _read(context, st):
         pages = []
         st['error'] = str(exc)
     st['names'] = names
+    st['rooms'] = [(p.info or {}).get('room') or '' for p in pages]
+    # A sheet that came back unchanged (its room did not change) keeps
+    # its batches and its texture.
+    before = {id(p): (c, st.get('tex', {}).get(i))
+              for i, (p, c) in enumerate(zip(st.get('pages') or (),
+                                             st.get('compiled') or ()))}
+    kept_tex, compiled, fresh = {}, [], set()
+    for i, page in enumerate(pages):
+        old = before.pop(id(page), None)
+        if old is None:
+            compiled.append(gpu_painter.Compiled(page))
+            fresh.add(i)
+        else:
+            compiled.append(old[0])
+            if old[1] is not None:
+                kept_tex[i] = old[1]
+            else:
+                fresh.add(i)
+    for _comp, tex in before.values():
+        if tex is not None:
+            tex[0].free()
+    st['tex'] = kept_tex
     st['pages'] = pages
-    st['compiled'] = [gpu_painter.Compiled(p) for p in pages]
+    st['compiled'] = compiled
     st['placed'] = [list((p.info or {}).get('placed', ())) for p in pages]
     st['page'] = min(st.get('page', 0), max(len(pages) - 1, 0))
-    st['stale'] = set(range(len(pages)))
-    for i in [i for i in st.get('tex', {}) if i >= len(pages)]:
-        _free(st, i)
+    st['stale'] = fresh
     st['scene'] = context.scene.name
     st['gen'] = st['seen_gen'] = views.model_generation()
     # Reading the model stirs the dependency graph (a hidden part shown
@@ -141,7 +160,7 @@ def _draw():
         blf.size(0, 12.0)
         blf.color(0, 1.0, 1.0, 1.0, 1.0)
         blf.position(0, 14.0, 12.0, 0.0)
-        scene = bpy.context.scene
+        scene = page_scene(st)
         if not st['compiled']:
             blf.draw(0, "Drawings: " + (
                 st.get('error') or "no wall with products in this room"))
@@ -178,10 +197,29 @@ def _draw():
 
 
 def _pdf_path(context):
-    stem = re.sub(r'[\\/:*?"<>|]+', '_', f"{context.scene.name} - Drawings")
-    folder = (os.path.dirname(bpy.data.filepath) if bpy.data.filepath
-              else tempfile.gettempdir())
+    if bpy.data.filepath:
+        folder = os.path.dirname(bpy.data.filepath)
+        name = os.path.splitext(os.path.basename(bpy.data.filepath))[0]
+    else:
+        folder, name = tempfile.gettempdir(), context.scene.name
+    stem = re.sub(r'[\\/:*?"<>|]+', '_', f"{name} - Drawings")
     return os.path.join(folder, stem + ".pdf")
+
+
+def page_scene(st, context=None):
+    """The room the sheet on show belongs to: what its edits are kept
+    with, whichever room the model is showing."""
+    rooms = st.get('rooms') or []
+    name = rooms[st['page']] if st.get('page', 0) < len(rooms) else None
+    scene = bpy.data.scenes.get(name) if name else None
+    return scene or (context or bpy.context).scene
+
+
+def _wall_cuts_shown(st, wall_name):
+    """A wall's section cuts as they stand on the sheets."""
+    return [it.get('x') or 0.0 for items in st.get('placed') or ()
+            for it in items
+            if it['kind'] == 'SECTION' and it.get('wall') == wall_name]
 
 
 class HOME_BUILDER_OT_drawings_preview(bpy.types.Operator):
@@ -284,8 +322,13 @@ class HOME_BUILDER_OT_drawings_preview(bpy.types.Operator):
         """Do what the button `ident` is for. Returns a modal result
         when the preview closed, else None."""
         st = _st
-        scene = context.scene
+        scene = page_scene(st, context)
         count = max(len(st['compiled']), 1)
+        if isinstance(ident, tuple) and ident[0] == 'ROOM':
+            rooms = st.get('rooms') or []
+            if ident[1] in rooms:
+                st['page'] = rooms.index(ident[1])
+            return None
         if ident == 'PREV':
             st['page'] = (st['page'] - 1) % count
         elif ident == 'NEXT':
@@ -318,7 +361,8 @@ class HOME_BUILDER_OT_drawings_preview(bpy.types.Operator):
             elif ident == 'ADD_CUT':
                 st['pick'] = None if st.get('pick') else 'CUT'
             elif ident == 'REMOVE' and wall is not None:
-                sheets.remove_cut(scene, wall, item.get('x') or 0.0)
+                sheets.remove_cut(scene, wall, item.get('x') or 0.0,
+                                  _wall_cuts_shown(st, wall.name))
                 st['selected'] = None
                 self._edited(context, "section removed")
             elif ident == 'TOGETHER' and item.get('wall'):
@@ -331,10 +375,18 @@ class HOME_BUILDER_OT_drawings_preview(bpy.types.Operator):
         and nothing else is in the middle of an action."""
         st = _st
         gen = views.model_generation()
-        if st.get('quiet', 0) > 0 and context.scene.name == st['scene']:
+        if st.get('quiet', 0) > 0:
             st['quiet'] -= 1
             st['gen'] = st['seen_gen'] = gen
-        changed = gen != st['gen'] or context.scene.name != st['scene']
+        if context.scene.name != st['scene']:
+            # The model went to another room: show that room's sheets.
+            st['scene'] = context.scene.name
+            rooms = st.get('rooms') or []
+            if st['scene'] in rooms and not st.get('move'):
+                st['page'] = rooms.index(st['scene'])
+                st['selected'] = None
+                area.tag_redraw()
+        changed = gen != st['gen']
         settled = gen == st.get('seen_gen')
         st['seen_gen'] = gen
         busy = len(context.window.modal_operators) > 1
@@ -399,7 +451,8 @@ class HOME_BUILDER_OT_drawings_preview(bpy.types.Operator):
             dx = (now[0] - move['start'][0]) / f
             dy = (now[1] - move['start'][1]) / f
             if abs(dx) > 1.0 or abs(dy) > 1.0:
-                sheets.move_view(context.scene, move['key'], dx, dy)
+                sheets.move_view(page_scene(st, context), move['key'],
+                                 dx, dy)
                 self._edited(context, "view moved")
             area.tag_redraw()
             return {'RUNNING_MODAL'}
@@ -409,7 +462,7 @@ class HOME_BUILDER_OT_drawings_preview(bpy.types.Operator):
                 area.tag_redraw()
             return {'PASS_THROUGH'}
         press = event.value == 'PRESS'
-        scene = context.scene
+        scene = page_scene(st, context)
         mx, my = event.mouse_x - region.x, event.mouse_y - region.y
         button = hud.hit(st, area, scene, mx, my)
         if event.type in ('MOUSEMOVE', 'INBETWEEN_MOUSEMOVE'):
@@ -438,7 +491,8 @@ class HOME_BUILDER_OT_drawings_preview(bpy.types.Operator):
                 wall = bpy.data.objects.get(item['wall'] or '')
                 x_cut = (at[0] - item['origin'][0]) / item['k']
                 if wall is not None and x_cut > 0.0:
-                    sheets.add_cut(scene, wall, round(x_cut, 4))
+                    sheets.add_cut(scene, wall, round(x_cut, 4),
+                                   _wall_cuts_shown(st, wall.name))
                     self._edited(context, "section added")
             elif item and item.get('key'):
                 # A click selects the view; a drag from it moves it.
@@ -465,7 +519,8 @@ class HOME_BUILDER_OT_drawings_preview(bpy.types.Operator):
             elif event.type in ('X', 'DEL'):
                 wall = bpy.data.objects.get(item.get('wall') or '')
                 if item['kind'] == 'SECTION' and wall is not None:
-                    sheets.remove_cut(scene, wall, item.get('x') or 0.0)
+                    sheets.remove_cut(scene, wall, item.get('x') or 0.0,
+                                      _wall_cuts_shown(st, wall.name))
                     self._edited(context, "section removed")
             elif event.type == 'T' and item.get('wall'):
                 sheets.toggle_together(scene, item['wall'])

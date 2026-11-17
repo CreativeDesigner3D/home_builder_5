@@ -26,7 +26,9 @@ class Compiled:
         self.tri_pos, self.tri_col = [], []
         self.lines = {}             # width -> (positions, colours)
         self.texts = []
+        self.images = []            # (rgb, px_w, px_h, x, y, w, h)
         self._batches = None
+        self._textures = None
         calls = drawing.calls
         n = len(calls) + 2
         stroke = fill = (0.0, 0.0, 0.0, 1.0)
@@ -77,6 +79,9 @@ class Compiled:
                        for a in range(steps)]
                 self._poly(pts, ox, oy, z, fill, stroke, width, None,
                            do_fill, do_stroke)
+            elif name == 'image':
+                rgb, px_w, px_h, x, y, w, h = args[:7]
+                self.images.append((rgb, px_w, px_h, x + ox, y + oy, w, h))
             elif name == 'text':
                 x, y, text, size = args[:4]
                 angle = args[4] if len(args) > 4 else kw.get('angle', 0.0)
@@ -139,6 +144,27 @@ class Compiled:
         return self._batches
 
 
+def _image_textures(compiled):
+    """A texture for each image on the sheet, made once."""
+    if compiled._textures is None:
+        compiled._textures = []
+        import numpy as np
+        for rgb, px_w, px_h, x, y, w, h in compiled.images:
+            try:
+                rows = np.frombuffer(rgb, dtype=np.uint8).reshape(
+                    px_h, px_w, 3)[::-1]            # bottom row first
+                rgba = np.ones((px_h, px_w, 4), dtype=np.float32)
+                rgba[:, :, :3] = rows / 255.0
+                buf = gpu.types.Buffer('FLOAT', px_w * px_h * 4,
+                                       rgba.ravel())
+                tex = gpu.types.GPUTexture((px_w, px_h), format='RGBA8',
+                                           data=buf)
+                compiled._textures.append((tex, x, y, w, h))
+            except Exception as exc:
+                print("Drawings: image:", exc)
+    return compiled._textures
+
+
 def render(compiled, scale):
     """Paint `compiled` into a new GPUOffScreen at `scale` pixels to the
     point. The caller frees it."""
@@ -175,6 +201,11 @@ def render(compiled, scale):
                 gpu.state.depth_test_set('NONE')
                 gpu.state.depth_mask_set(False)
             gpu.matrix.load_projection_matrix(pixels)
+            if compiled.images:
+                from gpu_extras.presets import draw_texture_2d
+                for tex, x, y, iw, ih in _image_textures(compiled):
+                    draw_texture_2d(tex, (x * scale, y * scale),
+                                    iw * scale, ih * scale)
             gpu.state.blend_set('ALPHA')
             font = 0
             for x, y, text, size, angle, color, halo in compiled.texts:

@@ -85,9 +85,11 @@ def unregister_set_extension(fn):
         _set_extensions.remove(fn)
 
 
-def default_set(scene):
+def default_set(scene, room_index=0):
     """The set made by rule: for each wall with products, its plan strip
-    over its elevation, then its sections on the sheets after."""
+    over its elevation, then its sections on the sheets after.
+    `room_index` is the room's place among the project's rooms, for an
+    extension that adds something once for the whole project."""
     sheets = []
     kept = edits(scene)
     walls = [wall for wall in em.room_walls(scene)
@@ -110,7 +112,7 @@ def default_set(scene):
         sheets.append({'views': on_sheet})
         for i in range(0, len(cuts), SECTIONS_A_SHEET):
             sheets.append({'views': cuts[i:i + SECTIONS_A_SHEET]})
-    data = {'sheets': sheets}
+    data = {'sheets': sheets, 'room_index': room_index}
     for extend in list(_set_extensions):
         try:
             extend(scene, data)
@@ -186,17 +188,22 @@ def step_scale(scene, key, current, larger):
     return ladder[i]
 
 
-def add_cut(scene, wall, x):
+def add_cut(scene, wall, x, current=None):
+    """Cut a section at `x` metres along `wall`. `current` is the
+    wall's cuts as they stand on the sheets (so a room that is not on
+    screen need not be read to find them)."""
     data = edits(scene)
-    cuts = _wall_cuts(scene, wall, data)
+    cuts = (list(current) if current is not None
+            else _wall_cuts(scene, wall, data))
     if all(abs(x - c) > 0.02 for c in cuts):
         data['cuts'][wall.name] = sorted(round(c, 4) for c in cuts + [x])
         store_edits(scene, data)
 
 
-def remove_cut(scene, wall, x):
+def remove_cut(scene, wall, x, current=None):
     data = edits(scene)
-    cuts = _wall_cuts(scene, wall, data)
+    cuts = (list(current) if current is not None
+            else _wall_cuts(scene, wall, data))
     data['cuts'][wall.name] = [round(c, 4) for c in cuts
                                if abs(c - x) > 0.002]
     store_edits(scene, data)
@@ -241,11 +248,20 @@ def sheet_name(scene, sheet):
     return "Sheet"
 
 
-def drawing_set(scene):
+def drawing_set(scene, counters=None):
     """The room's set with every view marked: '_mark' (A, S1), '_sheet'
     (the sheet it is on), and on an elevation '_cuts', the sections cut
-    from its wall, wherever they ended up."""
-    data = default_set(scene)
+    from its wall, wherever they ended up.
+
+    `counters` carries the numbering on from the room before, so a
+    project's sheets, elevation letters and section numbers run
+    through every room: {'sheets', 'letters', 'sections', 'rooms'}.
+    It is moved on to where this room ends."""
+    if counters is None:
+        counters = {}
+    first_sheet = counters.get('sheets', 0)
+    first_letter = counters.get('letters', 0)
+    data = default_set(scene, counters.get('rooms', 0))
     kept = edits(scene)
     sheets = [{'views': [dict(v) for v in s.get('views', [])
                          if isinstance(v, dict)]}
@@ -258,13 +274,15 @@ def drawing_set(scene):
             if key in kept['scales']:
                 view['scale'] = int(kept['scales'][key])
     letters, cuts = {}, {}
-    n_sections = 0
-    for number, sheet in enumerate(sheets, 1):
+    n_sections = counters.get('sections', 0)
+    for number, sheet in enumerate(sheets, first_sheet + 1):
+        sheet['_number'] = number
         for view in sheet['views']:
             view['_sheet'] = number
             wall = view.get('wall')
             if view.get('kind') == 'ELEVATION':
-                letters.setdefault(wall, (_letter(len(letters)), number))
+                letters.setdefault(
+                    wall, (_letter(first_letter + len(letters)), number))
                 view['_mark'] = letters[wall][0]
             elif view.get('kind') == 'SECTION':
                 n_sections += 1
@@ -280,6 +298,10 @@ def drawing_set(scene):
                 view['_mark'], view['_looks_from'] = letters[wall]
             elif view.get('kind') == 'ROOM_PLAN':
                 view['_marks'] = dict(letters)
+    counters['sheets'] = first_sheet + len(sheets)
+    counters['letters'] = first_letter + len(letters)
+    counters['sections'] = n_sections
+    counters['rooms'] = counters.get('rooms', 0) + 1
     return sheets
 
 
@@ -341,13 +363,18 @@ def _fit_section(context, view, height):
     return drawing, f"{text} = 1'"
 
 
-def compose(context, sheets, index):
-    """Sheet `index` of `sheets` (from drawing_set) as one Drawing."""
+def compose(context, sheets, index, count=None):
+    """Sheet `index` of `sheets` (from drawing_set) as one Drawing.
+    `count` is how many sheets the whole set has when these are only
+    one room's part of it."""
     scene = context.scene
     width, height = PAPER
     sheet = sheets[index]
     page = Drawing(width, height)
-    info = {'number': index + 1, 'count': len(sheets), 'sheet': sheet}
+    page.info['room'] = scene.name
+    page.info['name'] = sheet_name(scene, sheet)
+    info = {'number': sheet.get('_number', index + 1),
+            'count': count or len(sheets), 'sheet': sheet}
     furniture = _furniture[-1] if _furniture else _plain_furniture
     x0, y0, x1, y1 = furniture(page, context, info, width, height)
 
@@ -445,15 +472,61 @@ def compose(context, sheets, index):
 
 
 def compose_all(context):
+    """The sheets of the room on screen alone."""
     sheets = drawing_set(context.scene)
     return [compose(context, sheets, i) for i in range(len(sheets))]
 
 
+def project_rooms():
+    """The project's rooms, in the order the project lists them."""
+    return list(em._room_scenes())
+
+
+_page_cache = {}
+
+
+def compose_project(context):
+    """Every room's sheets as one set: numbered straight through, the
+    marks of one room carrying on from the room before. A sheet whose
+    room has not changed since it was last composed is reused."""
+    rooms = project_rooms()
+    pages = []
+    with views.showing_cages(rooms):
+        counters = {}
+        made = []
+        for room in rooms:
+            with views.in_room(context, room) as ctx:
+                try:
+                    made.append((room, drawing_set(ctx.scene, counters)))
+                except Exception as exc:
+                    print(f"Drawings: {room.name}: {exc}")
+        count = counters.get('sheets', 0)
+        live = set()
+        for room, sheets in made:
+            if not sheets:
+                continue
+            stamp = (views._project_generation(room),
+                     room.get(SET_PROP) or '', count)
+            with views.in_room(context, room) as ctx:
+                for i, sheet in enumerate(sheets):
+                    key = (room.name, i, sheet.get('_number'),
+                           json.dumps(sheet, sort_keys=True, default=str))
+                    live.add(key)
+                    hit = _page_cache.get(key)
+                    if hit is None or hit[0] != stamp:
+                        hit = (stamp, compose(ctx, sheets, i, count))
+                        _page_cache[key] = hit
+                    pages.append(hit[1])
+        for key in [k for k in _page_cache if k not in live]:
+            del _page_cache[key]
+    return pages
+
+
 def write_pdf(context, path, pages=None):
-    """The room's set as a PDF. Returns the path written (beside `path`
-    under another name when a viewer has that file locked)."""
+    """The project's set as a PDF. Returns the path written (beside
+    `path` under another name when a viewer has that file locked)."""
     if pages is None:
-        pages = compose_all(context)
+        pages = compose_project(context)
     doc = hb_pdf.Document()
     for drawing in pages:
         drawing.place(doc.add_page(drawing.width, drawing.height))

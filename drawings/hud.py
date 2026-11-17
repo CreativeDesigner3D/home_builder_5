@@ -2,7 +2,8 @@
 
 Three groups of buttons, drawn like the rest of the viewport HUD:
 
-- a row of sheet tabs along the top,
+- along the top, the project's rooms and under them the tabs of the
+  sheets of the room on show,
 - a bar at the bottom centre (previous / next sheet, fit, read again,
   print, reset, close),
 - a small toolbar over the view that is selected on the sheet, with
@@ -97,6 +98,9 @@ def _bar(st, bounds, scene, s):
     title = "No sheets"
     if count:
         name = names[st['page']] if st['page'] < len(names) else ""
+        rooms = st.get('rooms') or []
+        if len(set(rooms)) > 1 and st['page'] < len(rooms):
+            name = f"{rooms[st['page']]} - {name}"
         title = f"{st['page'] + 1} of {count}   {name}".rstrip()
     items = []
     if count > 1:
@@ -119,14 +123,26 @@ def _tabs(st, bounds, s):
     names = st.get('names') or []
     if len(names) < 2:
         return []
+    rooms = st.get('rooms') or [''] * len(names)
+    here = rooms[st['page']] if st['page'] < len(rooms) else ''
+    order = list(dict.fromkeys(rooms))
+    out = []
+    y = ymax - (BUTTON + 12) * s
+    if len(order) > 1:
+        # The rooms, then the sheets of the room on show under them.
+        items = [(('ROOM', name), name, _wide(name, s, 20.0),
+                  'ON' if name == here else None) for name in order]
+        out += _row(items, (xmin + xmax) / 2.0, y, s)
+        y -= (BUTTON + 6) * s
+    mine = [i for i in range(len(names)) if rooms[i] == here]
     room = (xmax - xmin) - 40 * s
-    labels = [f"{i + 1}  {n}" for i, n in enumerate(names)]
+    labels = [f"{i + 1}  {names[i]}" for i in mine]
     if sum(_wide(l, s, 18.0) + GAP * s for l in labels) > room:
-        labels = [str(i + 1) for i in range(len(names))]    # numbers only
+        labels = [str(i + 1) for i in mine]     # numbers only
     items = [(('TAB', i), label, _wide(label, s, 18.0),
               'ON' if i == st['page'] else None)
-             for i, label in enumerate(labels)]
-    return _row(items, (xmin + xmax) / 2.0, ymax - (BUTTON + 12) * s, s)
+             for i, label in zip(mine, labels)]
+    return out + _row(items, (xmin + xmax) / 2.0, y, s)
 
 
 def _tools(st, bounds, scene, s):
@@ -166,7 +182,7 @@ def _tools(st, bounds, scene, s):
     total = sum(w for _i, _l, w, _st in items) + GAP * s * (len(items) - 1)
     cx = min(max(bx + bw / 2.0, xmin + total / 2.0 + 8 * s),
              xmax - total / 2.0 - 8 * s)
-    top_limit = ymax - (2 * BUTTON + 24) * s        # under the tabs
+    top_limit = ymax - (3 * BUTTON + 30) * s        # under the tabs
     y = by + bh + 10 * s
     if y > top_limit:
         y = max(ymin + (BUTTON + 30) * s, min(top_limit, by + bh - 40 * s))
