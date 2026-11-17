@@ -289,6 +289,8 @@ OPTION_PAGES = {
             ('enum', 'edge_material', "Cabinet Edge"),
             ('enum', 'front_edge_material', "Front Edge"),
             ('enum', 'door_overlay_type', "Door Overlay"),
+            ('enum', 'hinge_type', "Hinge"),
+            ('enum', 'pull_drilling', "Pull Drilling"),
         ),
         'actions': (
             (("Assign Style",
@@ -454,6 +456,7 @@ OPTION_PAGES = {
         'fields': (
             ('thumb', 'crown_profile', "Crown Profile",
              {'thumb': lambda ident: _crown_thumbnail(ident)}),
+            ('distance', 'trim_stick_length', "Trim Stick Length"),
         ),
         'actions': (
             (("Add Crown Molding", 'hb_frameless.add_molding'),
@@ -503,6 +506,10 @@ OPTION_PAGES = {
             ('distance', 'countertop_overhang_sides', "Side Overhang"),
             ('distance', 'countertop_overhang_back', "Back Overhang"),
             ('enum', 'countertop_material', "Material"),
+            ('enum', 'countertop_edge', "Edge"),
+            ('enum', 'countertop_splash', "Splash"),
+            ('distance', 'countertop_splash_height', "Splash Height",
+             {'when': lambda p: p.countertop_splash == 'STANDARD'}),
             ('actions', (("Add Countertops", 'hb_frameless.add_countertops',
                           'selected_only', False),
                          ("Add to Selected", 'hb_frameless.add_countertops',
