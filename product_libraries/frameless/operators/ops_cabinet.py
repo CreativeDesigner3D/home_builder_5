@@ -824,6 +824,8 @@ class hb_frameless_OT_delete_cabinet(bpy.types.Operator):
         # The ends this cabinet covered show again.
         from .. import exposure
         exposure.request(context.scene)
+        # And a panel it shared with its neighbours is theirs again.
+        solver_frameless.refresh_finished_bottoms(context.scene)
         return {'FINISHED'}
 
 

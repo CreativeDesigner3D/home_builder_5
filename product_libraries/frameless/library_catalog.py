@@ -423,6 +423,8 @@ OPTION_PAGES = {
             ('distance', 'base_top_hand_hole_margin', "Hand Hole Margin",
              {'when': lambda p: p.base_top_hand_hole}),
             ('gap', None, None),
+            ('distance', 'finished_bottom_max_length', "Applied Bottom Max Length"),
+            ('gap', None, None),
             ('bool', 'equal_drawer_stack_heights', "Equal Drawer Stack Heights"),
             ('distance', 'top_drawer_front_height', "Top Drawer Front Height"),
         ),

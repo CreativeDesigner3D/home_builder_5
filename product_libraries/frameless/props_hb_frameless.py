@@ -2445,6 +2445,12 @@ class Frameless_Scene_Props(PropertyGroup):
                        unit='LENGTH',
                        update=update_back_tongue_length)# type: ignore
 
+    finished_bottom_max_length: FloatProperty(name="Applied Bottom Max Length",
+                                              description="Longest panel applied under a run of upper cabinets; a longer run is cut at a cabinet joint",
+                                              default=units.inch(96.0),
+                                              min=units.inch(12.0),
+                                              unit='LENGTH')# type: ignore
+
     equal_drawer_stack_heights: BoolProperty(name="Equal Drawer Stack Heights", 
                                              description="Check this make all drawer stack heights equal. Otherwise the Top Drawer Height will be set.", 
                                                         default=False)# type: ignore
