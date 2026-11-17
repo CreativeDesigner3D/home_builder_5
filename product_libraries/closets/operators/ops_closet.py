@@ -4579,6 +4579,8 @@ class hb_closets_OT_clear_bay(bpy.types.Operator):
         types_closets.clear_bay_contents(bay)
         types_closets.recalculate_closet_starter(root)
         _apply_selection_shading(context, root)
+        from .. import bay_card
+        bay_card.forget_config(bay)
         return {'FINISHED'}
 
 

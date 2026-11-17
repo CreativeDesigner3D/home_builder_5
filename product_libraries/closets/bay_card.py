@@ -113,11 +113,13 @@ def _set_height_standard(bay, value):
 # ---- What the bay is built as ----------------------------------------------
 # A bay keeps the standard configuration it was last built as, with a
 # note of the parts that made it; once its parts change (a shelf or a
-# drawer added, an opening changed) it reads as Custom.
+# drawer added, an opening changed) it reads as Custom. A bay never
+# built as one, or cleared, reads as Open.
 
 CONFIG_KEY = 'hb_bay_config'
 CONFIG_PARTS_KEY = 'hb_bay_config_parts'
 CUSTOM = 'CUSTOM'
+OPEN = 'OPEN'
 
 
 def _parts_note(bay):
@@ -132,16 +134,26 @@ def remember_config(bay, config):
     bay[CONFIG_PARTS_KEY] = _parts_note(bay)
 
 
+def forget_config(bay):
+    """Note that ``bay`` is empty again, so it reads as Open."""
+    for key in (CONFIG_KEY, CONFIG_PARTS_KEY):
+        if key in bay:
+            del bay[key]
+
+
 def config_of(bay):
     key = bay.get(CONFIG_KEY)
-    if key and bay.get(CONFIG_PARTS_KEY) == _parts_note(bay):
+    if not key:
+        return OPEN
+    if bay.get(CONFIG_PARTS_KEY) == _parts_note(bay):
         return key
     return CUSTOM
 
 
 def _config_items():
-    return ([(cid, label) for group in types_closets.BAY_CONFIG_GROUPS
-             for cid, label in group] + [(CUSTOM, "Custom")])
+    return ([(OPEN, "Open")]
+            + [(cid, label) for group in types_closets.BAY_CONFIG_GROUPS
+               for cid, label in group] + [(CUSTOM, "Custom")])
 
 
 def _get_config(bay):
@@ -157,7 +169,10 @@ def _set_config(bay, value):
     context = bpy.context
     with context.temp_override(active_object=bay, object=bay,
                                selected_objects=[bay]):
-        bpy.ops.hb_closets.change_bay(config=value)
+        if value == OPEN:
+            bpy.ops.hb_closets.clear_bay()
+        else:
+            bpy.ops.hb_closets.change_bay(config=value)
     try:
         layer = context.view_layer
         if layer.objects.get(bay.name) is bay:
