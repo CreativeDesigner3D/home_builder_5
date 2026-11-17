@@ -4,6 +4,7 @@ from . import operators
 from . import gpu_overlay_closets
 from . import drop_dims_closets
 from . import selected_card
+from . import part_card
 from . import drill_closets
 
 NAMESPACE = "hb_closets"
@@ -16,11 +17,13 @@ def register():
     operators.register()
     gpu_overlay_closets.register()
     selected_card.register()
+    part_card.register()
     drill_closets.register()
 
 
 def unregister():
     drill_closets.unregister()
+    part_card.unregister()
     selected_card.unregister()
     drop_dims_closets.unregister()
     gpu_overlay_closets.unregister()
