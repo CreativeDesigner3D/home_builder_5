@@ -424,8 +424,7 @@ OPTION_PAGES = {
              {'when': lambda p: p.base_top_hand_hole}),
             ('gap', None, None),
             ('bool', 'equal_drawer_stack_heights', "Equal Drawer Stack Heights"),
-            ('distance', 'top_drawer_front_height', "Top Drawer Height",
-             {'when': lambda p: not p.equal_drawer_stack_heights}),
+            ('distance', 'top_drawer_front_height', "Top Drawer Front Height"),
         ),
     },
     # Drawer boxes: whether new cabinets get them, and which box system

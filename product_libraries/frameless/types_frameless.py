@@ -285,7 +285,7 @@ class BaseCabinet(Cabinet):
 
         split = SplitterVertical()
         split.splitter_qty = 1
-        split.opening_sizes = [props.top_drawer_front_height, 0]
+        split.opening_sizes = [FrontHeight(props.top_drawer_front_height), 0]
         split.opening_inserts = [front, doors]
         self.add_cage_to_bay(split)
         self.obj['IS_SINK_CABINET'] = True
@@ -309,7 +309,7 @@ class BaseCabinet(Cabinet):
 
         door_drawer = SplitterVertical()
         door_drawer.splitter_qty = 1
-        door_drawer.opening_sizes = [props.top_drawer_front_height,0]
+        door_drawer.opening_sizes = [FrontHeight(props.top_drawer_front_height), 0]
         door_drawer.opening_inserts = [drawer,door]
         self.add_cage_to_bay(door_drawer)
     
@@ -323,7 +323,7 @@ class BaseCabinet(Cabinet):
         if equal_drawer_stack_heights:
             top_drawer_height = 0 # 0 means equal height
         else:
-            top_drawer_height = props.top_drawer_front_height
+            top_drawer_height = FrontHeight(props.top_drawer_front_height)
 
         door_drawer = SplitterVertical()
         door_drawer.splitter_qty = count - 1
@@ -868,6 +868,12 @@ class CabinetBay(GeoNodeCage):
         self.obj.display_type = 'WIRE'
 
 
+class FrontHeight(float):
+    """An entry of ``SplitterVertical.opening_sizes`` that is the height
+    of the opening's front, not of the opening: the solver takes the
+    front's overlays off it."""
+
+
 class SplitterVertical(GeoNodeCage):
 
     splitter_qty = 1
@@ -936,6 +942,9 @@ class SplitterVertical(GeoNodeCage):
                 oh = opening_calculator.get_calculator_prompt('Opening ' + str(i) + ' Height')
                 oh.equal = False
                 oh.distance_value = self.opening_sizes[i-1]
+                if isinstance(self.opening_sizes[i-1], FrontHeight):
+                    key = solver_frameless.front_height_keys(i)[0]
+                    self.obj[key] = float(self.opening_sizes[i-1])
 
 
 

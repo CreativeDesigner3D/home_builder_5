@@ -306,7 +306,7 @@ class hb_frameless_OT_change_bay_opening(bpy.types.Operator):
         
         splitter = types_frameless.SplitterVertical()
         splitter.splitter_qty = 3
-        splitter.opening_sizes = [0, units.inch(30), units.inch(30), props.top_drawer_front_height]
+        splitter.opening_sizes = [0, units.inch(30), units.inch(30), types_frameless.FrontHeight(props.top_drawer_front_height)]
         splitter.opening_inserts = [top_doors, appliance1, appliance2, drawer]
         self.add_cage_to_bay(bay, splitter)
         
@@ -374,7 +374,7 @@ class hb_frameless_OT_change_bay_opening(bpy.types.Operator):
         
         splitter = types_frameless.SplitterVertical()
         splitter.splitter_qty = 1
-        splitter.opening_sizes = [props.top_drawer_front_height, 0]
+        splitter.opening_sizes = [types_frameless.FrontHeight(props.top_drawer_front_height), 0]
         splitter.opening_inserts = [drawer, doors]
         self.add_cage_to_bay(bay, splitter)
         
@@ -409,7 +409,7 @@ class hb_frameless_OT_change_bay_opening(bpy.types.Operator):
         # Create vertical splitter with horizontal drawer section on top, doors below
         splitter = types_frameless.SplitterVertical()
         splitter.splitter_qty = 1
-        splitter.opening_sizes = [props.top_drawer_front_height, 0]
+        splitter.opening_sizes = [types_frameless.FrontHeight(props.top_drawer_front_height), 0]
         splitter.opening_inserts = [horiz_splitter, doors]
         self.add_cage_to_bay(bay, splitter)
         
@@ -432,7 +432,7 @@ class hb_frameless_OT_change_bay_opening(bpy.types.Operator):
         
         splitter = types_frameless.SplitterVertical()
         splitter.splitter_qty = 1
-        splitter.opening_sizes = [props.top_drawer_front_height, 0]
+        splitter.opening_sizes = [types_frameless.FrontHeight(props.top_drawer_front_height), 0]
         splitter.opening_inserts = [drawer, pullout]
         self.add_cage_to_bay(bay, splitter)
 
@@ -476,7 +476,7 @@ class hb_frameless_OT_change_bay_opening(bpy.types.Operator):
             if i < drawer_count - 1:  # Not the last drawer
                 drawer.half_overlay_bottom = True
             inserts.append(drawer)
-            sizes.append(props.top_drawer_front_height)
+            sizes.append(types_frameless.FrontHeight(props.top_drawer_front_height))
         
         splitter = types_frameless.SplitterVertical()
         splitter.splitter_qty = drawer_count
@@ -546,7 +546,7 @@ class hb_frameless_OT_change_bay_opening(bpy.types.Operator):
 
         splitter = types_frameless.SplitterVertical()
         splitter.splitter_qty = 1
-        splitter.opening_sizes = [props.top_drawer_front_height, 0]
+        splitter.opening_sizes = [types_frameless.FrontHeight(props.top_drawer_front_height), 0]
         splitter.opening_inserts = [drawer, door]
         self.add_cage_to_bay(bay, splitter)
         
@@ -565,7 +565,7 @@ class hb_frameless_OT_change_bay_opening(bpy.types.Operator):
         elif props.equal_drawer_stack_heights:
             top_drawer_height = 0
         else:
-            top_drawer_height = props.top_drawer_front_height
+            top_drawer_height = types_frameless.FrontHeight(props.top_drawer_front_height)
 
         splitter = types_frameless.SplitterVertical()
         splitter.splitter_qty = count - 1
@@ -1956,7 +1956,220 @@ class hb_frameless_OT_edit_splitter_openings(bpy.types.Operator):
                 row.prop(prompt, 'equal', text="", icon='LINKED' if prompt.equal else 'UNLINKED')
 
 
+FRONT_HEIGHT_ROWS = 10
+
+
+def front_height_splitter(obj):
+    """The vertical splitter the Door/Drawer Sizes editor works on for a
+    selected object: the object itself, the nearest one above it, or the
+    outermost one under it."""
+    tag = solver_frameless.SPLITTER_VERTICAL_TAG
+    current = obj
+    while current is not None:
+        if current.get(tag):
+            return current
+        current = current.parent
+    queue = list(obj.children) if obj is not None else []
+    while queue:
+        child = queue.pop(0)
+        if child.get(tag):
+            return child
+        queue.extend(child.children)
+    return None
+
+
+def front_height_rows(splitter_obj):
+    """One entry per opening of a vertical splitter, top to bottom:
+    ``(index, label, height, held, has_front)``. ``height`` is the
+    front's height where a front closes the opening, else the opening's
+    own."""
+    calc = solver_frameless.splitter_calculator(splitter_obj)
+    parts = solver_frameless.split_parts(splitter_obj)
+    rows = []
+    if calc is None:
+        return rows
+    for i, prompt in enumerate(calc.prompts, 1):
+        opening = parts.get(('OPENING', i))
+        size = prompt.distance_value
+        insert = solver_frameless.opening_front_insert(opening) if opening else None
+        if insert is None:
+            rows.append((i, "Opening (no front)", size, not prompt.equal, False))
+            continue
+        overlay = solver_frameless.opening_front_overlay(opening)
+        held = (solver_frameless.front_height_keys(i)[0] in splitter_obj
+                or not prompt.equal)
+        rows.append((i, insert.name.split('.')[0], size + overlay, held, True))
+    return rows
+
+
+def set_front_heights(context, splitter_obj, heights):
+    """Size a vertical splitter by its fronts. ``heights`` has one entry
+    per opening, top to bottom: a front height to hold (the opening's own
+    height where no front closes it), or None to let the opening share
+    what the others leave. With every opening held, the bottom one is
+    released to take up the difference."""
+    calc = solver_frameless.splitter_calculator(splitter_obj)
+    parts = solver_frameless.split_parts(splitter_obj)
+    if calc is None:
+        return
+    heights = list(heights)[:len(calc.prompts)]
+    heights += [None] * (len(calc.prompts) - len(heights))
+    if heights and all(h is not None for h in heights):
+        heights[-1] = None
+    for i, prompt in enumerate(calc.prompts, 1):
+        height = heights[i - 1]
+        key, solved_key = solver_frameless.front_height_keys(i)
+        for name in (key, solved_key):
+            if name in splitter_obj:
+                del splitter_obj[name]
+        opening = parts.get(('OPENING', i))
+        has_front = (opening is not None and
+                     solver_frameless.opening_front_insert(opening) is not None)
+        if height is None:
+            prompt.equal = True
+        elif has_front:
+            prompt.equal = False
+            splitter_obj[key] = float(height)
+        else:
+            prompt.equal = False
+            prompt.distance_value = height
+    splitter_obj[solver_frameless.SIZE_BY_FRONTS_KEY] = True
+    cabinet_bp = hb_utils.get_cabinet_bp(splitter_obj)
+    hb_utils.run_calc_fix(context, cabinet_bp or splitter_obj)
+
+
+class hb_frameless_OT_edit_front_heights(bpy.types.Operator):
+    bl_idname = "hb_frameless.edit_front_heights"
+    bl_label = "Edit Door/Drawer Sizes"
+    bl_description = ("Type the heights of the door and drawer fronts; the "
+                      "openings are worked out from them and the reveals are kept")
+    bl_options = {'UNDO'}
+
+    # height_1..N / hold_1..N are added below the class.
+
+    _shown = ()
+    _before = None
+
+    @classmethod
+    def poll(cls, context):
+        return (context.object is not None
+                and front_height_splitter(context.object) is not None)
+
+    def _sync(self, splitter_obj):
+        """Show the solved heights and which of them are held."""
+        shown = []
+        for i, _label, height, held, _has_front in front_height_rows(splitter_obj)[:FRONT_HEIGHT_ROWS]:
+            setattr(self, 'height_%d' % i, height)
+            setattr(self, 'hold_%d' % i, held)
+            shown.append(getattr(self, 'height_%d' % i))
+        self._shown = tuple(shown)
+
+    def _apply(self, context):
+        splitter_obj = front_height_splitter(context.object)
+        if splitter_obj is None:
+            return False
+        if not self._shown:
+            # Run without the dialog: keep what is held.
+            self._sync(splitter_obj)
+        count = len(self._shown)
+        edited = None
+        for i in range(1, count + 1):
+            # Typing a height holds it.
+            if abs(getattr(self, 'height_%d' % i) - self._shown[i - 1]) > 1e-6:
+                setattr(self, 'hold_%d' % i, True)
+                edited = i
+        holds = [getattr(self, 'hold_%d' % i) for i in range(1, count + 1)]
+        if count > 1 and all(holds):
+            # One front has to take up the difference: the bottom one,
+            # or the one above it when the bottom was just typed.
+            release = count - 1 if edited == count else count
+            holds[release - 1] = False
+        heights = [getattr(self, 'height_%d' % i) if holds[i - 1] else None
+                   for i in range(1, count + 1)]
+        set_front_heights(context, splitter_obj, heights)
+        self._sync(splitter_obj)
+        return True
+
+    def invoke(self, context, event):
+        splitter_obj = front_height_splitter(context.object)
+        calc = solver_frameless.splitter_calculator(splitter_obj)
+        # What Cancel puts back.
+        keys = {}
+        for i in range(1, len(calc.prompts) + 1):
+            for name in solver_frameless.front_height_keys(i):
+                if name in splitter_obj:
+                    keys[name] = splitter_obj[name]
+        self._before = (
+            keys,
+            [(p.equal, p.distance_value) for p in calc.prompts],
+            splitter_obj.get(solver_frameless.SIZE_BY_FRONTS_KEY))
+        self._sync(splitter_obj)
+        return context.window_manager.invoke_props_dialog(self, width=320)
+
+    def check(self, context):
+        return self._apply(context)
+
+    def execute(self, context):
+        if not self._apply(context):
+            self.report({'ERROR'}, "Could not find the openings")
+            return {'CANCELLED'}
+        return {'FINISHED'}
+
+    def cancel(self, context):
+        splitter_obj = front_height_splitter(context.object)
+        if splitter_obj is None or self._before is None:
+            return
+        keys, prompts, by_fronts = self._before
+        calc = solver_frameless.splitter_calculator(splitter_obj)
+        for i in range(1, len(calc.prompts) + 1):
+            for name in solver_frameless.front_height_keys(i):
+                if name in splitter_obj:
+                    del splitter_obj[name]
+        for name, value in keys.items():
+            splitter_obj[name] = value
+        for prompt, (equal, value) in zip(calc.prompts, prompts):
+            prompt.equal = equal
+            if not equal:
+                prompt.distance_value = value
+        flag = solver_frameless.SIZE_BY_FRONTS_KEY
+        if by_fronts is None:
+            if flag in splitter_obj:
+                del splitter_obj[flag]
+        else:
+            splitter_obj[flag] = by_fronts
+        cabinet_bp = hb_utils.get_cabinet_bp(splitter_obj)
+        hb_utils.run_calc_fix(context, cabinet_bp or splitter_obj)
+
+    def draw(self, context):
+        layout = self.layout
+        splitter_obj = front_height_splitter(context.object)
+        if splitter_obj is None:
+            layout.label(text="No openings found")
+            return
+        box = layout.box()
+        box.label(text="Front Heights, Top to Bottom:", icon='SNAP_GRID')
+        col = box.column(align=True)
+        for i, label, _height, _held, _has_front in front_height_rows(splitter_obj)[:FRONT_HEIGHT_ROWS]:
+            held = getattr(self, 'hold_%d' % i)
+            row = col.row(align=True)
+            row.prop(self, 'height_%d' % i, text="%d  %s" % (i, label))
+            row.prop(self, 'hold_%d' % i, text="",
+                     icon='LOCKED' if held else 'UNLOCKED')
+        layout.label(text="Unlocked fronts share what is left, at equal heights.")
+
+
+hb_frameless_OT_edit_front_heights.__annotations__ = {}
+for _i in range(1, FRONT_HEIGHT_ROWS + 1):
+    hb_frameless_OT_edit_front_heights.__annotations__['height_%d' % _i] = bpy.props.FloatProperty(
+        name="Front Height", description="Height of this front. Typing a height holds it",
+        min=0.0, unit='LENGTH', precision=4)
+    hb_frameless_OT_edit_front_heights.__annotations__['hold_%d' % _i] = bpy.props.BoolProperty(
+        name="Hold", description="Keep this height; unlocked fronts share what is left")
+del _i
+
+
 classes = (
+    hb_frameless_OT_edit_front_heights,
     hb_frameless_OT_change_bay_opening,
     hb_frameless_OT_opening_prompts,
     hb_frameless_OT_change_opening_type,

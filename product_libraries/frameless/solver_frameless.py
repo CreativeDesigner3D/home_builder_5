@@ -1806,6 +1806,96 @@ def solve_calculator(calc, total):
     return [p.distance_value for p in calc.prompts]
 
 
+# A vertical splitter can hold an opening by the height of the front that
+# closes it instead of by the opening's own height.
+SIZE_BY_FRONTS_KEY = 'Size By Fronts'
+
+
+def front_height_keys(index):
+    """(typed front height, opening height it last solved to) id-property
+    names for one opening of a vertical splitter."""
+    return 'Front Height %d' % index, 'Front Height %d Opening' % index
+
+
+def opening_front_insert(opening_obj):
+    """The insert whose fronts close ``opening_obj``, or None. An opening
+    split side by side answers with its first front insert: the fronts
+    across it share their top and bottom edges."""
+    queue = list(opening_obj.children)
+    while queue:
+        child = queue.pop(0)
+        if not is_cage_link(child):
+            continue
+        if 'Inset Front' in child and any(
+                c.get('IS_CABINET_FRONT') for c in child.children):
+            return child
+        queue.extend(child.children)
+    return None
+
+
+def opening_front_overlay(opening_obj):
+    """How much taller than its opening an opening's front stands (less
+    than nothing for an inset front); None where no front closes it."""
+    insert = opening_front_insert(opening_obj) if opening_obj else None
+    if insert is None:
+        return None
+    top, bottom, _left, _right = front_overlays(insert)
+    return top + bottom
+
+
+def _solve_front_heights(splitter_obj, parts, calc, total):
+    """Share ``total`` among a vertical splitter's openings when some are
+    held by front height: each of those gets its front height less the
+    front's overlays, openings held by their own height keep it, and the
+    rest share what is left so that their fronts come out equal. Returns
+    the sizes in prompt order, or None when the splitter sizes by
+    openings alone."""
+    held = {}
+    overlays = {}
+    for i, p in enumerate(calc.prompts, 1):
+        overlays[i] = opening_front_overlay(parts.get(('OPENING', i)))
+        key, solved_key = front_height_keys(i)
+        if key not in splitter_obj:
+            continue
+        solved = splitter_obj.get(solved_key)
+        # An opening height typed since (or the opening put back on an
+        # equal share) takes the opening over again, as does losing the
+        # front.
+        if overlays[i] is None or (solved is not None and (
+                p.equal or abs(p.distance_value - float(solved)) > 1e-6)):
+            del splitter_obj[key]
+            if solved is not None:
+                del splitter_obj[solved_key]
+            continue
+        held[i] = float(splitter_obj[key])
+    if not held and not splitter_obj.get(SIZE_BY_FRONTS_KEY):
+        return None
+
+    if calc.distance_obj is not None:
+        clear_drivers(calc.distance_obj)
+        calc.distance_obj.home_builder.calculator_distance = total
+    fixed = 0.0
+    shared = []
+    for i, p in enumerate(calc.prompts, 1):
+        if i in held:
+            p.equal = False
+            p.distance_value = max(held[i] - overlays[i], 0.0)
+            splitter_obj[front_height_keys(i)[1]] = p.distance_value
+        if not p.equal:
+            if p.include:
+                fixed += p.distance_value
+        elif p.include:
+            shared.append(i)
+        else:
+            p.distance_value = 0.0
+    if shared:
+        front = (total - fixed
+                 + sum(overlays[i] or 0.0 for i in shared)) / len(shared)
+        for i in shared:
+            calc.prompts[i - 1].distance_value = front - (overlays[i] or 0.0)
+    return [p.distance_value for p in calc.prompts]
+
+
 def _sink_split_board(splitter_obj, opening_above):
     """True for a front split board in a sink base that sits under a false
     front: the bowl and trap need that space, so it is not built."""
@@ -1855,7 +1945,12 @@ def _solve_splitter(splitter_obj, vertical):
     mt = float(prompt(splitter_obj, 'Material Thickness', inch(0.75)))
     count = len(calc.prompts)
     span = dim_z if vertical else dim_x
-    sizes = solve_calculator(calc, span - mt * (count - 1))
+    sizes = None
+    if vertical:
+        sizes = _solve_front_heights(splitter_obj, parts, calc,
+                                     span - mt * (count - 1))
+    if sizes is None:
+        sizes = solve_calculator(calc, span - mt * (count - 1))
 
     if vertical:
         # Openings run top to bottom; the last one sits on the floor of

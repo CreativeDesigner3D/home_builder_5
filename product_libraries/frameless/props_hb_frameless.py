@@ -2450,7 +2450,7 @@ class Frameless_Scene_Props(PropertyGroup):
                                                         default=False)# type: ignore
     
     top_drawer_front_height: FloatProperty(name="Top Drawer Front Height",
-                                           description="Default top drawer front height.",
+                                           description="Height of the top drawer front on new cabinets; the opening behind it is worked out from it",
                                            default=units.inch(6.0),
                                            unit='LENGTH')# type: ignore
 
@@ -2952,9 +2952,8 @@ class Frameless_Scene_Props(PropertyGroup):
         row.operator('hb_frameless.update_drawer_front_height_prompts',text="",icon='FILE_REFRESH')
         row = size_box.row()
         row.prop(self,'equal_drawer_stack_heights')
-        if not self.equal_drawer_stack_heights:
-            row = size_box.row()
-            row.prop(self,'top_drawer_front_height',text="Top Drawer Front Height")
+        row = size_box.row()
+        row.prop(self,'top_drawer_front_height',text="Top Drawer Front Height")
 
     def draw_cabinet_options_handles(self,layout,context):
         from ... import hb_project
