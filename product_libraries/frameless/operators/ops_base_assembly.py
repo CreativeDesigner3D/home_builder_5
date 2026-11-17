@@ -200,6 +200,37 @@ def _wall_closes(parent, frame, x, kick_height):
     return False
 
 
+def inside_corners(frame, members):
+    """(left, right): whether each end of the stretch runs into an
+    inside corner -- the end of its wall, where the next wall turns
+    out in front of the cabinets."""
+    first, last = members[0], members[-1]
+    parent = first.obj.parent
+    if parent is None or not parent.get('IS_WALL_BP'):
+        return False, False
+    wall = hb_types.GeoNodeWall(parent)
+    to_wall = parent.matrix_world.inverted().to_3x3()
+    length = wall.get_input('Length')
+    found = []
+    for x, side in ((first.x0, 'left'), (last.x1, 'right')):
+        wall_x = (parent.matrix_world.inverted()
+                  @ (frame @ Vector((x, 0.0, first.kick_height)))).x
+        at_end = (wall_x <= WALL_END_REACH if side == 'left'
+                  else wall_x >= length - WALL_END_REACH)
+        other = (wall.get_connected_wall(direction=side,
+                                         include_loop_seam=True)
+                 if at_end else None)
+        if other is None:
+            found.append(False)
+            continue
+        # The other wall's run, in this wall's frame (cabinets face -Y):
+        # the next wall heads out to the front, the previous one comes
+        # in from it.
+        way = (to_wall @ other.obj.matrix_world.to_3x3().col[0]).normalized()
+        found.append(way.y < -0.5 if side == 'right' else way.y > 0.5)
+    return tuple(found)
+
+
 def _neighbor_boxes(context, frame, members):
     """Frame-space (x0, x1, y0, y1) of everything that could stand
     against this stretch: cabinets, products and appliances on the
@@ -349,6 +380,12 @@ def create_base_assemblies(context, frame, members):
     # filler's width, and the filler leaves out its own kick piece. That
     # length comes out of the same stock, so it counts towards the cut.
     fillers = end_fillers(context, frame, members)
+    # Carried on into an inside corner with no filler, the end is a
+    # wall end too: the kick face runs to the wall and the end sleeper
+    # stands off it by the base's corner gap.
+    corners = inside_corners(frame, members)
+    wall_end = [fillers[0] is not None or (corners[0] and not open_left),
+                fillers[1] is not None or (corners[1] and not open_right)]
     reach = [hb_types.GeoNodeCage(f).get_input('Dim X') if f is not None
              else 0.0 for f in fillers]
     spans = piece_spans(x0 - reach[0], x1 + reach[1], max_length(context.scene))
@@ -389,11 +426,11 @@ def create_base_assemblies(context, frame, members):
         first_piece, last_piece = index == 0, index == len(spans) - 1
         types_products.add_end_conditions(
             obj,
-            types_products.END_WALL if first_piece and fillers[0] is not None
+            types_products.END_WALL if first_piece and wall_end[0]
             else types_products.END_FINISHED
             if obj[types_products.LEFT_END_EXPOSED_KEY]
             else types_products.END_FLUSH,
-            types_products.END_WALL if last_piece and fillers[1] is not None
+            types_products.END_WALL if last_piece and wall_end[1]
             else types_products.END_FINISHED
             if obj[types_products.RIGHT_END_EXPOSED_KEY]
             else types_products.END_FLUSH)

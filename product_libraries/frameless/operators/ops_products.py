@@ -239,6 +239,18 @@ class hb_frameless_OT_product_prompts(bpy.types.Operator):
         row.label(text="Floor Cleat Width:")
         row.prop(obj, '["%s"]' % tp.FLOOR_CLEAT_KEY, text="")
 
+        if tp.TOE_SKIN_SCRIBE_KEY not in obj:
+            return
+        box = layout.box()
+        box.label(text="Wall Ends")
+        col = box.column(align=True)
+        row = col.row(align=True)
+        row.label(text="Corner Wall Gap:")
+        row.prop(obj, '["%s"]' % tp.CORNER_WALL_GAP_KEY, text="")
+        row = col.row(align=True)
+        row.label(text="Toe Skin Scribe:")
+        row.prop(obj, '["%s"]' % tp.TOE_SKIN_SCRIBE_KEY, text="")
+
     def draw_floating_shelf(self, layout, obj):
         box = layout.box()
         box.label(text="Options")

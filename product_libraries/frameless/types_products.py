@@ -1613,9 +1613,20 @@ BASE_BY_OTHERS_THICKNESS_KEY = 'Base by Others Thickness'
 # cross supports are cut shorter and stand on the two cleats.
 SLEEPER_CLEAT_KEY = 'Sleeper Cleat Width'
 FLOOR_CLEAT_KEY = 'Floor Cleat Width'
+# Wall ends.
+# Corner Wall Gap: at a wall end with no filler beside it (the kick
+# carried on into a corner) the end sleeper stands this far off the
+# wall; the kick face still runs to the wall.
+# Toe Skin Scribe: a loose finished toe skin runs this much past each
+# wall end, to be scribed to the wall on site.
+CORNER_WALL_GAP_KEY = 'Corner Wall Gap'
+TOE_SKIN_SCRIBE_KEY = 'Toe Skin Scribe'
+BASE_ASSEMBLY_CORNER_WALL_GAP = inch(0.5)
+BASE_ASSEMBLY_TOE_SKIN_SCRIBE = inch(0.5)
 BASE_ASSEMBLY_OPTION_KEYS = (FINISH_REAR_KEY, LOOSE_SKIN_KEY,
                              BASE_BY_OTHERS_KEY, BASE_BY_OTHERS_THICKNESS_KEY,
-                             SLEEPER_CLEAT_KEY, FLOOR_CLEAT_KEY)
+                             SLEEPER_CLEAT_KEY, FLOOR_CLEAT_KEY,
+                             CORNER_WALL_GAP_KEY, TOE_SKIN_SCRIBE_KEY)
 BASE_ASSEMBLY_SKIN_THICKNESS = inch(0.75)
 BASE_BY_OTHERS_THICKNESS = inch(0.125)
 
@@ -1688,7 +1699,9 @@ def add_base_assembly_options(root):
             (BASE_BY_OTHERS_THICKNESS_KEY, 'DISTANCE',
              BASE_BY_OTHERS_THICKNESS),
             (SLEEPER_CLEAT_KEY, 'DISTANCE', 0.0),
-            (FLOOR_CLEAT_KEY, 'DISTANCE', 0.0)):
+            (FLOOR_CLEAT_KEY, 'DISTANCE', 0.0),
+            (CORNER_WALL_GAP_KEY, 'DISTANCE', BASE_ASSEMBLY_CORNER_WALL_GAP),
+            (TOE_SKIN_SCRIBE_KEY, 'DISTANCE', BASE_ASSEMBLY_TOE_SKIN_SCRIBE)):
         if key not in root:
             root.home_builder.add_property(key, kind, value)
     if REAR_SETBACK_KEY not in root:
@@ -1833,7 +1846,7 @@ def _solve_base_assembly_capped(root, parts, dim_x, dim_y, dim_z, mt,
     base finish applied by others, the frame is held back from each face
     that shows -- the front, an exposed end, a finished rear -- by that
     finish's thickness, so the finished face stays where it was."""
-    if FINISH_REAR_KEY not in root:
+    if FINISH_REAR_KEY not in root or TOE_SKIN_SCRIBE_KEY not in root:
         add_base_assembly_options(root)
     add_end_conditions(root)
     gap = max(float(_prompt(root, BACK_GAP_KEY, 0.0)), 0.0)
@@ -1846,6 +1859,14 @@ def _solve_base_assembly_capped(root, parts, dim_x, dim_y, dim_z, mt,
         ext_r = 0.0
     cap_l = 0.0 if cond_l == END_WALL else mt
     cap_r = 0.0 if cond_r == END_WALL else mt
+    # A wall end with no run-on (the kick carried into a corner) holds
+    # its end sleeper off the wall; the kick face still runs to it.
+    corner_gap = max(float(_prompt(root, CORNER_WALL_GAP_KEY, 0.0)), 0.0)
+    gap_l = corner_gap if cond_l == END_WALL and ext_l <= 0.0 else 0.0
+    gap_r = corner_gap if cond_r == END_WALL and ext_r <= 0.0 else 0.0
+    scribe = max(float(_prompt(root, TOE_SKIN_SCRIBE_KEY, 0.0)), 0.0)
+    scribe_l = scribe if cond_l == END_WALL else 0.0
+    scribe_r = scribe if cond_r == END_WALL else 0.0
 
     finish_rear = bool(_prompt(root, FINISH_REAR_KEY, False))
     by_others = bool(_prompt(root, BASE_BY_OTHERS_KEY, False))
@@ -1866,6 +1887,11 @@ def _solve_base_assembly_capped(root, parts, dim_x, dim_y, dim_z, mt,
     root[RIGHT_END_EXPOSED_KEY] = shows_r
     x_l = hold if shows_l else 0.0
     x_r = dim_x - (hold if shows_r else 0.0)
+    # The kick face's ends; the rest of the frame stands in from a
+    # corner wall by its gap.
+    face_l, face_r = x_l, x_r
+    x_l += gap_l
+    x_r -= gap_r
     y_front = -dim_y + hold
     if finish_rear:
         # The finished rear stands in from the cabinet backs by the
@@ -1883,8 +1909,8 @@ def _solve_base_assembly_capped(root, parts, dim_x, dim_y, dim_z, mt,
 
     part = parts.get('BASE_FRONT')
     if part is not None:
-        _set_part(part, (x_l + cap_l - ext_l, y_front, 0.0),
-                  length=x_r - x_l + ext_l + ext_r - cap_l - cap_r,
+        _set_part(part, (face_l + cap_l - ext_l, y_front, 0.0),
+                  length=face_r - face_l + ext_l + ext_r - cap_l - cap_r,
                   width=dim_z, thickness=mt)
 
     part = parts.get('BASE_BACK')
@@ -1962,13 +1988,13 @@ def _solve_base_assembly_capped(root, parts, dim_x, dim_y, dim_z, mt,
                       length=clear, width=floor_cleat, thickness=mt)
 
     # Loose skins: the front and the rear run the full length, the kick
-    # face's run under a wall filler included; an end skin stands
-    # between them.
+    # face's run under a wall filler included, and on past a wall end
+    # by the scribe; an end skin stands between them.
     part = _skin_part(root, parts, 'LOOSE_KICK_FRONT', skinned)
     if part is not None:
-        _set_part(part, (-ext_l, -dim_y, 0.0),
-                  length=dim_x + ext_l + ext_r, width=dim_z,
-                  thickness=skin_t)
+        _set_part(part, (-ext_l - scribe_l, -dim_y, 0.0),
+                  length=dim_x + ext_l + ext_r + scribe_l + scribe_r,
+                  width=dim_z, thickness=skin_t)
 
     part = _skin_part(root, parts, 'LOOSE_KICK_REAR', skinned and finish_rear)
     if part is not None:
