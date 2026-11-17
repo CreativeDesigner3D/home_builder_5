@@ -80,7 +80,45 @@ BAND_EDGES = {
     'FILLER_KICK': (),
     'FILLER_LEFT_RETURN': (),
     'FILLER_RIGHT_RETURN': (),
+    # A base assembly's frame and cleats are hidden structure and are
+    # never banded; only its loose finished toe skins are.
+    'BASE_FRONT': (),
+    'BASE_BACK': (),
+    'BASE_LEFT_END': (),
+    'BASE_RIGHT_END': (),
+    'BASE_SUPPORT': (),
+    'BASE_SLEEPER_CLEAT': (),
+    'BASE_SLEEPER_CLEAT_LEFT': (),
+    'BASE_SLEEPER_CLEAT_RIGHT': (),
+    'BASE_FLOOR_CLEAT_FRONT': (),
+    'BASE_FLOOR_CLEAT_BACK': (),
 }
+
+# The roles above that make up a base assembly's frame.
+BASE_FRAME_ROLES = ('BASE_FRONT', 'BASE_BACK', 'BASE_LEFT_END',
+                    'BASE_RIGHT_END', 'BASE_SUPPORT', 'BASE_SLEEPER_CLEAT',
+                    'BASE_SLEEPER_CLEAT_LEFT', 'BASE_SLEEPER_CLEAT_RIGHT',
+                    'BASE_FLOOR_CLEAT_FRONT', 'BASE_FLOOR_CLEAT_BACK')
+
+
+def unband_base_frame(parts):
+    """Take the banding off the frame parts of a base built when they
+    were banded all round. A part never painted, or already bare, is
+    left as it is."""
+    from ...hb_types import GeoNodeObject
+    core = bpy.data.materials.get('Board Core')
+    for role in BASE_FRAME_ROLES:
+        obj = parts.get(role)
+        if obj is None or _overrides(obj):
+            continue
+        part = GeoNodeObject(obj)
+        try:
+            mats = [part.get_input('Edge ' + e) for e in EDGE_SOCKETS]
+        except Exception:
+            continue
+        if all(m is None or m is core for m in mats):
+            continue
+        _set_edges(part, obj, None)
 
 # Roles whose front edge is their L1 socket.
 _FRONT_ON_L1 = frozenset({'SHELF', 'SPLITTER', 'FRONT_STRETCHER',

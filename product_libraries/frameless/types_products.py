@@ -1773,6 +1773,12 @@ def _solve_base_assembly(root, parts, dim_x, dim_y, dim_z):
             _finish_faces(part, finish)
     spacing = float(_prompt(root, 'Support Spacing',
                             BASE_ASSEMBLY_SUPPORT_SPACING))
+    # Bases painted when the frame was banded all round lose it.
+    try:
+        from . import edgebanding_frameless
+        edgebanding_frameless.unband_base_frame(parts)
+    except Exception:
+        pass
 
     # The kick face runs on past an end under a wall scribe filler, to
     # the wall; the end itself stays under the cabinet side.
