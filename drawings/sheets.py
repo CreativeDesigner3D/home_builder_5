@@ -211,8 +211,34 @@ def toggle_together(scene, wall_name):
     store_edits(scene, data)
 
 
+def home_view(scene, key):
+    """Put a moved view back where the layout places it."""
+    data = edits(scene)
+    if data['moved'].pop(key, None) is not None:
+        store_edits(scene, data)
+
+
 def reset_edits(scene):
     store_edits(scene, {})
+
+
+def sheet_name(scene, sheet):
+    """A short name for a sheet, from what is on it: 'Plan', 'Wall 2',
+    'Sections S1-S3'."""
+    kinds = [v.get('kind') for v in sheet.get('views', ())]
+    for view in sheet.get('views', ()):
+        if view.get('kind') == 'ELEVATION':
+            return _wall_title(scene, view.get('wall')).title()
+    if 'ROOM_PLAN' in kinds:
+        return "Plan"
+    marks = [v.get('_mark') for v in sheet.get('views', ())
+             if v.get('kind') == 'SECTION' and v.get('_mark')]
+    if marks:
+        return ("Section " + marks[0] if len(marks) == 1
+                else f"Sections {marks[0]}-{marks[-1]}")
+    if kinds:
+        return str(kinds[0]).replace('_', ' ').title()
+    return "Sheet"
 
 
 def drawing_set(scene):

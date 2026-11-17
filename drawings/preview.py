@@ -6,14 +6,11 @@ Split the area first and the model stays up beside it: the preview only
 takes the events that happen over its own area, and it reads the model
 again a moment after each change.
 
-Over the preview: Left / Right = sheet, wheel = zoom, middle drag =
-pan, Home = fit, R = read again, P = write the PDF, Esc = close.
-
-The set can be changed there too, and the changes are kept with the
-room: drag a view to move it, [ and ] draw the view under the cursor at
-the next drafting scale down or up, Ctrl+click on an elevation cuts a
-section there, X over a section removes it, T keeps a wall's sections
-on its elevation's sheet, Backspace puts the room's set back to the rule.
+Everything is worked with the buttons on the sheet (hud.py): tabs for
+the sheets, a bar for fit / refresh / print / close, and a toolbar over
+the view that is clicked for its scale, its place and its sections.
+Wheel zooms, middle drag pans, dragging a view moves it. The keys of the
+first version still work (arrows, Home, R, P, [ ], X, T, Backspace).
 """
 
 import os
@@ -27,7 +24,7 @@ import gpu
 from gpu_extras.batch import batch_for_shader
 from gpu_extras.presets import draw_texture_2d
 
-from . import gpu_painter, sheets, views
+from . import gpu_painter, hud, sheets, views
 
 DESK = (0.32, 0.33, 0.35, 1.0)
 TICK = 0.3                  # seconds between looks at the model
@@ -48,14 +45,18 @@ def _region(area):
 def _read(context, st):
     """Compose every sheet from the model as it stands."""
     started = time.perf_counter()
+    names = []
     try:
-        pages = sheets.compose_all(context)
+        made = sheets.drawing_set(context.scene)
+        pages = [sheets.compose(context, made, i) for i in range(len(made))]
+        names = [sheets.sheet_name(context.scene, s) for s in made]
         st['error'] = None
     except Exception as exc:
         import traceback
         traceback.print_exc()
         pages = []
         st['error'] = str(exc)
+    st['names'] = names
     st['pages'] = pages
     st['compiled'] = [gpu_painter.Compiled(p) for p in pages]
     st['placed'] = [list((p.info or {}).get('placed', ())) for p in pages]
@@ -140,10 +141,11 @@ def _draw():
         blf.size(0, 12.0)
         blf.color(0, 1.0, 1.0, 1.0, 1.0)
         blf.position(0, 14.0, 12.0, 0.0)
+        scene = bpy.context.scene
         if not st['compiled']:
             blf.draw(0, "Drawings: " + (
-                st.get('error') or "no wall with products in this room")
-                + "   |   Esc: close")
+                st.get('error') or "no wall with products in this room"))
+            hud.draw(st, area, scene)
             return
         w, h = comp.width * f, comp.height * f
         x = (region.width - w) / 2.0 + st['pan'][0]
@@ -151,6 +153,7 @@ def _draw():
         st['rect'] = (x, y, f)
         if st['tex'].get(i) is None:
             blf.draw(0, "Drawings: preparing the sheet...")
+            hud.draw(st, area, scene)
             return
         draw_texture_2d(st['tex'][i][0].texture_color, (x, y), w, h)
         move = st.get('move')
@@ -167,14 +170,7 @@ def _draw():
             uni.bind()
             uni.uniform_float('color', (0.1, 0.45, 0.95, 1.0))
             ghost.draw(uni)
-        blf.draw(0, "Sheet %d of %d   |   Left / Right: sheet   wheel: zoom   "
-                    "middle drag: pan   Home: fit   R: read again   P: PDF   "
-                    "Esc: close   (%s)" % (i + 1, len(st['compiled']),
-                                           st.get('note', '')))
-        blf.position(0, 14.0, 28.0, 0.0)
-        blf.draw(0, "Drag: move a view   [ ]: its scale   Ctrl+click an "
-                    "elevation: cut a section   X: remove a section   "
-                    "T: sections with their elevation   Backspace: reset")
+        hud.draw(st, area, scene)
     except Exception as exc:        # never break the viewport
         if st.get('draw_error') != repr(exc):
             st['draw_error'] = repr(exc)
@@ -262,6 +258,73 @@ class HOME_BUILDER_OT_drawings_preview(bpy.types.Operator):
             pass
         _read(context, st)
         st['note'] = note
+        # The selected view may have gone to another sheet: follow it.
+        key = st.get('selected')
+        if key:
+            for i, items in enumerate(st.get('placed') or ()):
+                if any(it['key'] == key for it in items):
+                    st['page'] = i
+                    break
+            else:
+                st['selected'] = None
+
+    def _print(self, context):
+        st = _st
+        try:
+            path = sheets.write_pdf(context, _pdf_path(context), st['pages'])
+            st['note'] = "wrote " + path
+            try:
+                bpy.ops.wm.path_open(filepath=path)
+            except Exception:
+                pass
+        except Exception as exc:
+            st['note'] = f"PDF failed: {exc}"
+
+    def _act(self, context, ident):
+        """Do what the button `ident` is for. Returns a modal result
+        when the preview closed, else None."""
+        st = _st
+        scene = context.scene
+        count = max(len(st['compiled']), 1)
+        if ident == 'PREV':
+            st['page'] = (st['page'] - 1) % count
+        elif ident == 'NEXT':
+            st['page'] = (st['page'] + 1) % count
+        elif isinstance(ident, tuple) and ident[0] == 'TAB':
+            st['page'] = min(max(int(ident[1]), 0), count - 1)
+        elif ident == 'FIT':
+            st['zoom'], st['pan'] = 1.0, [0.0, 0.0]
+        elif ident == 'REFRESH':
+            _read(context, st)
+        elif ident == 'PRINT':
+            self._print(context)
+        elif ident == 'RESET':
+            sheets.reset_edits(scene)
+            self._edited(context, "layout reset")
+        elif ident == 'CLOSE':
+            return self._close(context)
+        else:
+            item = hud.selected_item(st)
+            if item is None:
+                return None
+            wall = bpy.data.objects.get(item.get('wall') or '')
+            if ident in ('SCALE_DOWN', 'SCALE_UP') and item.get('n'):
+                sheets.step_scale(scene, item['key'], item['n'],
+                                  ident == 'SCALE_UP')
+                self._edited(context, "scale changed")
+            elif ident == 'HOME':
+                sheets.home_view(scene, item['key'])
+                self._edited(context, "view put back")
+            elif ident == 'ADD_CUT':
+                st['pick'] = None if st.get('pick') else 'CUT'
+            elif ident == 'REMOVE' and wall is not None:
+                sheets.remove_cut(scene, wall, item.get('x') or 0.0)
+                st['selected'] = None
+                self._edited(context, "section removed")
+            elif ident == 'TOGETHER' and item.get('wall'):
+                sheets.toggle_together(scene, item['wall'])
+                self._edited(context, "sections moved")
+        return None
 
     def _tick(self, context, area):
         """Follow the model: read it again once it has stopped changing
@@ -341,12 +404,36 @@ class HOME_BUILDER_OT_drawings_preview(bpy.types.Operator):
             area.tag_redraw()
             return {'RUNNING_MODAL'}
         if not over:
+            if st.get('hover') or st.get('hover_view'):
+                st['hover'] = st['hover_view'] = None
+                area.tag_redraw()
             return {'PASS_THROUGH'}
         press = event.value == 'PRESS'
         scene = context.scene
+        mx, my = event.mouse_x - region.x, event.mouse_y - region.y
+        button = hud.hit(st, area, scene, mx, my)
+        if event.type in ('MOUSEMOVE', 'INBETWEEN_MOUSEMOVE'):
+            # What is under the cursor lights up: a button, or a view.
+            under = None
+            if button is None:
+                item, _at = self._hit(event, region)
+                under = item['key'] if item else None
+            if button != st.get('hover') or under != st.get('hover_view'):
+                st['hover'], st['hover_view'] = button, under
+                area.tag_redraw()
+            return {'PASS_THROUGH'}
         if event.type == 'LEFTMOUSE' and press:
+            if button is not None:
+                if button != 'LABEL':
+                    closed = self._act(context, button)
+                    if closed is not None:
+                        return closed
+                area.tag_redraw()
+                return {'RUNNING_MODAL'}
             item, at = self._hit(event, region)
-            if item and event.ctrl and item['kind'] == 'ELEVATION' \
+            cutting = st.get('pick') == 'CUT' or event.ctrl
+            st['pick'] = None
+            if item and cutting and item['kind'] == 'ELEVATION' \
                     and item.get('origin') and item.get('k'):
                 wall = bpy.data.objects.get(item['wall'] or '')
                 x_cut = (at[0] - item['origin'][0]) / item['k']
@@ -354,8 +441,12 @@ class HOME_BUILDER_OT_drawings_preview(bpy.types.Operator):
                     sheets.add_cut(scene, wall, round(x_cut, 4))
                     self._edited(context, "section added")
             elif item and item.get('key'):
+                # A click selects the view; a drag from it moves it.
+                st['selected'] = item['key']
                 st['move'] = {'key': item['key'], 'box': item['box'],
                               'start': (event.mouse_x, event.mouse_y)}
+            else:
+                st['selected'] = None
             area.tag_redraw()
             return {'RUNNING_MODAL'}
         if press and event.type in ('LEFT_BRACKET', 'RIGHT_BRACKET', 'X',
@@ -383,7 +474,15 @@ class HOME_BUILDER_OT_drawings_preview(bpy.types.Operator):
             return {'RUNNING_MODAL'}
         count = max(len(st['compiled']), 1)
         if event.type == 'ESC' and press:
-            return self._close(context)
+            # Esc backs out one step at a time.
+            if st.get('pick'):
+                st['pick'] = None
+            elif st.get('selected'):
+                st['selected'] = None
+            else:
+                return self._close(context)
+            area.tag_redraw()
+            return {'RUNNING_MODAL'}
         if press and event.type in ('RIGHT_ARROW', 'PAGE_DOWN'):
             st['page'] = (st['page'] + 1) % count
         elif press and event.type in ('LEFT_ARROW', 'PAGE_UP'):
@@ -406,12 +505,7 @@ class HOME_BUILDER_OT_drawings_preview(bpy.types.Operator):
         elif event.type == 'R' and press:
             _read(context, st)
         elif event.type == 'P' and press:
-            try:
-                path = sheets.write_pdf(context, _pdf_path(context),
-                                        st['pages'])
-                st['note'] = "wrote " + path
-            except Exception as exc:
-                st['note'] = f"PDF failed: {exc}"
+            self._print(context)
         elif event.type in ('MOUSEMOVE', 'INBETWEEN_MOUSEMOVE', 'TIMER',
                             'WINDOW_DEACTIVATE'):
             return {'PASS_THROUGH'}
