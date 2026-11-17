@@ -404,18 +404,46 @@ def _spawn_sweep_piece(scene, molding_type, chain, runs, material, parent,
     return sweep
 
 
+def _apply_leg_base(scene, members, resolved_stack):
+    """Base molding around support frame legs: one sweep per frame and
+    stack entry, standing on the floor under the legs."""
+    made = 0
+    for frame, floor_z, paths in adapters.collect_leg_runs(scene, members):
+        material = adapters.leg_material(frame)
+        for profile_ref, fallback_key, dx, dy, height, size in resolved_stack:
+            runs = []
+            for pts, closed in paths:
+                if closed:
+                    loop = engine.offset_polygon_right(pts, dx)
+                    if len(loop) >= 3:
+                        runs.append((engine._seam_open_loop(loop), False))
+                else:
+                    line = engine.offset_polyline_right(pts, dx)
+                    if len(line) >= 2:
+                        runs.append((line, False))
+            if not runs:
+                continue
+            if _spawn_sweep_piece(scene, 'BASE', [frame], runs, material,
+                                  frame, floor_z + dy, profile_ref,
+                                  fallback_key, height, size) is not None:
+                made += 1
+    return made
+
+
 def _apply_type(scene, molding_type, align, stack, opts):
     targets = adapters.collect_targets(scene, molding_type)
-    if not targets:
-        return 0
     members = list(targets)
     if molding_type == 'BASE':
         members += [b for b in adapters.collect_bridges(scene)
                     if b not in members]
-    facts = adapters.build_facts(scene, members)
     resolved_stack = _resolve_stack(stack, opts)
-
     made = 0
+    if molding_type == 'BASE':
+        made += _apply_leg_base(scene, members, resolved_stack)
+    if not targets:
+        return made
+    facts = adapters.build_facts(scene, members)
+
     for component in engine.connected_components(members, align=align):
         if not any(m in targets for m in component):
             continue

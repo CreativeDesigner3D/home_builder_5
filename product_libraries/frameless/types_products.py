@@ -487,6 +487,99 @@ def support_frame_parts(frame_obj):
 # How far a wrapped leg stands proud of the frame it carries.
 LEG_REVEAL_KEY = 'Leg Reveal'
 
+# Run the room's base molding around the foot of each leg.
+LEG_BASE_MOLDING_KEY = 'Base Molding On Legs'
+
+_LEG_ROLES = ('FRONT_LEFT_LEG', 'FRONT_RIGHT_LEG',
+              'BACK_LEFT_LEG', 'BACK_RIGHT_LEG')
+
+
+def _support_frame_legs(root):
+    """``{role: (on, leg type)}`` for the four corners."""
+    get = root.get
+    return {
+        'FRONT_LEFT_LEG': (bool(get('Front Left Leg', True)),
+                           int(get('Front Left Leg Type', 0))),
+        'FRONT_RIGHT_LEG': (bool(get('Front Right Leg', True)),
+                            int(get('Front Right Leg Type', 0))),
+        'BACK_LEFT_LEG': (bool(get('Back Left Leg', True)),
+                          int(get('Back Left Leg Type', 0))),
+        'BACK_RIGHT_LEG': (bool(get('Back Right Leg', True)),
+                           int(get('Back Right Leg Type', 0))),
+    }
+
+
+def _support_frame_reveals(root, legs):
+    """(left, right, front, back) hold-back of each side of the frame.
+
+    A wrapped leg can stand proud of the frame: each side of the frame
+    that runs into one is held back from the leg's outside face by the
+    reveal, so the cage stays the leg-to-leg size.
+    """
+    reveal = max(float(_prompt(root, LEG_REVEAL_KEY, 0.0)), 0.0)
+
+    def side(*roles):
+        return reveal if any(
+            legs[r][0] and legs[r][1] == LEG_TYPE_WRAPPED
+            for r in roles) else 0.0
+
+    return (side('FRONT_LEFT_LEG', 'BACK_LEFT_LEG'),
+            side('FRONT_RIGHT_LEG', 'BACK_RIGHT_LEG'),
+            side('FRONT_LEFT_LEG', 'FRONT_RIGHT_LEG'),
+            side('BACK_LEFT_LEG', 'BACK_RIGHT_LEG'))
+
+
+def _support_frame_leg_corners(dim_x, dim_y, mt, reveals):
+    """``{role: (inset corner, wrapped corner)}``: where a leg's outside
+    corner sits. An inset leg sits inside the rails by their thickness;
+    a wrapped leg sits at the cage's outside face."""
+    rv_l, rv_r, rv_f, rv_b = reveals
+    in_l, in_r = mt + rv_l, dim_x - mt - rv_r
+    in_f, in_b = -(dim_y - mt - rv_f), -(mt + rv_b)
+    return {
+        'FRONT_LEFT_LEG': ((in_l, in_f), (0.0, -dim_y)),
+        'FRONT_RIGHT_LEG': ((in_r, in_f), (dim_x, -dim_y)),
+        'BACK_LEFT_LEG': ((in_l, in_b), (0.0, 0.0)),
+        'BACK_RIGHT_LEG': ((in_r, in_b), (dim_x, 0.0)),
+    }
+
+
+def support_frame_leg_footprints(root):
+    """Where each square leg of a support frame meets the floor.
+
+    Returns ``(floor_z, [(x0, x1, y0, y1), ...])`` in the frame's own
+    coordinates, one rectangle per leg that is switched on. Turned legs
+    are left out: a turning has no flat foot to trim.
+    """
+    from ..common import turned_leg
+    if int(root.get(turned_leg.LEG_STYLE_PROP, 0) or 0) != 0:
+        return 0.0, []
+    cage = GeoNodeCage(root)
+    dim_x = cage.get_input('Dim X')
+    dim_y = cage.get_input('Dim Y')
+    dim_z = cage.get_input('Dim Z')
+    mt = float(_prompt(root, 'Material Thickness', inch(0.75)))
+    leg_w = float(_prompt(root, 'Leg Width', inch(3.5)))
+    leg_d = float(_prompt(root, 'Leg Depth', inch(3.5)))
+    leg_h = float(_prompt(root, 'Leg Height', inch(34.5)))
+    legs = _support_frame_legs(root)
+    corners = _support_frame_leg_corners(
+        dim_x, dim_y, mt, _support_frame_reveals(root, legs))
+    rects = []
+    for role in _LEG_ROLES:
+        on, leg_type = legs[role]
+        if not on:
+            continue
+        inset_xy, wrapped_xy = corners[role]
+        x, y = wrapped_xy if leg_type == LEG_TYPE_WRAPPED else inset_xy
+        # Every leg grows from its outside corner toward the middle of
+        # the frame: the leg width along the frame, the depth across it.
+        x_in = x + leg_w if 'LEFT' in role else x - leg_w
+        y_in = y + leg_d if 'FRONT' in role else y - leg_d
+        rects.append((min(x, x_in), max(x, x_in),
+                      min(y, y_in), max(y, y_in)))
+    return dim_z - leg_h, rects
+
 
 def recalculate_support_frame(obj):
     """Solve the support frame at or above ``obj``."""
@@ -501,36 +594,21 @@ def _solve_support_frame(root, parts, dim_x, dim_y, dim_z):
     leg_d = float(_prompt(root, 'Leg Depth', inch(3.5)))
     leg_h = float(_prompt(root, 'Leg Height', inch(34.5)))
 
-    legs = {
-        'FRONT_LEFT_LEG': (bool(get('Front Left Leg', True)),
-                           int(get('Front Left Leg Type', 0))),
-        'FRONT_RIGHT_LEG': (bool(get('Front Right Leg', True)),
-                            int(get('Front Right Leg Type', 0))),
-        'BACK_LEFT_LEG': (bool(get('Back Left Leg', True)),
-                          int(get('Back Left Leg Type', 0))),
-        'BACK_RIGHT_LEG': (bool(get('Back Right Leg', True)),
-                           int(get('Back Right Leg Type', 0))),
-    }
+    legs = _support_frame_legs(root)
 
     def wrapped(role):
         """True when that corner carries a leg the rails must stop at."""
         on, leg_type = legs[role]
         return on and leg_type == LEG_TYPE_WRAPPED
 
-    # A wrapped leg can stand proud of the frame: each side of the frame
-    # that runs into one is held back from the leg's outside face by the
-    # reveal, so the cage stays the leg-to-leg size.
+    # Frames built before these options get them on their next solve.
     if LEG_REVEAL_KEY not in root:
         root.home_builder.add_property(LEG_REVEAL_KEY, 'DISTANCE', 0.0)
-    reveal = max(float(_prompt(root, LEG_REVEAL_KEY, 0.0)), 0.0)
-
-    def side_reveal(*roles):
-        return reveal if any(wrapped(r) for r in roles) else 0.0
-
-    rv_l = side_reveal('FRONT_LEFT_LEG', 'BACK_LEFT_LEG')
-    rv_r = side_reveal('FRONT_RIGHT_LEG', 'BACK_RIGHT_LEG')
-    rv_f = side_reveal('FRONT_LEFT_LEG', 'FRONT_RIGHT_LEG')
-    rv_b = side_reveal('BACK_LEFT_LEG', 'BACK_RIGHT_LEG')
+    if LEG_BASE_MOLDING_KEY not in root:
+        root.home_builder.add_property(LEG_BASE_MOLDING_KEY, 'CHECKBOX',
+                                       False)
+    reveals = _support_frame_reveals(root, legs)
+    rv_l, rv_r, rv_f, rv_b = reveals
 
     # How much each corner takes out of the rail running into it: the leg
     # itself where the leg wraps the frame, otherwise just the rail it
@@ -582,22 +660,21 @@ def _solve_support_frame(root, parts, dim_x, dim_y, dim_z):
                   thickness=mt, visible=count > 0)
         _set_array(part, count, -spacing)
 
-    # Legs hang from the top of the frame down to the floor. An inset leg
-    # sits inside the rails by their thickness; a wrapped leg sits at the
-    # cage's outside face, with the rails stopped short of it above.
-    in_l, in_r = mt + rv_l, dim_x - mt - rv_r
-    in_f, in_b = -(dim_y - mt - rv_f), -(mt + rv_b)
-    leg_specs = {
-        'FRONT_LEFT_LEG': ((in_l, in_f), (0.0, -dim_y), leg_w, leg_d),
-        'FRONT_RIGHT_LEG': ((in_r, in_f), (dim_x, -dim_y), leg_d, leg_w),
-        'BACK_LEFT_LEG': ((in_l, in_b), (0.0, 0.0), leg_d, leg_w),
-        'BACK_RIGHT_LEG': ((in_r, in_b), (dim_x, 0.0), leg_w, leg_d),
+    # Legs hang from the top of the frame down to the floor, with the
+    # rails stopped short of a wrapped leg above.
+    corners = _support_frame_leg_corners(dim_x, dim_y, mt, reveals)
+    leg_sizes = {
+        'FRONT_LEFT_LEG': (leg_w, leg_d),
+        'FRONT_RIGHT_LEG': (leg_d, leg_w),
+        'BACK_LEFT_LEG': (leg_d, leg_w),
+        'BACK_RIGHT_LEG': (leg_w, leg_d),
     }
-    for role, (inset_xy, wrapped_xy, width, thickness) in leg_specs.items():
+    for role, (width, thickness) in leg_sizes.items():
         part = parts.get(role)
         if part is None:
             continue
         on, leg_type = legs[role]
+        inset_xy, wrapped_xy = corners[role]
         x, y = wrapped_xy if leg_type == LEG_TYPE_WRAPPED else inset_xy
         _set_part(part, (x, y, dim_z),
                   length=leg_h, width=width, thickness=thickness,
@@ -635,6 +712,7 @@ class SupportFrame(Product):
         self.add_property('Leg Depth', 'DISTANCE', inch(3.5))
         self.add_property('Leg Height', 'DISTANCE', inch(34.5))
         self.add_property(LEG_REVEAL_KEY, 'DISTANCE', 0.0)
+        self.add_property(LEG_BASE_MOLDING_KEY, 'CHECKBOX', False)
         self.add_property('Front Left Leg Type', 'COMBOBOX', 0, combobox_items=["Inset", "Wrapped"])
         self.add_property('Front Right Leg Type', 'COMBOBOX', 0, combobox_items=["Inset", "Wrapped"])
         self.add_property('Back Left Leg Type', 'COMBOBOX', 0, combobox_items=["Inset", "Wrapped"])
