@@ -126,8 +126,12 @@ def blocks(context, item):
     picked = {'starter': root, 'bay': bay_obj, 'opening': opening_obj}[kind]
     menu = generic_page.menu_id(context.active_object) or generic_page.menu_id(picked)
     if menu:
-        out.append(('gap', None))
-        out.extend(generic_page.command_blocks(context, menu))
+        # Every command of the menu, in the sections every library uses.
+        from ...operators import quick_actions
+        page = quick_actions.blocks(quick_actions.from_menu(context, menu))
+        if page:
+            out.append(('gap', None))
+            out.extend(page)
     return out
 
 

@@ -1305,43 +1305,24 @@ def _menu(label, menu_id, icon=None):
             1.0, icon)
 
 
-def _menu_actions(context, obj, skip=(), limit=6):
+def _menu_actions(context, obj, skip=(), limit=8):
     """The first commands of `obj`'s right-click menu, as buttons. Add
     Accessory is left out: the page's Accessories list has it."""
-    from ...operators import generic_page
+    from ...operators import generic_page, quick_actions
     skip = tuple(skip) + ('hb_frameless.add_opening_accessory',)
-    menu = generic_page.menu_id(obj)
-    picked = []
-    if not menu:
-        return picked
-    for rec in generic_page._record(context, menu):
-        if rec[0] == 'op':
-            if rec[2] in skip:
-                continue
-            label = (rec[1] or generic_page._op_label(rec[2])).rstrip('.')
-            picked.append((label, rec[2], dict(rec[3]._values), None))
-        elif rec[0] == 'menu':
-            if rec[2] in skip:
-                continue
-            picked.append(_menu(rec[1] or generic_page._menu_label(rec[2]),
-                                rec[2]))
-        elif rec[0] == 'enum':
-            label = rec[1] or generic_page._op_label(rec[2])
-            picked.append((label + "  ›", generic_page._enum_opener(rec[2], rec[3]),
-                           None, None, 1.0, None))
-        if len(picked) == limit:
-            break
-    return picked
+    return quick_actions.from_menu(context, generic_page.menu_id(obj),
+                                   skip=skip, limit=limit)
 
 
-def _quick(out, picked, title="Quick Actions"):
-    if not picked:
+def _quick(out, picked, title=None):
+    """The page's quick actions, in the sections every library uses."""
+    from ...operators import quick_actions
+    page = quick_actions.blocks(picked, title or quick_actions.TITLE)
+    if not page:
         return
     if out and out[-1] != ('gap', None):
         out.append(('gap', None))
-    out.append(('label', title))
-    for i in range(0, len(picked), 2):
-        out.append(('actions', tuple(picked[i:i + 2])))
+    out.extend(page)
 
 
 def _footer(out, prompts_op):

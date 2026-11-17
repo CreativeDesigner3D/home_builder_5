@@ -610,9 +610,11 @@ def _quick(owner, rows):
             except Exception:
                 continue
             kept.append(action)
-        if kept:
-            out.append(('actions', tuple(kept), None))
-    return (('label', None, "Quick Actions"),) + tuple(out) if out else ()
+        out.extend(kept)
+    # Laid out in the sections every library uses; a pair a row names
+    # together stays side by side where both land in one section.
+    from ...operators import quick_actions
+    return quick_actions.fields(out)
 
 
 # ---- Summaries of the folded groups ----------------------------------------
@@ -1250,22 +1252,13 @@ def _part_blocks(context, part_obj):
             out.append(('gap', None))
         out.extend(page)
         return out
-    picked = []
-    for rec in generic_page._record(context, generic_page.menu_id(part_obj)):
-        if rec[0] == 'op':
-            label = (rec[1] or generic_page._op_label(rec[2])).rstrip('.')
-            picked.append((label, rec[2], dict(rec[3]._values), None))
-        elif rec[0] == 'menu':
-            picked.append(_menu(rec[1] or generic_page._menu_label(rec[2]),
-                                rec[2]))
-        if len(picked) == 6:
-            break
-    if picked:
+    from ...operators import quick_actions
+    page = quick_actions.blocks(quick_actions.from_menu(
+        context, generic_page.menu_id(part_obj), limit=8))
+    if page:
         if out:
             out.append(('gap', None))
-        out.append(('label', "Quick Actions"))
-        for i in range(0, len(picked), 2):
-            out.append(('actions', tuple(picked[i:i + 2])))
+        out.extend(page)
     return out
 
 
