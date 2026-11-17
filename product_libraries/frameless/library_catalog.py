@@ -403,6 +403,7 @@ OPTION_PAGES = {
                          ("Add to Selected",
                           'hb_frameless.add_base_assemblies',
                           'selected_only', True)), None),
+            ('distance', 'base_assembly_max_length', "Base Assembly Max Length"),
             ('actions', (("Edit Base Assemblies",
                           'hb_frameless.edit_base_assemblies'),
                          ("Remove",

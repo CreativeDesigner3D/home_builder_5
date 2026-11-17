@@ -124,17 +124,28 @@ class _Member:
                 and abs(other.kick_setback - self.kick_setback) <= ALIGN_TOL)
 
 
-def piece_spans(x0, x1):
-    """[(start, end)]: a run cut into bases no longer than MAX_LENGTH.
-    Full lengths first and what is left last; a last piece too short to
-    be worth building takes the difference off the one before it."""
-    if x1 - x0 <= MAX_LENGTH + ALIGN_TOL:
+def max_length(scene=None):
+    """The longest single base: the room's Base Assembly Max Length
+    (Options), else MAX_LENGTH."""
+    scene = scene or bpy.context.scene
+    props = getattr(scene, 'hb_frameless', None)
+    value = float(getattr(props, 'base_assembly_max_length', 0.0) or 0.0)
+    return value if value >= MIN_PIECE else MAX_LENGTH
+
+
+def piece_spans(x0, x1, longest=None):
+    """[(start, end)]: a run cut into bases no longer than ``longest``
+    (MAX_LENGTH when not given). Full lengths first and what is left
+    last; a last piece too short to be worth building takes the
+    difference off the one before it."""
+    longest = MAX_LENGTH if longest is None else longest
+    if x1 - x0 <= longest + ALIGN_TOL:
         return [(x0, x1)]
     spans = []
     start = x0
-    while x1 - start > MAX_LENGTH + ALIGN_TOL:
-        spans.append((start, start + MAX_LENGTH))
-        start += MAX_LENGTH
+    while x1 - start > longest + ALIGN_TOL:
+        spans.append((start, start + longest))
+        start += longest
     if x1 - start < MIN_PIECE:
         start = x1 - MIN_PIECE
         spans[-1] = (spans[-1][0], start)
@@ -340,7 +351,7 @@ def create_base_assemblies(context, frame, members):
     fillers = end_fillers(context, frame, members)
     reach = [hb_types.GeoNodeCage(f).get_input('Dim X') if f is not None
              else 0.0 for f in fillers]
-    spans = piece_spans(x0 - reach[0], x1 + reach[1])
+    spans = piece_spans(x0 - reach[0], x1 + reach[1], max_length(context.scene))
     spans[0] = (x0, spans[0][1])
     spans[-1] = (spans[-1][0], x1)
 
