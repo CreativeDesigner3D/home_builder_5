@@ -805,6 +805,36 @@ def edge_blocks(context, part_obj):
     ), prop_proxy.owner(part_obj, PART_EDGES_SCHEMA))
 
 
+PART_MATERIAL_SCHEMA = 'FL_PART_MATERIAL'
+PART_MATERIAL_GROUP = 'fl_part_material'
+
+
+def material_blocks(context, part_obj):
+    """The Material group of a cabinet or product part: which of a
+    style's materials it wears, Automatic leaving it to its place in the
+    cabinet. Registered on each draw so the style list is current."""
+    from ...operators import options_panel, prop_proxy as P
+    from . import part_material as pm
+    if not pm.takes_override(part_obj):
+        return []
+    styles = [pm.OWN_STYLE] + pm.style_names()
+    P.register(PART_MATERIAL_SCHEMA, {
+        'material': P.computed(pm.choice, pm.set_choice, type='ENUM',
+                               items=list(pm.CHOICES)),
+        'material_style': P.computed(pm.style_choice, pm.set_style,
+                                     type='ENUM',
+                                     items=[(n, n) for n in styles]),
+    })
+    fields = (('enum', 'material', "Material"),)
+    if len(styles) > 2:
+        fields += (('enum', 'material_style', "From Style",
+                    {'when': lambda o: pm.choice(o.id_data) != pm.AUTO}),)
+    return options_panel.field_blocks(context, (
+        ('group', PART_MATERIAL_GROUP, "Material",
+         {'summary': lambda o: pm.summary(o.id_data), 'fields': fields}),
+    ), P.owner(part_obj, PART_MATERIAL_SCHEMA))
+
+
 def _name_prop():
     """The product's own name, which the cut list and reports carry. A
     misc part is its own product, so its part takes the same name."""
@@ -922,7 +952,8 @@ def _unregister_schemas():
     from . import bay_config
     bay_config.unregister()
     for key in (CABINET_SCHEMA, OPENING_SCHEMA, PRODUCT_SCHEMA,
-                MISC_PART_SCHEMA, PART_EDGES_SCHEMA, FRONT_SCHEMA):
+                MISC_PART_SCHEMA, PART_EDGES_SCHEMA, FRONT_SCHEMA,
+                PART_MATERIAL_SCHEMA):
         prop_proxy.unregister(key)
 
 
@@ -1771,6 +1802,7 @@ def _interior_page(context, out, part_obj, opening_obj, bay_obj):
             out.insert(start + 1, size)     # under the picture
     out.extend(accessory_blocks(context, part_obj or host))
     if real:
+        out.extend(material_blocks(context, part_obj))
         out.extend(edge_blocks(context, part_obj))
         _quick(out, _menu_actions(context, part_obj, skip=(
             'hb_frameless.interior_prompts', 'HOME_BUILDER_MT_interior_change')))
@@ -1932,6 +1964,7 @@ def _part_page(context, out, part_obj):
         out.extend(_front_opening_blocks(context, part_obj))
         out.extend(front_blocks(context, part_obj))
         out.extend(accessory_blocks(context, part_obj))
+    out.extend(material_blocks(context, part_obj))
     out.extend(edge_blocks(context, part_obj))
     _quick(out, _menu_actions(context, part_obj, skip=_ON_PAGE),
            owner=part_obj)
@@ -1955,11 +1988,13 @@ def _product_page(context, out, root):
     if root.get('IS_FRAMELESS_MISC_PART'):
         out.extend(options_panel.field_blocks(
             context, MISC_BAND_FIELDS, prop_proxy.owner(root, schema)))
+        out.extend(material_blocks(context, root))
     out.extend(product_option_blocks(context, root))
     # One part of the product picked (a filler's face, a toe skin, a
     # ceiling closure board): its edges can be set one by one.
     part_obj = context.active_object
     if part_obj is not None and part_obj is not root:
+        out.extend(material_blocks(context, part_obj))
         out.extend(edge_blocks(context, part_obj))
     _quick(out, _menu_actions(context, root,
                               skip=('hb_frameless.product_prompts',)))

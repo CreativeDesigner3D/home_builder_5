@@ -1413,6 +1413,7 @@ class Frameless_Cabinet_Style(PropertyGroup):
         finished_interior = cabinet_obj.get('Finished Interior', False)
         shelf_edge = self.get_shelf_edge_material(finished_interior)
         from . import edgebanding_frameless
+        from . import part_material
         from . import sheet_faces
         two_sided = self.exterior_two_sided()
 
@@ -1438,6 +1439,10 @@ class Frameless_Cabinet_Style(PropertyGroup):
                 edge = carcass_edge
             if edgebanding_frameless.is_loose_shelf(child):
                 edge = shelf_edge
+            # A part given its own material on its page keeps it.
+            own = part_material.materials(child, self)
+            if own is not None:
+                top_mat, bottom_mat, edge = own
 
             part.set_input("Top Surface", top_mat)
             part.set_input("Bottom Surface", bottom_mat)
