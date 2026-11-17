@@ -506,17 +506,29 @@ def draw_construction(layout, cab_props):
             row = col.row(align=True)
             row.prop(cab_props, 'decorative_corner_back_left', toggle=True)
             row.prop(cab_props, 'decorative_corner_back_right', toggle=True)
-            # Posts are 2" x 2" only, so no size field:
+            # Turned posts are 2" x 2" only, so they get no size field:
             # the bottom detail's square base and the crown block run
-            # are the two lengths a job actually varies.
+            # are the two lengths a job actually varies. Clipped
+            # corners come in any size and have no details.
+            style = cab_props.decorative_corner_style
+            clipped = style in ('CLIPPED', 'GOTHIC')
             col = dcbox.column(align=True)
+            if clipped:
+                col.prop(cab_props, 'decorative_corner_size',
+                         text="Clip Size")
+            if style == 'GOTHIC':
+                col.prop(cab_props, 'decorative_corner_ball_cuts',
+                         text="Ball Cuts")
+                col.prop(cab_props, 'decorative_corner_route_stop',
+                         text="Route Stop")
             col.prop(cab_props, 'decorative_corner_bottom', text="Bottom")
-            col.prop(cab_props, 'decorative_corner_top_detail',
-                     text="Top Transition Detail")
-            col.prop(cab_props, 'decorative_corner_detail_height',
-                     text="Transition Detail Height")
-            col.prop(cab_props, 'decorative_corner_block_run',
-                     text="Square Block Run")
+            if not clipped:
+                col.prop(cab_props, 'decorative_corner_top_detail',
+                         text="Top Transition Detail")
+                col.prop(cab_props, 'decorative_corner_detail_height',
+                         text="Transition Detail Height")
+                col.prop(cab_props, 'decorative_corner_block_run',
+                         text="Square Block Run")
 
     # Furniture wood top sits at the bottom - a finishing option layered
     # on after the carcass, ends, and any extensions are set.

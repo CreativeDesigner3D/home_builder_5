@@ -10228,9 +10228,9 @@ class Face_Frame_Cabinet_Props(PropertyGroup):
     decorative_corner_back_right: BoolProperty(
         name="Back Right", default=False, update=_update_cabinet_dim,
     )  # type: ignore
-    # The vendor posts are 2" x 2" only; the size is not offered in the
-    # UI (kept as a property for older files and for the solver, which
-    # pulls the face frame in by it).
+    # The turned posts are 2" x 2" only, so the UI offers the size for
+    # clipped corners alone, which come in any size. The solver pulls
+    # the face frame in by it.
     decorative_corner_size: FloatProperty(
         name="Corner Size", default=decorative_corner.DEFAULT_SIZE,
         unit='LENGTH', precision=4, min=units.inch(0.25),
@@ -10252,6 +10252,21 @@ class Face_Frame_Cabinet_Props(PropertyGroup):
         unit='LENGTH', precision=4, min=0.0,
         description="Length of the plain square block above the top "
                     "transition detail, that crown moulding dies into",
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    decorative_corner_ball_cuts: IntProperty(
+        name="Ball Cuts", default=decorative_corner.DEFAULT_BALL_CUTS,
+        min=1, max=9,
+        description="Ball cuts routed down a Gothic clipped corner, "
+                    "equally spaced across the clip",
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    decorative_corner_route_stop: FloatProperty(
+        name="Route Stop",
+        default=decorative_corner.DEFAULT_ROUTE_STOP,
+        unit='LENGTH', precision=4, min=0.0,
+        description="How far short of each end of the corner the ball "
+                    "cuts stop",
         update=_update_cabinet_dim,
     )  # type: ignore
     decorative_corner_top_detail: BoolProperty(

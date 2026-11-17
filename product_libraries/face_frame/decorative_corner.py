@@ -47,6 +47,14 @@ The colonial outline is a measured table of the catalog profile
 (fillet, cove, bead, quirk, ovolo) normalized to the post size; refine
 COLONIAL_HALF_PROFILE to match shop tooling without touching any
 caller.
+
+Clipped corners are the same post with a flat 45 degree face: the
+straight line from one cabinet face to the other across the notch,
+``r(theta) = size / (cos + sin)``, so a 2" corner shows a 2-13/16"
+face. They have no transition details or square blocks - the clip runs
+the full post. The size is free (2", 6", 12" ...), unlike the turned
+styles. The Gothic version routes half-round ball cuts down the clip,
+equally spaced across it and stopped short of each end.
 """
 
 import math
@@ -80,6 +88,11 @@ REED_COUNT = 5
 # reeds and six lands at this ratio put the reed pitch at about 1/2"
 # on a 2" post, which is the catalog's fluting.
 REED_LAND_RATIO = 0.383
+# Gothic clipped corner: half-round ball cuts down the clipped face,
+# equally spaced across it, stopped short of both ends of the post.
+BALL_CUT_DIAMETER = inch(0.375)
+DEFAULT_BALL_CUTS = 3
+DEFAULT_ROUTE_STOP = inch(1.0)
 
 # Shortest shaft worth building. Below this the post drops its end
 # details rather than emitting slivers.
@@ -97,7 +110,19 @@ STYLE_ITEMS = [
      "Milled colonial outline - fillet, cove, bead, quirk and ovolo"),
     ('FLUTED', "Fluted (Reeded)",
      "Reeded shaft - half-round beads separated by flat lands"),
+    ('CLIPPED', "Clipped Corner",
+     "Flat 45 degree clip across the corner, any size"),
+    ('GOTHIC', "Clipped Corner - Gothic (Ball Cut)",
+     "Clipped corner with half-round ball cuts routed down the clip"),
 ]
+
+# Styles that cut the corner off flat rather than turning a post. They
+# take any size and have no transition details or square blocks.
+CLIPPED_STYLES = frozenset({'CLIPPED', 'GOTHIC'})
+
+
+def is_clipped(style):
+    return style in CLIPPED_STYLES
 
 BOTTOM_ITEMS = [
     ('STANDARD', "Standard Application",
@@ -126,6 +151,8 @@ CORNERS = (
 _SQUARE = 'SQUARE'
 _ASTRAGAL = 'ASTRAGAL'
 _SHAFT = 'SHAFT'
+# Plain clip, the unrouted ends of a Gothic clipped corner.
+_CLIP = 'CLIP'
 
 # Parts the corner notch cuts through. An explicit allow-list, like the
 # pipe chase's: the notch box overshoots the cabinet faces so the
@@ -205,9 +232,45 @@ def _reed_spans():
             for k in range(REED_COUNT)]
 
 
-def _sample_degrees(style):
+def _clip_point(size, s):
+    """(u, v) on the clipped face, ``s`` along it from the 45 degree
+    diagonal (positive towards the u face)."""
+    half = size / 2.0
+    k = s / math.sqrt(2.0)
+    return half + k, half - k
+
+
+def _ball_cut_centers(size, count):
+    """Positions of the ball cuts along the clipped face, measured from
+    its centre: equally spaced, with the same gap at both edges. A face
+    too narrow for the count keeps as many as fit."""
+    face = size * math.sqrt(2.0)
+    count = max(0, int(count))
+    while count > 0:
+        pitch = face / (count + 1)
+        if pitch >= BALL_CUT_DIAMETER * 1.25:
+            break
+        count -= 1
+    if count <= 0:
+        return []
+    pitch = face / (count + 1)
+    return [-face / 2.0 + pitch * (k + 1) for k in range(count)]
+
+
+def _sample_degrees(style, size=DEFAULT_SIZE, ball_cuts=DEFAULT_BALL_CUTS):
     """Angles the section is sampled at, 0 to 90 inclusive. 45 is always
     present: the square blocks crease there."""
+    if style == 'CLIPPED':
+        # A straight clip: its two ends and the diagonal are exact.
+        return [0.0, 45.0, 90.0]
+    if style == 'GOTHIC':
+        degs = {0.0, 45.0, 90.0}
+        rg = BALL_CUT_DIAMETER / 2.0
+        for c in _ball_cut_centers(size, ball_cuts):
+            for i in range(13):
+                u, v = _clip_point(size, c - rg + 2.0 * rg * i / 12.0)
+                degs.add(math.degrees(math.atan2(v, u)))
+        return sorted(d for d in degs if 0.0 <= d <= 90.0)
     if style == 'COLONIAL':
         degs = {0.0, 45.0, 90.0}
         for deg, _ratio in COLONIAL_HALF_PROFILE:
@@ -242,8 +305,31 @@ def _lerp_table(table, deg):
     return table[-1][1]
 
 
-def _style_radius(style, size, deg):
+def _clip_radius(size, deg):
+    """Radius of the flat clip: the line from one cabinet face to the
+    other across the notch."""
+    rad = math.radians(deg)
+    return size / (math.cos(rad) + math.sin(rad))
+
+
+def _style_radius(style, size, deg, ball_cuts=DEFAULT_BALL_CUTS):
     """Shaft radius at one section angle."""
+    if style == 'CLIPPED':
+        return _clip_radius(size, deg)
+    if style == 'GOTHIC':
+        rad = math.radians(deg)
+        cs = math.cos(rad) + math.sin(rad)
+        r0 = size / cs
+        # Where this ray meets the clip, along the clip from its centre.
+        s = r0 * (math.cos(rad) - math.sin(rad)) / math.sqrt(2.0)
+        rg = BALL_CUT_DIAMETER / 2.0
+        for c in _ball_cut_centers(size, ball_cuts):
+            if abs(s - c) < rg:
+                depth = math.sqrt(max(0.0, rg * rg - (s - c) ** 2))
+                # Back along the ray far enough to sit ``depth`` under
+                # the clipped face.
+                return r0 - depth * math.sqrt(2.0) / cs
+        return r0
     if style == 'COLONIAL':
         half = deg if deg <= 45.0 else 90.0 - deg
         return size * _lerp_table(COLONIAL_HALF_PROFILE, half)
@@ -265,9 +351,13 @@ def _square_radius(size, deg):
     return size / max(math.cos(rad), math.sin(rad))
 
 
-def _band_radii(kind, style, size, deg, bulge):
+def _band_radii(kind, style, size, deg, bulge, ball_cuts=DEFAULT_BALL_CUTS):
     if kind == _SQUARE:
         return _square_radius(size, deg)
+    if kind == _CLIP:
+        return _clip_radius(size, deg)
+    if style in CLIPPED_STYLES:
+        return _style_radius(style, size, deg, ball_cuts)
     # The bead ring is its own shell (see _ring_shell); the main loft
     # runs the shaft straight through its band.
     return _style_radius(style, size, deg)
@@ -381,6 +471,28 @@ def band_stack(height, kick_height, bottom_option, top_detail, block_run,
     return lower + [(shaft_z0, shaft_z1, _SHAFT)] + upper
 
 
+def clipped_band_stack(height, kick_height, bottom_option, style,
+                       route_stop=DEFAULT_ROUTE_STOP):
+    """[(z0, z1, kind)] for a clipped corner, or None when there is no
+    room. The clip runs the whole post; a Gothic corner's ball cuts stop
+    ``route_stop`` short of each end, and a post too short to route
+    stays a plain clip."""
+    z_bot = post_bottom_z(bottom_option, kick_height)
+    z_top = height
+    if z_top - z_bot <= 0.0:
+        return None
+    if style != 'GOTHIC':
+        return [(z_bot, z_top, _CLIP)]
+    stop = max(0.0, route_stop)
+    if z_top - z_bot - 2.0 * stop < MIN_SHAFT_RUN:
+        return [(z_bot, z_top, _CLIP)]
+    if stop <= 0.0:
+        return [(z_bot, z_top, _SHAFT)]
+    return [(z_bot, z_bot + stop, _CLIP),
+            (z_bot + stop, z_top - stop, _SHAFT),
+            (z_top - stop, z_top, _CLIP)]
+
+
 def _band_rings(bands):
     """[(z, kind, bulge)] rings for the loft. Bands meet at a shared Z
     with different radii, so each boundary emits two rings and the quads
@@ -396,7 +508,7 @@ def _band_rings(bands):
 # ----------------------------------------------------------------------
 # Mesh
 # ----------------------------------------------------------------------
-def build_post_mesh(mesh, style, size, bands):
+def build_post_mesh(mesh, style, size, bands, ball_cuts=DEFAULT_BALL_CUTS):
     """Regenerate mesh as the lofted post in post-local section space.
 
     Section space: the notch's inner corner is the origin, the post
@@ -405,7 +517,7 @@ def build_post_mesh(mesh, style, size, bands):
     samples, so the two flat cut faces fall out of the loft. The bead
     rings are added as their own shells afterwards.
     """
-    degs = _sample_degrees(style)
+    degs = _sample_degrees(style, size, ball_cuts)
     dirs = [(math.cos(math.radians(d)), math.sin(math.radians(d)))
             for d in degs]
     n = len(degs)
@@ -416,7 +528,8 @@ def build_post_mesh(mesh, style, size, bands):
     # faces for mesh.validate() to strip, tearing the shell open.
     rings = []
     for z, kind, bulge in _band_rings(bands):
-        radii = [_band_radii(kind, style, size, deg, bulge) for deg in degs]
+        radii = [_band_radii(kind, style, size, deg, bulge, ball_cuts)
+                 for deg in degs]
         if rings and abs(rings[-1][0] - z) < 1e-9:
             prev = rings[-1][1]
             if all(abs(a - b) < 1e-9 for a, b in zip(prev, radii)):
@@ -676,6 +789,11 @@ def spec_from_props(cab_props, has_toe_kick):
                                      DEFAULT_DETAIL_HEIGHT)),
         'top_detail': getattr(cab_props, 'decorative_corner_top_detail',
                               True),
+        'ball_cuts': getattr(cab_props, 'decorative_corner_ball_cuts',
+                             DEFAULT_BALL_CUTS),
+        'route_stop': max(0.0, getattr(cab_props,
+                                       'decorative_corner_route_stop',
+                                       DEFAULT_ROUTE_STOP)),
         'kick_height': kick,
     }
 
@@ -693,7 +811,12 @@ def apply_corners(cabinet_obj, width, depth, height, spec):
     # or two corners on the same face would collide.
     size = min(spec.get('size', DEFAULT_SIZE), width / 2.0, depth / 2.0)
     bands = None
-    if style != 'NONE' and corners and size > 0.0:
+    if is_clipped(style) and corners and size > 0.0:
+        bands = clipped_band_stack(
+            height, spec.get('kick_height', 0.0),
+            spec.get('bottom', 'STANDARD'), style,
+            spec.get('route_stop', DEFAULT_ROUTE_STOP))
+    elif style != 'NONE' and corners and size > 0.0:
         bands = band_stack(height, spec.get('kick_height', 0.0),
                            spec.get('bottom', 'STANDARD'),
                            spec.get('top_detail', True),
@@ -702,7 +825,8 @@ def apply_corners(cabinet_obj, width, depth, height, spec):
     if bands is None:
         cleanup(cabinet_obj)
         _apply_cuts(cabinet_obj, {})
-        for key in ('DECORATIVE_CORNER_STYLE', 'DECORATIVE_CORNERS'):
+        for key in ('DECORATIVE_CORNER_STYLE', 'DECORATIVE_CORNERS',
+                    'DECORATIVE_CORNER_SIZE'):
             if key in cabinet_obj:
                 del cabinet_obj[key]
         return
@@ -719,7 +843,8 @@ def apply_corners(cabinet_obj, width, depth, height, spec):
     for corner in corners:
         label = labels.get(corner, corner.title())
         post = ensure_post(cabinet_obj, corner, label)
-        build_post_mesh(post.data, style, size, bands)
+        build_post_mesh(post.data, style, size, bands,
+                        spec.get('ball_cuts', DEFAULT_BALL_CUTS))
         x, y, rot = corner_placement(corner, width, depth, size)
         post.location = (x, y, 0.0)
         post.rotation_euler = (0.0, 0.0, rot)
@@ -737,3 +862,5 @@ def apply_corners(cabinet_obj, width, depth, height, spec):
     # when the corners are removed.
     cabinet_obj['DECORATIVE_CORNER_STYLE'] = style
     cabinet_obj['DECORATIVE_CORNERS'] = ','.join(corners)
+    # Size as built (after the half-cabinet cap), in metres.
+    cabinet_obj['DECORATIVE_CORNER_SIZE'] = size

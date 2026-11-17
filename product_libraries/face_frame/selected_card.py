@@ -786,12 +786,16 @@ def _cabinet_fields(root, cab):
                 ('bool', 'decorative_corner_front_right', "Front Right", {'when': _deco}),
                 ('bool', 'decorative_corner_back_left', "Back Left", {'when': _deco}),
                 ('bool', 'decorative_corner_back_right', "Back Right", {'when': _deco}),
+                ('distance', 'decorative_corner_size', "Clip Size", {'when': _clip}),
+                ('number', 'decorative_corner_ball_cuts', "Ball Cuts", {'when': _gothic}),
+                ('distance', 'decorative_corner_route_stop', "Route Stop",
+                 {'when': _gothic}),
                 ('enum', 'decorative_corner_bottom', "Bottom", {'when': _deco}),
-                ('bool', 'decorative_corner_top_detail', "Top Transition", {'when': _deco}),
+                ('bool', 'decorative_corner_top_detail', "Top Transition", {'when': _turned}),
                 ('distance', 'decorative_corner_detail_height', "Transition Height",
-                 {'when': _deco}),
+                 {'when': _turned}),
                 ('distance', 'decorative_corner_block_run', "Square Block Run",
-                 {'when': _deco}),
+                 {'when': _turned}),
             )}),
         ('group', 'ff_cab_wood_top', "Furniture Top", {
             'summary': lambda c: (_label_of(c, 'furniture_top_shape')
@@ -862,6 +866,18 @@ def _angled_summary(cab):
 
 def _deco(cab):
     return cab.decorative_corner_style != 'NONE'
+
+
+def _clip(cab):
+    return cab.decorative_corner_style in ('CLIPPED', 'GOTHIC')
+
+
+def _gothic(cab):
+    return cab.decorative_corner_style == 'GOTHIC'
+
+
+def _turned(cab):
+    return _deco(cab) and not _clip(cab)
 
 
 def _wood_top(cab):
