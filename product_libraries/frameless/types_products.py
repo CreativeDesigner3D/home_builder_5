@@ -1195,6 +1195,8 @@ def set_product_depth(root, depth):
 
 # A panel closing the gap under an upper's wall scribe filler.
 BOTTOM_RETURN_KEY = 'Bottom Return'
+# Whether a wall scribe filler flush with the case has a return cleat.
+FILLER_RETURN_CLEAT_KEY = 'Return Cleat'
 
 
 def _paint_product(root):
@@ -1277,6 +1279,10 @@ def _solve_corner_filler(root, parts, dim_x, dim_y, dim_z):
                   length=tkh, width=dim_x, thickness=mt,
                   visible=tkh > 0.0 and kick_on)
 
+    # A face flush with the case is fixed from inside the cabinet, so it
+    # has no return cleat unless asked for; one in the door plane always
+    # has one. Fillers built before the option keep theirs.
+    cleat_on = on_doors or bool(root.get(FILLER_RETURN_CLEAT_KEY, True))
     # The return is inside the filler's own width, so it lies against
     # the cabinet side rather than into the cabinet.
     for role, x, on in (('FILLER_LEFT_RETURN', 0.0, not cab_right),
@@ -1288,7 +1294,7 @@ def _solve_corner_filler(root, parts, dim_x, dim_y, dim_z):
             # toward the wall.
             _set_part(part, (x, face_y + mt + ret, leg_z),
                       length=dim_z - leg_z, width=ret, thickness=mt,
-                      visible=on)
+                      visible=on and cleat_on)
 
     # The cage is what gets clicked, so it is drawn back to the filler
     # itself: to the face when that stands behind the door plane, and up
@@ -1338,6 +1344,7 @@ class CornerFiller(Product):
         self.add_property('Flush With Doors', 'CHECKBOX', self.flush_with_doors)
         self.add_property('Toe Kick Piece', 'CHECKBOX', self.kick_piece)
         self.add_property(BOTTOM_RETURN_KEY, 'CHECKBOX', False)
+        self.add_property(FILLER_RETURN_CLEAT_KEY, 'CHECKBOX', False)
 
     def create(self, name="Wall Scribe Filler"):
         self.create_product(name)

@@ -345,6 +345,9 @@ class hb_frameless_OT_product_prompts(bpy.types.Operator):
         if 'Flush With Doors' in obj:   # fillers built before the option
             row.prop(obj, '["Flush With Doors"]', text="Flush With Doors")
         row.prop(obj, '["Cabinet On Right"]', text="Cabinet On Right")
+        cleat = types_products.FILLER_RETURN_CLEAT_KEY
+        if cleat in obj and not obj.get('Flush With Doors', True):
+            col.prop(obj, '["%s"]' % cleat, text="Return Cleat")
         key = types_products.BOTTOM_RETURN_KEY
         if key in obj and float(obj.get('Toe Kick Height', 0.0)) <= 0.0:
             col.prop(obj, '["%s"]' % key, text="Bottom Return")
