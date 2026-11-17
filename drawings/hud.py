@@ -46,6 +46,10 @@ HINTS = {
     'REMOVE': "Take this section off the drawings",
     'TOGETHER': "Keep this wall's sections on its elevation's sheet, "
                 "or on sheets of their own",
+    'ADD_NOTE': "Then click on the view where the note should go",
+    'NOTE_EDIT': "Type this note again",
+    'NOTE_LEADER': "Point this note at something, or take its leader off",
+    'NOTE_REMOVE': "Take this note off the drawing",
 }
 
 
@@ -111,7 +115,7 @@ def _bar(st, bounds, scene, s):
     for ident, label in (('FIT', "Fit"), ('REFRESH', "Refresh"),
                          ('PRINT', "Print PDF")):
         items.append((ident, label, _wide(label, s), None))
-    if scene is not None and scene.get(sheets.SET_PROP):
+    if scene is not None and sheets.has_layout_edits(scene):
         items.append(('RESET', "Reset Layout", _wide("Reset Layout", s),
                       None))
     items.append(('CLOSE', "Close", _wide("Close", s), None))
@@ -145,8 +149,49 @@ def _tabs(st, bounds, s):
     return out + _row(items, (xmin + xmax) / 2.0, y, s)
 
 
+def selected_note(st):
+    """The note that is selected, on the sheet on show."""
+    sel = st.get('note_sel')
+    notes = st.get('notes') or []
+    if not sel or st['page'] >= len(notes):
+        return None
+    return next((n for n in notes[st['page']]
+                 if n['view']['key'] == sel[0] and n['index'] == sel[1]),
+                None)
+
+
+def sheet_rect(st, box):
+    """A box in sheet points as (x, y, w, h) in region pixels."""
+    rect = st.get('rect')
+    if rect is None:
+        return None
+    x, y, f = rect
+    return (x + box[0] * f, y + box[1] * f, (box[2] - box[0]) * f,
+            (box[3] - box[1]) * f)
+
+
+def _note_tools(st, bounds, s):
+    entry = selected_note(st)
+    box = sheet_rect(st, entry['box']) if entry else None
+    if box is None or st.get('typing'):
+        return []
+    leader = "Remove Leader" if entry.get('tip') else "Add Leader"
+    items = [('NOTE_EDIT', "Edit Text", _wide("Edit Text", s), None),
+             ('NOTE_LEADER', leader, _wide(leader, s),
+              'ON' if st.get('pick') == 'TIP' else None),
+             ('NOTE_REMOVE', "Remove Note", _wide("Remove Note", s), None)]
+    xmin, xmax, ymin, ymax = bounds
+    total = sum(w for _i, _l, w, _st in items) + GAP * s * (len(items) - 1)
+    cx = min(max(box[0] + box[2] / 2.0, xmin + total / 2.0 + 8 * s),
+             xmax - total / 2.0 - 8 * s)
+    y = min(box[1] + box[3] + 10 * s, ymax - (3 * BUTTON + 30) * s)
+    return _row(items, cx, y, s)
+
+
 def _tools(st, bounds, scene, s):
     """The toolbar of the selected view, over the view."""
+    if st.get('note_sel'):
+        return _note_tools(st, bounds, s)
     item = selected_item(st)
     box = view_rect(st, item) if item else None
     if box is None:
@@ -175,6 +220,9 @@ def _tools(st, bounds, scene, s):
         if item['kind'] == 'SECTION' and not kept['together'].get(wall):
             label = "Sections with Elevation"
         items.append(('TOGETHER', label, _wide(label, s), None))
+    if item.get('k') and item.get('origin'):
+        items.append(('ADD_NOTE', "+ Note", _wide("+ Note", s),
+                      'ON' if st.get('pick') == 'NOTE' else None))
     if not items:
         return []
     xmin, xmax, ymin, ymax = bounds
@@ -240,6 +288,25 @@ def draw(st, area, scene):
             _outline(shader, grown, SELECTED, 2.0)
         elif item['key'] == hover_key and not st.get('move'):
             _outline(shader, grown, HOVERED, 1.0)
+    # The selected note: its text boxed, a handle on its leader's tip.
+    entry = selected_note(st)
+    if entry is not None and not st.get('typing'):
+        rect = sheet_rect(st, entry['box'])
+        if rect is not None:
+            pad = 3 * s
+            _outline(shader, (rect[0] - pad, rect[1] - pad,
+                              rect[2] + 2 * pad, rect[3] + 2 * pad),
+                     SELECTED, 2.0)
+        if entry.get('tip'):
+            x, y, f = st['rect']
+            tx, ty = x + entry['tip'][0] * f, y + entry['tip'][1] * f
+            h = 4 * s
+            shader.bind()
+            draw_round_rect(shader, tx - h, ty - h, 2 * h, 2 * h, h,
+                            SELECTED)
+    typing = st.get('typing')
+    if typing and st.get('rect'):
+        _draw_typing(shader, st, typing, s)
     parts = layout(st, area, scene)
     hover = st.get('hover')
     # One soft shadow under each row of buttons.
@@ -290,7 +357,14 @@ def draw(st, area, scene):
             if key in HINTS:
                 hint = (rect, HINTS[key])
     banner = None
-    if st.get('pick') == 'CUT':
+    if st.get('typing'):
+        banner = ("Type the note.  Enter: done   Shift+Enter: new line   "
+                  "Esc: cancel")
+    elif st.get('pick') == 'NOTE':
+        banner = "Click on the view where the note should go"
+    elif st.get('pick') == 'TIP':
+        banner = "Click on what the note should point at"
+    elif st.get('pick') == 'CUT':
         banner = "Click on the elevation where the section should cut"
     elif st.get('note'):
         banner = st['note']
@@ -299,7 +373,7 @@ def draw(st, area, scene):
         blf.size(0, 11 * s)
         tw = blf.dimensions(0, banner)[0]
         blf.color(0, *(Theme.TEXT_PRIMARY if st.get('pick')
-                       else Theme.TEXT_NORMAL))
+                       or st.get('typing') else Theme.TEXT_NORMAL))
         blf.position(0, (xmin + xmax) / 2.0 - tw / 2.0,
                      ymin + (BUTTON + 26) * s, 0)
         draw_glyphs(0, banner)
@@ -325,3 +399,26 @@ def _draw_hint(shader, rect, text, s, area):
     blf.color(0, *Theme.TEXT_PRIMARY)
     blf.position(0, x + 7 * s, y + (h - th) / 2.0 + 1, 0)
     draw_glyphs(0, text)
+
+
+def _draw_typing(shader, st, typing, s):
+    """The note being typed: a field on the sheet where it will stand,
+    at the size it will print at this zoom."""
+    x, y, f = st['rect']
+    ax, ay = x + typing['at'][0] * f, y + typing['at'][1] * f
+    size = max(9.0 * s, 6.5 * f)
+    rows = (typing['text'] + "|").split('\n')
+    blf.size(0, size)
+    w = max(max(blf.dimensions(0, r)[0] for r in rows), 60 * s) + 12 * s
+    step = size * 1.3
+    h = step * len(rows) + 8 * s
+    bx, by = ax - 6 * s, ay - h / 2.0
+    shader.bind()
+    draw_soft_shadow(shader, bx, by, w, h, 4 * s)
+    draw_round_rect(shader, bx, by, w, h, 4 * s, (1.0, 1.0, 1.0, 1.0))
+    draw_round_rect_outline(shader, bx, by, w, h, 4 * s, SELECTED)
+    blf.color(0, 0.0, 0.0, 0.0, 1.0)
+    for i, row in enumerate(rows):
+        blf.position(0, bx + 6 * s, by + h - 4 * s - step * (i + 1)
+                     + size * 0.3, 0)
+        draw_glyphs(0, row)

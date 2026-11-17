@@ -49,6 +49,14 @@ def model_generation(scene=None):
     return _scene_gens.get(scene.name, 0)
 
 
+def touch(scene):
+    """Say that a room changed in a way the dependency graph does not
+    report (something kept in a custom property)."""
+    global _model_gen
+    _model_gen += 1
+    _scene_gens[scene.name] = _scene_gens.get(scene.name, 0) + 1
+
+
 def _project_generation(scene):
     """A room's own changes and those of the scene that holds what the
     whole project shares (its styles)."""

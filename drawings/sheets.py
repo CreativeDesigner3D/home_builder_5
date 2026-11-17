@@ -123,13 +123,17 @@ def default_set(scene, room_index=0):
 
 # ---- The user's edits ----------------------------------------------------------
 
-EDIT_KEYS = ('moved', 'scales', 'cuts', 'together')
+EDIT_KEYS = ('moved', 'scales', 'cuts', 'together', 'notes')
+LAYOUT_KEYS = ('moved', 'scales', 'cuts', 'together')
 SCALE_LADDER = (8, 12, 16, 24, 32, 48, 64, 96)      # the n of 1:n
 
 
 def edits(scene):
     """{'moved': {view key: [dx, dy] in points}, 'scales': {view key: n},
-    'cuts': {wall: [metres along it, ...]}, 'together': {wall: True}}."""
+    'cuts': {wall: [metres along it, ...]}, 'together': {wall: True},
+    'notes': {view key: [{'x', 'y', 'text', 'tip'}]}} -- a note's place
+    and its leader's tip are in the view's own metres, so they stay on
+    what they point at when the view is moved or drawn at another scale."""
     try:
         data = json.loads(scene.get(SET_PROP) or '{}')
     except (TypeError, ValueError):
@@ -226,7 +230,102 @@ def home_view(scene, key):
 
 
 def reset_edits(scene):
-    store_edits(scene, {})
+    """Back to the automatic layout. Typed notes are kept: they are
+    part of the drawing, not of where it sits."""
+    store_edits(scene, {'notes': edits(scene)['notes']})
+
+
+def has_layout_edits(scene):
+    kept = edits(scene)
+    return any(kept[k] for k in LAYOUT_KEYS)
+
+
+# ---- Typed notes ---------------------------------------------------------------
+#
+# A note belongs to a view. On an elevation it is the wall's own note,
+# the one the Elevation View types and prints, so the wall says the
+# same thing wherever it is drawn. On any other view it is kept with
+# the set's edits under the view's key.
+
+def _view_ident(view):
+    return (view.get('kind'), view.get('wall'),
+            view.get('_key') or view.get('key'))
+
+
+def view_notes(scene, view):
+    """[{'x', 'y', 'text', 'tip': [x, y] | None}] in the view's metres."""
+    import bpy
+    kind, wall_name, key = _view_ident(view)
+    if kind == 'ELEVATION':
+        wall = bpy.data.objects.get(wall_name or '')
+        if wall is None:
+            return []
+        return [{'x': n['x'], 'y': n['z'], 'text': n['text'],
+                 'tip': list(n['tip']) if n['tip'] else None,
+                 'turn': n.get('turn', 0)}
+                for n in em._user_notes(wall)]
+    out = []
+    for n in edits(scene)['notes'].get(key) or ():
+        try:
+            tip = n.get('tip')
+            out.append({'x': float(n['x']), 'y': float(n['y']),
+                        'text': str(n.get('text', '')),
+                        'tip': [float(tip[0]), float(tip[1])] if tip
+                        else None})
+        except Exception:
+            continue
+    return out
+
+
+def set_view_notes(scene, view, notes):
+    import bpy
+    kind, wall_name, key = _view_ident(view)
+    notes = [n for n in notes if (n.get('text') or '').strip()]
+    if kind == 'ELEVATION':
+        wall = bpy.data.objects.get(wall_name or '')
+        if wall is None:
+            return
+        em._set_user_notes(wall, [
+            {'x': round(n['x'], 5), 'z': round(n['y'], 5),
+             'text': n['text'], 'turn': int(n.get('turn', 0)),
+             'tip': ([round(n['tip'][0], 5), round(n['tip'][1], 5)]
+                     if n.get('tip') else None)} for n in notes])
+    else:
+        data = edits(scene)
+        if notes:
+            data['notes'][key] = [
+                {'x': round(n['x'], 5), 'y': round(n['y'], 5),
+                 'text': n['text'],
+                 'tip': ([round(n['tip'][0], 5), round(n['tip'][1], 5)]
+                         if n.get('tip') else None)} for n in notes]
+        else:
+            data['notes'].pop(key, None)
+        store_edits(scene, data)
+    views.touch(scene)
+
+
+def _draw_notes(page, scene):
+    """Draw each placed view's notes (an elevation's are already in its
+    drawing) and note where every note landed, for picking."""
+    found = page.info.setdefault('notes', [])
+    for item in page.info.get('placed', ()):
+        if not item.get('k') or not item.get('origin'):
+            continue
+        ox, oy = item['origin']
+        k = item['k']
+        for index, n in enumerate(view_notes(scene, item)):
+            at = (ox + n['x'] * k, oy + n['y'] * k)
+            tip = ((ox + n['tip'][0] * k, oy + n['tip'][1] * k)
+                   if n.get('tip') else None)
+            if item['kind'] == 'ELEVATION':
+                box, _lines = draft.note_box(at, n['text'], tip)
+            else:
+                box = draft.note(page, at, n['text'], tip)
+            found.append({'view': {'kind': item['kind'], 'wall': item['wall'],
+                                   'key': item['key']},
+                          'index': index, 'at': at, 'tip': tip, 'box': box,
+                          'origin': item['origin'], 'k': k,
+                          'text': n['text']})
 
 
 def sheet_name(scene, sheet):
@@ -330,14 +429,17 @@ def _scale_n(drawing):
 
 def _placed(page, view, drawing, x, y, origin=None):
     """Note where a view landed on the sheet, for whatever lets the
-    user pick it up there."""
+    user pick it up there. `origin` is where the view's own zero is on
+    the sheet; with its 'k' (points to the metre, 1 for a view that has
+    no scale) it turns a place on the sheet into a place in the view."""
     bx0, by0, bx1, by1 = drawing.bounds()
     page.info.setdefault('placed', []).append({
         'key': view.get('_key'), 'kind': view.get('kind'),
         'wall': view.get('wall'), 'x': view.get('x'),
         'box': (x + bx0, y + by0, x + bx1, y + by1),
-        'n': _scale_n(drawing), 'k': (drawing.info or {}).get('k'),
-        'origin': origin})
+        'n': _scale_n(drawing),
+        'k': (drawing.info or {}).get('k') or 1.0,
+        'origin': origin or (x, y)})
 
 
 SCALE_TEXT = {8: '1 1/2"', 12: '1"', 16: '3/4"', 24: '1/2"', 32: '3/8"',
@@ -432,7 +534,9 @@ def compose(context, sheets, index, count=None):
             continue
         rx, ry = x0 + view['_move'][0], y0 + 50.0 + view['_move'][1]
         room.place(page, rx, ry)
-        _placed(page, view, room, rx, ry)
+        zero = room.anchors.get('origin', (0.0, 0.0))
+        _placed(page, view, room, rx, ry,
+                origin=(rx + zero[0], ry + zero[1]))
         draft.view_title(page, x0 + 40.0, y0 + 30.0, 'P', view['_sheet'],
                          f"PLAN: {scene.name.upper()}",
                          _scale_text(room.info.get('scale')))
@@ -468,6 +572,7 @@ def compose(context, sheets, index, count=None):
         _placed(page, view, s, wall_x, base_y + 92.0)
         draft.view_title(page, wall_x - 130.0, base_y + 26.0, view['_mark'],
                          view['_sheet'], 'SECTION', scale, width=150.0)
+    _draw_notes(page, scene)
     return page
 
 

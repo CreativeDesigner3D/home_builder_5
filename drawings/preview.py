@@ -81,6 +81,7 @@ def _read(context, st):
     st['pages'] = pages
     st['compiled'] = compiled
     st['placed'] = [list((p.info or {}).get('placed', ())) for p in pages]
+    st['notes'] = [list((p.info or {}).get('notes', ())) for p in pages]
     st['page'] = min(st.get('page', 0), max(len(pages) - 1, 0))
     st['stale'] = fresh
     st['scene'] = context.scene.name
@@ -288,6 +289,92 @@ class HOME_BUILDER_OT_drawings_preview(bpy.types.Operator):
                     best = (area_, item)
         return (best[1] if best else None), (sx, sy)
 
+    def _hit_note(self, event, region):
+        """(note, 'TIP' | 'TEXT') under the cursor, or (None, None)."""
+        st = _st
+        rect = st.get('rect')
+        notes = st.get('notes') or []
+        if not rect or st['page'] >= len(notes):
+            return None, None
+        x, y, f = rect
+        sx = (event.mouse_x - region.x - x) / f
+        sy = (event.mouse_y - region.y - y) / f
+        reach = 5.0 / f
+        sel = hud.selected_note(st)
+        if sel is not None and sel.get('tip') and (
+                abs(sx - sel['tip'][0]) <= reach
+                and abs(sy - sel['tip'][1]) <= reach):
+            return sel, 'TIP'
+        for entry in notes[st['page']]:
+            bx0, by0, bx1, by1 = entry['box']
+            if bx0 - 2 <= sx <= bx1 + 2 and by0 - 2 <= sy <= by1 + 2:
+                return entry, 'TEXT'
+        return None, None
+
+    def _sheet_point(self, event, region):
+        x, y, f = _st['rect']
+        return ((event.mouse_x - region.x - x) / f,
+                (event.mouse_y - region.y - y) / f)
+
+    def _change_note(self, context, entry, change, said):
+        """Apply change(note) to one stored note (None removes it)."""
+        scene = page_scene(_st, context)
+        notes = sheets.view_notes(scene, entry['view'])
+        if entry['index'] < len(notes):
+            new = change(dict(notes[entry['index']]))
+            if new is None:
+                del notes[entry['index']]
+                _st['note_sel'] = None
+            else:
+                notes[entry['index']] = new
+        sheets.set_view_notes(scene, entry['view'], notes)
+        self._edited(context, said)
+
+    def _finish_typing(self, context, keep=True):
+        st = _st
+        typing = st.get('typing')
+        st['typing'] = None
+        if not typing:
+            return
+        text = typing['text'].strip()
+        scene = page_scene(st, context)
+        notes = sheets.view_notes(scene, typing['view'])
+        index = typing['index']
+        if not keep:
+            return
+        if index is None:
+            if not text:
+                return
+            notes.append({'x': typing['x'], 'y': typing['y'], 'text': text,
+                          'tip': None})
+            st['note_sel'] = (typing['view']['key'], len(notes) - 1)
+        elif index < len(notes):
+            notes[index] = dict(notes[index], text=text)
+            if not text:
+                st['note_sel'] = None
+        sheets.set_view_notes(scene, typing['view'], notes)
+        self._edited(context, "note typed" if text else "note removed")
+
+    def _type(self, context, event, area):
+        """A key while a note is being typed."""
+        st = _st
+        typing = st['typing']
+        kind = event.type
+        if kind in ('RET', 'NUMPAD_ENTER'):
+            if getattr(event, 'shift', False):
+                typing['text'] += '\n'
+            else:
+                self._finish_typing(context)
+        elif kind == 'ESC':
+            self._finish_typing(context, keep=False)
+        elif kind == 'BACK_SPACE':
+            typing['text'] = typing['text'][:-1]
+        else:
+            char = getattr(event, 'unicode', '') or ''
+            if char and char.isprintable():
+                typing['text'] += char
+        area.tag_redraw()
+
     def _edited(self, context, note):
         st = _st
         try:
@@ -368,7 +455,29 @@ class HOME_BUILDER_OT_drawings_preview(bpy.types.Operator):
             elif ident == 'TOGETHER' and item.get('wall'):
                 sheets.toggle_together(scene, item['wall'])
                 self._edited(context, "sections moved")
+            elif ident == 'ADD_NOTE':
+                st['pick'] = None if st.get('pick') == 'NOTE' else 'NOTE'
         return None
+
+    def _act_note(self, context, ident):
+        st = _st
+        entry = hud.selected_note(st)
+        if entry is None:
+            return
+        if ident == 'NOTE_EDIT':
+            n = (entry['at'][0] - entry['origin'][0]) / entry['k']
+            st['typing'] = {'view': entry['view'], 'index': entry['index'],
+                            'text': entry.get('text', ''), 'at': entry['at'],
+                            'x': n, 'y': 0.0}
+        elif ident == 'NOTE_LEADER':
+            if entry.get('tip'):
+                self._change_note(context, entry,
+                                  lambda n: dict(n, tip=None),
+                                  "leader removed")
+            else:
+                st['pick'] = None if st.get('pick') == 'TIP' else 'TIP'
+        elif ident == 'NOTE_REMOVE':
+            self._change_note(context, entry, lambda n: None, "note removed")
 
     def _tick(self, context, area):
         """Follow the model: read it again once it has stopped changing
@@ -439,6 +548,18 @@ class HOME_BUILDER_OT_drawings_preview(bpy.types.Operator):
                 and event.value == 'RELEASE':
             st['drag'] = None
             return {'RUNNING_MODAL'}
+        if st.get('typing'):
+            # Every key goes to the note; a click anywhere finishes it.
+            if event.type in ('MOUSEMOVE', 'INBETWEEN_MOUSEMOVE',
+                              'WINDOW_DEACTIVATE'):
+                return {'PASS_THROUGH'}
+            if event.type == 'LEFTMOUSE' and event.value == 'PRESS':
+                self._finish_typing(context)
+                area.tag_redraw()
+                return {'RUNNING_MODAL'}
+            if event.value == 'PRESS':
+                self._type(context, event, area)
+            return {'RUNNING_MODAL'}
         move = st.get('move')
         if move and event.type == 'MOUSEMOVE':
             move['now'] = (event.mouse_x, event.mouse_y)
@@ -450,6 +571,23 @@ class HOME_BUILDER_OT_drawings_preview(bpy.types.Operator):
             f = (st.get('rect') or (0, 0, 1.0))[2]
             dx = (now[0] - move['start'][0]) / f
             dy = (now[1] - move['start'][1]) / f
+            entry = move.get('note')
+            if entry is not None:
+                # A note's text, or the tip of its leader, dragged.
+                if abs(dx) > 1.0 or abs(dy) > 1.0:
+                    mx_, my_ = dx / entry['k'], dy / entry['k']
+                    if move['part'] == 'TIP':
+                        self._change_note(
+                            context, entry, lambda n: dict(
+                                n, tip=[n['tip'][0] + mx_, n['tip'][1] + my_]
+                                if n.get('tip') else None), "leader moved")
+                    else:
+                        self._change_note(
+                            context, entry, lambda n: dict(
+                                n, x=n['x'] + mx_, y=n['y'] + my_),
+                            "note moved")
+                area.tag_redraw()
+                return {'RUNNING_MODAL'}
             if abs(dx) > 1.0 or abs(dy) > 1.0:
                 sheets.move_view(page_scene(st, context), move['key'],
                                  dx, dy)
@@ -477,12 +615,54 @@ class HOME_BUILDER_OT_drawings_preview(bpy.types.Operator):
             return {'PASS_THROUGH'}
         if event.type == 'LEFTMOUSE' and press:
             if button is not None:
-                if button != 'LABEL':
+                if isinstance(button, str) and button.startswith('NOTE_'):
+                    self._act_note(context, button)
+                elif button != 'LABEL':
                     closed = self._act(context, button)
                     if closed is not None:
                         return closed
                 area.tag_redraw()
                 return {'RUNNING_MODAL'}
+            if st.get('pick') == 'TIP' and st.get('rect'):
+                # Where the selected note's leader should point.
+                st['pick'] = None
+                entry = hud.selected_note(st)
+                if entry is not None:
+                    px, py = self._sheet_point(event, region)
+                    tip = [(px - entry['origin'][0]) / entry['k'],
+                           (py - entry['origin'][1]) / entry['k']]
+                    self._change_note(context, entry,
+                                      lambda n: dict(n, tip=tip),
+                                      "leader added")
+                area.tag_redraw()
+                return {'RUNNING_MODAL'}
+            if st.get('pick') == 'NOTE' and st.get('rect'):
+                # Where a new note should stand, then it is typed.
+                st['pick'] = None
+                view = hud.selected_item(st)
+                if view is not None:
+                    px, py = self._sheet_point(event, region)
+                    st['typing'] = {
+                        'view': {'kind': view['kind'], 'wall': view['wall'],
+                                 'key': view['key']},
+                        'index': None, 'text': '', 'at': (px, py),
+                        'x': (px - view['origin'][0]) / view['k'],
+                        'y': (py - view['origin'][1]) / view['k']}
+                area.tag_redraw()
+                return {'RUNNING_MODAL'}
+            entry, part = self._hit_note(event, region)
+            if entry is not None:
+                # A click selects the note; a drag moves it or its tip.
+                st['note_sel'] = (entry['view']['key'], entry['index'])
+                st['selected'] = None
+                tip = entry.get('tip')
+                box = ((tip[0] - 3, tip[1] - 3, tip[0] + 3, tip[1] + 3)
+                       if part == 'TIP' else entry['box'])
+                st['move'] = {'note': entry, 'part': part, 'box': box,
+                              'start': (event.mouse_x, event.mouse_y)}
+                area.tag_redraw()
+                return {'RUNNING_MODAL'}
+            st['note_sel'] = None
             item, at = self._hit(event, region)
             cutting = st.get('pick') == 'CUT' or event.ctrl
             st['pick'] = None
@@ -532,6 +712,8 @@ class HOME_BUILDER_OT_drawings_preview(bpy.types.Operator):
             # Esc backs out one step at a time.
             if st.get('pick'):
                 st['pick'] = None
+            elif st.get('note_sel'):
+                st['note_sel'] = None
             elif st.get('selected'):
                 st['selected'] = None
             else:

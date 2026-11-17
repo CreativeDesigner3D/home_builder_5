@@ -280,6 +280,7 @@ def resolve_room(context, view, width, height):
         n = math.hypot(po[0] - pa[0], po[1] - pa[1]) or 1.0
         off = ((po[0] - pa[0]) / n * 24.0, (po[1] - pa[1]) / n * 24.0)
         draft.dim_aligned(out, pa, pb, off, em.format_length(scene, length))
+    out.anchors['origin'] = P((0.0, 0.0))       # the room's own zero
     for name, (stand, toward) in parts['markers'].items():
         sx, sy = P(stand)
         out.anchors['marker:' + name] = (sx, sy, toward[0], toward[1])

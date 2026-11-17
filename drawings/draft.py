@@ -240,3 +240,57 @@ def elevation_marker_toward(page, cx, cy, direction, mark, sheet):
     page.polygon([(cx + px * 17, cy + py * 17), (cx - px * 17, cy - py * 17),
                   (cx + dx * 17, cy + dy * 17)], fill=True)
     _bubble(page, cx, cy, 11.0, mark, f"PG{sheet}")
+
+
+NOTE_SIZE = 6.5
+NOTE_LEADING = 1.25
+
+
+def note_box(at, text, tip=None, size=NOTE_SIZE):
+    """(x0, y0, x1, y1) a note's text takes, and where each line
+    starts: a note with a leader stands beside the leader's end and
+    runs away from what it points at; one without is centred."""
+    rows = text.split('\n') if text else ['']
+    widths = [hb_pdf.text_width(r, size) for r in rows]
+    w = max(widths + [size])
+    step = size * NOTE_LEADING
+    h = step * len(rows)
+    top = at[1] + h / 2.0
+    if tip is None:
+        x0 = at[0] - w / 2.0
+        starts = [at[0] - rw / 2.0 for rw in widths]
+    elif tip[0] <= at[0]:
+        x0 = at[0] + 3.0
+        starts = [x0] * len(rows)
+    else:
+        x0 = at[0] - 3.0 - w
+        starts = [at[0] - 3.0 - rw for rw in widths]
+    lines = [(starts[i], top - step * i - size * 0.82, rows[i])
+             for i in range(len(rows))]
+    return (x0, top - h, x0 + w, top), lines
+
+
+def note(page, at, text, tip=None, size=NOTE_SIZE):
+    """A typed note, with a leader and arrowhead to `tip` when it has
+    one. Returns the box its text takes."""
+    box, lines = note_box(at, text, tip, size)
+    if tip is not None:
+        page.stroke_color(INK)
+        page.line_width(0.45)
+        page.lines([(at, tip)])
+        dx, dy = at[0] - tip[0], at[1] - tip[1]
+        n = math.hypot(dx, dy)
+        if n > 1e-6:
+            ux, uy = dx / n, dy / n
+            px, py = -uy, ux
+            page.fill_color(INK)
+            page.polygon([tip,
+                          (tip[0] + ux * 6.0 + px * 1.8,
+                           tip[1] + uy * 6.0 + py * 1.8),
+                          (tip[0] + ux * 6.0 - px * 1.8,
+                           tip[1] + uy * 6.0 - py * 1.8)], fill=True)
+    page.fill_color(INK)
+    for x, y, row in lines:
+        if row:
+            page.text(x, y, row, size, halo=(WHITE, 2.5))
+    return box
