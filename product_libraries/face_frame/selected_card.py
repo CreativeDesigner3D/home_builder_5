@@ -101,7 +101,9 @@ def _find(context):
             opening = interior_page.opening_of(part)
             if opening is not None:
                 return ('interior', root, _owning_bay(part), opening, part)
-        if generic_page.menu_id(part) == PART_MENU:
+        from . import gothic_stile
+        if (generic_page.menu_id(part) == PART_MENU
+                or part.get('hb_part_role') == gothic_stile.PART_ROLE_PIECE):
             opening = _owning(part, types_face_frame.TAG_OPENING_CAGE)
             return ('part', root, _owning_bay(part), opening, part)
     return ('cabinet', root, None, None, None)

@@ -59,8 +59,8 @@ TYPE_ITEMS = [
 MOD_NAME = 'Gothic Ball Cuts'
 SIDES = ('LEFT', 'RIGHT')
 
-_SEGMENTS = 16
-_CAP_RINGS = 4
+_SEGMENTS = 24
+_CAP_RINGS = 6
 
 
 def cut_centers(width, count):
@@ -89,7 +89,7 @@ def _capsule(bm, ml, y, x0, x1, ys, zs, r, v0=0.0):
     # Ring stations along x: a hemisphere at each end, straight between.
     stations = []
     for i in range(_CAP_RINGS + 1):
-        a = math.pi / 2.0 * (1.0 - i / _CAP_RINGS)
+        a = math.pi / 2.0 * (i / _CAP_RINGS)
         stations.append((x0 + r - r * math.cos(a), r * math.sin(a)))
     for i in range(_CAP_RINGS + 1):
         a = math.pi / 2.0 * (i / _CAP_RINGS)

@@ -13,6 +13,7 @@ import bpy
 
 from . import types_face_frame
 from . import types_face_frame_corner
+from . import gothic_stile
 
 
 # ---- What a part is ---------------------------------------------------------
@@ -429,6 +430,28 @@ def _back_page(context, part_obj, root):
     return out
 
 
+def gothic_fields(side):
+    """The Gothic fields for one end stile: the toggle, and the shared
+    type, ball cuts and route stop while it is on."""
+    on = f'gothic_stile_{side}'
+
+    def shown(cab):
+        return getattr(cab, on)
+    return (
+        ('bool', on, "Gothic Stile"),
+        ('enum', 'gothic_stile_type', "Gothic Type", {'when': shown}),
+        ('number', 'gothic_ball_cuts', "Ball Cuts", {'when': shown}),
+        ('distance', 'gothic_route_stop', "Route Stop", {'when': shown}),
+    )
+
+
+def _gothic_piece_page(context, part_obj, root):
+    from ...operators import options_panel
+    side = str(part_obj.get('hb_side', 'LEFT')).lower()
+    return options_panel.field_blocks(
+        context, gothic_fields(side), root.face_frame_cabinet)
+
+
 def _end_stile_page(context, part_obj, root, side):
     from ...operators import options_panel
     from . import selected_card
@@ -441,7 +464,7 @@ def _end_stile_page(context, part_obj, root, side):
         ('enum', f'{side}_stile_type', "Stile Type"),
         ('bool', f'extend_{side}_stile_to_floor', "Stile to Floor",
          {'when': selected_card._has_kick}),
-    ), cab))
+    ) + gothic_fields(side), cab))
     out.append(('gap', None))
     out.extend(_rows([_act("Cabinet Column", 'hb_face_frame.set_cabinet_column')]))
     return out
@@ -537,6 +560,8 @@ def page_blocks(context, part_obj):
         return _back_page(context, part_obj, root)
     if role in _END_STILES:
         return _end_stile_page(context, part_obj, root, _END_STILES[role])
+    if role == gothic_stile.PART_ROLE_PIECE:
+        return _gothic_piece_page(context, part_obj, root)
     if role == types_face_frame.PART_ROLE_TOP_RAIL:
         return _top_rail_page(context, part_obj, root)
     if role == types_face_frame.PART_ROLE_BOTTOM_RAIL:
