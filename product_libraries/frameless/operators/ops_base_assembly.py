@@ -375,7 +375,18 @@ def create_base_assemblies(context, frame, members):
         obj[types_products.RIGHT_END_EXPOSED_KEY] = bool(
             index == len(spans) - 1 and (open_right or step_right < 0))
 
-        extended = False
+        first_piece, last_piece = index == 0, index == len(spans) - 1
+        types_products.add_end_conditions(
+            obj,
+            types_products.END_WALL if first_piece and fillers[0] is not None
+            else types_products.END_FINISHED
+            if obj[types_products.LEFT_END_EXPOSED_KEY]
+            else types_products.END_FLUSH,
+            types_products.END_WALL if last_piece and fillers[1] is not None
+            else types_products.END_FINISHED
+            if obj[types_products.RIGHT_END_EXPOSED_KEY]
+            else types_products.END_FLUSH)
+
         for filler, key, at_end in (
                 (fillers[0], 'Left Front Extension', index == 0),
                 (fillers[1], 'Right Front Extension',
@@ -385,9 +396,8 @@ def create_base_assemblies(context, frame, members):
             obj[key] = hb_types.GeoNodeCage(filler).get_input('Dim X')
             filler['Toe Kick Piece'] = False
             types_products.recalculate_product(filler)
-            extended = True
-        if extended:
-            types_products.recalculate_product(obj)
+        # Solved again for its end conditions and any run-on face.
+        types_products.recalculate_product(obj)
         created.append(obj)
 
     # The cabinets' cages clear the base so it can be clicked.

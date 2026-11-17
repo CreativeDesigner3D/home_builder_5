@@ -1594,6 +1594,17 @@ BASE_BY_OTHERS_THICKNESS = inch(0.125)
 # cabinet fronts (the rear is held in by the same when it is finished).
 LEFT_END_EXPOSED_KEY = 'Left End Exposed'
 RIGHT_END_EXPOSED_KEY = 'Right End Exposed'
+# How each end of a base is built, chosen on the base (Add Base
+# Assemblies picks it from what is beside the end):
+# Wall -- the kick face runs on to the wall (by the Front Extension) and
+#         the end is a cross piece under the cabinet side;
+# Finished -- the end shows: a full-depth end piece, held back for a
+#         loose skin or a finish by others like the front;
+# Flush -- a full-depth end piece that butts the next base or cabinet.
+LEFT_END_CONDITION_KEY = 'Left End Condition'
+RIGHT_END_CONDITION_KEY = 'Right End Condition'
+END_CONDITIONS = ("Wall", "Finished", "Flush")
+END_WALL, END_FINISHED, END_FLUSH = range(3)
 REAR_SETBACK_KEY = 'Rear Setback'
 
 # Marks a part that ships loose to be fit on site.
@@ -1652,6 +1663,37 @@ def add_base_assembly_options(root):
             root.home_builder.add_property(key, kind, value)
     if REAR_SETBACK_KEY not in root:
         root[REAR_SETBACK_KEY] = _default_rear_setback()
+
+
+def add_end_conditions(root, left=None, right=None):
+    """Give a base its two end condition prompts, set to `left` /
+    `right`, or -- on a base built before they existed -- to what its
+    frame already was: Wall where the kick face runs on, Finished where
+    the end was found showing, Flush otherwise."""
+    for key, side, value in ((LEFT_END_CONDITION_KEY, 'Left', left),
+                             (RIGHT_END_CONDITION_KEY, 'Right', right)):
+        if value is None:
+            if key in root:
+                continue
+            if float(_prompt(root, side + ' Front Extension', 0.0)) > 0.0:
+                value = END_WALL
+            elif root.get(side + ' End Exposed', False):
+                value = END_FINISHED
+            else:
+                value = END_FLUSH
+        if key in root:
+            root[key] = value
+        else:
+            root.home_builder.add_property(key, 'COMBOBOX', value,
+                                           combobox_items=list(END_CONDITIONS))
+
+
+def end_condition(root, key):
+    try:
+        value = int(root.get(key, END_FLUSH))
+    except (TypeError, ValueError):
+        return END_FLUSH
+    return value if 0 <= value < len(END_CONDITIONS) else END_FLUSH
 
 
 def _skin_part(root, parts, role, wanted):
@@ -1757,9 +1799,17 @@ def _solve_base_assembly_capped(root, parts, dim_x, dim_y, dim_z, mt,
     finish's thickness, so the finished face stays where it was."""
     if FINISH_REAR_KEY not in root:
         add_base_assembly_options(root)
+    add_end_conditions(root)
     gap = max(float(_prompt(root, BACK_GAP_KEY, 0.0)), 0.0)
-    cap_l = 0.0 if ext_l > 0.0 else mt
-    cap_r = 0.0 if ext_r > 0.0 else mt
+    cond_l = end_condition(root, LEFT_END_CONDITION_KEY)
+    cond_r = end_condition(root, RIGHT_END_CONDITION_KEY)
+    # Only a wall end runs the kick face on; the others end with it.
+    if cond_l != END_WALL:
+        ext_l = 0.0
+    if cond_r != END_WALL:
+        ext_r = 0.0
+    cap_l = 0.0 if cond_l == END_WALL else mt
+    cap_r = 0.0 if cond_r == END_WALL else mt
 
     finish_rear = bool(_prompt(root, FINISH_REAR_KEY, False))
     by_others = bool(_prompt(root, BASE_BY_OTHERS_KEY, False))
@@ -1774,9 +1824,10 @@ def _solve_base_assembly_capped(root, parts, dim_x, dim_y, dim_z, mt,
     else:
         hold = skin_t if skinned else 0.0
 
-    # An end under a wall scribe filler is at the wall: it never shows.
-    shows_l = bool(root.get(LEFT_END_EXPOSED_KEY, False)) and ext_l <= 0.0
-    shows_r = bool(root.get(RIGHT_END_EXPOSED_KEY, False)) and ext_r <= 0.0
+    shows_l = cond_l == END_FINISHED
+    shows_r = cond_r == END_FINISHED
+    root[LEFT_END_EXPOSED_KEY] = shows_l
+    root[RIGHT_END_EXPOSED_KEY] = shows_r
     x_l = hold if shows_l else 0.0
     x_r = dim_x - (hold if shows_r else 0.0)
     y_front = -dim_y + hold
@@ -1926,6 +1977,7 @@ class BaseAssembly(Product):
         self.add_property('Right Front Extension', 'DISTANCE', 0.0)
         self.add_property(BACK_GAP_KEY, 'DISTANCE', BASE_ASSEMBLY_BACK_GAP)
         add_base_assembly_options(self.obj)
+        add_end_conditions(self.obj, END_FLUSH, END_FLUSH)
 
         self.add_part('Front', 'BASE_FRONT', rotation=(90, 0, 0), mirror='Z',
                       finish=BASE_ASSEMBLY_FINISH['BASE_FRONT'])
