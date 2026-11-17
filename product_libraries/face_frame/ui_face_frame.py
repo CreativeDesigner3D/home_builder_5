@@ -537,6 +537,7 @@ def draw_construction(layout, cab_props):
         row.prop(cab_props, 'gothic_stile_left', text="Left", toggle=True)
         row.prop(cab_props, 'gothic_stile_right', text="Right", toggle=True)
         if cab_props.gothic_stile_left or cab_props.gothic_stile_right:
+            col.prop(cab_props, 'gothic_stile_type', text="Type")
             col.prop(cab_props, 'gothic_ball_cuts', text="Ball Cuts")
             col.prop(cab_props, 'gothic_route_stop', text="Route Stop")
 

@@ -827,6 +827,7 @@ def _cabinet_fields(root, cab):
                 ('locked', 'right_stile_width', "Right Stile", {'unlock': 'unlock_right_stile'}),
                 ('bool', 'gothic_stile_left', "Gothic Left Stile"),
                 ('bool', 'gothic_stile_right', "Gothic Right Stile"),
+                ('enum', 'gothic_stile_type', "Gothic Type", {'when': _gothic_stile}),
                 ('number', 'gothic_ball_cuts', "Ball Cuts", {'when': _gothic_stile}),
                 ('distance', 'gothic_route_stop', "Route Stop", {'when': _gothic_stile}),
                 ('distance', 'left_scribe', "Left Scribe", {'when': _scribes}),

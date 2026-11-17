@@ -3818,6 +3818,9 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
                                  # standing in the cabinet's own corner,
                                  # so always the exterior finish.
                                  'DECORATIVE_CORNER',
+                                 # Gothic stile boards applied over the
+                                 # end stiles: milled stock in the finish.
+                                 'GOTHIC_STILE_APPLIED',
                                  # Cabinet column turnings: purchased
                                  # split turnings applied over stiles,
                                  # finished to match the exterior.
@@ -3838,6 +3841,7 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
                                  'FRAME_PROFILE_CUTTER',
                                  'FINISHED_BOTTOM_LED_CUTTER',
                                  'DECORATIVE_CORNER_CUTTER',
+                                 'GOTHIC_STILE_CUTTER',
                                  'BOX_MITER_CUTTER'):
                     slot_mat = finish_mat
                 elif slot_role in ('DRAWER_DIVIDER', 'DRAWER_INSERT',
@@ -10330,6 +10334,13 @@ class Face_Frame_Cabinet_Props(PropertyGroup):
         description="Route ball cuts down the right end stile. Switching "
                     "it on widens the stile to 3\"",
         update=_update_gothic_stiles,
+    )  # type: ignore
+    gothic_stile_type: EnumProperty(
+        name="Gothic Stile Type", items=gothic_stile.TYPE_ITEMS,
+        default='INTEGRAL',
+        description="Route the end stile itself, or a board applied over "
+                    "it (fitted, or shipped loose)",
+        update=_update_cabinet_dim,
     )  # type: ignore
     gothic_ball_cuts: IntProperty(
         name="Ball Cuts", default=gothic_stile.DEFAULT_BALL_CUTS,

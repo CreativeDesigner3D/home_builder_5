@@ -13,9 +13,16 @@ stile's Length (x = 0 at its bottom), y across its Width (sign per
 'Mirror Y', u = 0 on the outer edge), the front face on z = 0 with the
 thickness running in per 'Mirror Z'.
 
+An applied Gothic stile is a separate board (APPLIED_THICKNESS) laid on
+the face of the end stile, flush with the cabinet's end, with the ball
+cuts routed into its face instead; the stile under it is widened to
+match so the doors clear it. A loose one is the same board shipped
+loose for fitting on site: it is modelled where it goes and flagged
+'hb_ship_loose'.
+
 The root publishes what was built (GOTHIC_STILES = "SIDE:length:width"
-entries in metres, GOTHIC_BALL_CUTS) so drawings and pricing read the
-built stile rather than recomputing it.
+entries in metres, GOTHIC_BALL_CUTS, GOTHIC_STILE_TYPE) so drawings and
+pricing read the built stile rather than recomputing it.
 """
 
 import math
@@ -38,6 +45,17 @@ DEFAULT_WIDTH = inch(3.0)
 MAX_WIDTH = inch(6.0)
 
 PART_ROLE_CUTTER = 'GOTHIC_STILE_CUTTER'
+# The applied / loose board.
+PART_ROLE_PIECE = 'GOTHIC_STILE_APPLIED'
+APPLIED_THICKNESS = inch(0.75)
+TYPE_ITEMS = [
+    ('INTEGRAL', "Integral",
+     "The end stile itself is widened and routed"),
+    ('APPLIED', "Applied",
+     "A routed board applied over the end stile"),
+    ('LOOSE', "Loose",
+     "A routed board shipped loose for fitting on site"),
+]
 MOD_NAME = 'Gothic Ball Cuts'
 SIDES = ('LEFT', 'RIGHT')
 
@@ -63,9 +81,10 @@ def cut_centers(width, count):
     return [mid + pitch * (k - (count - 1) / 2.0) for k in range(count)]
 
 
-def _capsule(bm, ml, y, x0, x1, ys, zs, r):
+def _capsule(bm, ml, y, x0, x1, ys, zs, r, v0=0.0):
     """One round-ended groove cutter along x from x0 to x1 at y, centred
-    on the front face (z = 0) so half of it is in the stile."""
+    on the routed face (thickness coordinate ``v0``; 0 = the stile's
+    front face) so half of it is in the wood."""
     rings = []
     # Ring stations along x: a hemisphere at each end, straight between.
     stations = []
@@ -78,7 +97,7 @@ def _capsule(bm, ml, y, x0, x1, ys, zs, r):
     first = last = None
     for idx, (x, rr) in enumerate(stations):
         if rr < 1e-9:
-            v = bm.verts.new(ml @ Vector((x, ys * y, 0.0)))
+            v = bm.verts.new(ml @ Vector((x, ys * y, zs * v0)))
             if idx == 0:
                 first = v
             else:
@@ -89,7 +108,8 @@ def _capsule(bm, ml, y, x0, x1, ys, zs, r):
         for k in range(_SEGMENTS):
             t = 2.0 * math.pi * k / _SEGMENTS
             ring.append(bm.verts.new(ml @ Vector(
-                (x, ys * (y + rr * math.cos(t)), zs * rr * math.sin(t)))))
+                (x, ys * (y + rr * math.cos(t)),
+                 zs * (v0 + rr * math.sin(t))))))
         rings.append(ring)
     body = [r_ for r_ in rings if r_ is not None]
     for a, b in zip(body, body[1:]):
@@ -106,10 +126,12 @@ def _capsule(bm, ml, y, x0, x1, ys, zs, r):
             bm.faces.new((last, a[k], a[(k + 1) % _SEGMENTS]))
 
 
-def build_cutter(cutter, part, ml, count, route_stop):
+def build_cutter(cutter, part, ml, count, route_stop, v0=0.0):
     """Rebuild ``cutter`` as the ball-cut grooves of one stile, in the
-    cabinet's frame (``ml`` = stile local -> cabinet). Returns the
-    number of cuts built (0 clears it)."""
+    cabinet's frame (``ml`` = stile local -> cabinet), routed into the
+    face at thickness coordinate ``v0`` (negative = proud of the stile,
+    an applied board's face). Returns the number of cuts built (0
+    clears it)."""
     try:
         length = part.get_input('Length')
         width = part.get_input('Width')
@@ -129,13 +151,58 @@ def build_cutter(cutter, part, ml, count, route_stop):
     zs = -1.0 if mirror_z else 1.0
     bm = bmesh.new()
     for y in centers:
-        _capsule(bm, ml, y, x0, x1, ys, zs, r)
+        _capsule(bm, ml, y, x0, x1, ys, zs, r, v0)
     bmesh.ops.recalc_face_normals(bm, faces=bm.faces[:])
     bm.to_mesh(cutter.data)
     bm.free()
     cutter.location = (0.0, 0.0, 0.0)
     cutter.rotation_euler = (0.0, 0.0, 0.0)
     return len(centers)
+
+
+def build_piece(piece, part, ml):
+    """Rebuild ``piece`` as the applied board over one stile: the
+    stile's length and width, APPLIED_THICKNESS proud of its face, in
+    the cabinet's frame."""
+    length = part.get_input('Length')
+    width = part.get_input('Width')
+    ys = -1.0 if part.get_input('Mirror Y') else 1.0
+    zs = -1.0 if part.get_input('Mirror Z') else 1.0
+    t = APPLIED_THICKNESS
+    bm = bmesh.new()
+    vs = [bm.verts.new(ml @ Vector((x, ys * u, -zs * v)))
+          for x in (0.0, length) for u in (0.0, width) for v in (0.0, t)]
+    for idx in ((0, 1, 3, 2), (4, 6, 7, 5), (0, 4, 5, 1),
+                (2, 3, 7, 6), (0, 2, 6, 4), (1, 5, 7, 3)):
+        bm.faces.new([vs[i] for i in idx])
+    bmesh.ops.recalc_face_normals(bm, faces=bm.faces[:])
+    bm.to_mesh(piece.data)
+    bm.free()
+    piece.location = (0.0, 0.0, 0.0)
+    piece.rotation_euler = (0.0, 0.0, 0.0)
+
+
+def _pieces(cabinet_obj):
+    return [c for c in cabinet_obj.children
+            if c.get('hb_part_role') == PART_ROLE_PIECE]
+
+
+def ensure_piece(cabinet_obj, side):
+    """The applied board for one side. A plain mesh, not a sheet-stock
+    cutpart: it is milled stock, like a decorative corner post."""
+    for child in _pieces(cabinet_obj):
+        if child.get('hb_side') == side:
+            return child
+    name = 'Gothic Stile %s' % side.title()
+    piece = hb_utils.new_object(name, bpy.data.meshes.new(name))
+    piece['hb_part_role'] = PART_ROLE_PIECE
+    piece['hb_side'] = side
+    piece['MENU_ID'] = 'HOME_BUILDER_MT_face_frame_cabinet_commands'
+    piece.parent = cabinet_obj
+    for coll in cabinet_obj.users_collection:
+        coll.objects.link(piece)
+        break
+    return piece
 
 
 def _cutters(cabinet_obj):
@@ -174,22 +241,32 @@ def apply(cabinet_obj, cab_props, stiles, matrix_to_root, cutpart_cls):
     sides switched off are removed."""
     count = getattr(cab_props, 'gothic_ball_cuts', DEFAULT_BALL_CUTS)
     stop = getattr(cab_props, 'gothic_route_stop', DEFAULT_ROUTE_STOP)
+    kind = getattr(cab_props, 'gothic_stile_type', 'INTEGRAL')
+    applied = kind in ('APPLIED', 'LOOSE')
     live = {}
+    live_pieces = set()
     built = []
     for side in wanted_sides(cab_props):
         stile = stiles.get(side)
         if stile is None or stile.hide_viewport:
             continue
         part = cutpart_cls(stile)
+        ml = matrix_to_root(stile, cabinet_obj)
         cutter = ensure_cutter(cabinet_obj, side)
-        n = build_cutter(cutter, part, matrix_to_root(stile, cabinet_obj),
-                         count, stop)
+        n = build_cutter(cutter, part, ml, count, stop,
+                         -APPLIED_THICKNESS if applied else 0.0)
         if not n:
             continue
-        live[stile.name] = cutter
-        mod = stile.modifiers.get(MOD_NAME)
+        target = stile
+        if applied:
+            target = ensure_piece(cabinet_obj, side)
+            build_piece(target, part, ml)
+            target['hb_ship_loose'] = kind == 'LOOSE'
+            live_pieces.add(target)
+        live[target.name] = cutter
+        mod = target.modifiers.get(MOD_NAME)
         if mod is None:
-            mod = stile.modifiers.new(name=MOD_NAME, type='BOOLEAN')
+            mod = target.modifiers.new(name=MOD_NAME, type='BOOLEAN')
             mod.operation = 'DIFFERENCE'
             mod.solver = 'EXACT'
         mod.material_mode = 'TRANSFER'
@@ -209,15 +286,17 @@ def apply(cabinet_obj, cab_props, stiles, matrix_to_root, cutpart_cls):
         mod = child.modifiers.get(MOD_NAME) if child.type == 'MESH' else None
         if mod is not None and live.get(child.name) is None:
             child.modifiers.remove(mod)
-    for cutter in _cutters(cabinet_obj):
-        if cutter not in live_cutters:
-            mesh = cutter.data
-            bpy.data.objects.remove(cutter, do_unlink=True)
-            if mesh is not None and mesh.users == 0:
-                bpy.data.meshes.remove(mesh)
+    doomed = [c for c in _cutters(cabinet_obj) if c not in live_cutters]
+    doomed += [p for p in _pieces(cabinet_obj) if p not in live_pieces]
+    for obj in doomed:
+        mesh = obj.data
+        bpy.data.objects.remove(obj, do_unlink=True)
+        if mesh is not None and mesh.users == 0:
+            bpy.data.meshes.remove(mesh)
     if built:
         cabinet_obj['GOTHIC_STILES'] = ','.join(built)
+        cabinet_obj['GOTHIC_STILE_TYPE'] = kind
     else:
-        for key in ('GOTHIC_STILES', 'GOTHIC_BALL_CUTS'):
+        for key in ('GOTHIC_STILES', 'GOTHIC_BALL_CUTS', 'GOTHIC_STILE_TYPE'):
             if key in cabinet_obj:
                 del cabinet_obj[key]
