@@ -200,6 +200,26 @@ def keep_picked(context, obj):
                 o.hide_viewport = True
         from .operators.ops_interior import show_in_selection_mode
         show_in_selection_mode(context, cabinet)
+    _hold_pick(obj.name)
+
+
+def _hold_pick(name):
+    """A dialog the change opens behind itself (a new pullout asks which
+    product it holds) drops the selection as it comes up, leaving the
+    pick active but unselected and the page empty. Pick it again once
+    that has happened, if it is still the active object."""
+    def again():
+        try:
+            layer = bpy.context.view_layer
+            obj = bpy.data.objects.get(name)
+            if obj is not None and layer.objects.active is obj \
+                    and not obj.select_get(view_layer=layer):
+                obj.select_set(True, view_layer=layer)
+        except Exception:
+            pass
+        return None
+    for delay in (0.1, 0.3, 0.8):
+        bpy.app.timers.register(again, first_interval=delay)
 
 
 # ---- The page's field ---------------------------------------------------------
