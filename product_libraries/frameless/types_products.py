@@ -586,7 +586,29 @@ def recalculate_support_frame(obj):
     recalculate_product(support_frame_root(obj))
 
 
+# The Leg Style the frame's legs were last built in, so a style picked
+# anywhere (the prompts dialog, the inspector, a script) is noticed.
+LEG_STYLE_BUILT_KEY = 'hb_leg_style_built'
+
+
 def _solve_support_frame(root, parts, dim_x, dim_y, dim_z):
+    """The frame's boards, then its legs' turnings. A newly picked Leg
+    Style first sizes the legs to that style's stock blank."""
+    from ..common import turned_leg
+    styled = turned_leg.LEG_STYLE_PROP in root
+    if styled:
+        style = int(root.get(turned_leg.LEG_STYLE_PROP, 0) or 0)
+        built = root.get(LEG_STYLE_BUILT_KEY)
+        # A frame from before the stamp keeps the sizes it has.
+        if built is not None and int(built) != style:
+            turned_leg.size_frame_legs_from_style(root)
+        root[LEG_STYLE_BUILT_KEY] = style
+    _solve_support_frame_parts(root, parts, dim_x, dim_y, dim_z)
+    if styled:
+        turned_leg.sync_frame_legs(root)
+
+
+def _solve_support_frame_parts(root, parts, dim_x, dim_y, dim_z):
     get = root.get
     mt = float(_prompt(root, 'Material Thickness', inch(0.75)))
     spacing = float(_prompt(root, 'Support Spacing', inch(16)))
