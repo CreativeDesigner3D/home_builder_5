@@ -3336,6 +3336,53 @@ class home_builder_OT_options_pick_file(bpy.types.Operator):
 
 # ---- Typed values -------------------------------------------------------------
 
+# A distance or number typed starting with one of these works from the
+# value already in the field: "+5" adds five, "*2" doubles it.
+RELATIVE_OPS = '+-*/'
+
+
+def _relative_entry(owner, prop, text):
+    """True when `text` is an operation on the field's current value.
+    A leading '-' is that only while the value is above zero; on a field
+    at zero or below it is a negative number."""
+    text = text.strip()
+    if len(text) < 2 or text[0] not in RELATIVE_OPS:
+        return False
+    if text[0] == '-':
+        try:
+            return float(getattr(owner, prop)) > 0
+        except Exception:
+            return False
+    return True
+
+
+def _relative_value(owner, prop, text):
+    """The field's current value with the typed operation applied, in the
+    property's own units, or None when the operand can't be read."""
+    import math
+    text = text.strip()
+    op, rest = text[0], text[1:].strip()
+    try:
+        current = float(getattr(owner, prop))
+    except Exception:
+        return None
+    if op in '*/':
+        factor = parse_number(rest)
+        if factor is None or (op == '/' and factor == 0):
+            return None
+        return current * factor if op == '*' else current / factor
+    # The sign stays with what was typed, so "-5+1" takes off four.
+    if _edit_kind == 'number':
+        amount = parse_number(text)
+        if amount is not None and _is_angle(owner, prop):
+            amount = math.radians(amount)
+    else:
+        amount = parse_distance(text)
+    if amount is None:
+        return None
+    return current + amount
+
+
 def commit_value(context):
     """Write what was typed into the field. A distance is parsed, and an
     empty or unreadable entry leaves it alone; text is taken as typed,
@@ -3351,6 +3398,12 @@ def commit_value(context):
         return False
     if is_text:
         value = text
+    elif _relative_entry(owner, prop, text):
+        value = _relative_value(owner, prop, text)
+        if value is None:
+            return False
+        if owner.bl_rna.properties[prop].type == 'INT':
+            value = int(round(value))
     elif _edit_kind == 'number':
         # A 'number' field: a count, a scale, an angle typed in degrees.
         import math
