@@ -50,6 +50,9 @@ HINTS = {
     'NOTE_EDIT': "Type this note again",
     'NOTE_LEADER': "Point this note at something, or take its leader off",
     'NOTE_REMOVE': "Take this note off the drawing",
+    'ADD_DIM': "Click two points on the view, then where the dimension "
+               "line goes",
+    'DIM_REMOVE': "Take this dimension off the drawing",
 }
 
 
@@ -243,6 +246,17 @@ def selected_note(st):
                 None)
 
 
+def selected_dim(st):
+    """The added dimension that is selected, on the sheet on show."""
+    sel = st.get('dim_sel')
+    dims = st.get('dims') or []
+    if not sel or st['page'] >= len(dims):
+        return None
+    return next((d for d in dims[st['page']]
+                 if d['view']['key'] == sel[0] and d['index'] == sel[1]),
+                None)
+
+
 def sheet_rect(st, box):
     """A box in sheet points as (x, y, w, h) in region pixels."""
     rect = st.get('rect')
@@ -271,8 +285,25 @@ def _note_tools(st, bounds, s):
     return _row(items, cx, y, s)
 
 
+def _dim_tools(st, bounds, s):
+    entry = selected_dim(st)
+    box = sheet_rect(st, entry['box']) if entry else None
+    if box is None:
+        return []
+    items = [('DIM_REMOVE', "Remove Dimension",
+              _wide("Remove Dimension", s), None)]
+    xmin, xmax, ymin, ymax = bounds
+    total = items[0][2]
+    cx = min(max(box[0] + box[2] / 2.0, xmin + total / 2.0 + 8 * s),
+             xmax - total / 2.0 - 8 * s)
+    y = min(box[1] + box[3] + 10 * s, ymax - (3 * BUTTON + 30) * s)
+    return _row(items, cx, y, s)
+
+
 def _tools(st, bounds, scene, s):
     """The toolbar of the selected view, over the view."""
+    if st.get('dim_sel'):
+        return _dim_tools(st, bounds, s)
     if st.get('note_sel'):
         return _note_tools(st, bounds, s)
     item = selected_item(st)
@@ -306,6 +337,8 @@ def _tools(st, bounds, scene, s):
     if item.get('k') and item.get('origin'):
         items.append(('ADD_NOTE', "+ Note", _wide("+ Note", s),
                       'ON' if st.get('pick') == 'NOTE' else None))
+        items.append(('ADD_DIM', "+ Dimension", _wide("+ Dimension", s),
+                      'ON' if st.get('pick') == 'DIM' else None))
     if not items:
         return []
     xmin, xmax, ymin, ymax = bounds
@@ -391,6 +424,13 @@ def draw(st, area, scene):
             shader.bind()
             draw_round_rect(shader, tx - h, ty - h, 2 * h, 2 * h, h,
                             SELECTED)
+    dim = selected_dim(st)
+    if dim is not None:
+        rect = sheet_rect(st, dim['box'])
+        if rect is not None:
+            _outline(shader, rect, SELECTED, 2.0)
+    if st.get('pick') == 'DIM' and st.get('rect'):
+        _draw_dim_draft(shader, st, scene, s)
     typing = st.get('typing')
     if typing and st.get('rect'):
         _draw_typing(shader, st, typing, s)
@@ -460,6 +500,13 @@ def draw(st, area, scene):
         banner = "Click on the view where the note should go"
     elif st.get('pick') == 'TIP':
         banner = "Click on what the note should point at"
+    elif st.get('pick') == 'DIM':
+        pending = st.get('dim_draft')
+        count = len(pending['pts']) if pending else 0
+        banner = ("Click where the dimension line goes  (beside: height, "
+                  "above or below: width)" if count == 2
+                  else "Click the %s point to measure  (it holds to line "
+                       "ends)   Esc: done" % ("second" if count else "first"))
     elif st.get('pick') == 'CUT':
         banner = "Click on the elevation where the section should cut"
     elif st.get('note'):
@@ -495,6 +542,56 @@ def _draw_hint(shader, rect, text, s, area):
     blf.color(0, *Theme.TEXT_PRIMARY)
     blf.position(0, x + 7 * s, y + (h - th) / 2.0 + 1, 0)
     draw_glyphs(0, text)
+
+
+def _draw_dim_draft(shader, st, scene, s):
+    """The dimension being drawn: its points so far, a mark where the
+    cursor holds to a line's end, and once both points are down the
+    dimension itself, following the cursor, with its value."""
+    x, y, f = st['rect']
+    to_px = lambda p: (x + p[0] * f, y + p[1] * f)
+    pending = st.get('dim_draft')
+    pts = list(pending['pts']) if pending else []
+    cursor, snapped = st.get('dim_cursor') or (None, False)
+    shader.bind()
+    h = 4 * s
+    for p in pts:
+        px, py = to_px(p)
+        draw_round_rect(shader, px - h, py - h, 2 * h, 2 * h, h, SELECTED)
+    if cursor is None:
+        return
+    cx, cy = to_px(cursor)
+    if len(pts) < 2 and snapped:
+        draw_round_rect_outline(shader, cx - h - 1, cy - h - 1, 2 * h + 2,
+                                2 * h + 2, 1, SELECTED)
+    if len(pts) == 1:
+        draw_lines(shader, [to_px(pts[0]), (cx, cy)], HOVERED)
+        return
+    if len(pts) != 2:
+        return
+    a, b = pts
+    axis = sheets.dim_axis(a, b, cursor)
+    (ax, ay), (bx, by) = to_px(a), to_px(b)
+    if axis == 'V':
+        segs = [(ax, ay), (cx, ay), (bx, by), (cx, by), (cx, ay), (cx, by)]
+        tx, ty = cx + 6 * s, (ay + by) / 2.0
+    else:
+        segs = [(ax, ay), (ax, cy), (bx, by), (bx, cy), (ax, cy), (bx, cy)]
+        tx, ty = (ax + bx) / 2.0, cy + 6 * s
+    draw_lines(shader, segs, SELECTED)
+    value = sheets.dim_value(a, b, axis)
+    k = pending['k']
+    try:
+        from ..operators import elevation_mode as em
+        text = em.format_length(scene, value / k) if scene else ""
+    except Exception:
+        text = ""
+    if text:
+        blf.size(0, 12 * s)
+        tw = blf.dimensions(0, text)[0]
+        blf.color(0, *SELECTED)
+        blf.position(0, tx - (0 if axis == 'V' else tw / 2.0), ty, 0)
+        draw_glyphs(0, text)
 
 
 def _draw_typing(shader, st, typing, s):

@@ -135,7 +135,7 @@ def default_set(scene, room_index=0):
 
 # ---- The user's edits ----------------------------------------------------------
 
-EDIT_KEYS = ('moved', 'scales', 'cuts', 'together', 'notes')
+EDIT_KEYS = ('moved', 'scales', 'cuts', 'together', 'notes', 'dims')
 LAYOUT_KEYS = ('moved', 'scales', 'cuts', 'together')
 SCALE_LADDER = (8, 12, 16, 24, 32, 48, 64, 96)      # the n of 1:n
 
@@ -143,9 +143,11 @@ SCALE_LADDER = (8, 12, 16, 24, 32, 48, 64, 96)      # the n of 1:n
 def edits(scene):
     """{'moved': {view key: [dx, dy] in points}, 'scales': {view key: n},
     'cuts': {wall: [metres along it, ...]}, 'together': {wall: True},
-    'notes': {view key: [{'x', 'y', 'text', 'tip'}]}} -- a note's place
-    and its leader's tip are in the view's own metres, so they stay on
-    what they point at when the view is moved or drawn at another scale."""
+    'notes': {view key: [{'x', 'y', 'text', 'tip'}]},
+    'dims': {view key: [{'a', 'b', 'at', 'axis'}]}} -- a note's place,
+    its leader's tip and a dimension's points are in the view's own
+    metres, so they stay on what they point at when the view is moved
+    or drawn at another scale."""
     try:
         data = json.loads(scene.get(SET_PROP) or '{}')
     except (TypeError, ValueError):
@@ -242,9 +244,10 @@ def home_view(scene, key):
 
 
 def reset_edits(scene):
-    """Back to the automatic layout. Typed notes are kept: they are
-    part of the drawing, not of where it sits."""
-    store_edits(scene, {'notes': edits(scene)['notes']})
+    """Back to the automatic layout. Typed notes and added dimensions
+    are kept: they are part of the drawing, not of where it sits."""
+    kept = edits(scene)
+    store_edits(scene, {'notes': kept['notes'], 'dims': kept['dims']})
 
 
 def has_layout_edits(scene):
@@ -338,6 +341,114 @@ def _draw_notes(page, scene):
                           'index': index, 'at': at, 'tip': tip, 'box': box,
                           'origin': item['origin'], 'k': k,
                           'text': n['text']})
+
+
+# ---- Added dimensions ----------------------------------------------------------
+#
+# A dimension the user adds belongs to a view, kept with the set's edits
+# under the view's key: its two points and a third, where its line runs,
+# all in the view's metres. It measures across ('H') or up ('V').
+
+def _pair(p):
+    return [float(p[0]), float(p[1])]
+
+
+def view_dims(scene, view):
+    """[{'a', 'b', 'at': [x, y], 'axis': 'H' | 'V'}] in the view's metres."""
+    out = []
+    for d in edits(scene)['dims'].get(_view_ident(view)[2]) or ():
+        try:
+            out.append({'a': _pair(d['a']), 'b': _pair(d['b']),
+                        'at': _pair(d['at']),
+                        'axis': 'V' if d.get('axis') == 'V' else 'H'})
+        except Exception:
+            continue
+    return out
+
+
+def set_view_dims(scene, view, dims):
+    key = _view_ident(view)[2]
+    data = edits(scene)
+    if dims:
+        data['dims'][key] = [
+            {k: [round(d[k][0], 5), round(d[k][1], 5)]
+             for k in ('a', 'b', 'at')} | {'axis': d['axis']} for d in dims]
+    else:
+        data['dims'].pop(key, None)
+    store_edits(scene, data)
+    views.touch(scene)
+
+
+def dim_axis(a, b, at):
+    """Which way a dimension from a to b measures, from where its line
+    is put: beside the two points it is up ('V'), above or below them
+    across ('H')."""
+    out_x = max(min(a[0], b[0]) - at[0], at[0] - max(a[0], b[0]), 0.0)
+    out_y = max(min(a[1], b[1]) - at[1], at[1] - max(a[1], b[1]), 0.0)
+    if out_x == out_y:
+        return 'H' if abs(b[0] - a[0]) >= abs(b[1] - a[1]) else 'V'
+    return 'V' if out_x > out_y else 'H'
+
+
+def dim_value(a, b, axis):
+    return abs(b[1] - a[1]) if axis == 'V' else abs(b[0] - a[0])
+
+
+def draw_dim(page, a, b, at, axis, text, size=7.0):
+    """One added dimension in sheet points: the dimension line through
+    `at`, extension lines back to a and b. Returns its box."""
+    w = hb_pdf.text_width(text, size) + 6.0
+    page.stroke_color(draft.GREY)
+    page.line_width(0.4)
+    if axis == 'V':
+        x = at[0]
+        y0, y1 = sorted((a[1], b[1]))
+        right = x >= (a[0] + b[0]) / 2.0
+        draft.dim_v(page, y0, y1, x, text, size=size,
+                    side=1 if right else -1)
+        page.stroke_color(draft.GREY)
+        page.line_width(0.4)
+        for p in (a, b):
+            d = 1.0 if x > p[0] else -1.0
+            if abs(x - p[0]) > 4.0:
+                page.lines([((p[0] + d * 3.0, p[1]), (x + d * 4.0, p[1]))])
+        return ((x - 6.0, y0 - 4.0, x + w + 4.0, y1 + 4.0) if right
+                else (x - w - 4.0, y0 - 4.0, x + 6.0, y1 + 4.0))
+    y = at[1]
+    x0, x1 = sorted((a[0], b[0]))
+    draft.dim_h(page, x0, x1, y, text, size=size)
+    page.stroke_color(draft.GREY)
+    page.line_width(0.4)
+    for p in (a, b):
+        d = 1.0 if y > p[1] else -1.0
+        if abs(y - p[1]) > 4.0:
+            page.lines([((p[0], p[1] + d * 3.0), (p[0], y + d * 4.0))])
+    cx = (x0 + x1) / 2.0
+    return (min(x0, cx - w / 2.0) - 4.0, y - 6.0,
+            max(x1, cx + w / 2.0) + 4.0, y + size + 6.0)
+
+
+def _draw_dims(page, scene):
+    """Draw each placed view's added dimensions and note where each one
+    landed, for picking."""
+    found = page.info.setdefault('dims', [])
+    for item in page.info.get('placed', ()):
+        if not item.get('k') or not item.get('origin'):
+            continue
+        ox, oy = item['origin']
+        k = item['k']
+        for index, d in enumerate(view_dims(scene, item)):
+            value = dim_value(d['a'], d['b'], d['axis'])
+            if value < 1e-5:
+                continue
+            a, b, at = [(ox + d[n][0] * k, oy + d[n][1] * k)
+                        for n in ('a', 'b', 'at')]
+            box = draw_dim(page, a, b, at, d['axis'],
+                           em.format_length(scene, value))
+            found.append({'view': {'kind': item['kind'], 'wall': item['wall'],
+                                   'key': item['key']},
+                          'index': index, 'box': box, 'a': a, 'b': b,
+                          'at': at, 'origin': item['origin'], 'k': k})
 
 
 def sheet_name(scene, sheet):
@@ -636,6 +747,7 @@ def compose(context, sheets, index, count=None):
                          f"SECTION: {_wall_title(scene, view.get('wall'))}",
                          scale, width=150.0)
     _draw_notes(page, scene)
+    _draw_dims(page, scene)
     return page
 
 

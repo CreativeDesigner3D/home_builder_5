@@ -39,6 +39,28 @@ def is_open():
     return bool(_st)
 
 
+SNAP_PX = 9.0           # how near, in screen pixels, a line's end holds
+SNAP_CELL = 12.0        # the snap grid's cell, in sheet points
+
+
+def _snap_grid(comp):
+    """The ends of a sheet's lines, bucketed by cell, kept with its
+    compiled drawing so a sheet that did not change keeps its grid."""
+    grid = getattr(comp, '_snap', None)
+    if grid is None:
+        grid, seen = {}, set()
+        for pos, _col in comp.lines.values():
+            for p in pos:
+                q = (round(p[0], 2), round(p[1], 2))
+                if q in seen:
+                    continue
+                seen.add(q)
+                grid.setdefault((int(q[0] // SNAP_CELL),
+                                 int(q[1] // SNAP_CELL)), []).append(q)
+        comp._snap = grid
+    return grid
+
+
 def _region(area):
     return next((r for r in area.regions if r.type == 'WINDOW'), None)
 
@@ -83,6 +105,7 @@ def _read(context, st):
     st['compiled'] = compiled
     st['placed'] = [list((p.info or {}).get('placed', ())) for p in pages]
     st['notes'] = [list((p.info or {}).get('notes', ())) for p in pages]
+    st['dims'] = [list((p.info or {}).get('dims', ())) for p in pages]
     st['page'] = min(st.get('page', 0), max(len(pages) - 1, 0))
     st['stale'] = fresh
     st['scene'] = context.scene.name
@@ -353,6 +376,71 @@ class HOME_BUILDER_OT_drawings_preview(bpy.types.Operator):
                 return entry, 'TEXT'
         return None, None
 
+    def _hit_dim(self, event, region):
+        """The added dimension under the cursor, or None."""
+        st = _st
+        dims = st.get('dims') or []
+        if not st.get('rect') or st['page'] >= len(dims):
+            return None
+        sx, sy = self._sheet_point(event, region)
+        for entry in dims[st['page']]:
+            bx0, by0, bx1, by1 = entry['box']
+            if bx0 <= sx <= bx1 and by0 <= sy <= by1:
+                return entry
+        return None
+
+    def _snap(self, event, region):
+        """The sheet point under the cursor, held to the nearest end of
+        a drawn line within a few pixels. Returns (point, snapped)."""
+        st = _st
+        pt = self._sheet_point(event, region)
+        comps = st.get('compiled') or []
+        if st['page'] >= len(comps):
+            return pt, False
+        reach = SNAP_PX / st['rect'][2]
+        best, near = None, reach * reach
+        cx, cy = int(pt[0] // SNAP_CELL), int(pt[1] // SNAP_CELL)
+        grid = _snap_grid(comps[st['page']])
+        for i in (cx - 1, cx, cx + 1):
+            for j in (cy - 1, cy, cy + 1):
+                for q in grid.get((i, j), ()):
+                    d = (q[0] - pt[0]) ** 2 + (q[1] - pt[1]) ** 2
+                    if d < near:
+                        best, near = q, d
+        return (best, True) if best else (pt, False)
+
+    def _place_dim(self, context, pending, at):
+        """The third click: where the new dimension's line runs."""
+        st = _st
+        a, b = pending['pts']
+        o, k = pending['origin'], pending['k']
+        axis = sheets.dim_axis(a, b, at)
+        if sheets.dim_value(a, b, axis) < 0.5:
+            st['note'] = "nothing to measure that way"
+            return
+        scene = page_scene(st, context)
+        dims = sheets.view_dims(scene, pending['view'])
+        dims.append({'a': [(a[0] - o[0]) / k, (a[1] - o[1]) / k],
+                     'b': [(b[0] - o[0]) / k, (b[1] - o[1]) / k],
+                     'at': [(at[0] - o[0]) / k, (at[1] - o[1]) / k],
+                     'axis': axis})
+        sheets.set_view_dims(scene, pending['view'], dims)
+        self._edited(context, "dimension added")
+
+    def _change_dim(self, context, entry, change, said):
+        """Apply change(dim) to one stored dimension (None removes it)."""
+        scene = page_scene(_st, context)
+        dims = sheets.view_dims(scene, entry['view'])
+        if entry['index'] < len(dims):
+            new = change(dict(dims[entry['index']]))
+            if new is None:
+                del dims[entry['index']]
+                _st['dim_sel'] = None
+            else:
+                dims[entry['index']] = new
+        sheets.set_view_dims(scene, entry['view'], dims)
+        self._edited(context, said)
+
     def _sheet_point(self, event, region):
         x, y, f = _st['rect']
         return ((event.mouse_x - region.x - x) / f,
@@ -499,6 +587,9 @@ class HOME_BUILDER_OT_drawings_preview(bpy.types.Operator):
                 self._edited(context, "sections moved")
             elif ident == 'ADD_NOTE':
                 st['pick'] = None if st.get('pick') == 'NOTE' else 'NOTE'
+            elif ident == 'ADD_DIM':
+                st['pick'] = None if st.get('pick') == 'DIM' else 'DIM'
+                st['dim_draft'] = st['dim_cursor'] = None
         return None
 
     def _act_note(self, context, ident):
@@ -612,6 +703,16 @@ class HOME_BUILDER_OT_drawings_preview(bpy.types.Operator):
             f = (st.get('rect') or (0, 0, 1.0))[2]
             dx = (now[0] - move['start'][0]) / f
             dy = (now[1] - move['start'][1]) / f
+            dim = move.get('dim')
+            if dim is not None:
+                if abs(dx) > 1.0 or abs(dy) > 1.0:
+                    mx_, my_ = dx / dim['k'], dy / dim['k']
+                    self._change_dim(
+                        context, dim, lambda d: dict(
+                            d, at=[d['at'][0] + mx_, d['at'][1] + my_]),
+                        "dimension moved")
+                area.tag_redraw()
+                return {'RUNNING_MODAL'}
             entry = move.get('note')
             if entry is not None:
                 # A note's text, or the tip of its leader, dragged.
@@ -644,6 +745,18 @@ class HOME_BUILDER_OT_drawings_preview(bpy.types.Operator):
         scene = page_scene(st, context)
         mx, my = event.mouse_x - region.x, event.mouse_y - region.y
         button = hud.hit(st, area, scene, mx, my)
+        if event.type in ('MOUSEMOVE', 'INBETWEEN_MOUSEMOVE') \
+                and st.get('pick') == 'DIM' and st.get('rect'):
+            # The dimension being drawn follows the cursor, held to the
+            # end of a line while it is picking its two points.
+            pending = st.get('dim_draft')
+            if pending and len(pending['pts']) == 2:
+                st['dim_cursor'] = (self._sheet_point(event, region), False)
+            else:
+                st['dim_cursor'] = self._snap(event, region)
+            st['hover'] = button
+            area.tag_redraw()
+            return {'PASS_THROUGH'}
         if event.type in ('MOUSEMOVE', 'INBETWEEN_MOUSEMOVE'):
             # What is under the cursor lights up: a button, or a view.
             under = None
@@ -658,6 +771,11 @@ class HOME_BUILDER_OT_drawings_preview(bpy.types.Operator):
             if button is not None:
                 if isinstance(button, str) and button.startswith('NOTE_'):
                     self._act_note(context, button)
+                elif button == 'DIM_REMOVE':
+                    entry = hud.selected_dim(st)
+                    if entry is not None:
+                        self._change_dim(context, entry, lambda d: None,
+                                         "dimension removed")
                 elif button != 'LABEL':
                     closed = self._act(context, button)
                     if closed is not None:
@@ -677,6 +795,31 @@ class HOME_BUILDER_OT_drawings_preview(bpy.types.Operator):
                                       "leader added")
                 area.tag_redraw()
                 return {'RUNNING_MODAL'}
+            if st.get('pick') == 'DIM' and st.get('rect'):
+                # Two points, then where the line runs. The tool stays on
+                # for the next one until Esc.
+                pending = st.get('dim_draft')
+                if not pending:
+                    item, _at = self._hit(event, region)
+                    if not (item and item.get('k') and item.get('origin')):
+                        item = hud.selected_item(st)
+                    if item is None or not item.get('k') \
+                            or not item.get('origin'):
+                        st['note'] = "click on a view to measure it"
+                        area.tag_redraw()
+                        return {'RUNNING_MODAL'}
+                    pending = st['dim_draft'] = {
+                        'view': {'kind': item['kind'], 'wall': item['wall'],
+                                 'key': item['key']},
+                        'origin': item['origin'], 'k': item['k'], 'pts': []}
+                if len(pending['pts']) < 2:
+                    pending['pts'].append(self._snap(event, region)[0])
+                else:
+                    st['dim_draft'] = None
+                    self._place_dim(context, pending,
+                                    self._sheet_point(event, region))
+                area.tag_redraw()
+                return {'RUNNING_MODAL'}
             if st.get('pick') == 'NOTE' and st.get('rect'):
                 # Where a new note should stand, then it is typed.
                 st['pick'] = None
@@ -691,6 +834,16 @@ class HOME_BUILDER_OT_drawings_preview(bpy.types.Operator):
                         'y': (py - view['origin'][1]) / view['k']}
                 area.tag_redraw()
                 return {'RUNNING_MODAL'}
+            dim = self._hit_dim(event, region)
+            if dim is not None:
+                # A click selects the dimension; a drag moves its line.
+                st['dim_sel'] = (dim['view']['key'], dim['index'])
+                st['note_sel'] = st['selected'] = None
+                st['move'] = {'dim': dim, 'box': dim['box'],
+                              'start': (event.mouse_x, event.mouse_y)}
+                area.tag_redraw()
+                return {'RUNNING_MODAL'}
+            st['dim_sel'] = None
             entry, part = self._hit_note(event, region)
             if entry is not None:
                 # A click selects the note; a drag moves it or its tip.
@@ -727,6 +880,11 @@ class HOME_BUILDER_OT_drawings_preview(bpy.types.Operator):
         if press and event.type in ('LEFT_BRACKET', 'RIGHT_BRACKET', 'X',
                                     'DEL', 'T', 'BACK_SPACE'):
             item, _at = self._hit(event, region)
+            if event.type in ('X', 'DEL') and hud.selected_dim(st):
+                self._change_dim(context, hud.selected_dim(st),
+                                 lambda d: None, "dimension removed")
+                area.tag_redraw()
+                return {'RUNNING_MODAL'}
             if event.type == 'BACK_SPACE':
                 sheets.reset_edits(scene)
                 self._edited(context, "set back to the rule")
@@ -751,8 +909,12 @@ class HOME_BUILDER_OT_drawings_preview(bpy.types.Operator):
         count = max(len(st['compiled']), 1)
         if event.type == 'ESC' and press:
             # Esc backs out one step at a time.
-            if st.get('pick'):
+            if st.get('pick') == 'DIM' and st.get('dim_draft'):
+                st['dim_draft'] = None
+            elif st.get('pick'):
                 st['pick'] = None
+            elif st.get('dim_sel'):
+                st['dim_sel'] = None
             elif st.get('note_sel'):
                 st['note_sel'] = None
             elif st.get('selected'):
