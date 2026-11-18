@@ -2,8 +2,8 @@
 
 Three groups of buttons, drawn like the rest of the viewport HUD:
 
-- along the top, the project's rooms and under them the tabs of the
-  sheets of the room on show,
+- down the left, the page list: each room, and the sheets of that room
+  under it,
 - a bar at the bottom centre (previous / next sheet, fit, read again,
   print, reset, close),
 - a small toolbar over the view that is selected on the sheet, with
@@ -122,31 +122,114 @@ def _bar(st, bounds, scene, s):
     return _row(items, (xmin + xmax) / 2.0, ymin + 16 * s, s)
 
 
-def _tabs(st, bounds, s):
-    xmin, xmax, _ymin, ymax = bounds
+LIST_W = 190.0              # the page list down the left
+ROW_H = 24.0
+HEAD_H = 26.0
+
+
+def list_width(st):
+    """Pixels the page list takes from the left of the view, gap
+    included: none when there is only one sheet."""
+    if len(st.get('names') or ()) < 2:
+        return 0.0
+    return (LIST_W + 20.0) * _s()
+
+
+def _fit_label(label, room, s):
+    blf.size(0, FONT * s)
+    if blf.dimensions(0, label)[0] <= room:
+        return label
+    while label and blf.dimensions(0, label + "...")[0] > room:
+        label = label[:-1]
+    return label + "..."
+
+
+def _pages(st, bounds, s):
+    """The page list: each room's name, the sheets of that room under
+    it. It scrolls (st['list_scroll']) when the set is longer than the
+    view, keeping the sheet on show in sight."""
+    xmin, _xmax, ymin, ymax = bounds
     names = st.get('names') or []
     if len(names) < 2:
         return []
     rooms = st.get('rooms') or [''] * len(names)
-    here = rooms[st['page']] if st['page'] < len(rooms) else ''
     order = list(dict.fromkeys(rooms))
-    out = []
-    y = ymax - (BUTTON + 12) * s
-    if len(order) > 1:
-        # The rooms, then the sheets of the room on show under them.
-        items = [(('ROOM', name), name, _wide(name, s, 20.0),
-                  'ON' if name == here else None) for name in order]
-        out += _row(items, (xmin + xmax) / 2.0, y, s)
-        y -= (BUTTON + 6) * s
-    mine = [i for i in range(len(names)) if rooms[i] == here]
-    room = (xmax - xmin) - 40 * s
-    labels = [f"{i + 1}  {names[i]}" for i in mine]
-    if sum(_wide(l, s, 18.0) + GAP * s for l in labels) > room:
-        labels = [str(i + 1) for i in mine]     # numbers only
-    items = [(('TAB', i), label, _wide(label, s, 18.0),
-              'ON' if i == st['page'] else None)
-             for i, label in zip(mine, labels)]
-    return out + _row(items, (xmin + xmax) / 2.0, y, s)
+    x, w = xmin + 10 * s, LIST_W * s
+    rows = []                   # (ident, label, height, state)
+    for room in order:
+        if len(order) > 1:
+            rows.append((('ROOM', room), room.upper(), HEAD_H * s, 'HEAD'))
+        for i, name in enumerate(names):
+            if rooms[i] == room:
+                rows.append((('TAB', i), f"{i + 1}   {name}", ROW_H * s,
+                             'ROW_ON' if i == st['page'] else 'ROW'))
+    top = ymax - 10 * s
+    bottom = ymin + (BUTTON + 40) * s
+    room = top - bottom
+    total = sum(h for _i, _l, h, _st in rows)
+    scroll = min(max(st.get('list_scroll', 0.0), 0.0),
+                 max(0.0, total - room))
+    # The sheet on show is kept in sight, unless the list was scrolled
+    # since it came up.
+    if st.get('list_page') != st['page']:
+        st['list_page'], st['list_free'] = st['page'], False
+    y = 0.0
+    for ident, _label, h, state in rows:
+        if state == 'ROW_ON' and not st.get('list_free'):
+            if y < scroll:
+                scroll = y
+            elif y + h > scroll + room:
+                scroll = y + h - room
+        y += h
+    st['list_scroll'] = scroll
+    out = [('PANEL', (x - 4 * s, max(bottom, top - total) - 4 * s,
+                      w + 8 * s, min(room, total) + 8 * s), None, 'LABEL')]
+    y = top + scroll
+    for ident, label, h, state in rows:
+        y -= h
+        if y < bottom - 1 or y + h > top + 1:
+            continue
+        pad = 10 * s
+        out.append((ident, (x, y, w, h - 2 * s),
+                    _fit_label(label, w - 2 * pad, s), state))
+    return out
+
+
+LIST_STATES = ('HEAD', 'ROW', 'ROW_ON')
+
+
+def _draw_list(shader, listed, hover, s):
+    """The page list's rows: the sheet on show lit, the room names
+    small over their sheets, the text from the left."""
+    for ident, (rx, ry, rw, rh), label, state in listed:
+        hovered = hover == ident
+        if state == 'ROW_ON':
+            shader.bind()
+            draw_round_rect(shader, rx, ry, rw, rh, 4 * s, Theme.ACCENT_BG)
+        elif hovered:
+            shader.bind()
+            draw_round_rect(shader, rx, ry, rw, rh, 4 * s,
+                            Theme.BTN_HOVER_BG)
+        size = FONT * s * (0.85 if state == 'HEAD' else 1.0)
+        blf.size(0, size)
+        th = blf.dimensions(0, "Ag")[1]
+        bright = hovered or state == 'ROW_ON'
+        blf.color(0, *(Theme.TEXT_PRIMARY if bright else Theme.TEXT_NORMAL))
+        pad = (8 if state == 'HEAD' else 14) * s
+        y = ry + (rh - th) / 2.0 + 1
+        if state == 'HEAD':
+            y = ry + 4 * s
+        blf.position(0, rx + pad, y, 0)
+        draw_glyphs(0, label)
+
+
+def over_list(st, area, mx, my):
+    """True when (mx, my) is over the page list."""
+    for ident, rect, _label, _state in _pages(
+            st, get_visible_window_bounds(area), _s()):
+        if ident == 'PANEL':
+            return point_in_rect(mx, my, rect)
+    return False
 
 
 def selected_note(st):
@@ -230,7 +313,7 @@ def _tools(st, bounds, scene, s):
     total = sum(w for _i, _l, w, _st in items) + GAP * s * (len(items) - 1)
     cx = min(max(bx + bw / 2.0, xmin + total / 2.0 + 8 * s),
              xmax - total / 2.0 - 8 * s)
-    top_limit = ymax - (3 * BUTTON + 30) * s        # under the tabs
+    top_limit = ymax - (BUTTON + 20) * s
     y = by + bh + 10 * s
     if y > top_limit:
         y = max(ymin + (BUTTON + 30) * s, min(top_limit, by + bh - 40 * s))
@@ -242,8 +325,12 @@ def layout(st, area, scene=None):
         return []
     s = _s()
     bounds = get_visible_window_bounds(area)
-    return (_tabs(st, bounds, s) + _bar(st, bounds, scene, s)
-            + _tools(st, bounds, scene, s))
+    # The page list last: hit() takes the first thing under the cursor,
+    # and its panel stands behind its rows.
+    pages = _pages(st, bounds, s)
+    return ([p for p in pages if p[0] != 'PANEL']
+            + _bar(st, bounds, scene, s) + _tools(st, bounds, scene, s)
+            + [p for p in pages if p[0] == 'PANEL'])
 
 
 def hit(st, area, scene, mx, my):
@@ -309,6 +396,15 @@ def draw(st, area, scene):
         _draw_typing(shader, st, typing, s)
     parts = layout(st, area, scene)
     hover = st.get('hover')
+    for ident, rect, _label, _state in parts:
+        if ident == 'PANEL':
+            shader.bind()
+            draw_soft_shadow(shader, *rect, 6 * s)
+            draw_round_rect(shader, *rect, 6 * s, Theme.BTN_BG)
+    parts = [p for p in parts if p[0] != 'PANEL']
+    listed = [p for p in parts if p[3] in LIST_STATES]
+    parts = [p for p in parts if p[3] not in LIST_STATES]
+    _draw_list(shader, listed, hover, s)
     # One soft shadow under each row of buttons.
     rows = {}
     for _ident, rect, _label, _state in parts:

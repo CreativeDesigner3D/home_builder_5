@@ -104,10 +104,13 @@ def _free(st, index=None):
 def _place(st, comp, region):
     """(x, y, f): where the sheet's corner is in the region, on a whole
     pixel, and the pixels to the point it shows at."""
-    fit = min((region.width - 40.0) / comp.width,
+    # The sheet fits beside the page list.
+    side = hud.list_width(st)
+    fit = min((region.width - side - 40.0) / comp.width,
               (region.height - 60.0) / comp.height)
     f = max(fit * st['zoom'], 0.01)
-    x = round((region.width - comp.width * f) / 2.0 + st['pan'][0])
+    x = round(side + (region.width - side - comp.width * f) / 2.0
+              + st['pan'][0])
     y = round((region.height - comp.height * f) / 2.0 + st['pan'][1])
     return x, y, f
 
@@ -762,12 +765,21 @@ class HOME_BUILDER_OT_drawings_preview(bpy.types.Operator):
             st['page'] = (st['page'] + 1) % count
         elif press and event.type in ('LEFT_ARROW', 'PAGE_UP'):
             st['page'] = (st['page'] - 1) % count
+        elif event.type in ('WHEELUPMOUSE', 'WHEELDOWNMOUSE') \
+                and hud.over_list(st, area, mx, my):
+            step = hud.ROW_H * 3 * hud._s()
+            st['list_scroll'] = st.get('list_scroll', 0.0) + (
+                -step if event.type == 'WHEELUPMOUSE' else step)
+            # The sheet on show is no longer held in sight.
+            st['list_free'] = True
         elif event.type in ('WHEELUPMOUSE', 'WHEELDOWNMOUSE'):
             k = 1.2 if event.type == 'WHEELUPMOUSE' else 1 / 1.2
             new = min(max(st['zoom'] * k, 0.5), 12.0)
             k = new / st['zoom']
-            # The point under the cursor stays where it is.
-            cx = event.mouse_x - region.x - region.width / 2.0
+            # The point under the cursor stays where it is: the sheet is
+            # centred in what the page list leaves.
+            cx = (event.mouse_x - region.x
+                  - (region.width + hud.list_width(st)) / 2.0)
             cy = event.mouse_y - region.y - region.height / 2.0
             st['pan'][0] = cx - (cx - st['pan'][0]) * k
             st['pan'][1] = cy - (cy - st['pan'][1]) * k
