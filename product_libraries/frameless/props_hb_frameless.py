@@ -992,9 +992,9 @@ def _sheet_materials():
 
 
 # Toe kicks and base assemblies are built from structural 3/4" plywood
-# whatever the cabinet's colours (#7fbbc66a): the shop's "18mm Radiata
-# Utility Ply VC" stock (48.5 x 96.5, about 0.72" actual). It is made here rather than added to the
-# materials library, so it never shows in the Exterior / Interior lists.
+# whatever the cabinet's colours: "18mm Radiata Utility Ply VC" stock
+# (48.5 x 96.5, about 0.72" actual). It is made here rather than added to
+# the materials library, so it never shows in the Exterior / Interior lists.
 STRUCTURAL_PLY_MATERIAL = '18mm Radiata Utility Ply VC'
 STRUCTURAL_PLY_COLOR = (0.80, 0.66, 0.46, 1.0)
 # The kick boards themselves. A Toe Kick Panel and its returns are the
