@@ -92,7 +92,8 @@ def unregister_set_extension(fn):
 
 def default_set(scene, room_index=0):
     """The set made by rule: for each wall with products, its plan strip
-    over its elevation, then its sections on the sheets after.
+    over its elevation, then the sections of every wall on the sheets
+    after.
     `room_index` is the room's place among the project's rooms, for an
     extension that adds something once for the whole project."""
     sheets = []
@@ -100,26 +101,29 @@ def default_set(scene, room_index=0):
     walls = [wall for wall in em.room_walls(scene)
              if any(it.kind != 'OPENING'
                     for it in views.wall_items(scene, wall))]
-    # A room with products on more than one wall gets a plan of the
-    # whole room; a single wall's plan strip rides over its elevation.
+    # A room with products on more than one wall gets a plan and a 3D
+    # view of the whole room. Each wall's sheet shows the run whole: its
+    # plan strip over its elevation, its 3D view and its detail cards.
     whole_room = len(walls) > 1
     if whole_room:
         sheets.append({'views': [{'kind': 'ROOM_PLAN'}]})
         sheets.append({'views': [{'kind': 'ROOM_ISO'}]})
+    cuts = []
     for wall in walls:
         on_sheet = [{'kind': 'ELEVATION', 'wall': wall.name},
+                    {'kind': 'PLAN', 'wall': wall.name},
                     {'kind': 'ISO', 'wall': wall.name},
                     {'kind': 'DETAILS', 'wall': wall.name}]
-        if not whole_room:
-            on_sheet.append({'kind': 'PLAN', 'wall': wall.name})
-        cuts = [{'kind': 'SECTION', 'wall': wall.name, 'x': x}
+        mine = [{'kind': 'SECTION', 'wall': wall.name, 'x': x}
                 for x in _wall_cuts(scene, wall, kept)]
         if kept['together'].get(wall.name):
-            on_sheet += cuts[:SECTIONS_WITH_ELEVATION]
-            cuts = cuts[SECTIONS_WITH_ELEVATION:]
+            on_sheet += mine[:SECTIONS_WITH_ELEVATION]
+            mine = mine[SECTIONS_WITH_ELEVATION:]
         sheets.append({'views': on_sheet})
-        for i in range(0, len(cuts), SECTIONS_A_SHEET):
-            sheets.append({'views': cuts[i:i + SECTIONS_A_SHEET]})
+        cuts += mine
+    # The sections of every wall share sheets, after the walls.
+    for i in range(0, len(cuts), SECTIONS_A_SHEET):
+        sheets.append({'views': cuts[i:i + SECTIONS_A_SHEET]})
     data = {'sheets': sheets, 'room_index': room_index}
     for extend in list(_set_extensions):
         try:
@@ -628,7 +632,9 @@ def compose(context, sheets, index, count=None):
         s.place(page, wall_x, base_y + 92.0)
         _placed(page, view, s, wall_x, base_y + 92.0)
         draft.view_title(page, wall_x - 130.0, base_y + 26.0, view['_mark'],
-                         view['_sheet'], 'SECTION', scale, width=150.0)
+                         view['_sheet'],
+                         f"SECTION: {_wall_title(scene, view.get('wall'))}",
+                         scale, width=150.0)
     _draw_notes(page, scene)
     return page
 

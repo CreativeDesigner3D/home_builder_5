@@ -27,6 +27,27 @@ def _number(obj):
     return views.unit_number(obj)
 
 
+LABEL_SIZE, LABEL_MIN_SIZE = 5.0, 3.5
+
+
+def _fitted_label(page, cx, cy, text, room):
+    """An appliance's name centred in its box: set smaller when the box
+    is narrow, on two lines when that is still too wide."""
+    size = LABEL_SIZE
+    while size > LABEL_MIN_SIZE and hb_pdf.text_width(text, size) > room:
+        size -= 0.25
+    if hb_pdf.text_width(text, size) <= room or ' ' not in text:
+        draft.text_centered(page, cx, cy, text, size)
+        return
+    words = text.split()
+    cut = max(range(1, len(words)), key=lambda i: -abs(
+        len(' '.join(words[:i])) - len(' '.join(words[i:]))))
+    draft.text_centered(page, cx, cy + size * 0.6, ' '.join(words[:cut]),
+                        size)
+    draft.text_centered(page, cx, cy - size * 0.6, ' '.join(words[cut:]),
+                        size)
+
+
 def resolve(context, view, _width, _height):
     wall = views.wall_of(view)
     if wall is None:
@@ -82,7 +103,7 @@ def resolve(context, view, _width, _height):
         if number and (b[0] - a[0]) > 16.0:
             views.number_tag(out, cx, cy, number, (b[0] - a[0]) - 3.0)
         elif appliance:
-            draft.text_centered(out, cx, cy, it.name.upper()[:12], 5.0)
+            _fitted_label(out, cx, cy, it.name.upper(), (b[0] - a[0]) - 4.0)
     # The wall's length over the top, one depth each down the left.
     top = thickness * k
     draft.dim_h(out, 0.0, length * k, top + 22.0,
