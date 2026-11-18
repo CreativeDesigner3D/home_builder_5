@@ -28,7 +28,8 @@ from . import gpu_painter, hud, sheets, views
 
 DESK = (0.32, 0.33, 0.35, 1.0)
 TICK = 0.3                  # seconds between looks at the model
-MIN_TEXTURE, MAX_TEXTURE = 1.5, 4.0     # pixels to the point
+SETTLE = 0.2                # s after a zoom before the sheet is repainted
+MARGIN = 0.25               # of the viewport painted past each edge
 QUIET_TICKS = 2             # ticks after a reading that changes are its own
 
 _st = {}
@@ -100,29 +101,58 @@ def _free(st, index=None):
             st['tex'].pop(i)[0].free()
 
 
-def _fit(st, comp, region):
-    """(pixels to the point the sheet shows at, pixels to the point its
-    texture wants)."""
+def _place(st, comp, region):
+    """(x, y, f): where the sheet's corner is in the region, on a whole
+    pixel, and the pixels to the point it shows at."""
     fit = min((region.width - 40.0) / comp.width,
               (region.height - 60.0) / comp.height)
     f = max(fit * st['zoom'], 0.01)
-    return f, min(max(f * 1.25, MIN_TEXTURE), MAX_TEXTURE)
+    x = round((region.width - comp.width * f) / 2.0 + st['pan'][0])
+    y = round((region.height - comp.height * f) / 2.0 + st['pan'][1])
+    return x, y, f
+
+
+def _settled(st):
+    return (not st.get('drag')
+            and time.perf_counter() - st.get('zoomed', 0.0) > SETTLE)
+
+
+def _out_of_step(st, region):
+    """True when the texture up was painted for another zoom or place:
+    shown stretched until the view settles, then painted again."""
+    have = st['tex'].get(st['page'])
+    if have is None or not st.get('compiled'):
+        return False
+    return _place(st, st['compiled'][st['page']], region) != have[1]
 
 
 def _paint(st, area):
-    """Paint the sheet on show into its texture when it has none or its
-    drawing changed. Called by the operator, between the viewport's
-    draws; the texture already up stays until the new one is whole."""
+    """Paint what the viewport shows of the sheet on show, one of its
+    pixels to one of the screen's, when there is no texture yet, its
+    drawing changed, or the view moved and has settled. Called by the
+    operator, between the viewport's draws; the texture already up
+    stays until the new one is whole."""
     region = _region(area) if area is not None else None
     if region is None or not st.get('compiled'):
         return False
     i = st['page']
-    if i not in st['stale'] and st['tex'].get(i) is not None:
+    if i not in st['stale'] and st['tex'].get(i) is not None and not (
+            _settled(st) and _out_of_step(st, region)):
         return False
     comp = st['compiled'][i]
-    _f, want = _fit(st, comp, region)
+    x, y, f = _place(st, comp, region)
+    # The screen and a margin round it, in the sheet's own pixels, so a
+    # short pan does not show bare paper; never past the sheet's edge.
+    mx, my = region.width * MARGIN, region.height * MARGIN
+    x0 = max(0.0, -mx - x)
+    y0 = max(0.0, -my - y)
+    x1 = min(comp.width * f, region.width + mx - x)
+    y1 = min(comp.height * f, region.height + my - y)
+    if x1 - x0 < 1.0 or y1 - y0 < 1.0:
+        x0, y0, x1, y1 = 0.0, 0.0, 8.0, 8.0      # nothing of it on screen
+    window = (x0, y0, x1 - x0, y1 - y0)
     try:
-        fresh = (gpu_painter.render(comp, want), want)
+        fresh = (gpu_painter.render(comp, f, window), (x, y, f), window)
     except Exception as exc:
         st['stale'].discard(i)          # do not try every tick
         st['note'] = f"could not paint: {exc}"
@@ -149,7 +179,7 @@ def _draw():
         if st['compiled']:
             i = st['page']
             comp = st['compiled'][i]
-            f, st['want'] = _fit(st, comp, region)
+            x, y, f = _place(st, comp, region)
         uni = gpu.shader.from_builtin('UNIFORM_COLOR')
         back = batch_for_shader(uni, 'TRI_FAN', {'pos': [
             (0, 0), (region.width, 0), (region.width, region.height),
@@ -168,14 +198,23 @@ def _draw():
             hud.draw(st, area, scene)
             return
         w, h = comp.width * f, comp.height * f
-        x = (region.width - w) / 2.0 + st['pan'][0]
-        y = (region.height - h) / 2.0 + st['pan'][1]
         st['rect'] = (x, y, f)
         if st['tex'].get(i) is None:
             blf.draw(0, "Drawings: preparing the sheet...")
             hud.draw(st, area, scene)
             return
-        draw_texture_2d(st['tex'][i][0].texture_color, (x, y), w, h)
+        # The paper, then what was painted of it: one to one once the
+        # view has settled, stretched to follow it until then.
+        paper = batch_for_shader(uni, 'TRI_FAN', {'pos': [
+            (x, y), (x + w, y), (x + w, y + h), (x, y + h)]})
+        uni.bind()
+        uni.uniform_float('color', (1.0, 1.0, 1.0, 1.0))
+        paper.draw(uni)
+        off, (_tx, _ty, tf), (wx, wy, ww, wh) = st['tex'][i]
+        r = f / tf
+        draw_texture_2d(off.texture_color, (x + round(wx) * r,
+                                            y + round(wy) * r),
+                        max(8, round(ww)) * r, max(8, round(wh)) * r)
         move = st.get('move')
         if move and move.get('now'):
             # The view being dragged, as an outline where it will land.
@@ -504,12 +543,11 @@ class HOME_BUILDER_OT_drawings_preview(bpy.types.Operator):
             _read(context, st)
             area.tag_redraw()
             return
-        # A sheet zoomed well past its texture is painted again, sharp.
-        have = st['tex'].get(st['page'])
-        want = st.get('want')
-        settled = time.perf_counter() - st.get('zoomed', 0.0) > 0.4
-        if have and want and not st['drag'] and settled and (
-                abs(want - have[1]) / have[1] > 0.3):
+        # A view that was zoomed or panned is painted again, sharp, once
+        # it has settled.
+        region = _region(area)
+        if region is not None and _settled(st) \
+                and _out_of_step(st, region):
             st['stale'].add(st['page'])
             area.tag_redraw()
 

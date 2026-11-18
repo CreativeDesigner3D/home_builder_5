@@ -1,9 +1,11 @@
 """Painting a Drawing in the viewport.
 
-The record is compiled once into a few vertex batches (one of
-triangles, one of lines for each line width) and painted into an
-offscreen texture; the viewport then only has to show the texture, so
-zooming and panning a sheet cost nothing.
+The record is compiled once into a batch of triangles and lists of
+lines, and painted into an offscreen texture one pixel of the sheet to
+one of the screen: the lines set on the pixel grid at whole-pixel
+weights, so they come out solid black, never smeared grey. The
+viewport shows the texture, stretched while the view is zoomed or
+panned, and the sheet is painted again once it settles.
 
 A drawing's calls are in paint order: a white face laid over the lines
 behind it hides them. Each call is given a depth that rises with its
@@ -18,6 +20,11 @@ import gpu
 from gpu_extras.batch import batch_for_shader
 from mathutils import Matrix
 from mathutils.geometry import tessellate_polygon
+
+
+# Lines are drawn this much heavier on screen than on paper: at a sheet's
+# fit the paper's light and heavy weights would both round to one pixel.
+SCREEN_WEIGHT = 1.6
 
 
 class Compiled:
@@ -137,10 +144,8 @@ class Compiled:
             tris = batch_for_shader(flat, 'TRIS', {
                 'pos': self.tri_pos, 'color': self.tri_col}) \
                 if self.tri_pos else None
-            lines = [(w, batch_for_shader(poly, 'LINES',
-                                          {'pos': p, 'color': c}))
-                     for w, (p, c) in sorted(self.lines.items()) if p]
-            self._batches = (flat, poly, tris, lines)
+            # The lines are batched at each paint, set on its pixels.
+            self._batches = (flat, poly, tris, None)
         return self._batches
 
 
@@ -165,20 +170,67 @@ def _image_textures(compiled):
     return compiled._textures
 
 
-def render(compiled, scale):
+def _pixel_widths(compiled, scale):
+    """{whole pixels wide: (positions, colours)} of the sheet's lines at
+    `scale`, in sheet pixels. A line is never thinner than one pixel,
+    and one that runs square to the page sits on whole pixels -- in the
+    middle of a pixel when it is an odd number wide -- so it is drawn
+    solid, not smeared grey across two."""
+    import numpy as np
+    out = {}
+    for width, (pos, col) in compiled.lines.items():
+        if not pos:
+            continue
+        px = max(1, int(round(width * scale * SCREEN_WEIGHT)))
+        p = np.asarray(pos, dtype=np.float64).reshape(-1, 2, 3)
+        p[:, :, :2] *= scale
+        half = 0.5 if px % 2 else 0.0
+        d = np.abs(p[:, 1, :2] - p[:, 0, :2])
+        for axis, square in ((0, d[:, 0] < 0.01), (1, d[:, 1] < 0.01)):
+            # Square to the page: the line's own axis on the pixel grid,
+            # its ends on whole pixels.
+            p[square, :, axis] = np.floor(p[square, :, axis]) + half
+            p[square, :, 1 - axis] = np.round(p[square, :, 1 - axis])
+        smooth = ~((d[:, 0] < 0.01) | (d[:, 1] < 0.01))
+        c = np.asarray(col, dtype=np.float32).reshape(-1, 2, 4)
+        for key, rows in ((False, ~smooth), (True, smooth)):
+            if rows.any():
+                got = out.setdefault((px, key), ([], []))
+                got[0].append(p[rows].reshape(-1, 3))
+                got[1].append(c[rows].reshape(-1, 4))
+    return {k: (np.concatenate(v[0]), np.concatenate(v[1]))
+            for k, v in out.items()}
+
+
+def render(compiled, scale, window=None):
     """Paint `compiled` into a new GPUOffScreen at `scale` pixels to the
-    point. The caller frees it."""
-    w = max(8, int(compiled.width * scale))
-    h = max(8, int(compiled.height * scale))
+    point. `window` (x, y, w, h in the sheet's pixels at that scale)
+    paints only that part of it, one pixel of the sheet to one of the
+    texture; the whole sheet when None. The caller frees it."""
+    if window is None:
+        window = (0, 0, compiled.width * scale, compiled.height * scale)
+    wx, wy = int(round(window[0])), int(round(window[1]))
+    w = max(8, int(round(window[2])))
+    h = max(8, int(round(window[3])))
     off = gpu.types.GPUOffScreen(w, h)
-    flat, poly, tris, lines = compiled.batches()
+    flat, poly, tris, _lines = compiled.batches()
     # Page points to clip space; depth 0..1, the later call nearer.
-    proj = Matrix(((2.0 / compiled.width, 0, 0, -1.0),
-                   (0, 2.0 / compiled.height, 0, -1.0),
+    proj = Matrix(((2.0 * scale / w, 0, 0, -1.0 - 2.0 * wx / w),
+                   (0, 2.0 * scale / h, 0, -1.0 - 2.0 * wy / h),
                    (0, 0, -2.0, 1.0),
                    (0, 0, 0, 1.0)))
+    # The lines come already in sheet pixels.
+    line_proj = Matrix(((2.0 / w, 0, 0, -1.0 - 2.0 * wx / w),
+                        (0, 2.0 / h, 0, -1.0 - 2.0 * wy / h),
+                        (0, 0, -2.0, 1.0),
+                        (0, 0, 0, 1.0)))
     pixels = Matrix(((2.0 / w, 0, 0, -1.0), (0, 2.0 / h, 0, -1.0),
                      (0, 0, -1.0, 0.0), (0, 0, 0, 1.0)))
+    lines = []
+    for (px, smooth), (pos, col) in sorted(
+            _pixel_widths(compiled, scale).items()):
+        lines.append((px, smooth, batch_for_shader(
+            poly, 'LINES', {'pos': pos.tolist(), 'color': col.tolist()})))
     with off.bind():
         fb = gpu.state.active_framebuffer_get()
         fb.clear(color=(1.0, 1.0, 1.0, 1.0), depth=1.0)
@@ -192,11 +244,19 @@ def render(compiled, scale):
                 if tris is not None:
                     flat.bind()
                     tris.draw(flat)
-                for width, batch in lines:
+                gpu.matrix.load_projection_matrix(line_proj)
+                for px, smooth, batch in lines:
                     poly.bind()
                     poly.uniform_float('viewportSize', (w, h))
-                    poly.uniform_float('lineWidth', max(1.0, width * scale))
+                    poly.uniform_float('lineWidth', float(px))
+                    try:
+                        poly.uniform_bool('lineSmooth', smooth)
+                    except Exception:
+                        pass
+                    if smooth:
+                        gpu.state.blend_set('ALPHA')
                     batch.draw(poly)
+                    gpu.state.blend_set('NONE')
             finally:
                 gpu.state.depth_test_set('NONE')
                 gpu.state.depth_mask_set(False)
@@ -204,14 +264,15 @@ def render(compiled, scale):
             if compiled.images:
                 from gpu_extras.presets import draw_texture_2d
                 for tex, x, y, iw, ih in _image_textures(compiled):
-                    draw_texture_2d(tex, (x * scale, y * scale),
+                    draw_texture_2d(tex, (x * scale - wx, y * scale - wy),
                                     iw * scale, ih * scale)
             gpu.state.blend_set('ALPHA')
             font = 0
             for x, y, text, size, angle, color, halo in compiled.texts:
                 blf.size(font, max(1.0, size * scale))
                 blf.color(font, *color)
-                blf.position(font, x * scale, y * scale, 0.0)
+                blf.position(font, round(x * scale) - wx,
+                             round(y * scale) - wy, 0.0)
                 if angle:
                     blf.enable(font, blf.ROTATION)
                     blf.rotation(font, angle)
