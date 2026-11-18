@@ -12414,6 +12414,35 @@ class hb_closets_OT_install_model_pack(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class hb_closets_OT_get_more_hanger_models(bpy.types.Operator):
+    """Open the dialog a host add-on offers for downloading more hanger
+    models"""
+    bl_idname = "hb_closets.get_more_hanger_models"
+    bl_label = "Get More Hanger Models"
+
+    @classmethod
+    def poll(cls, context):
+        from .. import pulls_closets
+        return bool(pulls_closets.more_models_operator())
+
+    def invoke(self, context, event):
+        return self.execute(context)
+
+    def execute(self, context):
+        from .. import pulls_closets
+        idname = pulls_closets.more_models_operator()
+        if not idname or '.' not in idname:
+            self.report({'WARNING'}, "No more hanger models are on offer")
+            return {'CANCELLED'}
+        mod, name = idname.split('.', 1)
+        try:
+            getattr(getattr(bpy.ops, mod), name)('INVOKE_DEFAULT')
+        except Exception as exc:
+            self.report({'ERROR'}, f"Could not open the download: {exc}")
+            return {'CANCELLED'}
+        return {'FINISHED'}
+
+
 class hb_closets_OT_add_molding(bpy.types.Operator):
     """Add molding along every closet in the room using the selected
     profile (re-run after layout changes; clears each starter's previous
@@ -12586,6 +12615,7 @@ classes = (
     hb_closets_OT_delete_molding,
     hb_closets_OT_change_hanger,
     hb_closets_OT_install_model_pack,
+    hb_closets_OT_get_more_hanger_models,
     hb_closets_OT_randomize_hangers,
     hb_closets_OT_open_room_fronts,
 )
