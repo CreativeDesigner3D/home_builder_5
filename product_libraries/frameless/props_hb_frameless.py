@@ -1004,10 +1004,21 @@ STRUCTURAL_PLY_ROLES = frozenset({
 })
 
 
+# A base assembly's loose toe skins are the finished faces over its
+# frame, like a Toe Kick Panel, so they keep the style's finish.
+FINISHED_SKIN_ROLES = frozenset({
+    'LOOSE_KICK_FRONT', 'LOOSE_KICK_REAR', 'LOOSE_KICK_END_LEFT',
+    'LOOSE_KICK_END_RIGHT',
+})
+
+
 def is_structural_ply_part(part_obj):
     """True for a part cut from the structural plywood: a toe kick board
-    or any part of a base assembly / ladder base."""
-    if part_obj.get('hb_part_role') in STRUCTURAL_PLY_ROLES:
+    or any part of a base assembly / ladder base except its skins."""
+    role = part_obj.get('hb_part_role')
+    if role in FINISHED_SKIN_ROLES:
+        return False
+    if role in STRUCTURAL_PLY_ROLES:
         return True
     cur = part_obj
     while cur is not None:
