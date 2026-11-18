@@ -5297,7 +5297,7 @@ FULL_CORNER_SIDE_OVERLAY = inch(0.25)
 
 
 # Smallest reveal left between two fronts that meet over a mid rail.
-MID_RAIL_MIN_REVEAL = inch(0.125)
+MID_RAIL_MIN_REVEAL = inch(0.25)
 
 
 def _mid_rail_overlay(cab_props, side, overlay, rail):
