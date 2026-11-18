@@ -21,7 +21,8 @@ backs are left alone there.
 The top of a wall or tall cabinet goes by how high it is: one at or
 below TOP_SEEN_HEIGHT can be looked down on and is finished, a higher
 one is out of sight and stays unfinished. A base cabinet's top is under
-the countertop and stays unfinished.
+the countertop and stays unfinished, and so does its bottom: the toe kick
+hides the underside, and an unfinished interior is the inside face.
 
 An end set by hand is left alone until it is handed back to automatic.
 """
@@ -47,13 +48,16 @@ WALL_JOIN = units.inch(6.0)
 TOP_SEEN_HEIGHT = units.inch(72.0)
 
 SIDES = ('LEFT', 'RIGHT')
-# Every face this module settles: the ends, the back, then the top of a
-# base, wall or tall cabinet.
-AUTO_SIDES = SIDES + ('BACK', 'TOP')
+# Every face this module settles: the ends, the back, the top of a
+# base, wall or tall cabinet, then the bottom of a base.
+AUTO_SIDES = SIDES + ('BACK', 'TOP', 'BOTTOM')
+# Faces only ever set by hand through the menus, which mark them: one
+# never settled here is taken as it was built, whatever that is.
+_MENU_ONLY_SIDES = ('TOP', 'BOTTOM')
 # What a face is in before it is first settled here: every carcass part
 # is built finished on its outside face.
 BUILT_AS = {'LEFT': 'FINISHED', 'RIGHT': 'FINISHED', 'BACK': 'FINISHED',
-            'TOP': 'FINISHED'}
+            'TOP': 'FINISHED', 'BOTTOM': 'FINISHED'}
 AUTO_KEY = 'hb_end_auto_'      # + side.lower(): the condition set here last
 MANUAL_KEY = 'hb_end_manual_'  # + side.lower(): set by hand, leave alone
 
@@ -275,6 +279,15 @@ def takes_auto_top(cab_obj):
     return solver_frameless.carcass_kind(cab_obj) in AUTO_TOP_KINDS
 
 
+# Cabinets whose bottom is settled here: always unfinished.
+AUTO_BOTTOM_KINDS = ('BASE',)
+
+
+def takes_auto_bottom(cab_obj):
+    """A cabinet whose bottom is settled here."""
+    return solver_frameless.carcass_kind(cab_obj) in AUTO_BOTTOM_KINDS
+
+
 def top_condition(mw, box, kind='UPPER'):
     """'FINISHED' for a top low enough to be seen, else 'UNFINISHED'."""
     if kind == 'BASE':
@@ -319,11 +332,11 @@ def set_manual(cab_obj, side, manual=True):
 
 def _built_as(cab_obj, side):
     """The condition a face is in before it is first settled here."""
-    if side == 'TOP':
+    if side in ('TOP', 'BOTTOM'):
         from .operators import ops_finished_ends
         style = ops_finished_ends._cabinet_style(cab_obj)
         if style is not None and style.exterior_two_sided():
-            # A board made the same both faces: a top is the interior
+            # A board made the same both faces: a top or bottom is the interior
             # material until it is marked.
             return 'UNFINISHED'
     return BUILT_AS[side]
@@ -340,17 +353,15 @@ def _apply(context, cab_obj, side, target):
     # before ends looked after themselves: it stays as it is.
     first = key not in cab_obj
     last = cab_obj.get(key, _built_as(cab_obj, side))
-    # A top is only ever set by hand through the menus, which mark it;
-    # one never settled here is taken as it was built, whatever that is.
-    if current != last and not (side == 'TOP' and first):
+    if current != last and not (side in _MENU_ONLY_SIDES and first):
         set_manual(cab_obj, side)
         return False
     if cab_obj.get(key) != target:
         cab_obj[key] = target
     if current == target:
-        # A top settled for the first time: the ends of the sides are
-        # banded to go with it, so the cabinet is painted again.
-        return first and side == 'TOP'
+        # A top or bottom settled for the first time: the ends of the
+        # sides are banded to go with it, so the cabinet is painted again.
+        return first and side in _MENU_ONLY_SIDES
     panels = ('SLAB', '5PIECE')
     if current in panels or target in panels:
         ops_finished_ends.set_finish_condition(context, cab_obj, side, target)
@@ -400,6 +411,8 @@ def recalc_scene(scene=None, context=None):
             if not is_manual(cab_obj, 'TOP'):
                 wanted.append((cab_obj, 'TOP', top_condition(
                     mw, box, solver_frameless.carcass_kind(cab_obj))))
+        if takes_auto_bottom(cab_obj) and not is_manual(cab_obj, 'BOTTOM'):
+            wanted.append((cab_obj, 'BOTTOM', 'UNFINISHED'))
     changed = []
     was_running = _running
     _running = True
