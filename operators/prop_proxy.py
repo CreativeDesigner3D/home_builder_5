@@ -32,10 +32,14 @@ class _Item:
 
 class Prop:
     """One setting: how to read it, how to write it, and what it is, as
-    RNA would say (type, unit, precision, range, enum items)."""
+    RNA would say (type, unit, precision, range, enum items). `solve`
+    False marks a setting that changes nothing the schema's solve reads
+    (a name), so writing it skips the solve."""
 
     def __init__(self, get, set=None, type='FLOAT', unit='NONE',
-                 precision=3, hard_min=-1e9, hard_max=1e9, items=()):
+                 precision=3, hard_min=-1e9, hard_max=1e9, items=(),
+                 solve=True):
+        self.solve = solve
         self.get = get
         self.set = set
         self.type = type
@@ -191,7 +195,7 @@ class Owner:
         if p is None or p.set is None:
             raise AttributeError("%s cannot be set" % prop)
         p.set(self._obj, value)
-        if after is not None:
+        if after is not None and p.solve:
             try:
                 after(self._obj, bpy.context)
             except Exception as ex:

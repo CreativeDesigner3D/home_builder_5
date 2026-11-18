@@ -32,8 +32,9 @@ _last_kind = None
 
 def find(context):
     """(kind, root, bay_obj, opening_obj) for a picked closet or part of
-    one, or None. `kind` is 'starter', 'bay' or 'opening' -- the
-    nearest of them above what was clicked."""
+    one, or None. `kind` is 'part' for a piece of the run picked in
+    Parts mode (the active object), else 'starter', 'bay' or
+    'opening' -- the nearest of them above what was clicked."""
     obj = context.active_object
     if obj is None or not obj.select_get():
         return None
@@ -48,6 +49,9 @@ def find(context):
         elif bay is None and o.get(types_closets.TAG_BAY_CAGE):
             bay = o
         o = o.parent
+    from . import part_page
+    if part_page.is_part(obj, root):
+        return ('part', root, bay, opening)
     if opening is not None:
         return ('opening', root, bay, opening)
     if bay is not None:
@@ -64,7 +68,7 @@ def _fold_for(context, kind):
     _last_kind = kind
     from ...operators import options_panel
     primary = {'starter': STARTER_GROUP, 'bay': BAY_GROUP,
-               'opening': OPENING_GROUP}[kind]
+               'opening': OPENING_GROUP}.get(kind)
     for key in (STARTER_GROUP, BAY_GROUP, OPENING_GROUP):
         method = 'group:' + key
         if bool(options_panel.section_expanded(context, method)) != (key == primary):
@@ -96,10 +100,48 @@ def blocks(context, item):
         trail.append(_bay_label(bay_obj))
     if opening_obj is not None:
         trail.append(_opening_label(bay_obj, opening_obj))
+    part = context.active_object if kind == 'part' else None
+    if part is not None:
+        from . import part_page
+        trail.append(part_page.label(part))
     out = [('head', (" › ".join(trail), False, None))]
     _fold_for(context, kind)
 
     from . import starter_card
+    if kind == 'part':
+        # Parts mode: the part's own page, its size and what builds it.
+        from . import part_page
+        shown = part_page.blocks(context, part, root, bay_obj, opening_obj)
+        out.extend(shown)
+        _actions(context, out, part, skip=part_page.ON_PAGE)
+        return out
+    if kind == 'starter':
+        # Starters mode: the closet's own page, its size on top and its
+        # parts in folds, with nothing of a bay or opening under it.
+        out.extend(options_panel.field_blocks(
+            context, starter_card.page_fields(root), starter_card.owner(root)))
+        _actions(context, out, root)
+        return out
+    if kind == 'bay':
+        # Bays mode: the bay's own page, what it is built as and its
+        # sizes on top, the rest in folds.
+        from . import bay_card
+        out.extend(options_panel.field_blocks(
+            context, bay_card.page_fields(bay_obj), bay_card.owner(bay_obj)))
+        # Bay Configuration is the dropdown at the top of the page.
+        _actions(context, out, bay_obj,
+                 skip=('HOME_BUILDER_MT_closet_change_bay',))
+        return out
+    if kind == 'opening':
+        # Openings mode: the opening's own page.
+        from . import opening_card
+        out.extend(options_panel.field_blocks(
+            context, opening_card.page_fields(opening_obj),
+            opening_card.owner(opening_obj)))
+        # Change Opening is the dropdown at the top of the page.
+        _actions(context, out, opening_obj,
+                 skip=('HOME_BUILDER_MT_closet_change_opening',))
+        return out
     out.extend(options_panel.field_blocks(context, (
         ('group', STARTER_GROUP, f"Closet  ({sp.closet_type.title()})",
          {'icon': 'closet_starter',
@@ -122,13 +164,31 @@ def blocks(context, item):
               'summary': lambda _ow: opening_card.fill_text(opening_obj),
               'fields': opening_card.fields(opening_obj)}),
         ), opening_card.owner(opening_obj)))
-    # The commands of what is picked: its right-click menu.
     picked = {'starter': root, 'bay': bay_obj, 'opening': opening_obj}[kind]
+    _actions(context, out, picked)
+    return out
+
+
+QUICK_FOLD = 'cl_quick_actions'
+
+
+def _actions(context, out, picked, skip=()):
+    """The commands of what is picked, from its right-click menu, in a
+    Quick Actions fold that stays closed until opened, then All Actions
+    at the foot."""
+    from ...operators import options_panel, generic_page, quick_actions
     menu = generic_page.menu_id(context.active_object) or generic_page.menu_id(picked)
     if menu:
+        fold = quick_actions.fields(
+            quick_actions.from_menu(context, menu, skip=skip), fold=QUICK_FOLD)
+        if fold:
+            if out and out[-1] != ('gap', None):
+                out.append(('gap', None))
+            out.extend(options_panel.field_blocks(context, fold, picked))
+    if out and out[-1] != ('gap', None):
         out.append(('gap', None))
-        out.extend(generic_page.command_blocks(context, menu))
-    return out
+    out.append(('actions', (("All Actions", 'home_builder.all_actions',
+                             None, None),)))
 
 
 def crumbs(context, item):
@@ -141,6 +201,9 @@ def crumbs(context, item):
     if opening_obj is not None:
         out.append((_opening_label(bay_obj, opening_obj),
                     (op, {'name': opening_obj.name, 'level': 'Openings'})))
+    if kind == 'part' and context.active_object is not None:
+        from . import part_page
+        out.append((part_page.label(context.active_object), None))
     out[-1] = (out[-1][0], None)
     return out
 

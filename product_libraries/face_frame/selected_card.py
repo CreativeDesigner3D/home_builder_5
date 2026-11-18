@@ -101,7 +101,9 @@ def _find(context):
             opening = interior_page.opening_of(part)
             if opening is not None:
                 return ('interior', root, _owning_bay(part), opening, part)
-        if generic_page.menu_id(part) == PART_MENU:
+        from . import gothic_stile
+        if (generic_page.menu_id(part) == PART_MENU
+                or part.get('hb_part_role') == gothic_stile.PART_ROLE_PIECE):
             opening = _owning(part, types_face_frame.TAG_OPENING_CAGE)
             return ('part', root, _owning_bay(part), opening, part)
     return ('cabinet', root, None, None, None)
@@ -595,6 +597,11 @@ def _act(label, op_id, kwargs=None, icon=None):
     return (label, op_id, dict(kwargs or {}), None, 1.0, icon)
 
 
+# The quick actions sit in one fold at the foot of every page, above All
+# Actions: closed until opened, so they take a line until wanted.
+QUICK_FOLD = 'ff_quick_actions'
+
+
 def _quick(owner, rows):
     """The quick actions a page leads with, a row at a time: each row is
     (action, when) pairs and keeps the ones that apply, so a pair such
@@ -610,9 +617,11 @@ def _quick(owner, rows):
             except Exception:
                 continue
             kept.append(action)
-        if kept:
-            out.append(('actions', tuple(kept), None))
-    return (('label', None, "Quick Actions"),) + tuple(out) if out else ()
+        out.extend(kept)
+    # Laid out in the sections every library uses; a pair a row names
+    # together stays side by side where both land in one section.
+    from ...operators import quick_actions
+    return quick_actions.fields(out, fold=QUICK_FOLD)
 
 
 # ---- Summaries of the folded groups ----------------------------------------
@@ -649,13 +658,15 @@ def _bay_details_summary(bp):
 
 
 # ---- Fields -----------------------------------------------------------------
-# Each scope: its size, then the quick actions, then everything else in
-# folds that say what is set in them. Every command -- the quick ones and
-# the rest -- is in All Actions at the foot of the page.
+# Each scope: its size, then everything else in folds that say what is
+# set in them, and last the quick actions in a fold of their own. Every
+# command -- the quick ones and the rest -- is in All Actions at the foot
+# of the page.
 
-def _cabinet_fields(root, cab):
+def _cabinet_quick(root, cab):
+    """The cabinet page's quick actions."""
     name = root.name
-    quick = _quick(cab, (
+    return _quick(cab, (
         ((_act("Duplicate", 'hb_face_frame.place_cabinet',
                {'source_cabinet_name': name}, 'duplicate'), _one_plain),
          (_act("Duplicate Mirror", 'hb_face_frame.place_cabinet',
@@ -678,14 +689,15 @@ def _cabinet_fields(root, cab):
          (_act("Hide Cabinet", 'hb_general.hide',
                {'scope': 'PRODUCT', 'isolate': False}), None)),
     ))
+
+
+def _cabinet_fields(root, cab):
     return (
         ('distance', 'width', "Width"),
         ('distance', 'height', "Height"),
         ('distance', 'depth', "Depth"),
         ('distance', 'height_above_floor', "Above Floor", {'when': _raised}),
         ('choices', 'anchor_side', "Anchor", {'cols': 3, 'when': _no_corner}),
-        ('gap', None, None),
-    ) + quick + (
         ('gap', None, None),
         ('group', 'ff_cab_corner', "Corner", {'icon': 'cab_corner', 'when': _corner, 'fields': (
             ('locked', 'left_depth', "Left Depth", {'unlock': 'unlock_left_depth'}),
@@ -776,12 +788,16 @@ def _cabinet_fields(root, cab):
                 ('bool', 'decorative_corner_front_right', "Front Right", {'when': _deco}),
                 ('bool', 'decorative_corner_back_left', "Back Left", {'when': _deco}),
                 ('bool', 'decorative_corner_back_right', "Back Right", {'when': _deco}),
+                ('distance', 'decorative_corner_size', "Clip Size", {'when': _clip}),
+                ('number', 'decorative_corner_ball_cuts', "Ball Cuts", {'when': _gothic}),
+                ('distance', 'decorative_corner_route_stop', "Route Stop",
+                 {'when': _gothic}),
                 ('enum', 'decorative_corner_bottom', "Bottom", {'when': _deco}),
-                ('bool', 'decorative_corner_top_detail', "Top Transition", {'when': _deco}),
+                ('bool', 'decorative_corner_top_detail', "Top Transition", {'when': _turned}),
                 ('distance', 'decorative_corner_detail_height', "Transition Height",
-                 {'when': _deco}),
+                 {'when': _turned}),
                 ('distance', 'decorative_corner_block_run', "Square Block Run",
-                 {'when': _deco}),
+                 {'when': _turned}),
             )}),
         ('group', 'ff_cab_wood_top', "Furniture Top", {
             'summary': lambda c: (_label_of(c, 'furniture_top_shape')
@@ -811,6 +827,11 @@ def _cabinet_fields(root, cab):
                 ('locked', 'bottom_rail_width', "Bottom Rail", {'unlock': 'unlock_bottom_rail'}),
                 ('locked', 'left_stile_width', "Left Stile", {'unlock': 'unlock_left_stile'}),
                 ('locked', 'right_stile_width', "Right Stile", {'unlock': 'unlock_right_stile'}),
+                ('bool', 'gothic_stile_left', "Gothic Left Stile"),
+                ('bool', 'gothic_stile_right', "Gothic Right Stile"),
+                ('enum', 'gothic_stile_type', "Gothic Type", {'when': _gothic_stile}),
+                ('number', 'gothic_ball_cuts', "Ball Cuts", {'when': _gothic_stile}),
+                ('distance', 'gothic_route_stop', "Route Stop", {'when': _gothic_stile}),
                 ('distance', 'left_scribe', "Left Scribe", {'when': _scribes}),
                 ('distance', 'right_scribe', "Right Scribe", {'when': _scribes}),
                 ('distance', 'top_scribe', "Top Scribe", {'when': _scribes}),
@@ -852,6 +873,22 @@ def _angled_summary(cab):
 
 def _deco(cab):
     return cab.decorative_corner_style != 'NONE'
+
+
+def _clip(cab):
+    return cab.decorative_corner_style in ('CLIPPED', 'GOTHIC')
+
+
+def _gothic(cab):
+    return cab.decorative_corner_style == 'GOTHIC'
+
+
+def _turned(cab):
+    return _deco(cab) and not _clip(cab)
+
+
+def _gothic_stile(cab):
+    return cab.gothic_stile_left or cab.gothic_stile_right
 
 
 def _wood_top(cab):
@@ -975,9 +1012,10 @@ def _bay_appliance_fields(bay_obj):
     )
 
 
-def _bay_fields(bay_obj, bp):
+def _bay_quick(bay_obj, bp):
+    """The bay page's quick actions."""
     index = bp.bay_index
-    quick = _quick(bp, (
+    return _quick(bp, (
         ((_act("Insert Before", 'hb_face_frame.insert_bay',
                {'bay_index': index, 'direction': 'BEFORE'},
                'cab_insert_before'), None),
@@ -993,6 +1031,9 @@ def _bay_fields(bay_obj, bp):
                'cab_flush_kick'), _is_type('BASE', 'TALL'))),
         ((_act("Finish Bay", 'hb_face_frame.finish_bay_prompts'), None),),
     ))
+
+
+def _bay_fields(bay_obj, bp):
     return (
         ('locked', 'width', "Width", {'unlock': 'unlock_width'}),
         ('locked', 'height', "Height", {'unlock': 'unlock_height'}),
@@ -1000,8 +1041,6 @@ def _bay_fields(bay_obj, bp):
         ('locked', 'kick_height', "Kick Height",
          {'unlock': 'unlock_kick_height', 'when': _has_kick}),
         ('enum', 'back_condition', "Back"),
-        ('gap', None, None),
-    ) + quick + (
         ('gap', None, None),
         ('group', 'ff_bay_appliances', "Appliances", {
             'summary': _appliance_summary, 'when': _takes_appliance,
@@ -1021,8 +1060,9 @@ def _bay_fields(bay_obj, bp):
     )
 
 
-def _opening_fields(op):
-    quick = _quick(op, (
+def _opening_quick(op):
+    """The opening page's quick actions."""
+    return _quick(op, (
         ((_act("Split Horizontal", 'hb_face_frame.split_opening', {'axis': 'H'},
                'cab_split_h'), None),
          (_act("Split Vertical", 'hb_face_frame.split_opening', {'axis': 'V'},
@@ -1034,13 +1074,14 @@ def _opening_fields(op):
         ((_act("Accessories", 'hb_face_frame.accessory_menu', None,
                'cab_accessories'), _accessories),),
     ))
+
+
+def _opening_fields(op):
     return (
         ('value', _opening_root_size, "Size"),
         ('locked', 'size', "Size",
          {'unlock': 'unlock_size', 'when': _split_child}),
     ) + front_fields() + (
-        ('gap', None, None),
-    ) + quick + (
         ('gap', None, None),
     )
 
@@ -1250,22 +1291,14 @@ def _part_blocks(context, part_obj):
             out.append(('gap', None))
         out.extend(page)
         return out
-    picked = []
-    for rec in generic_page._record(context, generic_page.menu_id(part_obj)):
-        if rec[0] == 'op':
-            label = (rec[1] or generic_page._op_label(rec[2])).rstrip('.')
-            picked.append((label, rec[2], dict(rec[3]._values), None))
-        elif rec[0] == 'menu':
-            picked.append(_menu(rec[1] or generic_page._menu_label(rec[2]),
-                                rec[2]))
-        if len(picked) == 6:
-            break
-    if picked:
+    from ...operators import options_panel, quick_actions
+    page = options_panel.field_blocks(context, quick_actions.fields(
+        quick_actions.from_menu(context, generic_page.menu_id(part_obj),
+                                limit=8), fold=QUICK_FOLD), part_obj)
+    if page:
         if out:
             out.append(('gap', None))
-        out.append(('label', "Quick Actions"))
-        for i in range(0, len(picked), 2):
-            out.append(('actions', tuple(picked[i:i + 2])))
+        out.extend(page)
     return out
 
 
@@ -1427,6 +1460,8 @@ def blocks(context, item):
     if kind == 'cabinet':
         out.extend(options_panel.field_blocks(
             context, _cabinet_fields(root, cab), cab))
+        out.extend(options_panel.field_blocks(
+            context, _cabinet_quick(root, cab), cab))
         _footer(out, 'hb_face_frame.cabinet_prompts')
     elif kind == 'bay':
         bp = bay_obj.face_frame_bay
@@ -1435,6 +1470,8 @@ def blocks(context, item):
         out.extend(bay_config.field_blocks(context, bay_obj))
         out.extend(options_panel.field_blocks(
             context, _bay_fields(bay_obj, bp), bp))
+        out.extend(options_panel.field_blocks(
+            context, _bay_quick(bay_obj, bp), bp))
         _footer(out, 'hb_face_frame.bay_prompts')
     elif kind == 'opening':
         op = opening_obj.face_frame_opening
@@ -1462,6 +1499,7 @@ def blocks(context, item):
                      {'kind': 'ROLLOUT'}))))
         out.extend(opening_group_blocks(context, opening_obj))
         out.extend(opening_overlay_blocks(context, opening_obj))
+        out.extend(options_panel.field_blocks(context, _opening_quick(op), op))
         _footer(out, 'hb_face_frame.opening_prompts')
     elif kind == 'interior':
         from . import interior_page

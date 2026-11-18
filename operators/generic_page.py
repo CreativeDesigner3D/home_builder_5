@@ -291,11 +291,15 @@ def _solve(obj, context):
     hb_utils.run_calc_fix(context, obj)
 
 
-def prompt_owner(obj, exclude=()):
+def prompt_owner(obj, exclude=(), after=None):
     """(owner, fields) for `obj`'s prompts, or (None, ()) when it has
     none. Objects with the same prompts share one schema. `exclude`
     names prompts that take more than a write (a page shows those its
-    own way, or leaves them to the dialog)."""
+    own way, or leaves them to the dialog). `after(obj, context)` runs
+    after each write in place of the plain solve, for objects whose
+    prompts need more than a recalc."""
+    if after is None:
+        after = _solve
     from . import prop_proxy
     keys = [k for k in prompt_keys(obj) if k not in exclude]
     if not keys:
@@ -314,21 +318,22 @@ def prompt_owner(obj, exclude=()):
         fields.append((kind, ident, key))
     if not fields:
         return None, ()
-    sig = tuple((f[1], props[f[1]].type, props[f[1]].unit,
-                 tuple(i.name for i in props[f[1]].enum_items)) for f in fields)
+    sig = (getattr(after, '__qualname__', ''),) + tuple(
+        (f[1], props[f[1]].type, props[f[1]].unit,
+         tuple(i.name for i in props[f[1]].enum_items)) for f in fields)
     schema = _prompt_schemas.get(sig)
     if schema is None:
         schema = 'PROMPTS_%d' % len(_prompt_schemas)
         _prompt_schemas[sig] = schema
-        prop_proxy.register(schema, props, after=_solve)
+        prop_proxy.register(schema, props, after=after)
     return prop_proxy.owner(obj, schema), tuple(fields)
 
 
 def prompt_blocks(context, obj, key, label="Prompts", open_first=True,
-                  exclude=()):
+                  exclude=(), after=None):
     """A folding group of `obj`'s prompts, or [] when it has none."""
     from . import options_panel
-    owner, fields = prompt_owner(obj, exclude)
+    owner, fields = prompt_owner(obj, exclude, after)
     if owner is None:
         return []
     method = 'group:' + key

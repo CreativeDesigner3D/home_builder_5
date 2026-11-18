@@ -1,5 +1,6 @@
 import bpy
 import math
+import re
 from ...hb_types import GeoNodeCage, GeoNodeCutpart, CabinetPartModifier
 from ... import units
 from ...units import inch
@@ -487,21 +488,17 @@ def support_frame_parts(frame_obj):
 # How far a wrapped leg stands proud of the frame it carries.
 LEG_REVEAL_KEY = 'Leg Reveal'
 
+# Run the room's base molding around the foot of each leg.
+LEG_BASE_MOLDING_KEY = 'Base Molding On Legs'
 
-def recalculate_support_frame(obj):
-    """Solve the support frame at or above ``obj``."""
-    recalculate_product(support_frame_root(obj))
+_LEG_ROLES = ('FRONT_LEFT_LEG', 'FRONT_RIGHT_LEG',
+              'BACK_LEFT_LEG', 'BACK_RIGHT_LEG')
 
 
-def _solve_support_frame(root, parts, dim_x, dim_y, dim_z):
+def _support_frame_legs(root):
+    """``{role: (on, leg type)}`` for the four corners."""
     get = root.get
-    mt = float(_prompt(root, 'Material Thickness', inch(0.75)))
-    spacing = float(_prompt(root, 'Support Spacing', inch(16)))
-    leg_w = float(_prompt(root, 'Leg Width', inch(3.5)))
-    leg_d = float(_prompt(root, 'Leg Depth', inch(3.5)))
-    leg_h = float(_prompt(root, 'Leg Height', inch(34.5)))
-
-    legs = {
+    return {
         'FRONT_LEFT_LEG': (bool(get('Front Left Leg', True)),
                            int(get('Front Left Leg Type', 0))),
         'FRONT_RIGHT_LEG': (bool(get('Front Right Leg', True)),
@@ -512,25 +509,129 @@ def _solve_support_frame(root, parts, dim_x, dim_y, dim_z):
                            int(get('Back Right Leg Type', 0))),
     }
 
+
+def _support_frame_reveals(root, legs):
+    """(left, right, front, back) hold-back of each side of the frame.
+
+    A wrapped leg can stand proud of the frame: each side of the frame
+    that runs into one is held back from the leg's outside face by the
+    reveal, so the cage stays the leg-to-leg size.
+    """
+    reveal = max(float(_prompt(root, LEG_REVEAL_KEY, 0.0)), 0.0)
+
+    def side(*roles):
+        return reveal if any(
+            legs[r][0] and legs[r][1] == LEG_TYPE_WRAPPED
+            for r in roles) else 0.0
+
+    return (side('FRONT_LEFT_LEG', 'BACK_LEFT_LEG'),
+            side('FRONT_RIGHT_LEG', 'BACK_RIGHT_LEG'),
+            side('FRONT_LEFT_LEG', 'FRONT_RIGHT_LEG'),
+            side('BACK_LEFT_LEG', 'BACK_RIGHT_LEG'))
+
+
+def _support_frame_leg_corners(dim_x, dim_y, mt, reveals):
+    """``{role: (inset corner, wrapped corner)}``: where a leg's outside
+    corner sits. An inset leg sits inside the rails by their thickness;
+    a wrapped leg sits at the cage's outside face."""
+    rv_l, rv_r, rv_f, rv_b = reveals
+    in_l, in_r = mt + rv_l, dim_x - mt - rv_r
+    in_f, in_b = -(dim_y - mt - rv_f), -(mt + rv_b)
+    return {
+        'FRONT_LEFT_LEG': ((in_l, in_f), (0.0, -dim_y)),
+        'FRONT_RIGHT_LEG': ((in_r, in_f), (dim_x, -dim_y)),
+        'BACK_LEFT_LEG': ((in_l, in_b), (0.0, 0.0)),
+        'BACK_RIGHT_LEG': ((in_r, in_b), (dim_x, 0.0)),
+    }
+
+
+def support_frame_leg_footprints(root):
+    """Where each square leg of a support frame meets the floor.
+
+    Returns ``(floor_z, [(x0, x1, y0, y1), ...])`` in the frame's own
+    coordinates, one rectangle per leg that is switched on. Turned legs
+    are left out: a turning has no flat foot to trim.
+    """
+    from ..common import turned_leg
+    if int(root.get(turned_leg.LEG_STYLE_PROP, 0) or 0) != 0:
+        return 0.0, []
+    cage = GeoNodeCage(root)
+    dim_x = cage.get_input('Dim X')
+    dim_y = cage.get_input('Dim Y')
+    dim_z = cage.get_input('Dim Z')
+    mt = float(_prompt(root, 'Material Thickness', inch(0.75)))
+    leg_w = float(_prompt(root, 'Leg Width', inch(3.5)))
+    leg_d = float(_prompt(root, 'Leg Depth', inch(3.5)))
+    leg_h = float(_prompt(root, 'Leg Height', inch(34.5)))
+    legs = _support_frame_legs(root)
+    corners = _support_frame_leg_corners(
+        dim_x, dim_y, mt, _support_frame_reveals(root, legs))
+    rects = []
+    for role in _LEG_ROLES:
+        on, leg_type = legs[role]
+        if not on:
+            continue
+        inset_xy, wrapped_xy = corners[role]
+        x, y = wrapped_xy if leg_type == LEG_TYPE_WRAPPED else inset_xy
+        # Every leg grows from its outside corner toward the middle of
+        # the frame: the leg width along the frame, the depth across it.
+        x_in = x + leg_w if 'LEFT' in role else x - leg_w
+        y_in = y + leg_d if 'FRONT' in role else y - leg_d
+        rects.append((min(x, x_in), max(x, x_in),
+                      min(y, y_in), max(y, y_in)))
+    return dim_z - leg_h, rects
+
+
+def recalculate_support_frame(obj):
+    """Solve the support frame at or above ``obj``."""
+    recalculate_product(support_frame_root(obj))
+
+
+# The Leg Style the frame's legs were last built in, so a style picked
+# anywhere (the prompts dialog, the inspector, a script) is noticed.
+LEG_STYLE_BUILT_KEY = 'hb_leg_style_built'
+
+
+def _solve_support_frame(root, parts, dim_x, dim_y, dim_z):
+    """The frame's boards, then its legs' turnings. A newly picked Leg
+    Style first sizes the legs to that style's stock blank."""
+    from ..common import turned_leg
+    styled = turned_leg.LEG_STYLE_PROP in root
+    if styled:
+        style = int(root.get(turned_leg.LEG_STYLE_PROP, 0) or 0)
+        built = root.get(LEG_STYLE_BUILT_KEY)
+        # A frame from before the stamp keeps the sizes it has.
+        if built is not None and int(built) != style:
+            turned_leg.size_frame_legs_from_style(root)
+        root[LEG_STYLE_BUILT_KEY] = style
+    _solve_support_frame_parts(root, parts, dim_x, dim_y, dim_z)
+    if styled:
+        turned_leg.sync_frame_legs(root)
+
+
+def _solve_support_frame_parts(root, parts, dim_x, dim_y, dim_z):
+    get = root.get
+    mt = float(_prompt(root, 'Material Thickness', inch(0.75)))
+    spacing = float(_prompt(root, 'Support Spacing', inch(16)))
+    leg_w = float(_prompt(root, 'Leg Width', inch(3.5)))
+    leg_d = float(_prompt(root, 'Leg Depth', inch(3.5)))
+    leg_h = float(_prompt(root, 'Leg Height', inch(34.5)))
+
+    legs = _support_frame_legs(root)
+
     def wrapped(role):
         """True when that corner carries a leg the rails must stop at."""
         on, leg_type = legs[role]
         return on and leg_type == LEG_TYPE_WRAPPED
 
-    # A wrapped leg can stand proud of the frame: each side of the frame
-    # that runs into one is held back from the leg's outside face by the
-    # reveal, so the cage stays the leg-to-leg size.
+    # Frames built before these options get them on their next solve.
     if LEG_REVEAL_KEY not in root:
         root.home_builder.add_property(LEG_REVEAL_KEY, 'DISTANCE', 0.0)
-    reveal = max(float(_prompt(root, LEG_REVEAL_KEY, 0.0)), 0.0)
-
-    def side_reveal(*roles):
-        return reveal if any(wrapped(r) for r in roles) else 0.0
-
-    rv_l = side_reveal('FRONT_LEFT_LEG', 'BACK_LEFT_LEG')
-    rv_r = side_reveal('FRONT_RIGHT_LEG', 'BACK_RIGHT_LEG')
-    rv_f = side_reveal('FRONT_LEFT_LEG', 'FRONT_RIGHT_LEG')
-    rv_b = side_reveal('BACK_LEFT_LEG', 'BACK_RIGHT_LEG')
+    if LEG_BASE_MOLDING_KEY not in root:
+        root.home_builder.add_property(LEG_BASE_MOLDING_KEY, 'CHECKBOX',
+                                       False)
+    reveals = _support_frame_reveals(root, legs)
+    rv_l, rv_r, rv_f, rv_b = reveals
 
     # How much each corner takes out of the rail running into it: the leg
     # itself where the leg wraps the frame, otherwise just the rail it
@@ -582,22 +683,21 @@ def _solve_support_frame(root, parts, dim_x, dim_y, dim_z):
                   thickness=mt, visible=count > 0)
         _set_array(part, count, -spacing)
 
-    # Legs hang from the top of the frame down to the floor. An inset leg
-    # sits inside the rails by their thickness; a wrapped leg sits at the
-    # cage's outside face, with the rails stopped short of it above.
-    in_l, in_r = mt + rv_l, dim_x - mt - rv_r
-    in_f, in_b = -(dim_y - mt - rv_f), -(mt + rv_b)
-    leg_specs = {
-        'FRONT_LEFT_LEG': ((in_l, in_f), (0.0, -dim_y), leg_w, leg_d),
-        'FRONT_RIGHT_LEG': ((in_r, in_f), (dim_x, -dim_y), leg_d, leg_w),
-        'BACK_LEFT_LEG': ((in_l, in_b), (0.0, 0.0), leg_d, leg_w),
-        'BACK_RIGHT_LEG': ((in_r, in_b), (dim_x, 0.0), leg_w, leg_d),
+    # Legs hang from the top of the frame down to the floor, with the
+    # rails stopped short of a wrapped leg above.
+    corners = _support_frame_leg_corners(dim_x, dim_y, mt, reveals)
+    leg_sizes = {
+        'FRONT_LEFT_LEG': (leg_w, leg_d),
+        'FRONT_RIGHT_LEG': (leg_d, leg_w),
+        'BACK_LEFT_LEG': (leg_d, leg_w),
+        'BACK_RIGHT_LEG': (leg_w, leg_d),
     }
-    for role, (inset_xy, wrapped_xy, width, thickness) in leg_specs.items():
+    for role, (width, thickness) in leg_sizes.items():
         part = parts.get(role)
         if part is None:
             continue
         on, leg_type = legs[role]
+        inset_xy, wrapped_xy = corners[role]
         x, y = wrapped_xy if leg_type == LEG_TYPE_WRAPPED else inset_xy
         _set_part(part, (x, y, dim_z),
                   length=leg_h, width=width, thickness=thickness,
@@ -635,6 +735,7 @@ class SupportFrame(Product):
         self.add_property('Leg Depth', 'DISTANCE', inch(3.5))
         self.add_property('Leg Height', 'DISTANCE', inch(34.5))
         self.add_property(LEG_REVEAL_KEY, 'DISTANCE', 0.0)
+        self.add_property(LEG_BASE_MOLDING_KEY, 'CHECKBOX', False)
         self.add_property('Front Left Leg Type', 'COMBOBOX', 0, combobox_items=["Inset", "Wrapped"])
         self.add_property('Front Right Leg Type', 'COMBOBOX', 0, combobox_items=["Inset", "Wrapped"])
         self.add_property('Back Left Leg Type', 'COMBOBOX', 0, combobox_items=["Inset", "Wrapped"])
@@ -1095,6 +1196,8 @@ def set_product_depth(root, depth):
 
 # A panel closing the gap under an upper's wall scribe filler.
 BOTTOM_RETURN_KEY = 'Bottom Return'
+# Whether a wall scribe filler flush with the case has a return cleat.
+FILLER_RETURN_CLEAT_KEY = 'Return Cleat'
 
 
 def _paint_product(root):
@@ -1108,38 +1211,32 @@ def _paint_product(root):
     style.apply_materials_to_cabinet(root)
 
 
-def _solve_filler_bottom_return(root, parts, dim_x, depth, mt, on):
-    """The bottom return of a filler with no kick under it: a panel
-    lying behind the face's bottom edge, from the face back to the wall,
-    made when the option is switched on and removed when it is off. Its
-    underside is finished when the bottom of the cabinet beside the
-    filler is."""
-    part = parts.get('FILLER_BOTTOM_RETURN')
+def _solve_filler_return(root, parts, role, name, z, dim_x, depth, mt, on,
+                         finish):
+    """A return lying behind a filler face's bottom (or top) edge, from
+    the face back to the wall, made when ``on`` and removed when not.
+    ``finish`` is (Finish Top, Finish Bottom). True when the part was
+    made or its finish changed, so the filler wants a repaint."""
+    part = parts.get(role)
     if not on:
         if part is not None:
-            parts.pop('FILLER_BOTTOM_RETURN')
+            parts.pop(role)
             bpy.data.objects.remove(part, do_unlink=True)
-        return
+        return False
     made = part is None
     if made:
         new = CabinetPart()
-        new.create('Bottom Return')
+        new.create(name)
         part = new.obj
         part.parent = root
-        part[PART_ROLE_KEY] = 'FILLER_BOTTOM_RETURN'
+        part[PART_ROLE_KEY] = role
         new.set_input('Mirror Y', True)
-        parts['FILLER_BOTTOM_RETURN'] = part
-    from . import scribe_fit
-    finished = scribe_fit.bottom_return_finished(root)
-    repaint = made or bool(part.get('Finish Bottom')) != finished
-    part['Finish Top'] = False
-    part['Finish Bottom'] = finished
-    _set_part(part, (0.0, 0.0, 0.0), length=dim_x, width=depth, thickness=mt)
-    if repaint:
-        try:
-            _paint_product(root)
-        except Exception:
-            pass
+        parts[role] = part
+    changed = made or (bool(part.get('Finish Top')), bool(
+        part.get('Finish Bottom'))) != tuple(finish)
+    part['Finish Top'], part['Finish Bottom'] = finish
+    _set_part(part, (0.0, 0.0, z), length=dim_x, width=depth, thickness=mt)
+    return changed
 
 
 def _solve_corner_filler(root, parts, dim_x, dim_y, dim_z):
@@ -1159,12 +1256,24 @@ def _solve_corner_filler(root, parts, dim_x, dim_y, dim_z):
     # Off over a separate toe kick platform, which runs on under it.
     kick_on = bool(root.get('Toe Kick Piece', True))
     face_y = -dim_y + (0.0 if on_doors else FRONT_THICKNESS)
+    from . import scribe_fit
     # Under an upper only: a base or tall stands on its kick or the floor.
+    # Its underside is finished when the cabinet beside it shows its
+    # bottom.
     bottom_on = bool(root.get(BOTTOM_RETURN_KEY, False)) and tkh <= 0.0
-    _solve_filler_bottom_return(root, parts, dim_x, -(face_y + mt), mt,
-                                bottom_on)
-    # The return leg stands on the bottom return.
+    repaint = _solve_filler_return(
+        root, parts, 'FILLER_BOTTOM_RETURN', 'Bottom Return', 0.0, dim_x,
+        -(face_y + mt), mt, bottom_on,
+        (False, scribe_fit.bottom_return_finished(root)))
+    # Over an upper or tall whose top is finished, a top return closes
+    # the filler over the top the same way, finished on its top face.
+    top_on = scribe_fit.top_return_wanted(root)
+    repaint = _solve_filler_return(
+        root, parts, 'FILLER_TOP_RETURN', 'Top Return', dim_z - mt, dim_x,
+        -(face_y + mt), mt, top_on, (True, False)) or repaint
+    # The return leg stands on the bottom return, under the top one.
     leg_z = tkh + (mt if bottom_on else 0.0)
+    leg_top = dim_z - (mt if top_on else 0.0)
 
     part = parts.get('FILLER_FACE')
     if part is not None:
@@ -1177,6 +1286,13 @@ def _solve_corner_filler(root, parts, dim_x, dim_y, dim_z):
                   length=tkh, width=dim_x, thickness=mt,
                   visible=tkh > 0.0 and kick_on)
 
+    # A face flush with the case is fixed from inside the cabinet, so it
+    # has no return cleat unless asked for; one in the door plane always
+    # has one. Fillers built before the option keep theirs.
+    cleat_on = on_doors or bool(root.get(FILLER_RETURN_CLEAT_KEY, True))
+    # The cleat is finished stock only where the face stands in the door
+    # plane; behind a face flush with the case it is unfinished.
+    cleat_finish = (False, on_doors)
     # The return is inside the filler's own width, so it lies against
     # the cabinet side rather than into the cabinet.
     for role, x, on in (('FILLER_LEFT_RETURN', 0.0, not cab_right),
@@ -1186,9 +1302,23 @@ def _solve_corner_filler(root, parts, dim_x, dim_y, dim_z):
             # A side panel's width runs toward -Y from where it is set,
             # so it is set at its back edge to run from the face's back
             # toward the wall.
+            if (bool(part.get('Finish Top')),
+                    bool(part.get('Finish Bottom', True))) != cleat_finish:
+                part['Finish Top'], part['Finish Bottom'] = cleat_finish
+                repaint = True
             _set_part(part, (x, face_y + mt + ret, leg_z),
-                      length=dim_z - leg_z, width=ret, thickness=mt,
-                      visible=on)
+                      length=leg_top - leg_z, width=ret, thickness=mt,
+                      visible=on and cleat_on)
+
+    # The face is banded by where it stands (edgebanding_frameless):
+    # repaint when that, or a return's finish, has changed.
+    signature = scribe_fit.finish_signature(root)
+    if repaint or root.get(scribe_fit.FINISH_SIGNATURE_KEY) != signature:
+        root[scribe_fit.FINISH_SIGNATURE_KEY] = signature
+        try:
+            _paint_product(root)
+        except Exception:
+            pass
 
     # The cage is what gets clicked, so it is drawn back to the filler
     # itself: to the face when that stands behind the door plane, and up
@@ -1238,6 +1368,7 @@ class CornerFiller(Product):
         self.add_property('Flush With Doors', 'CHECKBOX', self.flush_with_doors)
         self.add_property('Toe Kick Piece', 'CHECKBOX', self.kick_piece)
         self.add_property(BOTTOM_RETURN_KEY, 'CHECKBOX', False)
+        self.add_property(FILLER_RETURN_CLEAT_KEY, 'CHECKBOX', False)
 
     def create(self, name="Wall Scribe Filler"):
         self.create_product(name)
@@ -1483,9 +1614,20 @@ BASE_BY_OTHERS_THICKNESS_KEY = 'Base by Others Thickness'
 # cross supports are cut shorter and stand on the two cleats.
 SLEEPER_CLEAT_KEY = 'Sleeper Cleat Width'
 FLOOR_CLEAT_KEY = 'Floor Cleat Width'
+# Wall ends.
+# Corner Wall Gap: at a wall end with no filler beside it (the kick
+# carried on into a corner) the end sleeper stands this far off the
+# wall; the kick face still runs to the wall.
+# Toe Skin Scribe: a loose finished toe skin runs this much past each
+# wall end, to be scribed to the wall on site.
+CORNER_WALL_GAP_KEY = 'Corner Wall Gap'
+TOE_SKIN_SCRIBE_KEY = 'Toe Skin Scribe'
+BASE_ASSEMBLY_CORNER_WALL_GAP = inch(0.5)
+BASE_ASSEMBLY_TOE_SKIN_SCRIBE = inch(0.5)
 BASE_ASSEMBLY_OPTION_KEYS = (FINISH_REAR_KEY, LOOSE_SKIN_KEY,
                              BASE_BY_OTHERS_KEY, BASE_BY_OTHERS_THICKNESS_KEY,
-                             SLEEPER_CLEAT_KEY, FLOOR_CLEAT_KEY)
+                             SLEEPER_CLEAT_KEY, FLOOR_CLEAT_KEY,
+                             CORNER_WALL_GAP_KEY, TOE_SKIN_SCRIBE_KEY)
 BASE_ASSEMBLY_SKIN_THICKNESS = inch(0.75)
 BASE_BY_OTHERS_THICKNESS = inch(0.125)
 
@@ -1494,6 +1636,17 @@ BASE_BY_OTHERS_THICKNESS = inch(0.125)
 # cabinet fronts (the rear is held in by the same when it is finished).
 LEFT_END_EXPOSED_KEY = 'Left End Exposed'
 RIGHT_END_EXPOSED_KEY = 'Right End Exposed'
+# How each end of a base is built, chosen on the base (Add Base
+# Assemblies picks it from what is beside the end):
+# Wall -- the kick face runs on to the wall (by the Front Extension) and
+#         the end is a cross piece under the cabinet side;
+# Finished -- the end shows: a full-depth end piece, held back for a
+#         loose skin or a finish by others like the front;
+# Flush -- a full-depth end piece that butts the next base or cabinet.
+LEFT_END_CONDITION_KEY = 'Left End Condition'
+RIGHT_END_CONDITION_KEY = 'Right End Condition'
+END_CONDITIONS = ("Wall", "Finished", "Flush")
+END_WALL, END_FINISHED, END_FLUSH = range(3)
 REAR_SETBACK_KEY = 'Rear Setback'
 
 # Marks a part that ships loose to be fit on site.
@@ -1547,11 +1700,44 @@ def add_base_assembly_options(root):
             (BASE_BY_OTHERS_THICKNESS_KEY, 'DISTANCE',
              BASE_BY_OTHERS_THICKNESS),
             (SLEEPER_CLEAT_KEY, 'DISTANCE', 0.0),
-            (FLOOR_CLEAT_KEY, 'DISTANCE', 0.0)):
+            (FLOOR_CLEAT_KEY, 'DISTANCE', 0.0),
+            (CORNER_WALL_GAP_KEY, 'DISTANCE', BASE_ASSEMBLY_CORNER_WALL_GAP),
+            (TOE_SKIN_SCRIBE_KEY, 'DISTANCE', BASE_ASSEMBLY_TOE_SKIN_SCRIBE)):
         if key not in root:
             root.home_builder.add_property(key, kind, value)
     if REAR_SETBACK_KEY not in root:
         root[REAR_SETBACK_KEY] = _default_rear_setback()
+
+
+def add_end_conditions(root, left=None, right=None):
+    """Give a base its two end condition prompts, set to `left` /
+    `right`, or -- on a base built before they existed -- to what its
+    frame already was: Wall where the kick face runs on, Finished where
+    the end was found showing, Flush otherwise."""
+    for key, side, value in ((LEFT_END_CONDITION_KEY, 'Left', left),
+                             (RIGHT_END_CONDITION_KEY, 'Right', right)):
+        if value is None:
+            if key in root:
+                continue
+            if float(_prompt(root, side + ' Front Extension', 0.0)) > 0.0:
+                value = END_WALL
+            elif root.get(side + ' End Exposed', False):
+                value = END_FINISHED
+            else:
+                value = END_FLUSH
+        if key in root:
+            root[key] = value
+        else:
+            root.home_builder.add_property(key, 'COMBOBOX', value,
+                                           combobox_items=list(END_CONDITIONS))
+
+
+def end_condition(root, key):
+    try:
+        value = int(root.get(key, END_FLUSH))
+    except (TypeError, ValueError):
+        return END_FLUSH
+    return value if 0 <= value < len(END_CONDITIONS) else END_FLUSH
 
 
 def _skin_part(root, parts, role, wanted):
@@ -1601,6 +1787,12 @@ def _solve_base_assembly(root, parts, dim_x, dim_y, dim_z):
             _finish_faces(part, finish)
     spacing = float(_prompt(root, 'Support Spacing',
                             BASE_ASSEMBLY_SUPPORT_SPACING))
+    # Bases painted when the frame was banded all round lose it.
+    try:
+        from . import edgebanding_frameless
+        edgebanding_frameless.unband_base_frame(parts)
+    except Exception:
+        pass
 
     # The kick face runs on past an end under a wall scribe filler, to
     # the wall; the end itself stays under the cabinet side.
@@ -1655,11 +1847,27 @@ def _solve_base_assembly_capped(root, parts, dim_x, dim_y, dim_z, mt,
     base finish applied by others, the frame is held back from each face
     that shows -- the front, an exposed end, a finished rear -- by that
     finish's thickness, so the finished face stays where it was."""
-    if FINISH_REAR_KEY not in root:
+    if FINISH_REAR_KEY not in root or TOE_SKIN_SCRIBE_KEY not in root:
         add_base_assembly_options(root)
+    add_end_conditions(root)
     gap = max(float(_prompt(root, BACK_GAP_KEY, 0.0)), 0.0)
-    cap_l = 0.0 if ext_l > 0.0 else mt
-    cap_r = 0.0 if ext_r > 0.0 else mt
+    cond_l = end_condition(root, LEFT_END_CONDITION_KEY)
+    cond_r = end_condition(root, RIGHT_END_CONDITION_KEY)
+    # Only a wall end runs the kick face on; the others end with it.
+    if cond_l != END_WALL:
+        ext_l = 0.0
+    if cond_r != END_WALL:
+        ext_r = 0.0
+    cap_l = 0.0 if cond_l == END_WALL else mt
+    cap_r = 0.0 if cond_r == END_WALL else mt
+    # A wall end with no run-on (the kick carried into a corner) holds
+    # its end sleeper off the wall; the kick face still runs to it.
+    corner_gap = max(float(_prompt(root, CORNER_WALL_GAP_KEY, 0.0)), 0.0)
+    gap_l = corner_gap if cond_l == END_WALL and ext_l <= 0.0 else 0.0
+    gap_r = corner_gap if cond_r == END_WALL and ext_r <= 0.0 else 0.0
+    scribe = max(float(_prompt(root, TOE_SKIN_SCRIBE_KEY, 0.0)), 0.0)
+    scribe_l = scribe if cond_l == END_WALL else 0.0
+    scribe_r = scribe if cond_r == END_WALL else 0.0
 
     finish_rear = bool(_prompt(root, FINISH_REAR_KEY, False))
     by_others = bool(_prompt(root, BASE_BY_OTHERS_KEY, False))
@@ -1674,11 +1882,17 @@ def _solve_base_assembly_capped(root, parts, dim_x, dim_y, dim_z, mt,
     else:
         hold = skin_t if skinned else 0.0
 
-    # An end under a wall scribe filler is at the wall: it never shows.
-    shows_l = bool(root.get(LEFT_END_EXPOSED_KEY, False)) and ext_l <= 0.0
-    shows_r = bool(root.get(RIGHT_END_EXPOSED_KEY, False)) and ext_r <= 0.0
+    shows_l = cond_l == END_FINISHED
+    shows_r = cond_r == END_FINISHED
+    root[LEFT_END_EXPOSED_KEY] = shows_l
+    root[RIGHT_END_EXPOSED_KEY] = shows_r
     x_l = hold if shows_l else 0.0
     x_r = dim_x - (hold if shows_r else 0.0)
+    # The kick face's ends; the rest of the frame stands in from a
+    # corner wall by its gap.
+    face_l, face_r = x_l, x_r
+    x_l += gap_l
+    x_r -= gap_r
     y_front = -dim_y + hold
     if finish_rear:
         # The finished rear stands in from the cabinet backs by the
@@ -1696,8 +1910,8 @@ def _solve_base_assembly_capped(root, parts, dim_x, dim_y, dim_z, mt,
 
     part = parts.get('BASE_FRONT')
     if part is not None:
-        _set_part(part, (x_l + cap_l - ext_l, y_front, 0.0),
-                  length=x_r - x_l + ext_l + ext_r - cap_l - cap_r,
+        _set_part(part, (face_l + cap_l - ext_l, y_front, 0.0),
+                  length=face_r - face_l + ext_l + ext_r - cap_l - cap_r,
                   width=dim_z, thickness=mt)
 
     part = parts.get('BASE_BACK')
@@ -1775,13 +1989,13 @@ def _solve_base_assembly_capped(root, parts, dim_x, dim_y, dim_z, mt,
                       length=clear, width=floor_cleat, thickness=mt)
 
     # Loose skins: the front and the rear run the full length, the kick
-    # face's run under a wall filler included; an end skin stands
-    # between them.
+    # face's run under a wall filler included, and on past a wall end
+    # by the scribe; an end skin stands between them.
     part = _skin_part(root, parts, 'LOOSE_KICK_FRONT', skinned)
     if part is not None:
-        _set_part(part, (-ext_l, -dim_y, 0.0),
-                  length=dim_x + ext_l + ext_r, width=dim_z,
-                  thickness=skin_t)
+        _set_part(part, (-ext_l - scribe_l, -dim_y, 0.0),
+                  length=dim_x + ext_l + ext_r + scribe_l + scribe_r,
+                  width=dim_z, thickness=skin_t)
 
     part = _skin_part(root, parts, 'LOOSE_KICK_REAR', skinned and finish_rear)
     if part is not None:
@@ -1794,6 +2008,46 @@ def _solve_base_assembly_capped(root, parts, dim_x, dim_y, dim_z, mt,
         if part is not None:
             _set_part(part, (x, y_cap, 0.0),
                       length=cap_len, width=dim_z, thickness=skin_t)
+
+    _name_base_frame(parts, cond_l, cond_r, ext_l + gap_l, ext_r + gap_r,
+                     gap, finish_rear)
+
+
+def _inch_text(value):
+    """A length as the shop reads it in a part name: 1.5", 0.25"."""
+    return "%g\"" % round(value / inch(1.0), 4)
+
+
+def _rename_part(obj, name):
+    """Give a part a new name, leaving it alone when it already has it
+    (Blender's .001 suffix aside), so a re-solve doesn't churn names."""
+    if obj is None:
+        return
+    if re.sub(r'\.\d{3}$', '', obj.name) != name:
+        obj.name = name
+
+
+def _name_base_frame(parts, cond_l, cond_r, tab_l, tab_r, gap, finish_rear):
+    """Name the frame parts so the cut list says how to put it
+    together without a drawing: how far each wall-end sleeper sets in
+    from the end of the kick face (its tab), the gap left behind the
+    back rail, and whether each full end is finished or flush."""
+    _rename_part(parts.get('BASE_FRONT'), "Front Toe Kick")
+    if finish_rear:
+        back = "Back Toe Kick[Finished]"
+    else:
+        back = "Back Toe Kick[%s Gap]" % _inch_text(gap)
+    _rename_part(parts.get('BASE_BACK'), back)
+    for role, side, cond, tab in (('BASE_LEFT_END', "Left", cond_l, tab_l),
+                                  ('BASE_RIGHT_END', "Right", cond_r, tab_r)):
+        if cond == END_WALL:
+            name = "%s Sleeper[%s Tab]" % (side, _inch_text(tab))
+        elif cond == END_FINISHED:
+            name = "%s Finished End" % side
+        else:
+            name = "%s Flush End" % side
+        _rename_part(parts.get(role), name)
+    _rename_part(parts.get('BASE_SUPPORT'), "Sleeper")
 
 
 class BaseAssembly(Product):
@@ -1826,6 +2080,7 @@ class BaseAssembly(Product):
         self.add_property('Right Front Extension', 'DISTANCE', 0.0)
         self.add_property(BACK_GAP_KEY, 'DISTANCE', BASE_ASSEMBLY_BACK_GAP)
         add_base_assembly_options(self.obj)
+        add_end_conditions(self.obj, END_FLUSH, END_FLUSH)
 
         self.add_part('Front', 'BASE_FRONT', rotation=(90, 0, 0), mirror='Z',
                       finish=BASE_ASSEMBLY_FINISH['BASE_FRONT'])

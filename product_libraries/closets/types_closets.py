@@ -6430,7 +6430,21 @@ class ClosetStarter(GeoNodeCage):
             if uid not in keep:
                 _remove_part_tree(obj)
 
+    def _run_top_height(self, layout, sp):
+        """Where the run's own top sits: the run height, unless every
+        bay stands on the floor at one height of its own - then the
+        panels all finish there and the top goes with them. A stepped
+        run keeps the run height."""
+        bays = (layout or {}).get('bays') or []
+        if not bays or not all(b.get('floor') for b in bays):
+            return sp.height
+        tops = [b['z0'] + b['height'] for b in bays]
+        if max(tops) - min(tops) > _BAY_CTOP_TOL:
+            return sp.height
+        return tops[0]
+
     def _layout_starter_parts(self, layout, scene_props, sp):
+        self._top_height = self._run_top_height(layout, sp)
         # Only a unit with a top to cap takes a countertop - a base run
         # or an island. A tall or hanging unit finishes at its own top
         # shelf, so the prompt is not offered there and a value left on
@@ -6463,7 +6477,7 @@ class ClosetStarter(GeoNodeCage):
             oh_r = sp.countertop_overhang_right
             oh_f = sp.countertop_overhang_front
             oh_b = sp.countertop_overhang_rear
-            ctop.location = (-oh_l, oh_b, sp.height)
+            ctop.location = (-oh_l, oh_b, self._top_height)
             part.set_input('Length', sp.width + oh_l + oh_r)
             part.set_input('Width', sp.depth + oh_f + oh_b)
             part.set_input('Thickness', sp.countertop_thickness)
@@ -6520,7 +6534,7 @@ class ClosetStarter(GeoNodeCage):
         thk = sp.countertop_thickness
         run = sp.width + oh_l + oh_r
         reach = abs(sp.depth + oh_f + oh_b - thk)
-        z = sp.height + thk
+        z = getattr(self, '_top_height', sp.height) + thk
         specs = (
             ('REAR', on, "Backsplash",
              (-oh_l, oh_b, z), 0.0, run, True),

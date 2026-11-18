@@ -41,6 +41,7 @@ TAG_FIXED_SHELF = 'IS_FRAMELESS_INTERIOR_SPLITTER_VERTICAL'    # sections stack
 TAG_DIVISION = 'IS_FRAMELESS_INTERIOR_SPLITTER_HORIZONTAL'     # side by side
 
 SPLIT_SCHEMA = 'FL_INTERIOR_SPLIT'
+EXTRAS_SCHEMA = 'FL_INTERIOR_EXTRAS'
 
 PART_FILL = (0.78, 0.66, 0.48, 0.95)        # wood
 BAR_FILL = (0.55, 0.45, 0.32, 1.0)          # fixed shelves and divisions
@@ -697,6 +698,240 @@ def _register_schema():
     })
 
 
+# ---- What the interior dialog held ------------------------------------------
+# Coat hooks, shoe shelves and an items interior's list (shelves,
+# roll-outs, tray dividers, a rod) with each item's settings, so the page
+# is the one place an interior is edited.
+
+def _solve_after(obj, context):
+    _solve(obj)
+
+
+def _hooked(owner):
+    return int(owner.id_data.get('Coat Hooks', 0) or 0) > 0
+
+
+def _hook_summary(owner):
+    count = int(owner.id_data.get('Coat Hooks', 0) or 0)
+    return "%d" % count if count else "None"
+
+
+def _register_extras_schema():
+    from ...operators import prop_proxy as P
+    from . import closet_parts
+
+    def count_get(obj):
+        try:
+            return int(obj.get(closet_parts.HOOK_COUNT_KEY, 0) or 0)
+        except (TypeError, ValueError):
+            return 0
+
+    def count_set(obj, value):
+        # An interior that never had hooks keeps no prompts for them.
+        if not int(value) and closet_parts.HOOK_COUNT_KEY not in obj:
+            return
+        obj[closet_parts.HOOK_COUNT_KEY] = int(value)
+        if closet_parts.HOOK_HEIGHT_KEY not in obj:
+            obj[closet_parts.HOOK_HEIGHT_KEY] = 0.0
+        if closet_parts.HOOK_STYLE_KEY not in obj:
+            obj[closet_parts.HOOK_STYLE_KEY] = _HOOK_STYLES[0][0]
+
+    def style_get(obj):
+        value = obj.get(closet_parts.HOOK_STYLE_KEY, _HOOK_STYLES[0][0])
+        return value if value in {k for k, _n in _HOOK_STYLES} else _HOOK_STYLES[0][0]
+
+    def style_set(obj, value):
+        obj[closet_parts.HOOK_STYLE_KEY] = value
+
+    P.register(EXTRAS_SCHEMA, {
+        'hook_count': P.computed(count_get, count_set, type='INT',
+                                 hard_min=0, hard_max=12),
+        'hook_style': P.computed(style_get, style_set, type='ENUM',
+                                 items=_HOOK_STYLES),
+        'hook_height': P.length(closet_parts.HOOK_HEIGHT_KEY),
+        'shoe_qty': P.number(closet_parts.SHOE_QTY_KEY, hard_max=20),
+        'shoe_angle': P.number(closet_parts.SHOE_ANGLE_KEY, 15, hard_max=45),
+        'shoe_stop': P.length(closet_parts.SHOE_STOP_KEY, units.inch(1.5)),
+    }, after=_solve_after)
+
+
+_HOOK_STYLES = [('Hook Coat.blend', "Coat Hook"),
+                ('Hook Double.blend', "Double Hook"),
+                ('Hook Waterfall.blend', "Waterfall Hook")]
+
+_SHOE_FIELDS = (('number', 'shoe_qty', "Shelves (0 = Auto)", 'Shoe Shelf Quantity'),
+                ('number', 'shoe_angle', "Angle (degrees)", 'Shoe Shelf Angle'),
+                ('distance', 'shoe_stop', "Shoe Stop", 'Shoe Stop Height'))
+
+
+# The item settings a frameless interior reads.
+_ITEM_SETTINGS = frozenset((
+    'unlock_shelf_qty', 'shelf_qty', 'shelf_setback', 'bottom_offset',
+    'unlock_qty', 'qty', 'pullout_thickness', 'distance_between',
+    'bottom_gap', 'item_setback', 'hide_rollout_spacers',
+    'rollout_spacer_height', 'rollout_depth', 'rollout_bottom_fixed',
+    'finger_scoop', 'tray_qty', 'tray_remove_shelf', 'tray_opening_height',
+    'tray_divider_thickness', 'tray_setback', 'rod_distance_from_top'))
+
+
+def _box_name(j, n):
+    if n > 1 and j == 0:
+        return "Top Box"
+    if n > 1 and j == n - 1:
+        return "Bottom Box"
+    return "Box %d" % (j + 1)
+
+
+def _rollout_blocks(context, it, item_index, inner):
+    """A roll-out's boxes: each with its height and a remove, Add Box,
+    and the picked box's height and U notch."""
+    from ...operators import options_panel
+    us = context.scene.unit_settings
+    boxes = it.rollout_boxes
+    n = len(boxes)
+    out = []
+    for j, box in enumerate(boxes):
+        def click(j=j, it=it):
+            it.rollout_boxes_index = j
+        out.append(('list_row', {
+            'key': ('fl_rollout_box', inner.name, item_index, j),
+            'text': _box_name(j, n),
+            'summary': units.unit_to_string(us, box.height),
+            'active': j == it.rollout_boxes_index,
+            'click': click,
+            'remove': ('hb_frameless.remove_rollout_box',
+                       {'item_index': item_index, 'box_index': j,
+                        'interior_name': inner.name}),
+            'confirm': False,
+        }))
+    out.append(('actions', (
+        _act("Add Box", 'hb_frameless.add_rollout_box',
+             {'item_index': item_index, 'interior_name': inner.name}),
+    )))
+    j = it.rollout_boxes_index
+    if 0 <= j < n:
+        out.extend(options_panel.field_blocks(context, (
+            ('enum', 'height_preset', "%s Height" % _box_name(j, n)),
+            ('distance', 'height', "Custom Height",
+             {'when': lambda o: o.height_preset == 'CUSTOM'}),
+            ('bool', 'sink_duo', "U-Shaped Box"),
+            ('distance', 'sink_duo_notch_width', "Notch Width",
+             {'when': lambda o: o.sink_duo}),
+            ('distance', 'sink_duo_notch_depth', "Notch Depth (0 = Auto)",
+             {'when': lambda o: o.sink_duo}),
+        ), boxes[j]))
+    return out
+
+
+def _add_item_entries(interior_name):
+    from ...operators import generic_page
+
+    def entries(_context):
+        return [(label, 'hb_frameless.add_interior_item',
+                 {'kind': ident, 'interior_name': interior_name})
+                for ident, label in generic_page._enum_items(
+                    'hb_frameless.add_interior_item', 'kind')
+                if ident != 'ACCESSORY']
+    return entries
+
+
+def _items_blocks(context, inner):
+    """An items interior's list, the picked item's settings, and the box
+    construction and slides its roll-outs are built to."""
+    from ...operators import options_panel
+    from ..face_frame import interior_page as ff_page, accessory_place
+    from . import interior_items
+    props = interior_items.item_props(inner)
+    items = props.interior_items
+    shown = [(i, it) for i, it in enumerate(items) if it.kind != 'ACCESSORY']
+    out = [('gap', None), ('label', "Interior Items")]
+    if not shown:
+        out.append(('note', "Nothing yet -- add something below"))
+    for i, it in shown:
+        def click(i=i, props=props):
+            props.interior_items_index = i
+        out.append(('list_row', {
+            'key': ('fl_interior_item', inner.name, i),
+            'text': ff_page._item_label(it),
+            'summary': ff_page._summary(it),
+            'active': i == props.interior_items_index,
+            'click': click,
+            'remove': ('hb_frameless.remove_interior_item',
+                       {'index': i, 'interior_name': inner.name}),
+            'confirm': False,
+        }))
+    out.append(('actions', (
+        _act("Shelves", 'hb_frameless.add_interior_item',
+             {'kind': 'ADJUSTABLE_SHELF', 'interior_name': inner.name}),
+        _act("Roll-outs", 'hb_frameless.add_interior_item',
+             {'kind': 'ROLLOUT', 'interior_name': inner.name}),
+        ("Add...", _add_item_entries(inner.name), None, None),
+    )))
+    idx = props.interior_items_index
+    if not any(i == idx for i, _it in shown) and shown:
+        idx = shown[0][0]
+    if any(i == idx for i, _it in shown):
+        it = items[idx]
+        out.append(('gap', None))
+        out.append(('label', ff_page._item_label(it)))
+        if it.kind == 'ROLLOUT':
+            out.extend(_rollout_blocks(context, it, idx, inner))
+        # The item's own settings, as the face frame page lists them:
+        # without its type (changed from Change Interior here), and only
+        # the ones a frameless interior is built from.
+        fields = tuple(f for f in ff_page._item_fields(it, idx, inner.name)[1:]
+                       if f[0] == 'value' or (isinstance(f[1], str)
+                                              and f[1] in _ITEM_SETTINGS))
+        out.extend(options_panel.field_blocks(context, fields, it))
+    if any(it.kind == 'ROLLOUT' for _i, it in shown):
+        ops_cabinet = accessory_place.ops_cabinet
+        picks = []
+        options = ops_cabinet.drawer_box_construction_options()
+        if options:
+            picks.append(accessory_place._option_pick(
+                'CONSTRUCTION', "Box Construction", options,
+                ops_cabinet.drawer_box_construction_label, [inner]))
+        options = ops_cabinet.drawer_slides_options()
+        if options:
+            picks.append(accessory_place._option_pick(
+                'SLIDES', "Slides", options, ops_cabinet.drawer_slides_label,
+                [inner]))
+        if picks:
+            out.append(('gap', None))
+            out.extend(picks)
+    return out
+
+
+def extras_blocks(context, inner):
+    """Shoe shelves, the item list and coat hooks of one interior."""
+    from ...operators import generic_page, options_panel, prop_proxy
+    from . import interior_items
+    owner = prop_proxy.owner(inner, EXTRAS_SCHEMA)
+    listed = set(generic_page.prompt_keys(inner))
+    out = []
+    if inner.get('IS_FRAMELESS_SHOE_SHELVES'):
+        # The ones the settings above do not already list.
+        fields = tuple((kind, name, label) for kind, name, label, key
+                       in _SHOE_FIELDS if key not in listed)
+        if fields:
+            out.extend(options_panel.field_blocks(context, (
+                ('group', 'fl_interior_shoes', "Shoe Shelves", {'fields': fields}),
+            ), owner))
+    if interior_items.is_items_interior(inner):
+        out.extend(_items_blocks(context, inner))
+    if 'Coat Hooks' not in listed:
+        out.extend(options_panel.field_blocks(context, (
+            ('group', 'fl_interior_hooks', "Coat Hooks", {
+                'summary': _hook_summary, 'fields': (
+                    ('number', 'hook_count', "Hooks"),
+                    ('enum', 'hook_style', "Hook", {'when': _hooked}),
+                    ('distance', 'hook_height', "Height (0 = Near Top)",
+                     {'when': _hooked}),
+                )}),
+        ), owner))
+    return out
+
+
 def _bar_blocks(context, part):
     from ...operators import options_panel, prop_proxy
     splitter, index = part.parent, bar_index(part)
@@ -737,6 +972,7 @@ def _target_blocks(context, host, target):
     if inner is not None and not is_splitter(inner):
         out.extend(generic_page.prompt_blocks(
             context, inner, 'fl_interior_prompts', "Interior Settings"))
+        out.extend(extras_blocks(context, inner))
     out.append(('gap', None))
     out.append(('label', "Split this %s" % where))
     row = [_cmd("Fixed Shelf", target, 'SPLIT', 'FIXED_SHELF', icon='cab_split_h'),
@@ -973,6 +1209,7 @@ def register():
     for cls in classes:
         bpy.utils.register_class(cls)
     _register_schema()
+    _register_extras_schema()
 
 
 def unregister():
@@ -981,6 +1218,7 @@ def unregister():
     try:
         from ...operators import prop_proxy
         prop_proxy.unregister(SPLIT_SCHEMA)
+        prop_proxy.unregister(EXTRAS_SCHEMA)
     except Exception:
         pass
     for cls in reversed(classes):

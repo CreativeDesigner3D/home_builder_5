@@ -285,7 +285,7 @@ class BaseCabinet(Cabinet):
 
         split = SplitterVertical()
         split.splitter_qty = 1
-        split.opening_sizes = [props.top_drawer_front_height, 0]
+        split.opening_sizes = [FrontHeight(props.top_drawer_front_height), 0]
         split.opening_inserts = [front, doors]
         self.add_cage_to_bay(split)
         self.obj['IS_SINK_CABINET'] = True
@@ -309,7 +309,7 @@ class BaseCabinet(Cabinet):
 
         door_drawer = SplitterVertical()
         door_drawer.splitter_qty = 1
-        door_drawer.opening_sizes = [props.top_drawer_front_height,0]
+        door_drawer.opening_sizes = [FrontHeight(props.top_drawer_front_height), 0]
         door_drawer.opening_inserts = [drawer,door]
         self.add_cage_to_bay(door_drawer)
     
@@ -323,7 +323,7 @@ class BaseCabinet(Cabinet):
         if equal_drawer_stack_heights:
             top_drawer_height = 0 # 0 means equal height
         else:
-            top_drawer_height = props.top_drawer_front_height
+            top_drawer_height = FrontHeight(props.top_drawer_front_height)
 
         door_drawer = SplitterVertical()
         door_drawer.splitter_qty = count - 1
@@ -868,6 +868,12 @@ class CabinetBay(GeoNodeCage):
         self.obj.display_type = 'WIRE'
 
 
+class FrontHeight(float):
+    """An entry of ``SplitterVertical.opening_sizes`` that is the height
+    of the opening's front, not of the opening: the solver takes the
+    front's overlays off it."""
+
+
 class SplitterVertical(GeoNodeCage):
 
     splitter_qty = 1
@@ -936,6 +942,9 @@ class SplitterVertical(GeoNodeCage):
                 oh = opening_calculator.get_calculator_prompt('Opening ' + str(i) + ' Height')
                 oh.equal = False
                 oh.distance_value = self.opening_sizes[i-1]
+                if isinstance(self.opening_sizes[i-1], FrontHeight):
+                    key = solver_frameless.front_height_keys(i)[0]
+                    self.obj[key] = float(self.opening_sizes[i-1])
 
 
 
@@ -1034,7 +1043,7 @@ class CabinetOpening(GeoNodeCage):
         self.add_property("Half Overlay Left",'CHECKBOX',self.half_overlay_left)
         self.add_property("Half Overlay Right",'CHECKBOX',self.half_overlay_right)
         self.add_property("Inset Reveal",'DISTANCE',inch(.125))
-        self.add_property("Top Reveal",'DISTANCE',inch(.0625))
+        self.add_property("Top Reveal",'DISTANCE',inch(.125))
         self.add_property("Bottom Reveal",'DISTANCE',inch(0))
         self.add_property("Left Reveal",'DISTANCE',inch(.0625))
         self.add_property("Right Reveal",'DISTANCE',inch(.0625))
@@ -2048,7 +2057,7 @@ def _add_angled_face_door(cabinet):
     angled end), hinged left or right; the solver places it."""
     cabinet.add_property('Front Thickness', 'DISTANCE', inch(.75))
     cabinet.add_property('Door to Cabinet Gap', 'DISTANCE', inch(.125))
-    cabinet.add_property('Top Reveal', 'DISTANCE', inch(.0625))
+    cabinet.add_property('Top Reveal', 'DISTANCE', inch(.125))
     cabinet.add_property('Bottom Reveal', 'DISTANCE', inch(0))
     cabinet.add_property('Outer Reveal', 'DISTANCE', inch(.0625))
     cabinet.add_property("Door Swing", 'COMBOBOX', 0, combobox_items=["Left", "Right"])
@@ -2129,7 +2138,7 @@ class CornerCabinet(Cabinet):
         self.add_property('Half Overlay Top', 'CHECKBOX', False)
         self.add_property('Half Overlay Bottom', 'CHECKBOX', False)
         self.add_property('Half Overlay Outer', 'CHECKBOX', False)
-        self.add_property('Top Reveal', 'DISTANCE', inch(.0625))
+        self.add_property('Top Reveal', 'DISTANCE', inch(.125))
         self.add_property('Bottom Reveal', 'DISTANCE', inch(0))
         self.add_property('Outer Reveal', 'DISTANCE', inch(.0625))
         self.add_property('Vertical Gap', 'DISTANCE', inch(.125))

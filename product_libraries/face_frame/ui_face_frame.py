@@ -506,17 +506,40 @@ def draw_construction(layout, cab_props):
             row = col.row(align=True)
             row.prop(cab_props, 'decorative_corner_back_left', toggle=True)
             row.prop(cab_props, 'decorative_corner_back_right', toggle=True)
-            # Posts are 2" x 2" only, so no size field:
+            # Turned posts are 2" x 2" only, so they get no size field:
             # the bottom detail's square base and the crown block run
-            # are the two lengths a job actually varies.
+            # are the two lengths a job actually varies. Clipped
+            # corners come in any size and have no details.
+            style = cab_props.decorative_corner_style
+            clipped = style in ('CLIPPED', 'GOTHIC')
             col = dcbox.column(align=True)
+            if clipped:
+                col.prop(cab_props, 'decorative_corner_size',
+                         text="Clip Size")
+            if style == 'GOTHIC':
+                col.prop(cab_props, 'decorative_corner_ball_cuts',
+                         text="Ball Cuts")
+                col.prop(cab_props, 'decorative_corner_route_stop',
+                         text="Route Stop")
             col.prop(cab_props, 'decorative_corner_bottom', text="Bottom")
-            col.prop(cab_props, 'decorative_corner_top_detail',
-                     text="Top Transition Detail")
-            col.prop(cab_props, 'decorative_corner_detail_height',
-                     text="Transition Detail Height")
-            col.prop(cab_props, 'decorative_corner_block_run',
-                     text="Square Block Run")
+            if not clipped:
+                col.prop(cab_props, 'decorative_corner_top_detail',
+                         text="Top Transition Detail")
+                col.prop(cab_props, 'decorative_corner_detail_height',
+                         text="Transition Detail Height")
+                col.prop(cab_props, 'decorative_corner_block_run',
+                         text="Square Block Run")
+        # Gothic stiles: ball cuts down a widened end stile (the flat
+        # face frame counterpart of the Gothic clipped corner).
+        col = dcbox.column(align=True)
+        col.label(text="Gothic Stiles")
+        row = col.row(align=True)
+        row.prop(cab_props, 'gothic_stile_left', text="Left", toggle=True)
+        row.prop(cab_props, 'gothic_stile_right', text="Right", toggle=True)
+        if cab_props.gothic_stile_left or cab_props.gothic_stile_right:
+            col.prop(cab_props, 'gothic_stile_type', text="Type")
+            col.prop(cab_props, 'gothic_ball_cuts', text="Ball Cuts")
+            col.prop(cab_props, 'gothic_route_stop', text="Route Stop")
 
     # Furniture wood top sits at the bottom - a finishing option layered
     # on after the carcass, ends, and any extensions are set.
@@ -650,7 +673,8 @@ def draw_wedge(layout, root):
     When enabled the three calc inputs are shown as live props (their
     update callback re-runs recalc, so the chamfer tracks edits); the
     calculator dialog is still available for the guided preview."""
-    if root.get('CLASS_NAME') != 'RefrigeratorCabinet':
+    if root.get('CLASS_NAME') not in ('RefrigeratorCabinet',
+                                      'LaundryCabinet'):
         return
     cab = root.face_frame_cabinet
     box = layout.box()

@@ -31,7 +31,6 @@ from ... import hb_utils, hb_project, units
 
 SOURCE_KEY = 'FRAMELESS'
 
-CABINET_GROUP = 'fl_cabinet'
 BAY_GROUP = 'fl_bay'
 OPENING_GROUP = 'fl_opening'
 PRODUCT_GROUP = 'fl_product'
@@ -42,6 +41,8 @@ PRODUCT_SCHEMA = 'FL_PRODUCT'
 MISC_PART_SCHEMA = 'FL_MISC_PART'
 PART_EDGES_SCHEMA = 'FL_PART_EDGES'
 PART_EDGES_GROUP = 'fl_part_edges'
+FRONT_SCHEMA = 'FL_FRONT'
+DOOR_STYLE_PREFIX = 'FL_DOOR_STYLE_'
 STYLE_PREFIX = 'FL_STYLE_'
 SCOPE_PREFIX = 'FL_SCOPE_'
 
@@ -52,10 +53,8 @@ TAG_INTERIOR = 'IS_FRAMELESS_INTERIOR_CAGE'
 TOE_KICK_TYPES = ("Notch Ends to Floor", "Ladder Style", "Floating",
                   "Leg Levelers")
 
-# Prompts that take more than a write -- a toe kick type swaps parts, a
-# finished interior repaints the cabinet: the Toe Kick group and the
-# dialog handle them.
-_DIALOG_ONLY = ('Toe Kick Type', 'Finished Interior')
+FINISHED_BOTTOMS = ("None", "1/4\" Panel", "3/4\" Panel")
+
 
 
 # ---- Finding what is picked -------------------------------------------------
@@ -298,6 +297,11 @@ def _drawer_look():
 # ---- Schemas ----------------------------------------------------------------
 
 def _solve(obj, context):
+    try:
+        obj.name
+    except ReferenceError:
+        # Rebuilt away by the change (a new front replaces its insert).
+        return
     hb_utils.run_calc_fix(context, obj)
 
 
@@ -329,6 +333,62 @@ def _toe_kick_type():
         items=[(str(i), label) for i, label in enumerate(TOE_KICK_TYPES)])
 
 
+# Which part of a cabinet stays put when its width is typed, as on a face
+# frame cabinet: the left edge (the cabinet grows to the right, as it
+# always has), the centreline, or the right edge. Kept on the cabinet.
+ANCHOR_KEY = 'HB_ANCHOR_SIDE'
+ANCHOR_SIDES = (('LEFT', "Left"), ('CENTER', "Center"), ('RIGHT', "Right"))
+_ANCHOR_SHARE = {'CENTER': 0.5, 'RIGHT': 1.0}
+
+
+def _anchor_side():
+    from ...operators import prop_proxy
+
+    def get(obj):
+        value = obj.get(ANCHOR_KEY, 'LEFT')
+        return value if value in _ANCHOR_SHARE or value == 'LEFT' else 'LEFT'
+
+    def set(obj, value):
+        if value == 'LEFT':
+            obj.pop(ANCHOR_KEY, None)
+        else:
+            obj[ANCHOR_KEY] = value
+    return prop_proxy.computed(get, set, type='ENUM', items=list(ANCHOR_SIDES))
+
+
+def _width_axis(obj):
+    """The way the cabinet's width grows, in its parent's space."""
+    from mathutils import Vector
+    axis = obj.matrix_basis.to_3x3() @ Vector((1.0, 0.0, 0.0))
+    return axis.normalized() if axis.length > 1e-9 else Vector((1.0, 0.0, 0.0))
+
+
+def _cabinet_width():
+    """The cabinet's width. Anchored right the cabinet moves by the
+    change so its right edge holds; anchored centre by half of it."""
+    from ...operators import prop_proxy
+
+    def get(obj):
+        try:
+            return float(_cage(obj).get_input('Dim X'))
+        except Exception:
+            return 0.0
+
+    def set(obj, value):
+        cage = _cage(obj)
+        old = float(cage.get_input('Dim X'))
+        share = _ANCHOR_SHARE.get(obj.get(ANCHOR_KEY, 'LEFT'), 0.0)
+        if share and not obj.get('IS_CORNER_CABINET'):
+            obj.location -= _width_axis(obj) * ((float(value) - old) * share)
+        cage.set_input('Dim X', float(value))
+    return prop_proxy.computed(get, set, unit='LENGTH', precision=4,
+                               hard_min=0.0)
+
+
+def _straight(owner):
+    return not owner.id_data.get('IS_CORNER_CABINET')
+
+
 def _cabinet_height():
     """The cabinet's height; an upper keeps its top or bottom in place
     by the room's setting."""
@@ -345,6 +405,238 @@ def _cabinet_height():
         types_frameless.set_cabinet_height(obj, float(value))
     return prop_proxy.computed(get, set, unit='LENGTH', precision=4,
                                hard_min=0.0)
+
+
+def _upper_box(owner):
+    """A straight upper cabinet: the one kind a panel is applied under."""
+    from . import solver_frameless
+    obj = owner.id_data
+    return (not obj.get('IS_CORNER_CABINET')
+            and solver_frameless.carcass_kind(obj) == 'UPPER')
+
+
+def _fb_on(owner):
+    from . import solver_frameless
+    return _upper_box(owner) and bool(
+        owner.id_data.get(solver_frameless.FINISHED_BOTTOM_KEY))
+
+
+def _fb_led(owner):
+    from . import solver_frameless
+    return _fb_on(owner) and bool(
+        owner.id_data.get(solver_frameless.FB_LED_KEY))
+
+
+def _fb_summary(owner):
+    from . import solver_frameless
+    number = int(owner.id_data.get(solver_frameless.FINISHED_BOTTOM_KEY, 0) or 0)
+    text = FINISHED_BOTTOMS[number] if 0 <= number < len(FINISHED_BOTTOMS) else ""
+    if number and owner.id_data.get(solver_frameless.FB_LED_KEY):
+        text += ", LED route"
+    return text
+
+
+def _construction_summary(owner):
+    obj = owner.id_data
+    said = []
+    if 'Toe Kick Height' in obj:
+        kind = int(obj.get('Toe Kick Type', 0) or 0)
+        name = TOE_KICK_TYPES[kind] if 0 <= kind < len(TOE_KICK_TYPES) else ""
+        said.append(f"{_dist(obj['Toe Kick Height'])} kick" +
+                    (f" ({name})" if name else ""))
+    said.extend(label for key, label in (('Remove Bottom', "No bottom"),
+                                         ('Finished Interior', "Finished interior"))
+                if obj.get(key))
+    return " · ".join(said) or "Standard"
+
+
+def _leg_levelers(owner):
+    return 'Leg Leveler Inset' in owner.id_data and int(
+        owner.id_data.get('Toe Kick Type', 0) or 0) == 3
+
+
+def _stretchers(owner):
+    return 'Stretcher Width' in owner.id_data and int(
+        owner.id_data.get('Base Top Construction', 0) or 0) == 1
+
+
+def _sink_top(owner):
+    return 'Sink Apron Width' in owner.id_data and int(
+        owner.id_data.get('Base Top Construction', 0) or 0) == 2
+
+
+# ---- Finished ends ------------------------------------------------------------
+# Each side's finish as the right-click Finish Condition menu sets it. An
+# end picked here stays as picked; Follow Neighbors hands it back to
+# finishing itself from what is beside it.
+
+_PANEL_CONDITIONS = ('LEFT', 'RIGHT', 'BACK')
+
+
+def _finish_condition(side):
+    from ...operators import prop_proxy
+    from .operators import ops_finished_ends as fe
+
+    def get(obj):
+        return fe.finish_condition(obj, side) or 'UNFINISHED'
+
+    def set(obj, value):
+        if value == get(obj):
+            return
+        context = bpy.context
+        if not fe.set_finish_condition(context, obj, side, value):
+            return
+        from . import exposure
+        if side in exposure.AUTO_SIDES:
+            exposure.set_manual(obj, side)
+        fe._paint(obj)
+        hb_utils.run_calc_fix(context, obj)
+    items = [(key, label) for key, label, _tip in fe.FINISH_CONDITIONS
+             if side in _PANEL_CONDITIONS or key in ('UNFINISHED', 'FINISHED')]
+    return prop_proxy.computed(get, set, type='ENUM', items=items)
+
+
+def _finish_side(side):
+    def shown(owner):
+        from .operators import ops_finished_ends as fe
+        return fe.finish_condition(owner.id_data, side) is not None
+    return shown
+
+
+def _top_finish_shown(owner):
+    """A top shows on a wall or tall cabinet; a base top is under the
+    countertop."""
+    from . import solver_frameless
+    return (_finish_side('TOP')(owner) and solver_frameless.carcass_kind(
+        owner.id_data) not in ('BASE', 'CORNER_BASE', 'LAP_DRAWER'))
+
+
+def _manual(side):
+    def test(owner):
+        from . import exposure
+        return exposure.is_manual(owner.id_data, side)
+    return test
+
+
+def _ends_summary(owner):
+    from .operators import ops_finished_ends as fe
+    words = {'FINISHED': "finished", 'SLAB': "slab panel",
+             '5PIECE': "5-piece panel"}
+    said = []
+    for side, name in (('LEFT', "Left"), ('RIGHT', "Right"), ('BACK', "Back")):
+        cond = fe.finish_condition(owner.id_data, side)
+        if cond in words:
+            said.append(f"{name} {words[cond]}")
+    return ", ".join(said) or "Unfinished"
+
+
+def _ends_fields():
+    fields = []
+    for side, prop, label in (('LEFT', 'left_finish', "Left End"),
+                              ('RIGHT', 'right_finish', "Right End"),
+                              ('BACK', 'back_finish', "Back")):
+        fields.append(('enum', prop, label, {'when': _finish_side(side)}))
+        fields.append(('actions', (
+            _act(f"{label}: Follow Neighbors",
+                 'hb_frameless.auto_finish_condition', {'side': side}),),
+            None, {'when': _manual(side)}))
+    fields.append(('enum', 'top_finish', "Top", {'when': _top_finish_shown}))
+    fields.extend((
+        ('enum', 'finished_bottom', "Bottom Panel", {'when': _upper_box}),
+        ('bool', 'fb_doors_cover', "Doors Cover Panel", {'when': _fb_on}),
+        ('bool', 'fb_led_route', "LED Route", {'when': _fb_on}),
+        ('distance', 'fb_led_width', "Route Width", {'when': _fb_led}),
+        ('distance', 'fb_led_depth', "Route Depth", {'when': _fb_led}),
+        ('distance', 'fb_led_inset', "Route From Front", {'when': _fb_led}),
+    ))
+    return tuple(fields)
+
+
+# ---- Quick actions -------------------------------------------------------------
+
+def _cabinets_selected(_owner):
+    return _count('cabinet') >= 2
+
+
+def _one_cabinet(owner):
+    return not _cabinets_selected(owner)
+
+
+def _quick_fields(owner, rows, fold='fl_quick_actions'):
+    """The quick actions a page leads with, a row at a time: each row is
+    (action, when) pairs and keeps the ones that apply. Every one is
+    also on the right-click menu, and so in All Actions."""
+    kept = []
+    for row in rows:
+        for action, when in row:
+            try:
+                if when is not None and not when(owner):
+                    continue
+            except Exception:
+                continue
+            kept.append(action)
+    from ...operators import quick_actions
+    return quick_actions.fields(kept, fold=fold)
+
+
+def _finished_interior():
+    """Finishing the interior repaints the cabinet in its style."""
+    from ...operators import prop_proxy
+
+    def get(obj):
+        return bool(obj.get('Finished Interior', False))
+
+    def set(obj, value):
+        if bool(value) == bool(obj.get('Finished Interior', False)):
+            return
+        obj['Finished Interior'] = bool(value)
+        try:
+            styles = hb_project.get_main_scene().hb_frameless.cabinet_styles
+            if len(styles):
+                index = int(obj.get('CABINET_STYLE_INDEX', 0) or 0)
+                style = styles[index] if index < len(styles) else styles[0]
+                style.assign_style_to_cabinet(obj)
+        except Exception as ex:
+            print('Home Builder: repainting %s failed: %s' % (obj.name, ex))
+    return prop_proxy.computed(get, set, type='BOOLEAN')
+
+
+def _finished_bottom():
+    """The panel applied under an upper. A cabinet that never had one
+    keeps no prompt for it until one is picked."""
+    from ...operators import prop_proxy
+    from . import solver_frameless
+    key = solver_frameless.FINISHED_BOTTOM_KEY
+
+    def get(obj):
+        try:
+            return str(int(obj.get(key, 0) or 0))
+        except (TypeError, ValueError):
+            return '0'
+
+    def set(obj, value):
+        if int(value) or key in obj:
+            obj[key] = int(value)
+    return prop_proxy.computed(
+        get, set, type='ENUM',
+        items=[(str(i), label) for i, label in enumerate(FINISHED_BOTTOMS)])
+
+
+def _upper_height_anchor():
+    """Which edge of an upper stays put when its height is typed: a
+    setting of the room, shown beside the height it steers."""
+    from ...operators import prop_proxy
+
+    def _props():
+        return hb_project.get_settings_scene(bpy.context).hb_frameless
+
+    def get(obj):
+        return _props().upper_height_anchor
+
+    def set(obj, value):
+        _props().upper_height_anchor = value
+    items = [('TOP', "Top"), ('BOTTOM', "Bottom")]
+    return prop_proxy.computed(get, set, type='ENUM', items=items)
 
 
 def _top_off_floor():
@@ -495,7 +787,7 @@ def _edge_summary(owner):
 
 
 def edge_blocks(context, part_obj):
-    """The Edgebanding group of a cabinet part: each edge by where it
+    """The Edgebanding group of a cabinet or product part: each edge by where it
     lies in the cabinet, banded or not and in which banding."""
     from ...operators import options_panel, prop_proxy
     from . import edgebanding_frameless as eb
@@ -513,10 +805,58 @@ def edge_blocks(context, part_obj):
     ), prop_proxy.owner(part_obj, PART_EDGES_SCHEMA))
 
 
+PART_MATERIAL_SCHEMA = 'FL_PART_MATERIAL'
+PART_MATERIAL_GROUP = 'fl_part_material'
+
+
+def material_blocks(context, part_obj):
+    """The Material group of a cabinet or product part: which of a
+    style's materials it wears, Automatic leaving it to its place in the
+    cabinet. Registered on each draw so the style list is current."""
+    from ...operators import options_panel, prop_proxy as P
+    from . import part_material as pm
+    if not pm.takes_override(part_obj):
+        return []
+    styles = [pm.OWN_STYLE] + pm.style_names()
+    P.register(PART_MATERIAL_SCHEMA, {
+        'material': P.computed(pm.choice, pm.set_choice, type='ENUM',
+                               items=list(pm.CHOICES)),
+        'material_style': P.computed(pm.style_choice, pm.set_style,
+                                     type='ENUM',
+                                     items=[(n, n) for n in styles]),
+    })
+    fields = (('enum', 'material', "Material"),)
+    if len(styles) > 2:
+        fields += (('enum', 'material_style', "From Style",
+                    {'when': lambda o: pm.choice(o.id_data) != pm.AUTO}),)
+    return options_panel.field_blocks(context, (
+        ('group', PART_MATERIAL_GROUP, "Material",
+         {'summary': lambda o: pm.summary(o.id_data), 'fields': fields}),
+    ), P.owner(part_obj, PART_MATERIAL_SCHEMA))
+
+
+def _name_prop():
+    """The product's own name, which the cut list and reports carry. A
+    misc part is its own product, so its part takes the same name."""
+    from ...operators import prop_proxy as P
+
+    def set_name(obj, value):
+        value = str(value).strip()
+        if value:
+            obj.name = value
+    return P.computed(lambda obj: obj.name, set_name, type='STRING',
+                      solve=False)
+
+
 def _register_schemas():
     from ...operators import prop_proxy as P
+    from . import solver_frameless
+    from . import bay_config
+    bay_config.register()
     P.register(CABINET_SCHEMA, {
-        'width': P.node_input('Dim X'),
+        'name': _name_prop(),
+        'width': _cabinet_width(),
+        'anchor_side': _anchor_side(),
         'depth': P.node_input('Dim Y'),
         'height': _cabinet_height(),
         'height_off_floor': P.height_off_floor(),
@@ -532,8 +872,29 @@ def _register_schemas():
         'toe_kick_panel_thickness': P.length('Toe Kick Panel Thickness', units.inch(0.375)),
         'toe_kick_end_inset': P.length('Toe Kick End Inset'),
         'remove_bottom': P.flag('Remove Bottom'),
+        'finished_interior': _finished_interior(),
+        'finished_bottom': _finished_bottom(),
+        'fb_doors_cover': P.flag(solver_frameless.FB_DOORS_COVER_KEY, True),
+        'fb_led_route': P.flag(solver_frameless.FB_LED_KEY),
+        'fb_led_width': P.length(solver_frameless.FB_LED_WIDTH_KEY, units.inch(0.875)),
+        'fb_led_depth': P.length(solver_frameless.FB_LED_DEPTH_KEY, units.inch(0.375)),
+        'fb_led_inset': P.length(solver_frameless.FB_LED_INSET_KEY, units.inch(1.5)),
+        'left_depth': P.length('Left Depth'),
+        'right_depth': P.length('Right Depth'),
+        'material_thickness': P.length('Material Thickness', units.inch(0.75)),
+        'leg_leveler_inset': P.length('Leg Leveler Inset'),
+        'base_top_construction': P.index_enum(
+            'Base Top Construction', ("Full Top", "Stretchers", "Sink")),
+        'stretcher_width': P.length('Stretcher Width'),
+        'sink_apron_width': P.length('Sink Apron Width'),
+        'left_finish': _finish_condition('LEFT'),
+        'right_finish': _finish_condition('RIGHT'),
+        'back_finish': _finish_condition('BACK'),
+        'top_finish': _finish_condition('TOP'),
+        'upper_height_anchor': _upper_height_anchor(),
     }, after=_solve)
     P.register(OPENING_SCHEMA, {
+        **bay_config.opening_props(),
         'door_swing': P.index_enum('Door Swing', ("Left", "Right", "Double"), 2),
         'door_mechanism': P.index_enum('Door Mechanism', ("Standard", "Retracting")),
         'drawer_look': _drawer_look(),
@@ -553,6 +914,7 @@ def _register_schemas():
         'overlay_right': _overlay_amount('Right'),
     }, after=_solve)
     P.register(PRODUCT_SCHEMA, {
+        'name': _name_prop(),
         'width': P.node_input('Dim X'),
         'depth': _product_depth(),
         'height': P.node_input('Dim Z'),
@@ -560,11 +922,26 @@ def _register_schemas():
     }, after=_solve_product)
     # A misc part is a cut part: its size is length, width and thickness.
     P.register(MISC_PART_SCHEMA, {
+        'name': _name_prop(),
         'width': P.node_input('Length'),
         'depth': P.node_input('Width'),
         'height': P.node_input('Thickness'),
         'height_off_floor': P.height_off_floor(),
+        **{'band_' + socket.lower(): _misc_band(socket)
+           for socket in ('W1', 'W2', 'L1', 'L2')},
     }, after=_solve_product)
+    P.register(FRONT_SCHEMA, {
+        'hinge': _front_hinge(),
+        'handle': _front_handle(),
+        'left_stile': _frame_input('Left Stile Width'),
+        'right_stile': _frame_input('Right Stile Width'),
+        'top_rail': _frame_input('Top Rail Width'),
+        'bottom_rail': _frame_input('Bottom Rail Width'),
+        'add_mid_rail': _frame_input('Add Mid Rail', 'BOOLEAN'),
+        'mid_rail_width': _frame_input('Mid Rail Width'),
+        'center_mid_rail': _frame_input('Center Mid Rail', 'BOOLEAN'),
+        'mid_rail_location': _frame_input('Mid Rail Location'),
+    }, after=_solve_front)
     P.register(PART_EDGES_SCHEMA, {
         'edge_' + socket.lower(): _edge_state(socket)
         for socket in ('W1', 'W2', 'L1', 'L2')})
@@ -572,47 +949,141 @@ def _register_schemas():
 
 def _unregister_schemas():
     from ...operators import prop_proxy
+    from . import bay_config
+    bay_config.unregister()
     for key in (CABINET_SCHEMA, OPENING_SCHEMA, PRODUCT_SCHEMA,
-                MISC_PART_SCHEMA, PART_EDGES_SCHEMA):
+                MISC_PART_SCHEMA, PART_EDGES_SCHEMA, FRONT_SCHEMA,
+                PART_MATERIAL_SCHEMA):
         prop_proxy.unregister(key)
 
 
 # ---- Fields -----------------------------------------------------------------
 
-CABINET_FIELDS = (
-    ('distance', 'width', "Width"),
-    ('distance', 'height', "Height"),
-    ('distance', 'depth', "Depth"),
-    ('distance', 'height_off_floor', "Above Floor", {'when': _hung}),
-    ('distance', 'top_off_floor', "Top Above Floor", {'when': _hung}),
-    ('distance', 'appliance_opening_width', "Appliance Opening Width",
-     {'when': _houses_appliance}),
-    ('distance', 'appliance_opening_height', "Appliance Opening Height",
-     {'when': _houses_appliance}),
-    ('distance', 'blind_opening_width', "Door Opening Width",
-     {'when': _blind_corner}),
-    ('group', 'fl_cab_kick', "Toe Kick", {'icon': 'cab_construction', 'when': _kicked, 'fields': (
-        ('enum', 'toe_kick_type', "Type"),
-        ('distance', 'toe_kick_height', "Height"),
-        ('distance', 'toe_kick_setback', "Setback"),
-        ('bool', 'flush_toe_kick', "Flush Toe Kick"),
-        ('bool', 'toe_kick_panel', "Kick Panel"),
-        ('distance', 'toe_kick_panel_thickness', "Panel Thickness", {'when': _kick_panel}),
-        ('distance', 'toe_kick_end_inset', "Hold In From Ends"),
-    )}),
-    ('bool', 'remove_bottom', "Remove Bottom", {'when': _has('Remove Bottom')}),
-)
+def _cabinet_fields(root):
+    """The cabinet page, laid out as the face frame cabinet's: its size,
+    then the rest in folds that say what is set in them, and last the
+    quick actions in a fold of their own. Every command is also in All
+    Actions at the foot."""
+    quick = _quick_fields(root, (
+        ((_act("Duplicate", 'hb_frameless.duplicate_cabinet', None,
+               'duplicate'), _one_cabinet),
+         (_act("Copy Cabinet", 'home_builder.copy_cabinet'), _one_cabinet)),
+        ((_act("Equal Widths", 'hb_frameless.equalize_cabinet_widths'),
+          _cabinets_selected),
+         (_act("Adjust Cabinet Sizes",
+               'hb_frameless.adjust_multiple_cabinet_widths'), None)),
+        ((_act("Create Cabinet Group", 'hb_frameless.create_cabinet_group'),
+          _cabinets_selected),),
+        ((_act("Drop to Countertop", 'hb_frameless.drop_cabinet_to_countertop'),
+          _hung),
+         (_act("Hide Cabinet", 'hb_general.hide',
+               {'scope': 'PRODUCT', 'isolate': False}), None)),
+    ))
+    return (
+        ('text', 'name', "Name"),
+        ('distance', 'width', "Width"),
+        ('distance', 'height', "Height"),
+        # An angled front's depth is its deeper end, kept by the cabinet
+        # dialog (Properties) with the two end depths.
+        ('distance', 'depth', "Depth", {'when': _square_front}),
+        ('distance', 'height_off_floor', "Above Floor", {'when': _hung}),
+        ('distance', 'top_off_floor', "Top Above Floor", {'when': _hung}),
+        ('enum', 'upper_height_anchor', "Height Keeps", {'when': _hung}),
+        ('distance', 'appliance_opening_width', "Appliance Opening Width",
+         {'when': _houses_appliance}),
+        ('distance', 'appliance_opening_height', "Appliance Opening Height",
+         {'when': _houses_appliance}),
+        ('distance', 'blind_opening_width', "Door Opening Width",
+         {'when': _blind_corner}),
+        ('choices', 'anchor_side', "Anchor", {'cols': 3, 'when': _straight}),
+        ('gap', None, None),
+        ('group', 'fl_cab_corner', "Corner", {
+            'icon': 'cab_corner', 'when': _has('Left Depth'), 'fields': (
+                ('distance', 'left_depth', "Left Depth"),
+                ('distance', 'right_depth', "Right Depth"),
+            )}),
+        ('group', 'fl_cab_construction', "Construction", {
+            'icon': 'cab_construction', 'summary': _construction_summary,
+            'fields': (
+                ('enum', 'toe_kick_type', "Toe Kick", {'when': _has('Toe Kick Type')}),
+                ('distance', 'toe_kick_height', "Kick Height", {'when': _kicked}),
+                ('distance', 'toe_kick_setback', "Kick Setback",
+                 {'when': _has('Toe Kick Setback')}),
+                ('bool', 'flush_toe_kick', "Flush Toe Kick",
+                 {'when': _has('Flush Toe Kick')}),
+                ('bool', 'toe_kick_panel', "Kick Panel",
+                 {'when': _has('Toe Kick Panel')}),
+                ('distance', 'toe_kick_panel_thickness', "Kick Panel Thickness",
+                 {'when': _kick_panel}),
+                ('distance', 'toe_kick_end_inset', "Kick Inset From Ends",
+                 {'when': _has('Toe Kick End Inset')}),
+                ('distance', 'leg_leveler_inset', "Leg Leveler Inset",
+                 {'when': _leg_levelers}),
+                ('enum', 'base_top_construction', "Top",
+                 {'when': _has('Base Top Construction')}),
+                ('distance', 'stretcher_width', "Stretcher Width",
+                 {'when': _stretchers}),
+                ('distance', 'sink_apron_width', "Sink Apron Width",
+                 {'when': _sink_top}),
+                ('distance', 'material_thickness', "Carcass Thickness",
+                 {'when': _has('Material Thickness')}),
+                ('bool', 'remove_bottom', "Remove Bottom",
+                 {'when': _has('Remove Bottom')}),
+                ('bool', 'finished_interior', "Finished Interior"),
+            )}),
+        ('group', 'fl_cab_ends', "Finished Ends & Back", {
+            'summary': _ends_summary, 'fields': _ends_fields()}),
+    ) + quick
+
+
+def _in_stack(owner):
+    from . import bay_config
+    return bay_config.opening_front_row(owner.id_data) is not None
+
+
+def _front_height_chip(owner):
+    from . import bay_config
+    row = bay_config.opening_front_row(owner.id_data)
+    if row is None or not row[3]:
+        return None
+    return ('hb_frameless.release_front_height',
+            {'splitter_name': row[0].name, 'index': row[1]},
+            'lock', "Held. Click to let it share what is left")
+
+
+def _front_details(owner):
+    return (_door(owner) or _has('Inset Front')(owner))
+
+
+def _front_summary(owner):
+    from . import bay_config
+    kind = bay_config.front_kind(owner.id_data)
+    return dict(bay_config.FRONT_KINDS).get(kind, "")
+
 
 OPENING_FIELDS = (
-    ('enum', 'door_swing', "Door Swing", {'when': _door}),
+    ('value', lambda o: _bay_size(o.id_data), "Size (W x H)"),
+    ('enum', 'front_type', "Front"),
+    ('enum', 'door_swing', "Hinge Side", {'when': _door}),
     ('enum', 'door_mechanism', "Mechanism", {'when': _door}),
-    ('enum', 'drawer_look', "Drawer Look", {'when': _door}),
-    ('distance', 'drawer_look_top_height', "Top Front Height",
-     {'when': _drawer_look_on}),
-    ('bool', 'add_apron', "Add Apron", {'when': _door}),
-    ('distance', 'apron_height', "Apron Height", {'when': _apron_on}),
     ('enum', 'lift_mechanism', "Lift", {'when': _flip_up}),
-    ('bool', 'inset_front', "Inset Front", {'when': _has('Inset Front')}),
+    ('distance', 'front_height', "Front Height",
+     {'when': _in_stack, 'action': _front_height_chip}),
+    ('gap', None, None),
+)
+
+OPENING_FOLDS = (
+    ('group', 'fl_opening_front', "Front Details", {
+        'when': _front_details,
+        'summary': _front_summary,
+        'fields': (
+            ('enum', 'drawer_look', "Drawer Look", {'when': _door}),
+            ('distance', 'drawer_look_top_height', "Top Front Height",
+             {'when': _drawer_look_on}),
+            ('bool', 'add_apron', "Add Apron", {'when': _door}),
+            ('distance', 'apron_height', "Apron Height", {'when': _apron_on}),
+            ('bool', 'inset_front', "Inset Front", {'when': _has('Inset Front')}),
+        )}),
     ('group', 'fl_opening_overlays', "Overlays", {
         'when': _has('Half Overlay Top'),
         'summary': _overlay_summary,
@@ -629,10 +1100,322 @@ OPENING_FIELDS = (
 )
 
 PRODUCT_FIELDS = (
+    ('text', 'name', "Name"),
     ('distance', 'width', "Width"),
     ('distance', 'height', "Height"),
     ('distance', 'depth', "Depth"),
     ('distance', 'height_off_floor', "Above Floor"),
+)
+
+
+# ---- Fronts -----------------------------------------------------------------
+# A door or drawer front's own settings: the style it wears, its hinge
+# and handle, where its pull sits, and a five piece door's frame.
+
+def _solve_front(obj, context):
+    from . import solver_frameless
+    solver_frameless.recalculate_cabinet(obj)
+    obj.update_tag()
+
+
+def _front_insert(front):
+    from .operators import ops_front
+    return ops_front._front_insert(front)
+
+
+def _frame_mod(front):
+    """The five piece door modifier on a front, or None for a slab."""
+    for mod in front.modifiers:
+        if (mod.type == 'NODES' and 'Door Style' in mod.name and mod.node_group
+                and 'CPM_5PIECEDOOR' in mod.node_group.name):
+            return mod
+    return None
+
+
+def _framed(owner):
+    return _frame_mod(owner.id_data) is not None
+
+
+def _mid_railed(owner):
+    return _framed(owner) and bool(owner.add_mid_rail)
+
+
+def _mid_rail_placed(owner):
+    return _mid_railed(owner) and not bool(owner.center_mid_rail)
+
+
+def _hinged(owner):
+    insert = _front_insert(owner.id_data)
+    return insert is not None and 'Door Swing' in insert
+
+
+def _frame_input(name, kind='FLOAT'):
+    """An input of the front's five piece door modifier."""
+    from ...operators import prop_proxy
+    from ...hb_types import CabinetPartModifier
+    cast = bool if kind == 'BOOLEAN' else float
+
+    def _cpm(obj):
+        mod = _frame_mod(obj)
+        if mod is None or name not in mod.node_group.interface.items_tree:
+            return None
+        cpm = CabinetPartModifier(obj)
+        cpm.mod = mod
+        return cpm
+
+    def get(obj):
+        cpm = _cpm(obj)
+        try:
+            return cast(cpm.get_input(name)) if cpm is not None else cast(0)
+        except Exception:
+            return cast(0)
+
+    def set(obj, value):
+        cpm = _cpm(obj)
+        if cpm is not None:
+            cpm.set_input(name, cast(value))
+    if kind == 'BOOLEAN':
+        return prop_proxy.computed(get, set, type='BOOLEAN')
+    return prop_proxy.computed(get, set, unit='LENGTH', precision=4,
+                               hard_min=0.0)
+
+
+def _front_hinge():
+    """Which way the doors of the front's opening swing; kept on the
+    doors insert, shown on the door."""
+    from ...operators import prop_proxy
+
+    def get(obj):
+        insert = _front_insert(obj)
+        try:
+            return str(int(insert.get('Door Swing', 2)))
+        except (AttributeError, TypeError, ValueError):
+            return '2'
+
+    def set(obj, value):
+        insert = _front_insert(obj)
+        if insert is not None and 'Door Swing' in insert:
+            insert['Door Swing'] = int(value)
+    return prop_proxy.computed(get, set, type='ENUM', items=[
+        ('0', "Left"), ('1', "Right"), ('2', "Double")])
+
+
+def _front_handle():
+    """How the front is opened: the room's handle, or one of its own."""
+    from ...operators import prop_proxy
+    from . import edge_pulls
+
+    def get(obj):
+        value = obj.get(edge_pulls.HANDLE_KEY, '') or 'DEFAULT'
+        return value if value in known else 'DEFAULT'
+
+    def set(obj, value):
+        if value == 'DEFAULT':
+            obj.pop(edge_pulls.HANDLE_KEY, None)
+        else:
+            obj[edge_pulls.HANDLE_KEY] = value
+    items = [('DEFAULT', "Room Default")] + [
+        (key, label) for key, label, _tip in edge_pulls.HANDLE_TYPES]
+    known = {key for key, _label in items}
+    return prop_proxy.computed(get, set, type='ENUM', items=items)
+
+
+def _door_styles():
+    try:
+        return list(hb_project.get_main_scene().hb_frameless.door_styles)
+    except Exception:
+        return []
+
+
+def _door_style_schema(names):
+    from ...operators import prop_proxy
+    key = DOOR_STYLE_PREFIX + str(abs(hash(tuple(names))))
+
+    def get(obj):
+        try:
+            index = int(obj.get('DOOR_STYLE_INDEX', 0))
+        except (TypeError, ValueError):
+            index = 0
+        return str(index if 0 <= index < len(names) else 0)
+
+    def set(obj, value):
+        styles = _door_styles()
+        index = int(value)
+        if not 0 <= index < len(styles):
+            return
+        if index == int(obj.get('DOOR_STYLE_INDEX', -1)):
+            return
+        obj['DOOR_STYLE_INDEX'] = index
+        styles[index].assign_style_to_front(obj)
+    if key not in prop_proxy._schemas:
+        prop_proxy.register(key, {
+            'door_style': prop_proxy.computed(
+                get, set, type='ENUM',
+                items=[(str(i), n) for i, n in enumerate(names)]),
+        }, after=_solve_front)
+    return key
+
+
+# The pull prompts a front shows: where the pull sits, then how far along
+# that edge. Only the vertical location of the place in use is offered.
+_PULL_VERTICAL = ('Base Pull Vertical Location', 'Tall Pull Vertical Location',
+                  'Upper Pull Vertical Location')
+
+
+def _pull_blocks(context, front):
+    from ...operators import generic_page, options_panel
+    if 'Pull Location' not in front:
+        return []
+    try:
+        place = int(front.get('Pull Location', 0))
+    except (TypeError, ValueError):
+        place = 0
+    wanted = ['Pull Location', 'Handle Horizontal Location']
+    if 0 <= place < len(_PULL_VERTICAL):
+        wanted.insert(1, _PULL_VERTICAL[place])
+    owner, fields = generic_page.prompt_owner(
+        front, exclude=[k for k in generic_page.prompt_keys(front)
+                        if k not in wanted])
+    if owner is None:
+        return []
+    names = {'Pull Location': "Location",
+             'Handle Horizontal Location': "Horizontal Location"}
+    names.update({key: "Vertical Location" for key in _PULL_VERTICAL})
+    fields = tuple((kind, ident, names.get(label, label))
+                   for kind, ident, label in fields)
+    return options_panel.field_blocks(context, (
+        ('group', 'fl_front_pull', "Pull", {'fields': fields}),
+    ), owner)
+
+
+FRONT_FIELDS = (
+    ('enum', 'hinge', "Hinge", {'when': _hinged}),
+    ('enum', 'handle', "Handle"),
+)
+
+FRONT_FRAME_FIELDS = (
+    ('group', 'fl_front_frame', "Frame Sizes", {'when': _framed, 'fields': (
+        ('distance', 'left_stile', "Left Stile"),
+        ('distance', 'right_stile', "Right Stile"),
+        ('distance', 'top_rail', "Top Rail"),
+        ('distance', 'bottom_rail', "Bottom Rail"),
+    )}),
+    ('group', 'fl_front_mid_rail', "Mid Rail", {'when': _framed, 'fields': (
+        ('bool', 'add_mid_rail', "Add Mid Rail"),
+        ('distance', 'mid_rail_width', "Width", {'when': _mid_railed}),
+        ('bool', 'center_mid_rail', "Center Mid Rail", {'when': _mid_railed}),
+        ('distance', 'mid_rail_location', "Location", {'when': _mid_rail_placed}),
+    )}),
+)
+
+
+def front_blocks(context, front):
+    """Everything the front's dialog held, on the page."""
+    from ...operators import options_panel, prop_proxy
+    out = []
+    names = [style.name for style in _door_styles()]
+    if names:
+        out.extend(options_panel.field_blocks(context, (
+            ('enum', 'door_style', "Door Style"),
+        ), prop_proxy.owner(front, _door_style_schema(names))))
+    owner = prop_proxy.owner(front, FRONT_SCHEMA)
+    out.extend(options_panel.field_blocks(context, FRONT_FIELDS, owner))
+    out.extend(_pull_blocks(context, front))
+    out.extend(options_panel.field_blocks(context, FRONT_FRAME_FIELDS, owner))
+    return out
+
+
+# ---- Product options --------------------------------------------------------
+# A product's prompts, folded by what they are about instead of one long
+# list. A product with only a few keeps the single Options group.
+
+_OPTION_GROUPS = (
+    ("Legs", lambda key: 'Leg' in key),
+    ("LED Routing", lambda key: 'LED' in key),
+    ("Finish", lambda key: 'Finish' in key or 'Skin' in key),
+    ("Cleats", lambda key: 'Cleat' in key),
+)
+_OPTION_GROUP_MIN = 7
+
+
+def _square_front(owner):
+    """False for a cabinet with an angled front (end depths set)."""
+    from . import solver_frameless
+    return owner.id_data.get(solver_frameless.FRONT_LEFT_DEPTH_KEY) is None
+
+
+# Stamped on a support frame with the Base Molding On Legs value the room
+# molding was last rebuilt for, so a page edit rebuilds it only on change.
+_LEG_BASE_APPLIED = 'hb_leg_base_molding_applied'
+
+
+def _product_solve(obj, context):
+    """Solve a product after a page edit, plus what its options dialog
+    did beyond the solve: a support frame whose Base Molding On Legs
+    changed rebuilds the room's molding, which runs round its legs."""
+    from ...operators import generic_page
+    generic_page._solve(obj, context)
+    if obj.get('PART_TYPE') != 'SUPPORT_FRAME':
+        return
+    from . import types_products
+    leg_base = bool(obj.get(types_products.LEG_BASE_MOLDING_KEY, False))
+    if obj.get(_LEG_BASE_APPLIED) is not None and \
+            bool(obj.get(_LEG_BASE_APPLIED)) == leg_base:
+        return
+    obj[_LEG_BASE_APPLIED] = leg_base
+    from ...molding import ops as molding_ops
+    context.view_layer.update()
+    molding_ops.apply_scene_packages(context.scene)
+
+
+def product_option_blocks(context, root):
+    from ...operators import generic_page, options_panel
+    owner, fields = generic_page.prompt_owner(root, after=_product_solve)
+    if owner is None:
+        return []
+    buckets = {}
+    for field in fields:
+        label = next((name for name, test in _OPTION_GROUPS if test(field[2])),
+                     "Options")
+        buckets.setdefault(label, []).append(field)
+    if len(fields) < _OPTION_GROUP_MIN or len(buckets) < 2:
+        return generic_page.prompt_blocks(context, root, 'fl_product_prompts',
+                                          "Options", after=_product_solve)
+    order = ["Options"] + [name for name, _test in _OPTION_GROUPS]
+    groups = tuple(
+        ('group', 'fl_product_' + name.lower().replace(' ', '_'), name,
+         {'icon': 'settings', 'fields': tuple(buckets[name])})
+        for name in order if name in buckets)
+    return options_panel.field_blocks(context, groups, owner)
+
+
+def _misc_band(socket):
+    """One edge of a misc part: banded or bare."""
+    from ...operators import prop_proxy
+    from . import edgebanding_frameless as eb
+
+    def get(obj):
+        return bool(obj.get(eb.MISC_FLAG + socket))
+
+    def set(obj, value):
+        obj[eb.MISC_FLAG + socket] = bool(value)
+        eb.refresh_banding(obj)
+    return prop_proxy.computed(get, set, type='BOOLEAN')
+
+
+def _band_summary(owner):
+    from . import edgebanding_frameless as eb
+    on = [e for e in eb.EDGE_SOCKETS if owner.id_data.get(eb.MISC_FLAG + e)]
+    return ", ".join(on) if on else "None"
+
+
+MISC_BAND_FIELDS = (
+    ('group', 'fl_misc_banding', "Edgebanding", {'summary': _band_summary, 'fields': (
+        ('bool', 'band_w1', "W1"),
+        ('bool', 'band_w2', "W2"),
+        ('bool', 'band_l1', "L1"),
+        ('bool', 'band_l2', "L2"),
+    )}),
 )
 
 
@@ -777,43 +1560,26 @@ def _menu(label, menu_id, icon=None):
             1.0, icon)
 
 
-def _menu_actions(context, obj, skip=(), limit=6):
+def _menu_actions(context, obj, skip=(), limit=8):
     """The first commands of `obj`'s right-click menu, as buttons. Add
     Accessory is left out: the page's Accessories list has it."""
-    from ...operators import generic_page
+    from ...operators import generic_page, quick_actions
     skip = tuple(skip) + ('hb_frameless.add_opening_accessory',)
-    menu = generic_page.menu_id(obj)
-    picked = []
-    if not menu:
-        return picked
-    for rec in generic_page._record(context, menu):
-        if rec[0] == 'op':
-            if rec[2] in skip:
-                continue
-            label = (rec[1] or generic_page._op_label(rec[2])).rstrip('.')
-            picked.append((label, rec[2], dict(rec[3]._values), None))
-        elif rec[0] == 'menu':
-            if rec[2] in skip:
-                continue
-            picked.append(_menu(rec[1] or generic_page._menu_label(rec[2]),
-                                rec[2]))
-        elif rec[0] == 'enum':
-            label = rec[1] or generic_page._op_label(rec[2])
-            picked.append((label + "  ›", generic_page._enum_opener(rec[2], rec[3]),
-                           None, None, 1.0, None))
-        if len(picked) == limit:
-            break
-    return picked
+    return quick_actions.from_menu(context, generic_page.menu_id(obj),
+                                   skip=skip, limit=limit)
 
 
-def _quick(out, picked, title="Quick Actions"):
-    if not picked:
+def _quick(out, picked, title=None, owner=None):
+    """The page's quick actions, in the sections every library uses,
+    in a fold of their own that stays closed until opened."""
+    from ...operators import options_panel, quick_actions
+    fold = quick_actions.fields(picked, title or quick_actions.TITLE,
+                                fold='fl_quick_actions')
+    if not fold:
         return
     if out and out[-1] != ('gap', None):
         out.append(('gap', None))
-    out.append(('label', title))
-    for i in range(0, len(picked), 2):
-        out.append(('actions', tuple(picked[i:i + 2])))
+    out.extend(options_panel.field_blocks(bpy.context, fold, owner))
 
 
 def _footer(out, prompts_op):
@@ -901,67 +1667,150 @@ def _size_value(context, obj):
 
 
 def _cabinet_page(context, out, root):
-    from ...operators import options_panel, prop_proxy, generic_page
-    label = _type_label(root)
-    out.extend(options_panel.field_blocks(context, (
-        ('group', CABINET_GROUP, f"Cabinet  ({label})" if label else "Cabinet",
-         {'icon': 'cab_cabinet', 'summary': _size_summary,
-          'fields': CABINET_FIELDS}),
-    ), prop_proxy.owner(root, CABINET_SCHEMA)))
-    out.extend(generic_page.prompt_blocks(
-        context, root, 'fl_cabinet_prompts', "All Cabinet Prompts",
-        open_first=False, exclude=_DIALOG_ONLY))
-    _quick(out, _menu_actions(context, root,
-                              skip=('hb_frameless.cabinet_prompts',)))
+    from ...operators import options_panel, prop_proxy
+    out.extend(options_panel.field_blocks(
+        context, _cabinet_fields(root), prop_proxy.owner(root, CABINET_SCHEMA)))
     _footer(out, 'hb_frameless.cabinet_prompts')
 
 
+def _has_splitter(owner):
+    return any(c.get('IS_FRAMELESS_SPLITTER_VERTICAL_CAGE')
+               or c.get('IS_FRAMELESS_SPLITTER_HORIZONTAL_CAGE')
+               for c in owner.id_data.children_recursive)
+
+
+def _has_fronts(owner):
+    from .operators.ops_opening import front_height_splitter
+    try:
+        return front_height_splitter(owner.id_data) is not None
+    except Exception:
+        return False
+
+
+def _bay_fields(bay_obj):
+    """The bay page, laid out as the face frame bay's: what it is built
+    as, its size, and the quick actions folded at the foot. A frameless
+    bay is the cabinet's whole box, so its size follows the cabinet."""
+    quick = _quick_fields(bay_obj, (
+        ((_act("Edit Opening Sizes", 'hb_frameless.edit_splitter_openings'),
+          _has_splitter),
+         (_act("Edit Door/Drawer Sizes", 'hb_frameless.edit_front_heights'),
+          _has_fronts)),
+        ((_act("Finish Interior", 'hb_frameless.finish_interior'), None),),
+    ), fold='fl_bay_quick_actions')
+    return (
+        ('enum', 'config', "Configuration"),
+        ('value', lambda _o, b=bay_obj: _bay_size(b), "Size (W x H)"),
+        ('gap', None, None),
+    ) + _front_fields(bay_obj) + quick
+
+
+def _front_fields(bay_obj):
+    """The fronts typed by height, top to bottom. A typed height is held
+    (its padlock lets it go again); the fronts left free share the rest."""
+    from . import bay_config
+    try:
+        rows = bay_config.front_rows(bay_obj)
+    except Exception:
+        rows = []
+    rows = [r for r in rows if r[0] <= bay_config.FRONT_ROWS]
+    if not rows:
+        return ()
+
+    def chip(index):
+        def action(owner):
+            for i, _label, _height, held in bay_config.front_rows(owner.id_data):
+                if i == index and held:
+                    return ('hb_frameless.release_front_height',
+                            {'bay_name': owner.id_data.name, 'index': index},
+                            'lock', "Held. Click to let it share what is left")
+            return None
+        return action
+    fields = [('label', None, "Front Heights")]
+    fields += [('distance', 'front_%d' % i, label, {'action': chip(i)})
+               for i, label, _height, _held in rows]
+    fields.append(('gap', None, None))
+    return tuple(fields)
+
+
 def _bay_page(context, out, bay_obj, title):
-    from ...operators import options_panel, generic_page
-    out.extend(options_panel.field_blocks(context, (
-        ('value', lambda _o, b=bay_obj: _bay_size(b), "Size"),
-    ), bay_obj))
-    from . import solver_frameless
+    from ...operators import options_panel, prop_proxy
+    from . import bay_config, solver_frameless
+    page = list(options_panel.field_blocks(
+        context, _bay_fields(bay_obj),
+        prop_proxy.owner(bay_obj, bay_config.schema_key(bay_obj))))
     root = solver_frameless.cabinet_root(bay_obj)
     if root is not None and root.get('IS_BLIND_CORNER'):
         # A blind corner's bay is its door opening: the one bay width
         # that is typed rather than read.
-        from ...operators import prop_proxy
-        out.extend(options_panel.field_blocks(context, (
-            ('distance', 'blind_opening_width', "Opening Width"),
-        ), prop_proxy.owner(root, CABINET_SCHEMA)))
-    out.extend(generic_page.prompt_blocks(
-        context, bay_obj, 'fl_bay_prompts', "Bay Prompts", open_first=False))
-    _quick(out, _menu_actions(context, bay_obj))
+        blocks = options_panel.field_blocks(context, (
+            ('distance', 'blind_opening_width', "Door Opening Width"),
+        ), prop_proxy.owner(root, CABINET_SCHEMA))
+        at = next((i for i, b in enumerate(page) if b[0] == 'gap'), len(page))
+        page[at:at] = blocks
+    out.extend(page)
     _footer(out, None)
 
 
+def _in_splitter(owner):
+    from . import bay_config
+    outer = bay_config.outer_opening(owner.id_data)
+    return outer.parent is not None and any(
+        outer.parent.get(t) for t in bay_config._SPLITTER_TAGS)
+
+
+def _stacked_fronts(owner):
+    from .operators.ops_opening import front_height_splitter
+    try:
+        return front_height_splitter(owner.id_data) is not None
+    except Exception:
+        return False
+
+
+def _opening_quick(opening_obj, has_interior):
+    actions = [
+        ((_act("Edit Opening Sizes", 'hb_frameless.edit_splitter_openings'),
+          _in_splitter),
+         (_act("Edit Door/Drawer Sizes", 'hb_frameless.edit_front_heights'),
+          _stacked_fronts)),
+    ]
+    if has_interior and hasattr(bpy.types, 'HOME_BUILDER_MT_interior_change'):
+        actions.append(((_menu("Change Interior",
+                               'HOME_BUILDER_MT_interior_change'), None),))
+    actions += [
+        ((_act("Split Vertical", 'hb_frameless.custom_vertical_splitter'), None),
+         (_act("Split Horizontal", 'hb_frameless.custom_horizontal_splitter'),
+          None)),
+        ((_act("Finish Interior", 'hb_frameless.finish_interior'), None),),
+    ]
+    return _quick_fields(opening_obj, actions, fold='fl_opening_quick_actions')
+
+
 def _opening_page(context, out, opening_obj):
-    from ...operators import options_panel, prop_proxy, generic_page
-    out.extend(options_panel.field_blocks(
-        context, OPENING_FIELDS, prop_proxy.owner(opening_obj, OPENING_SCHEMA)))
-    # What is inside, said here; changed from the menu beside it.
-    interior = _interior_of(opening_obj)
-    if _items().drawer_opening_for(opening_obj) is None:
+    """The opening page, laid out as the face frame opening's: its size
+    and front, what is inside, the front's details and overlays in folds,
+    and the quick actions folded at the foot."""
+    from ...operators import options_panel, prop_proxy
+    from . import bay_config
+    front = bay_config.front_opening(opening_obj)
+    owner = prop_proxy.owner(front, OPENING_SCHEMA)
+    out.extend(options_panel.field_blocks(context, OPENING_FIELDS, owner))
+    # What is inside, said here; its settings are on its own page.
+    interior = _interior_of(front)
+    has_interior = (interior is not None
+                    or _items().accessory_host(front) is not None)
+    if _items().drawer_opening_for(front) is None and not bay_config.is_split(front):
         out.append(('value', ("Interior", _interior_summary(interior))))
-    menus = []
-    if hasattr(bpy.types, 'HOME_BUILDER_MT_opening_change'):
-        menus.append(_menu("Change Opening", 'HOME_BUILDER_MT_opening_change'))
-    if (interior is not None or _items().accessory_host(opening_obj) is not None) \
-            and hasattr(bpy.types, 'HOME_BUILDER_MT_interior_change'):
-        menus.append(_menu("Change Interior", 'HOME_BUILDER_MT_interior_change'))
-    if menus:
-        out.append(('actions', tuple(menus)))
-    if interior is not None or _items().accessory_host(opening_obj) is not None:
+    if has_interior:
         out.append(('actions', (
             _act("Edit Interior", 'hb_frameless.show_interior_page',
-                 {'opening_name': opening_obj.name}, 'cab_interior'),
-            ("Interior Options", 'hb_frameless.interior_prompts', None, None))))
-    out.extend(accessory_blocks(context, opening_obj))
-    _quick(out, _menu_actions(context, opening_obj, skip=(
-        'hb_frameless.opening_prompts', 'HOME_BUILDER_MT_opening_change',
-        'HOME_BUILDER_MT_interior_change')))
-    _footer(out, 'hb_frameless.opening_prompts')
+                 {'opening_name': front.name}, 'cab_interior'),)))
+    out.extend(options_panel.field_blocks(context, OPENING_FOLDS, owner))
+    out.extend(accessory_blocks(context, front))
+    out.extend(options_panel.field_blocks(
+        context, _opening_quick(front, has_interior), owner))
+    # Every setting of the opening dialog is on the page above.
+    _footer(out, None)
 
 
 def _interior_page(context, out, part_obj, opening_obj, bay_obj):
@@ -985,10 +1834,11 @@ def _interior_page(context, out, part_obj, opening_obj, bay_obj):
             out.insert(start + 1, size)     # under the picture
     out.extend(accessory_blocks(context, part_obj or host))
     if real:
+        out.extend(material_blocks(context, part_obj))
         out.extend(edge_blocks(context, part_obj))
         _quick(out, _menu_actions(context, part_obj, skip=(
             'hb_frameless.interior_prompts', 'HOME_BUILDER_MT_interior_change')))
-    _footer(out, 'hb_frameless.interior_prompts' if real else None)
+    _footer(out, None)
 
 
 def _drawer_page(context, out, part_obj, drawers):
@@ -1001,6 +1851,7 @@ def _drawer_page(context, out, part_obj, drawers):
         size = _size_value(context, part_obj)
         if size:
             out.append(size)
+        out.extend(_front_opening_blocks(context, drawers[0]))
     options = ops_cabinet.drawer_box_construction_options()
     if options:
         out.append(accessory_place._option_pick(
@@ -1025,25 +1876,131 @@ def _drawer_page(context, out, part_obj, drawers):
     _add_fold(context, out, 'drawer', drawers,
               "Add Accessory" if one
               else "Add Accessory to %d Drawers" % len(drawers))
+    if one and part_obj.get('IS_CABINET_FRONT'):
+        out.append(('gap', None))
+        out.append(('label', "Front"))
+        out.extend(front_blocks(context, part_obj))
     if one:
         _quick(out, _menu_actions(context, part_obj, skip=(
             'hb_frameless.drawer_interior', 'hb_frameless.toggle_front_open',
-            'hb_frameless.door_front_prompts')))
-    _footer(out, 'hb_frameless.door_front_prompts'
-            if part_obj.get('IS_CABINET_FRONT') else 'hb_frameless.opening_prompts')
+            'hb_frameless.door_front_prompts',
+            'hb_frameless.set_front_handle_type')))
+    _footer(out, None)
+
+
+# ---- Carcass parts -------------------------------------------------------------
+# A side, back, top or bottom shows how that face of its cabinet is
+# finished, as the face frame side and back pages do; the cabinet page
+# has every face at once.
+
+_SIDE_FINISH = {'LEFT': ('left_finish', "Finished End"),
+                'RIGHT': ('right_finish', "Finished End"),
+                'BACK': ('back_finish', "Back")}
+_OTHER_SIDE = {'LEFT': ('RIGHT', "Right"), 'RIGHT': ('LEFT', "Left")}
+
+
+def _carcass_side(part_obj):
+    from . import solver_frameless
+    from .operators import ops_finished_ends as fe
+    side = fe.FINISH_ROLE_SIDES.get(part_obj.get(solver_frameless.PART_ROLE_KEY))
+    cabinet = hb_utils.get_cabinet_bp(part_obj)
+    if side is None or cabinet is None \
+            or not cabinet.get('IS_FRAMELESS_CABINET_CAGE'):
+        return None, None
+    return side, cabinet
+
+
+def _panel_options(side):
+    """The applied panel's own sizes, while the side has one."""
+    def action(owner):
+        from .operators import ops_finished_ends as fe
+        cond = fe.finish_condition(owner.id_data, side)
+        if cond == '5PIECE':
+            return ('hb_frameless.update_finished_end',
+                    {'side': side, 'finished_end_type': '5PIECE'},
+                    'settings', "5-Piece Panel Options")
+        if cond == 'SLAB':
+            return ('hb_frameless.applied_end_prompts', {'side': side},
+                    'settings', "End Panel Options")
+        return None
+    return action
+
+
+def _carcass_fields(side, cabinet):
+    if side in _SIDE_FINISH:
+        prop, label = _SIDE_FINISH[side]
+        fields = [('enum', prop, label, {'action': _panel_options(side)})]
+        fields.append(('actions', (
+            _act("Follow Neighbors", 'hb_frameless.auto_finish_condition',
+                 {'side': side}),), None, {'when': _manual(side)}))
+        if side in _OTHER_SIDE:
+            from .operators import ops_finished_ends as fe
+            other, name = _OTHER_SIDE[side]
+            cond = fe.finish_condition(cabinet, side) or 'UNFINISHED'
+            fields.append(('actions', (
+                _act("Apply to %s Side" % name,
+                     'hb_frameless.set_finish_condition',
+                     {'side': other, 'condition': cond}),), None))
+        return tuple(fields)
+    if side == 'TOP':
+        return (('enum', 'top_finish', "Top", {'when': _top_finish_shown}),)
+    if side == 'BOTTOM':
+        return (
+            ('enum', 'finished_bottom', "Bottom Panel", {'when': _upper_box}),
+            ('bool', 'fb_doors_cover', "Doors Cover Panel", {'when': _fb_on}),
+            ('bool', 'fb_led_route', "LED Route", {'when': _fb_on}),
+            ('distance', 'fb_led_width', "Route Width", {'when': _fb_led}),
+            ('distance', 'fb_led_depth', "Route Depth", {'when': _fb_led}),
+            ('distance', 'fb_led_inset', "Route From Front", {'when': _fb_led}),
+        )
+    return ()
+
+
+# Commands the page shows as fields: left out of its quick actions.
+_ON_PAGE = ('hb_frameless.door_front_prompts',
+            'hb_frameless.set_front_handle_type',
+            'hb_frameless.set_finish_condition',
+            'hb_frameless.auto_finish_condition',
+            'hb_frameless.set_finished_bottom_panel',
+            'hb_frameless.applied_end_prompts',
+            'hb_frameless.update_finished_end')
+
+
+def _front_opening_blocks(context, part_obj):
+    """For a front: its opening's Front, hinge side and height, as on
+    the opening page."""
+    from ...operators import options_panel, prop_proxy
+    from . import bay_config
+    opening = hb_utils.get_opening_bp(part_obj)
+    if opening is None:
+        return []
+    owner = prop_proxy.owner(bay_config.front_opening(opening), OPENING_SCHEMA)
+    return list(options_panel.field_blocks(context, OPENING_FIELDS[1:], owner))
 
 
 def _part_page(context, out, part_obj):
+    from ...operators import options_panel, prop_proxy
     size = _size_value(context, part_obj)
     if size:
         out.append(size)
+    side, cabinet = _carcass_side(part_obj)
+    if side is not None:
+        fields = _carcass_fields(side, cabinet)
+        shown = options_panel.field_blocks(
+            context, fields, prop_proxy.owner(cabinet, CABINET_SCHEMA))
+        if shown:
+            out.extend(shown)
+            out.append(('gap', None))
     front = bool(part_obj.get('IS_CABINET_FRONT'))
     if front:
+        out.extend(_front_opening_blocks(context, part_obj))
+        out.extend(front_blocks(context, part_obj))
         out.extend(accessory_blocks(context, part_obj))
+    out.extend(material_blocks(context, part_obj))
     out.extend(edge_blocks(context, part_obj))
-    _quick(out, _menu_actions(context, part_obj,
-                              skip=('hb_frameless.door_front_prompts',)))
-    _footer(out, 'hb_frameless.door_front_prompts' if front else None)
+    _quick(out, _menu_actions(context, part_obj, skip=_ON_PAGE),
+           owner=part_obj)
+    _footer(out, None)
 
 
 def _product_page(context, out, root):
@@ -1060,9 +2017,19 @@ def _product_page(context, out, root):
         ('group', PRODUCT_GROUP, label or "Product",
          {'icon': 'cab_parts', 'summary': _size_summary, 'fields': PRODUCT_FIELDS}),
     ), prop_proxy.owner(root, schema)))
-    out.extend(generic_page.prompt_blocks(context, root, 'fl_product_prompts',
-                                          "Options"))
-    _quick(out, _menu_actions(context, root))
+    if root.get('IS_FRAMELESS_MISC_PART'):
+        out.extend(options_panel.field_blocks(
+            context, MISC_BAND_FIELDS, prop_proxy.owner(root, schema)))
+        out.extend(material_blocks(context, root))
+    out.extend(product_option_blocks(context, root))
+    # One part of the product picked (a filler's face, a toe skin, a
+    # ceiling closure board): its edges can be set one by one.
+    part_obj = context.active_object
+    if part_obj is not None and part_obj is not root:
+        out.extend(material_blocks(context, part_obj))
+        out.extend(edge_blocks(context, part_obj))
+    _quick(out, _menu_actions(context, root,
+                              skip=('hb_frameless.product_prompts',)))
     _footer(out, None)
 
 

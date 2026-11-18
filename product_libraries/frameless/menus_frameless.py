@@ -155,6 +155,7 @@ class HOME_BUILDER_MT_bay_commands(bpy.types.Menu):
     def draw(self, context):
         layout = self.layout
         layout.operator("hb_frameless.edit_splitter_openings", text="Edit Opening Sizes")
+        layout.operator("hb_frameless.edit_front_heights", text="Edit Door/Drawer Sizes")
         layout.separator()
         layout.menu("HOME_BUILDER_MT_bay_change_configuration", text="Change Configuration")
         layout.separator()
@@ -296,6 +297,7 @@ class HOME_BUILDER_MT_opening_commands(bpy.types.Menu):
         layout = self.layout
         layout.operator("hb_frameless.opening_prompts", text="Opening Prompts")
         layout.operator("hb_frameless.edit_splitter_openings", text="Edit Opening Sizes")
+        layout.operator("hb_frameless.edit_front_heights", text="Edit Door/Drawer Sizes")
         _draw_drawer_interior(layout, context)
         _draw_opening_accessory(layout, context)
         _draw_open_close(layout, context)
@@ -531,6 +533,7 @@ class HOME_BUILDER_MT_appliance_commands(bpy.types.Menu):
 
 
 classes = (
+    HOME_BUILDER_MT_applied_end_commands,
     HOME_BUILDER_MT_finish_condition,
     HOME_BUILDER_MT_carcass_part_commands,
     HOME_BUILDER_MT_cabinet_commands,

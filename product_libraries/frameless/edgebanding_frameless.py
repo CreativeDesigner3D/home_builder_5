@@ -36,7 +36,7 @@ on L2 with W1 at the bottom and W2 at the top of a side; shelves,
 splitters (fixed shelves, divisions, drawer-bank splitters) and both
 stretchers have the front on L1. _FRONT_ON_L1 turns those round.
 
-Any one edge of a cabinet part can be set by hand over its rule
+Any one edge of a cabinet or product part can be set by hand over its rule
 (EDGE_STATES): banded in the cabinet banding, banded in the interior's,
 or left bare. The choice is kept on the part and read by the same
 functions, so it holds through a restyle.
@@ -73,7 +73,52 @@ BAND_EDGES = {
     'TOE_KICK': (),
     'LEFT_TOE_KICK': (),
     'RIGHT_TOE_KICK': (),
+    # A wall scribe filler's face bands only the edges that show, which
+    # depend on where it stands (scribe_fit.face_band_edges); its kick
+    # piece and return cleats show none.
+    'FILLER_FACE': (),
+    'FILLER_KICK': (),
+    'FILLER_LEFT_RETURN': (),
+    'FILLER_RIGHT_RETURN': (),
+    # A base assembly's frame and cleats are hidden structure and are
+    # never banded; only its loose finished toe skins are.
+    'BASE_FRONT': (),
+    'BASE_BACK': (),
+    'BASE_LEFT_END': (),
+    'BASE_RIGHT_END': (),
+    'BASE_SUPPORT': (),
+    'BASE_SLEEPER_CLEAT': (),
+    'BASE_SLEEPER_CLEAT_LEFT': (),
+    'BASE_SLEEPER_CLEAT_RIGHT': (),
+    'BASE_FLOOR_CLEAT_FRONT': (),
+    'BASE_FLOOR_CLEAT_BACK': (),
 }
+
+# The roles above that make up a base assembly's frame.
+BASE_FRAME_ROLES = ('BASE_FRONT', 'BASE_BACK', 'BASE_LEFT_END',
+                    'BASE_RIGHT_END', 'BASE_SUPPORT', 'BASE_SLEEPER_CLEAT',
+                    'BASE_SLEEPER_CLEAT_LEFT', 'BASE_SLEEPER_CLEAT_RIGHT',
+                    'BASE_FLOOR_CLEAT_FRONT', 'BASE_FLOOR_CLEAT_BACK')
+
+
+def unband_base_frame(parts):
+    """Take the banding off the frame parts of a base built when they
+    were banded all round. A part never painted, or already bare, is
+    left as it is."""
+    from ...hb_types import GeoNodeObject
+    core = bpy.data.materials.get('Board Core')
+    for role in BASE_FRAME_ROLES:
+        obj = parts.get(role)
+        if obj is None or _overrides(obj):
+            continue
+        part = GeoNodeObject(obj)
+        try:
+            mats = [part.get_input('Edge ' + e) for e in EDGE_SOCKETS]
+        except Exception:
+            continue
+        if all(m is None or m is core for m in mats):
+            continue
+        _set_edges(part, obj, None)
 
 # Roles whose front edge is their L1 socket.
 _FRONT_ON_L1 = frozenset({'SHELF', 'SPLITTER', 'FRONT_STRETCHER',
@@ -134,15 +179,28 @@ EDGE_STATES = (
 _STATE_KEYS = tuple(key for key, _label in EDGE_STATES)
 
 
+def owner_root(obj):
+    """The cabinet a part is in, or else the product (a filler, a
+    ceiling closure, a base assembly) it belongs to, or None."""
+    root = solver_frameless.cabinet_root(obj)
+    if root is not None:
+        return root
+    while obj is not None:
+        if obj.get('IS_FRAMELESS_PRODUCT_CAGE'):
+            return obj
+        obj = obj.parent
+    return None
+
+
 def takes_edge_override(obj):
-    """A board of a cabinet whose edges can be set one by one: not a
-    misc part (it has its own ticks) and not a door or drawer front
-    (banded by its style)."""
+    """A board of a cabinet or product whose edges can be set one by
+    one: not a misc part (it has its own ticks) and not a door or
+    drawer front (banded by its style)."""
     return (obj is not None
             and bool(obj.get(solver_frameless.PART_ROLE_KEY))
             and not is_bandable_misc_part(obj)
             and not obj.get('IS_CABINET_FRONT')
-            and solver_frameless.cabinet_root(obj) is not None
+            and owner_root(obj) is not None
             and _has_edges(obj))
 
 
@@ -199,7 +257,17 @@ def _rule_banded_edges(obj):
 
 def _context_band_edges(obj, role):
     """Edges banded beyond a part's usual ones because of the cabinet
-    it is in: a wall cabinet's side shows its top and bottom ends."""
+    it is in: a wall cabinet's side shows its top and bottom ends; a
+    filler face the edges its kind and placement show."""
+    if role == 'FILLER_FACE':
+        root = owner_root(obj)
+        if root is None:
+            return ()
+        from . import scribe_fit
+        try:
+            return scribe_fit.face_band_edges(root)
+        except Exception:
+            return ()
     if role in _SIDE_ROLES:
         root = solver_frameless.cabinet_root(obj)
         if root is not None and solver_frameless.carcass_kind(root) in _WALL_KINDS:
@@ -282,7 +350,7 @@ def edge_labels(obj):
     and width, turned round by its mirrors."""
     from mathutils import Vector
     from ...hb_types import GeoNodeObject
-    root = solver_frameless.cabinet_root(obj)
+    root = owner_root(obj)
     if root is None:
         return {e: e for e in EDGE_SOCKETS}
     part = GeoNodeObject(obj)
@@ -392,7 +460,7 @@ def _style(obj):
         return None
     if not len(styles):
         return None
-    root = solver_frameless.cabinet_root(obj) or obj
+    root = owner_root(obj) or obj
     index = int(root.get('CABINET_STYLE_INDEX', 0))
     return styles[index] if 0 <= index < len(styles) else styles[0]
 

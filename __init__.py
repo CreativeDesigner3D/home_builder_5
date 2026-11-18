@@ -51,6 +51,7 @@ from .operators import layout_lock
 from .operators import viewport_hud
 from .operators import room_dim_overlay
 from .operators import elevation_mode
+from . import drawings
 from .operators import wall_baseboard
 from .operators import ops_general
 from .operators import cabinet_clipboard
@@ -82,7 +83,7 @@ from bpy.app.handlers import persistent
 bl_info = {
     "name": "Home Builder 5",
     "author": "Andrew Peel",
-    "version": (5, 2, 70),
+    "version": (5, 2, 71),
     "blender": (5, 1, 0),
     "location": "3D Viewport Sidebar",
     "description": "Library for Designing Interior Spaces",
@@ -547,6 +548,7 @@ def register():
     style_editor.register()
     room_dim_overlay.register()
     elevation_mode.register()       # after the HUD: it adds a View toggle
+    drawings.register()             # after the elevation: it draws with it
     wall_baseboard.register()
     ops_general.register()
     cabinet_clipboard.register()
@@ -633,6 +635,7 @@ def unregister():
     scene_navigator.unregister()
     viewport_hud.unregister()
     layout_lock.unregister()
+    drawings.unregister()
     elevation_mode.unregister()
     room_dim_overlay.unregister()
     wall_baseboard.unregister()

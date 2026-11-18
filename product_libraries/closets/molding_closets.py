@@ -162,6 +162,10 @@ def _bay_specs(root):
     bays = sorted([c for c in root.children
                    if c.get(types_closets.TAG_BAY_CAGE)],
                   key=lambda o: o.get('hb_bay_index', 0))
+    # The crown minimum is a height off the floor: a hanging unit can
+    # sit high with its bays at the bottom of the unit, so add the
+    # unit's own elevation before comparing.
+    root_z = root.matrix_world.translation.z
     specs = []
     for bay in bays:
         bp = bay.hb_closet_bay
@@ -173,7 +177,7 @@ def _bay_specs(root):
             'bottom': bay.location.z,
             'depth': bp.depth,
             'floor': bp.floor_mounted,
-            'ok': top >= MIN_CROWN_HEIGHT,
+            'ok': root_z + top >= MIN_CROWN_HEIGHT - inch(0.05),
         })
     return specs
 

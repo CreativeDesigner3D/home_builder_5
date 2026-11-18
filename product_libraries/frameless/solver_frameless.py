@@ -291,8 +291,48 @@ def carcass_parts(root):
     return parts
 
 
+# How far the box stands in from the cabinet's left face, as last solved
+# (the thickness of an applied left end).
+CARCASS_SHIFT_KEY = 'hb_carcass_shift'
+
+# An applied end never squeezes the box narrower than this.
+APPLIED_END_MIN_BOX = inch(3.0)
+
+
+def applied_end_insets(root, parts, kind, dim_x, dim_y):
+    """(left, right) width the applied end panels take out of the box.
+
+    An applied end is part of the cabinet's width: the box is made
+    narrower by the panel's thickness and the panel stands inside the
+    width the cabinet was given. Corner cabinets and cabinets with an
+    angled front or back keep their panels outside.
+    """
+    if kind not in STRAIGHT_KINDS:
+        return 0.0, 0.0
+    if int(prompt(root, ANGLED_BACK_KEY, 0) or 0):
+        return 0.0, 0.0
+    mt = float(prompt(root, 'Material Thickness', inch(0.75)))
+    depths = angled_front_depths(root, dim_y, mt)
+    if depths is not None and any(abs(d - dim_y) > 1e-6 for d in depths):
+        return 0.0, 0.0
+    insets = []
+    for role in ('APPLIED_END_LEFT', 'APPLIED_END_RIGHT'):
+        part = parts.get(role)
+        t = 0.0
+        if part is not None and not part.hide_viewport:
+            try:
+                t = max(float(GeoNodeCutpart(part).get_input('Thickness')),
+                        0.0)
+            except Exception:
+                t = 0.0
+        insets.append(t)
+    if dim_x - insets[0] - insets[1] < APPLIED_END_MIN_BOX:
+        return 0.0, 0.0
+    return insets[0], insets[1]
+
+
 def _solve_applied_ends(root, parts, p, dim_x, dim_y, dim_z):
-    """Applied end panels on the cabinet's outside faces."""
+    """Applied end panels on the box's outside faces."""
     # An applied back stands behind the cabinet, so an applied end runs
     # back over its edge, and the back meets that end instead of
     # stopping short of it.
@@ -753,7 +793,198 @@ FB_LED_INSET_KEY = 'LED Route Inset'
 FB_LED_MOD_NAME = 'LED Route'
 
 
+# Panels applied under uppers that stand side by side are cut as one
+# part: the leftmost cabinet of the run carries a panel as long as the
+# run and the others keep theirs hidden. A run longer than the material
+# breaks at a cabinet joint.
+FB_OWNER_KEY = 'hb_finished_bottom_owner'    # on a hidden panel
+FB_RUN_KEY = 'hb_finished_bottom_run'        # on a cabinet: who it shares with
+FB_MAX_LENGTH = inch(96.0)
+_FB_TOL = inch(0.0625)
+
+
+def _live_world(obj):
+    """World matrix from the transforms as they stand now (matrix_world
+    lags a cabinet that has just been moved)."""
+    if obj.parent is None:
+        return obj.matrix_basis.copy()
+    return _live_world(obj.parent) @ obj.matrix_parent_inverse @ obj.matrix_basis
+
+
+def _finished_bottom_max_length(root):
+    for scene in root.users_scene:
+        props = getattr(scene, 'hb_frameless', None)
+        value = float(getattr(props, 'finished_bottom_max_length', 0.0) or 0.0)
+        if value > 0.0:
+            return value
+    return FB_MAX_LENGTH
+
+
+def _finished_bottom_entry(root):
+    """Where a cabinet's applied bottom panel runs, for joining it to its
+    neighbours'. None for a cabinet with no panel, or one that keeps its
+    own (a stacked, angled or hidden cabinet)."""
+    if root is None or not is_solved_cabinet(root):
+        return None
+    t = finished_bottom_thickness(root)
+    if t <= 0.0 or root.hide_viewport:
+        return None
+    if root.parent is not None and cabinet_root(root.parent) is not None:
+        return None
+    if root.get(ANGLED_BACK_KEY):
+        return None
+    parts = carcass_parts(root)
+    panel = parts.get('FINISHED_BOTTOM')
+    if panel is None:
+        return None
+    cage = GeoNodeCage(root)
+    dim_x, dim_y = cage.get_input('Dim X'), cage.get_input('Dim Y')
+    depths = angled_front_depths(root, dim_y, inch(0.75))
+    if depths is not None and min(depths) < dim_y - _FB_TOL:
+        return None
+    left_in, right_in = applied_end_insets(root, parts, 'UPPER', dim_x, dim_y)
+    world = _live_world(root)
+    rot = world.to_3x3()
+    led = None
+    if bool(prompt(root, FB_LED_KEY, False)):
+        led = tuple(round(float(prompt(root, key, default)), 5)
+                    for key, default in ((FB_LED_WIDTH_KEY, inch(0.875)),
+                                         (FB_LED_DEPTH_KEY, inch(0.375)),
+                                         (FB_LED_INSET_KEY, inch(1.5))))
+    slots = panel.material_slots
+    return {
+        'root': root, 'panel': panel, 't': t, 'dim_y': dim_y,
+        'start': left_in, 'length': max(dim_x - left_in - right_in, 0.0),
+        'origin': world.translation.copy(),
+        'x': (rot @ Vector((1.0, 0.0, 0.0))).normalized(),
+        'y': (rot @ Vector((0.0, 1.0, 0.0))).normalized(),
+        'led': led,
+        'material': tuple(s.material.name if s.material else '' for s in slots),
+    }
+
+
+def _finished_bottoms_join(a, b):
+    """Two panels are one piece of material in one line."""
+    if abs(a['t'] - b['t']) > 1e-6 or abs(a['dim_y'] - b['dim_y']) > _FB_TOL:
+        return False
+    if a['led'] != b['led'] or a['material'] != b['material']:
+        return False
+    if a['x'].dot(b['x']) < 0.999:
+        return False
+    off = b['origin'] - a['origin']
+    return abs(off.dot(a['y'])) < _FB_TOL and abs(off.z) < _FB_TOL
+
+
+def _finished_bottom_chain(entry):
+    """The panels touching end to end in a line with ``entry``'s, left to
+    right, its own included."""
+    root = entry['root']
+    line = [(entry['start'], entry)]
+    for scene in root.users_scene[:1]:
+        for obj in scene.objects:
+            if (obj is root or not obj.get('IS_FRAMELESS_CABINET_CAGE')
+                    or not obj.get(FINISHED_BOTTOM_KEY)):
+                continue
+            other = _finished_bottom_entry(obj)
+            if other is None or not _finished_bottoms_join(entry, other):
+                continue
+            along = (other['origin'] - entry['origin']).dot(entry['x'])
+            line.append((along + other['start'], other))
+    line.sort(key=lambda item: item[0])
+    at = next(i for i, item in enumerate(line) if item[1] is entry)
+    first = last = at
+    while first > 0 and abs(line[first - 1][0] + line[first - 1][1]['length']
+                            - line[first][0]) < _FB_TOL:
+        first -= 1
+    while last < len(line) - 1 and abs(line[last][0] + line[last][1]['length']
+                                       - line[last + 1][0]) < _FB_TOL:
+        last += 1
+    return [item[1] for item in line[first:last + 1]]
+
+
+def _apply_finished_bottom_chain(chain):
+    """Cut a line of touching panels into as few parts as the material
+    length allows, breaking only at cabinet joints."""
+    if not chain:
+        return
+    limit = _finished_bottom_max_length(chain[0]['root'])
+    pieces = [[chain[0]]]
+    for entry in chain[1:]:
+        if sum(e['length'] for e in pieces[-1]) + entry['length'] > limit + 1e-6:
+            pieces.append([entry])
+        else:
+            pieces[-1].append(entry)
+    names = '\n'.join(e['root'].name for e in chain)
+    for piece in pieces:
+        owner = piece[0]
+        total = sum(e['length'] for e in piece)
+        panel = owner['panel']
+        GeoNodeCutpart(panel).set_input('Length', total)
+        panel.hide_viewport = panel.hide_render = False
+        if FB_OWNER_KEY in panel:
+            del panel[FB_OWNER_KEY]
+        set_modifier(panel, FB_LED_MOD_NAME, (('End X', total + 0.01),))
+        for entry in piece[1:]:
+            GeoNodeCutpart(entry['panel']).set_input('Length', entry['length'])
+            entry['panel'].hide_viewport = entry['panel'].hide_render = True
+            entry['panel'][FB_OWNER_KEY] = owner['root'].name
+    for entry in chain:
+        if len(chain) > 1:
+            entry['root'][FB_RUN_KEY] = names
+        elif FB_RUN_KEY in entry['root']:
+            del entry['root'][FB_RUN_KEY]
+
+
+def _refresh_finished_bottom_run(root):
+    """Join ``root``'s applied bottom to its neighbours' as they stand
+    now, and put right the cabinets it shared a panel with before."""
+    before = [name for name in str(root.get(FB_RUN_KEY, '')).split('\n')
+              if name and name != root.name]
+    entry = _finished_bottom_entry(root)
+    chain = _finished_bottom_chain(entry) if entry is not None else []
+    _apply_finished_bottom_chain(chain)
+    if entry is None and FB_RUN_KEY in root:
+        del root[FB_RUN_KEY]
+    now = {e['root'].name for e in chain}
+    for name in before:
+        if name in now:
+            continue
+        other = _finished_bottom_entry(bpy.data.objects.get(name))
+        if other is not None:
+            _apply_finished_bottom_chain(_finished_bottom_chain(other))
+
+
+def refresh_finished_bottoms(scene):
+    """Re-join every applied bottom panel in the room (after a cabinet
+    has gone, say). Returns how many lines of panels were looked at."""
+    done = set()
+    count = 0
+    for obj in list(scene.objects):
+        if (obj.name in done or not obj.get('IS_FRAMELESS_CABINET_CAGE')
+                or not obj.get(FINISHED_BOTTOM_KEY)):
+            continue
+        entry = _finished_bottom_entry(obj)
+        if entry is None:
+            continue
+        chain = _finished_bottom_chain(entry)
+        _apply_finished_bottom_chain(chain)
+        done.update(e['root'].name for e in chain)
+        count += 1
+    return count
+
+
 def _solve_finished_bottom(root, parts, p, dim_x, dim_y, dim_z):
+    try:
+        _solve_own_finished_bottom(root, parts, p, dim_x, dim_y, dim_z)
+    finally:
+        if FINISHED_BOTTOM_KEY in root or FB_RUN_KEY in root:
+            try:
+                _refresh_finished_bottom_run(root)
+            except Exception:
+                traceback.print_exc()
+
+
+def _solve_own_finished_bottom(root, parts, p, dim_x, dim_y, dim_z):
     t = FINISHED_BOTTOM_THICKNESS.get(int(prompt(root, FINISHED_BOTTOM_KEY, 0)))
     panel = parts.get('FINISHED_BOTTOM')
     if t is None:
@@ -1624,6 +1855,16 @@ def recalculate_cabinet(obj):
     prompts = _Prompts(root)
     dims = (cage.get_input('Dim X'), cage.get_input('Dim Y'),
             cage.get_input('Dim Z'))
+    # Applied ends stand inside the cabinet's width: the box is solved
+    # at what is left between them, from its own left face, and then
+    # moved over by the left panel. Whatever the last solve moved goes
+    # back first, so a part this solve does not place stays put.
+    left_in, right_in = applied_end_insets(root, parts, kind, dims[0], dims[1])
+    moved = float(root.get(CARCASS_SHIFT_KEY, 0.0) or 0.0)
+    if moved:
+        for part_obj in parts.values():
+            part_obj.location.x -= moved
+    dims = (dims[0] - left_in - right_in, dims[1], dims[2])
     _SOLVERS[kind](root, parts, prompts, *dims)
     if kind == 'UPPER':
         _solve_finished_bottom(root, parts, prompts, *dims)
@@ -1633,6 +1874,12 @@ def recalculate_cabinet(obj):
         _solve_angled_back(root, parts, prompts, *dims)
     _solve_blind_corner(root, parts, prompts, *dims)
     _solve_applied_ends(root, parts, prompts, *dims)
+    if left_in:
+        # Read again: the solve can add parts (a finished bottom).
+        for part_obj in carcass_parts(root).values():
+            part_obj.location.x += left_in
+    if left_in or moved:
+        root[CARCASS_SHIFT_KEY] = left_in
     try:
         sync_cage_kick_clear(root, kind)
     except Exception:
@@ -1764,6 +2011,96 @@ def solve_calculator(calc, total):
     return [p.distance_value for p in calc.prompts]
 
 
+# A vertical splitter can hold an opening by the height of the front that
+# closes it instead of by the opening's own height.
+SIZE_BY_FRONTS_KEY = 'Size By Fronts'
+
+
+def front_height_keys(index):
+    """(typed front height, opening height it last solved to) id-property
+    names for one opening of a vertical splitter."""
+    return 'Front Height %d' % index, 'Front Height %d Opening' % index
+
+
+def opening_front_insert(opening_obj):
+    """The insert whose fronts close ``opening_obj``, or None. An opening
+    split side by side answers with its first front insert: the fronts
+    across it share their top and bottom edges."""
+    queue = list(opening_obj.children)
+    while queue:
+        child = queue.pop(0)
+        if not is_cage_link(child):
+            continue
+        if 'Inset Front' in child and any(
+                c.get('IS_CABINET_FRONT') for c in child.children):
+            return child
+        queue.extend(child.children)
+    return None
+
+
+def opening_front_overlay(opening_obj):
+    """How much taller than its opening an opening's front stands (less
+    than nothing for an inset front); None where no front closes it."""
+    insert = opening_front_insert(opening_obj) if opening_obj else None
+    if insert is None:
+        return None
+    top, bottom, _left, _right = front_overlays(insert)
+    return top + bottom
+
+
+def _solve_front_heights(splitter_obj, parts, calc, total):
+    """Share ``total`` among a vertical splitter's openings when some are
+    held by front height: each of those gets its front height less the
+    front's overlays, openings held by their own height keep it, and the
+    rest share what is left so that their fronts come out equal. Returns
+    the sizes in prompt order, or None when the splitter sizes by
+    openings alone."""
+    held = {}
+    overlays = {}
+    for i, p in enumerate(calc.prompts, 1):
+        overlays[i] = opening_front_overlay(parts.get(('OPENING', i)))
+        key, solved_key = front_height_keys(i)
+        if key not in splitter_obj:
+            continue
+        solved = splitter_obj.get(solved_key)
+        # An opening height typed since (or the opening put back on an
+        # equal share) takes the opening over again, as does losing the
+        # front.
+        if overlays[i] is None or (solved is not None and (
+                p.equal or abs(p.distance_value - float(solved)) > 1e-6)):
+            del splitter_obj[key]
+            if solved is not None:
+                del splitter_obj[solved_key]
+            continue
+        held[i] = float(splitter_obj[key])
+    if not held and not splitter_obj.get(SIZE_BY_FRONTS_KEY):
+        return None
+
+    if calc.distance_obj is not None:
+        clear_drivers(calc.distance_obj)
+        calc.distance_obj.home_builder.calculator_distance = total
+    fixed = 0.0
+    shared = []
+    for i, p in enumerate(calc.prompts, 1):
+        if i in held:
+            p.equal = False
+            p.distance_value = max(held[i] - overlays[i], 0.0)
+            splitter_obj[front_height_keys(i)[1]] = p.distance_value
+        if not p.equal:
+            if p.include:
+                fixed += p.distance_value
+        elif p.include:
+            shared.append(i)
+        else:
+            p.distance_value = 0.0
+    if shared:
+        front = (total - fixed
+                 + sum(overlays[i] or 0.0 for i in shared)) / len(shared)
+        for i in shared:
+            calc.prompts[i - 1].distance_value = front - (overlays[i] or 0.0)
+    return [p.distance_value for p in calc.prompts]
+
+
 def _sink_split_board(splitter_obj, opening_above):
     """True for a front split board in a sink base that sits under a false
     front: the bowl and trap need that space, so it is not built."""
@@ -1813,7 +2150,12 @@ def _solve_splitter(splitter_obj, vertical):
     mt = float(prompt(splitter_obj, 'Material Thickness', inch(0.75)))
     count = len(calc.prompts)
     span = dim_z if vertical else dim_x
-    sizes = solve_calculator(calc, span - mt * (count - 1))
+    sizes = None
+    if vertical:
+        sizes = _solve_front_heights(splitter_obj, parts, calc,
+                                     span - mt * (count - 1))
+    if sizes is None:
+        sizes = solve_calculator(calc, span - mt * (count - 1))
 
     if vertical:
         # Openings run top to bottom; the last one sits on the floor of

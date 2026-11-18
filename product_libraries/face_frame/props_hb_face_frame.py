@@ -29,6 +29,7 @@ from ... import hb_utils
 from . import finish_colors, wood_materials, style_options, shelf_nosing
 from . import wood_top_edge
 from . import decorative_corner
+from . import gothic_stile
 from . import cabinet_column
 from ..common import bun_foot
 
@@ -1768,6 +1769,25 @@ def apply_style_colors(context):
         if tint is not None:
             tinted += 1
 
+    # Frameless cabinets wear their own cabinet style's colour the same
+    # way (a face frame product built on frameless parts was reached
+    # through its own stamp above).
+    for cage in [o for o in bpy.data.objects
+                 if o.get('IS_FRAMELESS_CABINET_CAGE')]:
+        tint = _frameless_style_tint(cage) if on else None
+        part_colour = (_NO_STYLE_TINT if tint is None
+                       else (tint[0], tint[1], tint[2], 1.0))
+        _paint_cage(cage, tint, context)
+        for child in cage.children_recursive:
+            if child.get('IS_2D_ANNOTATION'):
+                child.color = note_colour
+            elif _is_cage(child):
+                _paint_cage(child, tint, context)
+            else:
+                child.color = part_colour
+        if tint is not None:
+            tinted += 1
+
     # Panels on a standalone appliance wear the style stamped on it (a
     # housed one was reached through its cabinet above). Only the panel
     # run is tinted, not the appliance model behind it.
@@ -1819,6 +1839,45 @@ def apply_style_colors(context):
     return tinted
 
 
+def _frameless_style_tint(cage):
+    """The viewport RGB of a frameless cabinet: its cabinet style's place
+    in the frameless style pool picks from the same palette the face
+    frame styles use, so the first style is white and each one after
+    takes the next colour. A cabinet with no style reads as the first."""
+    index = 0
+    name = cage.get('CABINET_STYLE_NAME')
+    if name:
+        try:
+            from ... import hb_project
+            pool = hb_project.get_main_scene().hb_frameless.cabinet_styles
+            index = max(next((i for i, style in enumerate(pool)
+                              if style.name == name), 0), 0)
+        except Exception:
+            index = 0
+    return style_viewport_color(style_palette_color(index))
+
+
+def _other_library_tint(obj):
+    """The style colour of something that is not a face frame cabinet:
+    a frameless cabinet wears its own style's colour, and a frameless
+    product or a closet (neither has a cabinet style) wears the first
+    style's white. None for anything else."""
+    cur = obj
+    while cur is not None:
+        if cur.get('IS_FRAMELESS_CABINET_CAGE'):
+            return _frameless_style_tint(cur)
+        if cur.get('IS_FRAMELESS_PRODUCT_CAGE'):
+            return STYLE_COLOR_PALETTE[0]
+        cur = cur.parent
+    try:
+        from ..closets import types_closets
+        if types_closets.find_starter_root(obj) is not None:
+            return STYLE_COLOR_PALETTE[0]
+    except Exception:
+        pass
+    return None
+
+
 def style_color_for_object(obj, context=None, highlight=None):
     """The colour ``obj`` should wear under style colours, or None.
 
@@ -1858,8 +1917,10 @@ def style_color_for_object(obj, context=None, highlight=None):
         while root is not None and not _is_styled_bare_part(root):
             root = root.parent
     if root is None:
-        return None
-    tint = _style_tint_for_cabinet(root, props.cabinet_styles)
+        # The other libraries follow the same rule with their own styles.
+        tint = _other_library_tint(obj)
+    else:
+        tint = _style_tint_for_cabinet(root, props.cabinet_styles)
     if tint is None:
         return None
     if highlight is None:
@@ -3757,6 +3818,9 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
                                  # standing in the cabinet's own corner,
                                  # so always the exterior finish.
                                  'DECORATIVE_CORNER',
+                                 # Gothic stile boards applied over the
+                                 # end stiles: milled stock in the finish.
+                                 'GOTHIC_STILE_APPLIED',
                                  # Cabinet column turnings: purchased
                                  # split turnings applied over stiles,
                                  # finished to match the exterior.
@@ -3777,6 +3841,7 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
                                  'FRAME_PROFILE_CUTTER',
                                  'FINISHED_BOTTOM_LED_CUTTER',
                                  'DECORATIVE_CORNER_CUTTER',
+                                 'GOTHIC_STILE_CUTTER',
                                  'BOX_MITER_CUTTER'):
                     slot_mat = finish_mat
                 elif slot_role in ('DRAWER_DIVIDER', 'DRAWER_INSERT',
@@ -8658,6 +8723,53 @@ def _update_decorative_corners(self, context):
     _update_cabinet_dim(self, context)
 
 
+def _sync_gothic_stile(cab_props, side):
+    """Widen an end stile when it becomes a Gothic stile.
+
+    Switching one on sets the stile to the typical Gothic width and
+    unlocks it, so the width can then be changed by hand (up to the
+    widest the design is made) and a style re-apply leaves it alone.
+    Switching it off re-locks a stile this unlocked, provided it still
+    holds the width set here; a width changed by hand since is kept.
+    """
+    if side == 'LEFT':
+        on = cab_props.gothic_stile_left
+        attr, lock_attr = 'left_stile_width', 'unlock_left_stile'
+    else:
+        on = cab_props.gothic_stile_right
+        attr, lock_attr = 'right_stile_width', 'unlock_right_stile'
+    root = cab_props.id_data
+    stamp = 'HB_GOTHIC_STILE_%s' % side
+    width = gothic_stile.DEFAULT_WIDTH
+    if on:
+        if root.get(stamp):
+            return
+        if getattr(cab_props, lock_attr):
+            root[stamp] = 'USER_UNLOCKED'
+        else:
+            root[stamp] = 'UNLOCKED_BY_GOTHIC'
+            setattr(cab_props, lock_attr, True)
+        if getattr(cab_props, attr) < width - 1e-7:
+            setattr(cab_props, attr, width)
+        return
+    was = root.get(stamp)
+    if not was:
+        return
+    del root[stamp]
+    if abs(getattr(cab_props, attr) - width) > 1e-7:
+        return
+    if was == 'UNLOCKED_BY_GOTHIC':
+        setattr(cab_props, lock_attr, False)
+        if not root.get('STYLE_NAME'):
+            _recompute_blind_stile_width(cab_props, side)
+
+
+def _update_gothic_stiles(self, context):
+    _sync_gothic_stile(self, 'LEFT')
+    _sync_gothic_stile(self, 'RIGHT')
+    _update_cabinet_dim(self, context)
+
+
 def _update_garage_bottom(self, context):
     """Full-width garage bottom sync (blind appliance garage, the
     "3-opening" configuration): one front spans the entire garage
@@ -10168,9 +10280,9 @@ class Face_Frame_Cabinet_Props(PropertyGroup):
     decorative_corner_back_right: BoolProperty(
         name="Back Right", default=False, update=_update_cabinet_dim,
     )  # type: ignore
-    # The vendor posts are 2" x 2" only; the size is not offered in the
-    # UI (kept as a property for older files and for the solver, which
-    # pulls the face frame in by it).
+    # The turned posts are 2" x 2" only, so the UI offers the size for
+    # clipped corners alone, which come in any size. The solver pulls
+    # the face frame in by it.
     decorative_corner_size: FloatProperty(
         name="Corner Size", default=decorative_corner.DEFAULT_SIZE,
         unit='LENGTH', precision=4, min=units.inch(0.25),
@@ -10192,6 +10304,56 @@ class Face_Frame_Cabinet_Props(PropertyGroup):
         unit='LENGTH', precision=4, min=0.0,
         description="Length of the plain square block above the top "
                     "transition detail, that crown moulding dies into",
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    decorative_corner_ball_cuts: IntProperty(
+        name="Ball Cuts", default=decorative_corner.DEFAULT_BALL_CUTS,
+        min=1, max=9,
+        description="Ball cuts routed down a Gothic clipped corner, "
+                    "equally spaced across the clip",
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    decorative_corner_route_stop: FloatProperty(
+        name="Route Stop",
+        default=decorative_corner.DEFAULT_ROUTE_STOP,
+        unit='LENGTH', precision=4, min=0.0,
+        description="How far short of each end of the corner the ball "
+                    "cuts stop",
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    # ---- Gothic stiles: ball cuts routed down a widened end stile
+    # (gothic_stile.py and types_face_frame._apply_gothic_stiles). ----
+    gothic_stile_left: BoolProperty(
+        name="Gothic Left Stile", default=False,
+        description="Route ball cuts down the left end stile. Switching "
+                    "it on widens the stile to 3\"",
+        update=_update_gothic_stiles,
+    )  # type: ignore
+    gothic_stile_right: BoolProperty(
+        name="Gothic Right Stile", default=False,
+        description="Route ball cuts down the right end stile. Switching "
+                    "it on widens the stile to 3\"",
+        update=_update_gothic_stiles,
+    )  # type: ignore
+    gothic_stile_type: EnumProperty(
+        name="Gothic Stile Type", items=gothic_stile.TYPE_ITEMS,
+        default='INTEGRAL',
+        description="Route the end stile itself, or a board applied over "
+                    "it (fitted, or shipped loose)",
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    gothic_ball_cuts: IntProperty(
+        name="Ball Cuts", default=gothic_stile.DEFAULT_BALL_CUTS,
+        min=1, max=9,
+        description="Ball cuts routed down each Gothic stile, centred "
+                    "across it",
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    gothic_route_stop: FloatProperty(
+        name="Route Stop", default=gothic_stile.DEFAULT_ROUTE_STOP,
+        unit='LENGTH', precision=4, min=0.0,
+        description="How far short of each end of the stile the ball "
+                    "cuts stop",
         update=_update_cabinet_dim,
     )  # type: ignore
     decorative_corner_top_detail: BoolProperty(

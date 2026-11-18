@@ -94,12 +94,80 @@ class hb_frameless_OT_update_base_top_construction_prompts(bpy.types.Operator):
         return {'FINISHED'}
 
 
+def _opening_front_kind(opening_obj):
+    """'DRAWER' (a drawer or false front), 'DOOR', 'PULLOUT' or None for
+    what closes an opening of a vertical splitter."""
+    from .. import solver_frameless
+    insert = solver_frameless.opening_front_insert(opening_obj) if opening_obj else None
+    if insert is None:
+        return None
+    for child in insert.children:
+        if child.get('IS_PULLOUT_FRONT'):
+            return 'PULLOUT'
+        if child.get('IS_DRAWER_FRONT'):
+            return 'DRAWER'
+        if child.get('IS_DOOR_FRONT'):
+            return 'DOOR'
+    return None
+
+
+def top_front_splitters(scene, equal_stacks):
+    """The outermost vertical splitters of the scene's frameless cabinets
+    whose top opening holds a drawer or false front, by the rules new
+    cabinets are built with: a drawer over doors or other fronts always,
+    an all-drawer stack only with three or more drawers and equal stack
+    heights off."""
+    from .. import solver_frameless
+    tag = solver_frameless.SPLITTER_VERTICAL_TAG
+    found = []
+    for obj in list(scene.objects):
+        if not obj.get(tag):
+            continue
+        parent = obj.parent
+        nested = False
+        while parent is not None:
+            if parent.get(tag):
+                nested = True
+                break
+            parent = parent.parent
+        if nested:
+            continue
+        calc = solver_frameless.splitter_calculator(obj)
+        if calc is None or len(calc.prompts) < 2:
+            continue
+        parts = solver_frameless.split_parts(obj)
+        kinds = [_opening_front_kind(parts.get(('OPENING', i)))
+                 for i in range(1, len(calc.prompts) + 1)]
+        if kinds[0] != 'DRAWER':
+            continue
+        if all(k == 'DRAWER' for k in kinds) and (len(kinds) < 3 or equal_stacks):
+            continue
+        found.append(obj)
+    return found
+
+
 class hb_frameless_OT_update_drawer_front_height_prompts(bpy.types.Operator):
     bl_idname = "hb_frameless.update_drawer_front_height_prompts"
     bl_label = "Update Drawer Front Height Prompts"
+    bl_description = ("Give the top drawer and sink false front of every frameless "
+                      "cabinet in the room the Top Drawer Front Height; the openings "
+                      "below share the rest as before")
+    bl_options = {'REGISTER', 'UNDO'}
 
     def execute(self, context):
-        print('TODO: Update Drawer Front Height Prompts')
+        from . import ops_opening
+        props = context.scene.hb_frameless
+        height = props.top_drawer_front_height
+        splitters = top_front_splitters(context.scene, props.equal_drawer_stack_heights)
+        for splitter_obj in splitters:
+            rows = ops_opening.front_height_rows(splitter_obj)
+            # The top front takes the option; fronts below keep what is
+            # held on them, and the rest share what is left.
+            heights = [height] + [h if held else None
+                                  for _i, _label, h, held, _f in rows[1:]]
+            ops_opening.set_front_heights(context, splitter_obj, heights)
+        self.report({'INFO'}, "Set the top front of %d cabinet bay(s) to %s"
+                    % (len(splitters), units.unit_to_string(context.scene.unit_settings, height)))
         return {'FINISHED'}
 
 

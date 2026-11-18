@@ -1472,6 +1472,7 @@ class PlaceCabinetBase(WallObjectPlacementMixin):
         along the wall when several are. None when the cursor is at no
         cabinet's height. So a filler follows the cursor up to an upper
         standing over a base, instead of always taking the base."""
+        self.scribe_level_cabinet = None
         if not self.selected_wall:
             return None
         side_rot = 0.0 if self.place_on_front else math.pi
@@ -1491,8 +1492,37 @@ class PlaceCabinetBase(WallObjectPlacementMixin):
                   for x in (0.0, cage.get_input('Dim X'))]
             away = max(min(xs) - cursor_x, cursor_x - max(xs), 0.0)
             if best is None or away < best[0]:
-                best = (away, z0, height)
-        return None if best is None else (best[1], best[2])
+                best = (away, z0, height, child)
+        if best is None:
+            return None
+        # The cabinet the row was read from: the one a filler dropped
+        # beside it, away from any narrow gap, is sized to.
+        self.scribe_level_cabinet = best[3]
+        return (best[1], best[2])
+
+    def scribe_fit_target(self, filler_x0, filler_x1):
+        """(cabinet, on_wall_right) a wall scribe filler standing at
+        wall-local x filler_x0..filler_x1 is sized to: the cabinet at an
+        end of the narrow gap it fills, else the cabinet of the row the
+        cursor is at (a filler dropped beside an upper takes the upper's
+        height, depth, toe kick and name, not a base's). None when it
+        stands beside neither."""
+        found = getattr(self, 'scribe_neighbour', None)
+        if found is not None:
+            return found
+        if self.scribe_level_now() is None:
+            return None
+        cab = getattr(self, 'scribe_level_cabinet', None)
+        if cab is None:
+            return None
+        try:
+            cab.name
+        except ReferenceError:
+            return None
+        cage = hb_types.GeoNodeCage(cab)
+        xs = [(cab.matrix_local @ Vector((x, 0.0, 0.0))).x
+              for x in (0.0, cage.get_input('Dim X'))]
+        return cab, (min(xs) + max(xs)) / 2.0 > (filler_x0 + filler_x1) / 2.0
 
     def find_scribe_neighbour(self, x0, x1):
         """The cabinet on this side of the wall standing at either end of
@@ -1532,12 +1562,14 @@ class PlaceCabinetBase(WallObjectPlacementMixin):
         """Size a placed wall scribe filler to the cabinet it closes
         against: its height, depth (to the door plane), height off the
         floor, toe kick, and which side the cabinet is on."""
-        found = getattr(self, 'scribe_neighbour', None)
+        cage = hb_types.GeoNodeCage(filler_obj)
+        xs = [(filler_obj.matrix_local @ Vector((x, 0.0, 0.0))).x
+              for x in (0.0, cage.get_input('Dim X'))]
+        found = self.scribe_fit_target(min(xs), max(xs))
         if found is None:
             return
         nb, on_wall_right = found
         nb_cage = hb_types.GeoNodeCage(nb)
-        cage = hb_types.GeoNodeCage(filler_obj)
         cage.set_input('Dim Z', nb_cage.get_input('Dim Z'))
         cage.set_input('Dim Y', abs(nb_cage.get_input('Dim Y'))
                        + types_products.FRONT_THICKNESS)
@@ -2007,8 +2039,10 @@ class PlaceCabinetBase(WallObjectPlacementMixin):
                 self.preview_cage.obj.location.y = wall_thickness
                 self.preview_cage.obj.rotation_euler = (0, 0, math.pi)
 
-            if self.scribe_neighbour is not None:
-                nb = self.scribe_neighbour[0]
+            fit = (self.scribe_fit_target(snap_x, snap_x + total_width)
+                   if self.is_scribe_filler() else None)
+            if fit is not None:
+                nb = fit[0]
                 nb_cage = hb_types.GeoNodeCage(nb)
                 self.preview_cage.set_input('Dim Z', nb_cage.get_input('Dim Z'))
                 self.preview_cage.set_input(

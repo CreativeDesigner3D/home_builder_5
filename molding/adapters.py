@@ -107,6 +107,116 @@ def collect_bridges(scene):
 
 
 # ---------------------------------------------------------------------------
+# Support frame legs
+# ---------------------------------------------------------------------------
+
+# A leg face with less than this much room in front of it has no space
+# for molding (a cabinet, appliance or wall stands against it).
+_LEG_PROBE = units.inch(2.0)
+
+
+def _leg_side_blocked(point, frame, blockers, walls):
+    """True when a leg face has a cabinet, appliance or wall against it
+    (``point`` is a world position just outside the face)."""
+    for obj in blockers:
+        if obj is frame:
+            continue
+        w, d, _h = engine.cage_dims(obj)
+        local = obj.matrix_world.inverted() @ point
+        if 0.0 <= local.x <= w and -d <= local.y <= 0.0:
+            return True
+    for wall in walls:
+        local = wall.matrix_world.inverted() @ point
+        xs = [c[0] for c in wall.bound_box]
+        ys = [c[1] for c in wall.bound_box]
+        if (min(xs) <= local.x <= max(xs)
+                and min(ys) <= local.y <= max(ys)):
+            return True
+    return False
+
+
+def leg_material(frame):
+    """The finish a support frame's base molding takes: the frame's own
+    style."""
+    if frame.get('IS_FACE_FRAME_PRODUCT_CAGE') and frame.get('STYLE_NAME'):
+        try:
+            from ..product_libraries.face_frame import props_hb_face_frame
+            ff = props_hb_face_frame.get_style_props()
+            style = next((cs for cs in ff.cabinet_styles
+                          if cs.name == frame.get('STYLE_NAME')), None)
+            if style is not None:
+                material, _rotated = style.get_finish_material()
+                return material
+        except Exception:
+            return None
+    return finish_material(frame)
+
+
+def collect_leg_runs(scene, blockers):
+    """Base molding paths around the legs of every support frame that
+    asks for it.
+
+    Returns ``[(frame, floor_z, [(points, closed), ...])]`` in world
+    space: one path per leg, wound so the outside of the leg is to the
+    RIGHT of travel. A leg standing free gets a closed loop; a face
+    with a cabinet, appliance or wall against it is left bare and the
+    path stops square at it.
+    """
+    from ..product_libraries.frameless import types_products as tp
+    walls = [o for o in scene.objects if o.get('IS_WALL_BP')]
+    out = []
+    for frame in scene.objects:
+        if not tp.is_support_frame(frame):
+            continue
+        if not frame.get(tp.LEG_BASE_MOLDING_KEY, False):
+            continue
+        floor_local, rects = tp.support_frame_leg_footprints(frame)
+        if not rects:
+            continue
+        mw = frame.matrix_world
+        flip = mw.to_3x3().determinant() < 0.0
+        floor_z = (mw @ mathutils.Vector((0.0, 0.0, floor_local))).z
+        paths = []
+        for x0, x1, y0, y1 in rects:
+            # Counter-clockwise from above: outside is right of travel.
+            ring = [(x0, y0), (x1, y0), (x1, y1), (x0, y1)]
+            if flip:
+                ring.reverse()
+            pts = [mw @ mathutils.Vector((x, y, floor_local))
+                   for x, y in ring]
+            pts = [mathutils.Vector((p.x, p.y)) for p in pts]
+            kept = []
+            for i in range(4):
+                a, b = pts[i], pts[(i + 1) % 4]
+                d = (b - a).normalized()
+                mid = (a + b) * 0.5 + mathutils.Vector((d.y, -d.x)) * _LEG_PROBE
+                kept.append(not _leg_side_blocked(
+                    mathutils.Vector((mid.x, mid.y, floor_z + 0.005)),
+                    frame, blockers, walls))
+            if all(kept):
+                paths.append((pts, True))
+                continue
+            if not any(kept):
+                continue
+            start = next(i for i in range(4) if not kept[i])
+            run = None
+            for k in range(1, 5):
+                i = (start + k) % 4
+                if kept[i]:
+                    if run is None:
+                        run = [pts[i]]
+                    run.append(pts[(i + 1) % 4])
+                elif run is not None:
+                    paths.append((run, False))
+                    run = None
+            if run is not None:
+                paths.append((run, False))
+        if paths:
+            out.append((frame, floor_z, paths))
+    return out
+
+
+# ---------------------------------------------------------------------------
 # Facts
 # ---------------------------------------------------------------------------
 
@@ -414,6 +524,22 @@ def finish_material(obj):
     return None
 
 
+def _front_clips(obj):
+    """{'left': size, 'right': size} for the front corners a cabinet
+    has clipped off at 45 degrees (decorative corner styles that clip
+    rather than turn a post), read from what the cabinet built, or None.
+    Crown and light rail follow the clip round the corner."""
+    if obj.get('DECORATIVE_CORNER_STYLE') not in ('CLIPPED', 'GOTHIC'):
+        return None
+    size = float(obj.get('DECORATIVE_CORNER_SIZE') or 0.0)
+    if size <= 0.0:
+        return None
+    corners = str(obj.get('DECORATIVE_CORNERS') or '').split(',')
+    clips = {'left': size if 'FRONT_LEFT' in corners else 0.0,
+             'right': size if 'FRONT_RIGHT' in corners else 0.0}
+    return clips if (clips['left'] or clips['right']) else None
+
+
 def build_facts(scene, members):
     """FACTS dict (keyed by id(obj)) for the engine, covering every
     member: role, corner data, kick config, finished ends."""
@@ -510,6 +636,7 @@ def build_facts(scene, members):
                 crown_mount = {'rail_width': rail, 'door_overlay': overlay}
             facts[id(obj)] = {'role': 'CABINET', 'corner': corner,
                               'kick': kick,
+                              'clips': _front_clips(obj),
                               'crown_mount': crown_mount,
                               'back_off': _finished_back_offset(obj),
                               'back_span': _finished_back_span(obj),

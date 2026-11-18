@@ -55,6 +55,31 @@ def is_cutter(obj):
                 and any(obj.get(tag) for tag in TAGS))
 
 
+def keep_out_of_renders(obj):
+    """A cutter only shapes its host. Its wire display keeps it out of
+    Solid shading and hide_render out of a final render; the rendered
+    viewport follows neither, so its rays are switched off as well."""
+    obj.display_type = 'WIRE'
+    obj.hide_render = True
+    obj.display.show_shadows = False
+    for name in ('visible_camera', 'visible_diffuse', 'visible_glossy',
+                 'visible_transmission', 'visible_volume_scatter',
+                 'visible_shadow'):
+        if getattr(obj, name, False):
+            setattr(obj, name, False)
+
+
+def keep_all_out_of_renders():
+    """Cutters drawn before their rays were switched off. Returns how
+    many there are."""
+    count = 0
+    for obj in bpy.data.objects:
+        if is_cutter(obj):
+            keep_out_of_renders(obj)
+            count += 1
+    return count
+
+
 def kind_of(obj):
     for tag in TAGS:
         if obj.get(tag):
@@ -137,8 +162,7 @@ def create(context, host, kind, points, bottom, depth, face):
     obj[ct.THICKNESS_KEY] = float(depth)
     obj[FACE_KEY] = float(face)
     ct.set_outline(obj, _anticlockwise(points))
-    obj.display_type = 'WIRE'
-    obj.hide_render = True
+    keep_out_of_renders(obj)
     if not rebuild(obj):
         # Two clicks on one spot: nothing to cut with.
         remove(obj)

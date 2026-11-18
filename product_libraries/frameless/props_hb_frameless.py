@@ -1317,6 +1317,35 @@ class Frameless_Cabinet_Style(PropertyGroup):
         update=update_style_materials,
     )  # type: ignore
 
+    # What the style is ordered with that the model does not build:
+    # printed on the style section of the drawings.
+    hinge_type: EnumProperty(
+        name="Hinge Type",
+        description="Hinge the style's doors are hung on",
+        items=[
+            ('SOFT_CLOSE_110', "110\u00b0 Soft Close",
+             "Clip-on 110 degree hinge with integrated soft close"),
+            ('STANDARD_110', "110\u00b0 Standard",
+             "Clip-on 110 degree hinge, no soft close"),
+            ('WIDE_170', "170\u00b0 Wide Angle",
+             "Clip-on 170 degree hinge, for doors that open past a "
+             "neighbour"),
+            ('PUSH_OPEN', "Push to Open",
+             "Hinge without a spring, opened by a push latch"),
+        ],
+        default='SOFT_CLOSE_110',
+    )  # type: ignore
+    pull_drilling: EnumProperty(
+        name="Pull Drilling",
+        description="Whether the shop drills the fronts for their pulls",
+        items=[
+            ('DRILLED', "Drilled", "Fronts are drilled for the pulls"),
+            ('NOT_DRILLED', "Not Drilled",
+             "Fronts ship undrilled; pulls are fitted on site"),
+        ],
+        default='DRILLED',
+    )  # type: ignore
+
     # Additional style options
     edge_banding: EnumProperty(
         name="Edge Banding",
@@ -1455,6 +1484,7 @@ class Frameless_Cabinet_Style(PropertyGroup):
         finished_interior = cabinet_obj.get('Finished Interior', False)
         shelf_edge = self.get_shelf_edge_material(finished_interior)
         from . import edgebanding_frameless
+        from . import part_material
         from . import sheet_faces
         two_sided = self.exterior_two_sided()
 
@@ -1486,6 +1516,10 @@ class Frameless_Cabinet_Style(PropertyGroup):
                 edge = carcass_edge
             if edgebanding_frameless.is_loose_shelf(child):
                 edge = shelf_edge
+            # A part given its own material on its page keeps it.
+            own = part_material.materials(child, self)
+            if own is not None:
+                top_mat, bottom_mat, edge = own
 
             part.set_input("Top Surface", top_mat)
             part.set_input("Bottom Surface", bottom_mat)
@@ -2501,12 +2535,24 @@ class Frameless_Scene_Props(PropertyGroup):
                        unit='LENGTH',
                        update=update_back_tongue_length)# type: ignore
 
+    base_assembly_max_length: FloatProperty(name="Base Assembly Max Length",
+                                            description="Longest single base assembly, set from the length of the kick stock sheet less its trim; a longer run is built as several bases butted end to end",
+                                            default=units.inch(95.0),
+                                            min=units.inch(12.0),
+                                            unit='LENGTH')# type: ignore
+
+    finished_bottom_max_length: FloatProperty(name="Applied Bottom Max Length",
+                                              description="Longest panel applied under a run of upper cabinets; a longer run is cut at a cabinet joint",
+                                              default=units.inch(96.0),
+                                              min=units.inch(12.0),
+                                              unit='LENGTH')# type: ignore
+
     equal_drawer_stack_heights: BoolProperty(name="Equal Drawer Stack Heights", 
                                              description="Check this make all drawer stack heights equal. Otherwise the Top Drawer Height will be set.", 
                                                         default=False)# type: ignore
     
     top_drawer_front_height: FloatProperty(name="Top Drawer Front Height",
-                                           description="Default top drawer front height.",
+                                           description="Height of the top drawer front on new cabinets; the opening behind it is worked out from it",
                                            default=units.inch(6.0),
                                            unit='LENGTH')# type: ignore
 
@@ -2678,6 +2724,42 @@ class Frameless_Scene_Props(PropertyGroup):
         items=drawer_box_system_items,
         default=_DRAWER_BOX_DEFAULT,
         update=update_drawer_box_system)  # type: ignore
+
+    countertop_edge: EnumProperty(
+        name="Countertop Edge",
+        description="Edge profile the countertops are ordered with",
+        items=[
+            ('SQUARE', "Square", "Square edge"),
+            ('EASED', "Eased", "Square edge, arrises eased"),
+            ('BEVEL', "Bevel", "Bevelled edge"),
+            ('HALF_BULLNOSE', "Half Bullnose", "Top edge rounded over"),
+            ('BULLNOSE', "Full Bullnose", "Both edges rounded over"),
+        ],
+        default='EASED',
+    )  # type: ignore
+    countertop_splash: EnumProperty(
+        name="Countertop Splash",
+        description="Backsplash the countertops are ordered with",
+        items=[
+            ('NONE', "None", "No backsplash"),
+            ('STANDARD', "Standard", "A low splash at the wall"),
+            ('FULL', "Full Height", "Splash up to the upper cabinets"),
+        ],
+        default='STANDARD',
+    )  # type: ignore
+    countertop_splash_height: FloatProperty(
+        name="Splash Height", default=units.inch(4.0), min=0.0, unit='LENGTH',
+        precision=4,
+        description="Height of a standard backsplash",
+    )  # type: ignore
+    # Trim is ordered in sticks of one length; drawings count the sticks
+    # each trim run needs.
+    trim_stick_length: FloatProperty(
+        name="Trim Stick Length", default=units.inch(96.0), min=0.0,
+        unit='LENGTH', precision=4,
+        description="Length trim is ordered in (0 = list total lengths "
+                    "only)",
+    )  # type: ignore
 
     countertop_material: EnumProperty(
         name="Countertop Material",
@@ -3010,9 +3092,8 @@ class Frameless_Scene_Props(PropertyGroup):
         row.operator('hb_frameless.update_drawer_front_height_prompts',text="",icon='FILE_REFRESH')
         row = size_box.row()
         row.prop(self,'equal_drawer_stack_heights')
-        if not self.equal_drawer_stack_heights:
-            row = size_box.row()
-            row.prop(self,'top_drawer_front_height',text="Top Drawer Front Height")
+        row = size_box.row()
+        row.prop(self,'top_drawer_front_height',text="Top Drawer Front Height")
 
     def draw_cabinet_options_handles(self,layout,context):
         from ... import hb_project
@@ -3289,6 +3370,10 @@ class Frameless_Scene_Props(PropertyGroup):
         col.prop(props, 'countertop_overhang_back', text="Back Overhang")
         col.separator()
         col.prop(props, 'countertop_material', text="Material")
+        col.prop(props, 'countertop_edge', text="Edge")
+        col.prop(props, 'countertop_splash', text="Splash")
+        if props.countertop_splash == 'STANDARD':
+            col.prop(props, 'countertop_splash_height', text="Splash Height")
 
         layout.separator()
 

@@ -45,6 +45,9 @@ class hb_frameless_OT_product_prompts(bpy.types.Operator):
     # Support frame: the Leg Style seen at the last check(), so a style
     # CHANGE (vs a size edit) can size the legs to the style's blank.
     _leg_style_seen = None
+    # Support frame: Base Molding On Legs at the last check(), so the
+    # room's molding is rebuilt when it is switched.
+    _leg_base_seen = False
 
     @classmethod
     def poll(cls, context):
@@ -64,6 +67,8 @@ class hb_frameless_OT_product_prompts(bpy.types.Operator):
             # Bases built before the finish options.
             types_products.add_base_assembly_options(product_bp)
         self._leg_style_seen = product_bp.get(_turned_leg().LEG_STYLE_PROP)
+        self._leg_base_seen = bool(
+            product_bp.get(types_products.LEG_BASE_MOLDING_KEY, False))
 
         if product_bp.get('IS_FRAMELESS_MISC_PART'):
             self.product = hb_types.GeoNodeCutpart(product_bp)
@@ -121,6 +126,13 @@ class hb_frameless_OT_product_prompts(bpy.types.Operator):
         types_products.recalculate_product(self.product.obj)
         if self.part_type == 'SUPPORT_FRAME':
             self._sync_support_frame_legs(self.product.obj)
+            leg_base = bool(self.product.obj.get(
+                types_products.LEG_BASE_MOLDING_KEY, False))
+            if leg_base != self._leg_base_seen:
+                self._leg_base_seen = leg_base
+                from ....molding import ops as molding_ops
+                context.view_layer.update()
+                molding_ops.apply_scene_packages(context.scene)
         return True
 
     def _sync_support_frame_legs(self, obj):
@@ -227,6 +239,18 @@ class hb_frameless_OT_product_prompts(bpy.types.Operator):
         row.label(text="Floor Cleat Width:")
         row.prop(obj, '["%s"]' % tp.FLOOR_CLEAT_KEY, text="")
 
+        if tp.TOE_SKIN_SCRIBE_KEY not in obj:
+            return
+        box = layout.box()
+        box.label(text="Wall Ends")
+        col = box.column(align=True)
+        row = col.row(align=True)
+        row.label(text="Corner Wall Gap:")
+        row.prop(obj, '["%s"]' % tp.CORNER_WALL_GAP_KEY, text="")
+        row = col.row(align=True)
+        row.label(text="Toe Skin Scribe:")
+        row.prop(obj, '["%s"]' % tp.TOE_SKIN_SCRIBE_KEY, text="")
+
     def draw_floating_shelf(self, layout, obj):
         box = layout.box()
         box.label(text="Options")
@@ -308,6 +332,11 @@ class hb_frameless_OT_product_prompts(bpy.types.Operator):
             row = col.row(align=True)
             row.label(text="Leg Style:")
             row.prop(obj, '["%s"]' % _turned_leg().LEG_STYLE_PROP, text="")
+        key = types_products.LEG_BASE_MOLDING_KEY
+        if key in obj:   # frames built before the option
+            row = col.row(align=True)
+            row.label(text="Base Molding On Legs:")
+            row.prop(obj, '["%s"]' % key, text="")
 
         col.separator()
 
@@ -328,6 +357,9 @@ class hb_frameless_OT_product_prompts(bpy.types.Operator):
         if 'Flush With Doors' in obj:   # fillers built before the option
             row.prop(obj, '["Flush With Doors"]', text="Flush With Doors")
         row.prop(obj, '["Cabinet On Right"]', text="Cabinet On Right")
+        cleat = types_products.FILLER_RETURN_CLEAT_KEY
+        if cleat in obj and not obj.get('Flush With Doors', True):
+            col.prop(obj, '["%s"]' % cleat, text="Return Cleat")
         key = types_products.BOTTOM_RETURN_KEY
         if key in obj and float(obj.get('Toe Kick Height', 0.0)) <= 0.0:
             col.prop(obj, '["%s"]' % key, text="Bottom Return")
