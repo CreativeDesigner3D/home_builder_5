@@ -113,7 +113,10 @@ class Cabinet(GeoNodeCage):
         self.obj['IS_FRAMELESS_CABINET_CAGE'] = True
         self.obj['MENU_ID'] = 'HOME_BUILDER_MT_cabinet_commands'
         self.obj.display_type = 'WIRE'
-        
+        # An open cabinet shows its inside, so it comes in finished.
+        if self.default_exterior == 'Open':
+            self.obj['Finished Interior'] = True
+
         self.set_input('Dim X', self.width)
         self.set_input('Dim Y', self.depth)
         self.set_input('Dim Z', self.height)
