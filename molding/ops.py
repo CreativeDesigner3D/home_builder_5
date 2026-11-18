@@ -554,6 +554,12 @@ def _base_stack(hb, stack):
     return out
 
 
+# Callables run with the scene after apply_scene_packages rebuilds a
+# room's molding, so add-ons that build molding of their own can follow
+# (a support frame switching Base Molding On Legs rebuilds through here).
+POST_APPLY_HOOKS = []
+
+
 def apply_scene_packages(scene):
     """Rebuild every molding-package sweep in the scene from its three
     package props. Safe to call from prop update callbacks."""
@@ -627,6 +633,11 @@ def apply_scene_packages(scene):
     if getattr(hb, 'molding_crown_furniture_cap', False):
         made += _apply_type(scene, 'CAP', 'top',
                             packages.FURNITURE_CAP_STACK, opts)
+    for hook in list(POST_APPLY_HOOKS):
+        try:
+            hook(scene)
+        except Exception as ex:  # pragma: no cover - defensive
+            print(f"Home Builder molding: post-apply hook failed: {ex}")
     return made
 
 
