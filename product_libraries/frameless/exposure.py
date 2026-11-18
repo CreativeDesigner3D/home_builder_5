@@ -18,9 +18,10 @@ island, a peninsula) takes the room's default finished back. A room
 with no walls drawn says nothing about what is behind a cabinet, so
 backs are left alone there.
 
-The top of a wall cabinet goes by how high it is: one at or below
-TOP_SEEN_HEIGHT can be looked down on and is finished, a higher one is
-out of sight and stays unfinished.
+The top of a wall or tall cabinet goes by how high it is: one at or
+below TOP_SEEN_HEIGHT can be looked down on and is finished, a higher
+one is out of sight and stays unfinished. A base cabinet's top is under
+the countertop and stays unfinished.
 
 An end set by hand is left alone until it is handed back to automatic.
 """
@@ -42,12 +43,12 @@ SLACK = units.inch(0.25)
 # wall has to start to the end of this one to close it.
 WALL_JOIN = units.inch(6.0)
 
-# The top of a wall cabinet shows when it is no higher than this.
+# The top of a wall or tall cabinet shows when it is no higher than this.
 TOP_SEEN_HEIGHT = units.inch(72.0)
 
 SIDES = ('LEFT', 'RIGHT')
 # Every face this module settles: the ends, the back, then the top of a
-# wall cabinet.
+# base, wall or tall cabinet.
 AUTO_SIDES = SIDES + ('BACK', 'TOP')
 # What a face is in before it is first settled here: every carcass part
 # is built finished on its outside face.
@@ -264,13 +265,20 @@ def side_exposure(cab_obj, side, scan):
     return 'EXPOSED'
 
 
+# Cabinets whose top is settled here: a base is always unfinished, the
+# others go by height.
+AUTO_TOP_KINDS = ('BASE', 'UPPER', 'TALL')
+
+
 def takes_auto_top(cab_obj):
-    """A wall cabinet: the one whose top is settled by its height."""
-    return solver_frameless.carcass_kind(cab_obj) == 'UPPER'
+    """A cabinet whose top is settled here."""
+    return solver_frameless.carcass_kind(cab_obj) in AUTO_TOP_KINDS
 
 
-def top_condition(mw, box):
+def top_condition(mw, box, kind='UPPER'):
     """'FINISHED' for a top low enough to be seen, else 'UNFINISHED'."""
+    if kind == 'BASE':
+        return 'UNFINISHED'
     top = max((mw @ Vector((x, y, z))).z
               for x in box[0] for y in box[1] for z in box[2])
     return 'FINISHED' if top <= TOP_SEEN_HEIGHT + TOUCH else 'UNFINISHED'
@@ -330,11 +338,13 @@ def _apply(context, cab_obj, side, target):
     key = AUTO_KEY + side.lower()
     # An end that is not the way this left it was set by hand, here or
     # before ends looked after themselves: it stays as it is.
+    first = key not in cab_obj
     last = cab_obj.get(key, _built_as(cab_obj, side))
-    if current != last:
+    # A top is only ever set by hand through the menus, which mark it;
+    # one never settled here is taken as it was built, whatever that is.
+    if current != last and not (side == 'TOP' and first):
         set_manual(cab_obj, side)
         return False
-    first = key not in cab_obj
     if cab_obj.get(key) != target:
         cab_obj[key] = target
     if current == target:
@@ -352,6 +362,16 @@ def _apply(context, cab_obj, side, target):
         part['Finish Top'] = False
         part['Finish Bottom'] = target == 'FINISHED'
     return True
+
+
+def _clear_guessed_top(cab_obj):
+    """Hand back a wall cabinet top that was marked as set by hand only
+    because it did not look the way it was expected to be built: it was
+    never settled here, so the menus did not set it."""
+    if (solver_frameless.carcass_kind(cab_obj) == 'UPPER'
+            and is_manual(cab_obj, 'TOP')
+            and AUTO_KEY + 'top' not in cab_obj):
+        set_manual(cab_obj, 'TOP', False)
 
 
 def recalc_scene(scene=None, context=None):
@@ -375,8 +395,11 @@ def recalc_scene(scene=None, context=None):
             wanted.append((cab_obj, side,
                            target_condition(side_exposure(cab_obj, side, scan),
                                             defaults[side])))
-        if takes_auto_top(cab_obj) and not is_manual(cab_obj, 'TOP'):
-            wanted.append((cab_obj, 'TOP', top_condition(mw, box)))
+        if takes_auto_top(cab_obj):
+            _clear_guessed_top(cab_obj)
+            if not is_manual(cab_obj, 'TOP'):
+                wanted.append((cab_obj, 'TOP', top_condition(
+                    mw, box, solver_frameless.carcass_kind(cab_obj))))
     changed = []
     was_running = _running
     _running = True
