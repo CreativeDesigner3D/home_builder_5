@@ -329,9 +329,57 @@ def _elevation_marks(drawing, context, wall, k, ox, oy):
         number_tag(drawing, cx, cy, number, room)
 
 
+def _details(context, view, _width, height):
+    """The wall's detail cards (a moulding's section, a toe kick, an
+    appliance panel) in a column, or columns when they do not stand in
+    `height`: the cards the elevation shows beside the wall, as the
+    Elevation View prints them. None when the wall has none, or the
+    elevation's Details are switched off."""
+    wall = wall_of(view)
+    if wall is None:
+        return None
+    saved = em._print_scale
+    em._print_scale = em.PRINT_TEXT_SCALE
+    try:
+        s = em._s()
+        cards = em._cards(context.scene, wall)
+        if not cards:
+            return None
+        limit = height if height > 1.0 else 1e9
+        flow, total = em._cards_flow(cards, 0.0, limit, s)
+        tall = max(y + h for _c, _x, y, _k, _w, h in flow)
+        drawing = Drawing(total, tall)
+        for card, cx, cy, k, w, h in flow:
+            ox, oy = cx, tall - cy - h
+            lines, texts, masks = {}, [], []
+            for pr in card.get('prims', ()):
+                kind = pr.get('kind')
+                if kind == 'LINES':
+                    width = max(em.CARD_MIN_LINE * s,
+                                pr.get('width', 0.0) * k)
+                    width = round(width * 4.0) / 4.0
+                    lines.setdefault(width, []).extend(
+                        (ox + p[0] * k, oy + p[1] * k)
+                        for p in pr.get('points', ()))
+                elif kind == 'TEXT':
+                    rows, mask = em._card_text(context.scene, pr, ox, oy,
+                                               k, w)
+                    texts += rows
+                    if mask is not None:
+                        masks.append(mask)
+            em._print_cards(drawing, {'cards': [{
+                'rect': (ox, oy, w, h), 'lines': lines, 'texts': texts,
+                'masks': masks}]})
+    finally:
+        em._print_scale = saved
+    drawing.info = {'k': None}
+    return drawing
+
+
 def register():
     from . import plan, section
     register_view_kind('ELEVATION', _elevation)
+    register_view_kind('DETAILS', _details)
     register_view_kind('PLAN', plan.resolve)
     register_view_kind('ROOM_PLAN', plan.resolve_room)
     register_view_kind('SECTION', section.resolve)

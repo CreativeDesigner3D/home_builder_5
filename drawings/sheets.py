@@ -31,7 +31,9 @@ SET_PROP = 'HB_DRAWING_SET'
 SECTION_COLUMN = 285.0      # width a section takes with its dimensions
 SECTIONS_A_SHEET = 4
 SECTIONS_WITH_ELEVATION = 2
-SECTION_SCALES = ((12, '1"'), (16, '3/4"'), (24, '1/2"'), (32, '3/8"'))
+DETAILS_GAP = 12.0          # beside the column of detail cards
+DETAILS_TOP = 54.0          # kept clear over and under it
+SECTION_SCALES = ((12, '1"'),(16, '3/4"'), (24, '1/2"'), (32, '3/8"'))
 
 
 # ---- Sheet furniture ---------------------------------------------------------
@@ -101,7 +103,8 @@ def default_set(scene, room_index=0):
     if whole_room:
         sheets.append({'views': [{'kind': 'ROOM_PLAN'}]})
     for wall in walls:
-        on_sheet = [{'kind': 'ELEVATION', 'wall': wall.name}]
+        on_sheet = [{'kind': 'ELEVATION', 'wall': wall.name},
+                    {'kind': 'DETAILS', 'wall': wall.name}]
         if not whole_room:
             on_sheet.append({'kind': 'PLAN', 'wall': wall.name})
         cuts = [{'kind': 'SECTION', 'wall': wall.name, 'x': x}
@@ -492,6 +495,21 @@ def compose(context, sheets, index, count=None):
     column_x = x1 - SECTION_COLUMN * len(sections)
     if not elevations:
         column_x = x0
+    # The wall's detail cards stand in a column between the elevation
+    # and its sections, centred up the sheet as the elevation is (clear
+    # of a logo in the sheet's corner).
+    for view in by_kind.get('DETAILS', [])[:1]:
+        room = (y1 - y0) - 2 * DETAILS_TOP
+        d = views.resolve(context, view, 0.0, room)
+        if d is None:
+            continue
+        column_x -= d.width + DETAILS_GAP
+        dx = column_x + view['_move'][0]
+        dy = (y0 + DETAILS_TOP + max(0.0, (room - d.height) / 2.0)
+              + view['_move'][1])
+        d.place(page, dx, dy)
+        _placed(page, view, d, dx, dy)
+        column_x -= DETAILS_GAP
     if elevations:
         elev = elevations[0]
         plan = next((p for p in plans if p.get('wall') == elev.get('wall')),
@@ -551,7 +569,7 @@ def compose(context, sheets, index, count=None):
     cursor = x0 + 22.0
     for view in sheet['views']:
         if view.get('kind') in ('ELEVATION', 'PLAN', 'SECTION',
-                                'ROOM_PLAN'):
+                                'ROOM_PLAN', 'DETAILS'):
             continue
         d = views.resolve(context, view, x1 - cursor, y1 - y0)
         if d is None:
