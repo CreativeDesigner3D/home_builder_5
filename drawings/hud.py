@@ -53,6 +53,8 @@ HINTS = {
     'ADD_DIM': "Click two points on the view, then where the dimension "
                "line goes",
     'DIM_REMOVE': "Take this dimension off the drawing",
+    'CROP': "Then drag a box round the part of this view to keep",
+    'UNCROP': "Show all of this view again",
 }
 
 
@@ -339,6 +341,12 @@ def _tools(st, bounds, scene, s):
                       'ON' if st.get('pick') == 'NOTE' else None))
         items.append(('ADD_DIM', "+ Dimension", _wide("+ Dimension", s),
                       'ON' if st.get('pick') == 'DIM' else None))
+    if item.get('k'):
+        items.append(('CROP', "Crop", _wide("Crop", s),
+                      'ON' if st.get('pick') == 'CROP' else None))
+    if item.get('cropped'):
+        items.append(('UNCROP', "Remove Crop", _wide("Remove Crop", s),
+                      None))
     if not items:
         return []
     xmin, xmax, ymin, ymax = bounds
@@ -431,6 +439,16 @@ def draw(st, area, scene):
             _outline(shader, rect, SELECTED, 2.0)
     if st.get('pick') == 'DIM' and st.get('rect'):
         _draw_dim_draft(shader, st, scene, s)
+    drag = st.get('crop_drag')
+    if drag and st.get('rect'):
+        x, y, f = st['rect']
+        (ax, ay), (bx, by) = drag['a'], drag['b']
+        shader.bind()
+        draw_round_rect(shader, x + min(ax, bx) * f, y + min(ay, by) * f,
+                        abs(bx - ax) * f, abs(by - ay) * f, 0,
+                        (0.20, 0.52, 0.95, 0.08))
+        _outline(shader, (x + min(ax, bx) * f, y + min(ay, by) * f,
+                          abs(bx - ax) * f, abs(by - ay) * f), SELECTED, 1.5)
     typing = st.get('typing')
     if typing and st.get('rect'):
         _draw_typing(shader, st, typing, s)
@@ -507,6 +525,8 @@ def draw(st, area, scene):
                   "above or below: width)" if count == 2
                   else "Click the %s point to measure  (it holds to line "
                        "ends)   Esc: done" % ("second" if count else "first"))
+    elif st.get('pick') == 'CROP':
+        banner = "Drag a box round the part of the view to keep   Esc: cancel"
     elif st.get('pick') == 'CUT':
         banner = "Click on the elevation where the section should cut"
     elif st.get('note'):

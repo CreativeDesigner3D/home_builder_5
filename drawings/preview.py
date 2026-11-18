@@ -427,6 +427,19 @@ class HOME_BUILDER_OT_drawings_preview(bpy.types.Operator):
         sheets.set_view_dims(scene, pending['view'], dims)
         self._edited(context, "dimension added")
 
+    def _finish_crop(self, context, drag, b):
+        st = _st
+        item, a = drag['item'], drag['a']
+        if abs(b[0] - a[0]) < 6.0 or abs(b[1] - a[1]) < 6.0:
+            st['note'] = "drag a box round the part to keep"
+            return
+        st['pick'] = None
+        o, k = item['origin'], item['k']
+        sheets.set_crop(page_scene(st, context), item['key'],
+                        ((a[0] - o[0]) / k, (a[1] - o[1]) / k,
+                         (b[0] - o[0]) / k, (b[1] - o[1]) / k))
+        self._edited(context, "view cropped")
+
     def _change_dim(self, context, entry, change, said):
         """Apply change(dim) to one stored dimension (None removes it)."""
         scene = page_scene(_st, context)
@@ -587,6 +600,11 @@ class HOME_BUILDER_OT_drawings_preview(bpy.types.Operator):
                 self._edited(context, "sections moved")
             elif ident == 'ADD_NOTE':
                 st['pick'] = None if st.get('pick') == 'NOTE' else 'NOTE'
+            elif ident == 'CROP':
+                st['pick'] = None if st.get('pick') == 'CROP' else 'CROP'
+            elif ident == 'UNCROP':
+                sheets.set_crop(scene, item['key'], None)
+                self._edited(context, "crop removed")
             elif ident == 'ADD_DIM':
                 st['pick'] = None if st.get('pick') == 'DIM' else 'DIM'
                 st['dim_draft'] = st['dim_cursor'] = None
@@ -692,6 +710,17 @@ class HOME_BUILDER_OT_drawings_preview(bpy.types.Operator):
             if event.value == 'PRESS':
                 self._type(context, event, area)
             return {'RUNNING_MODAL'}
+        drag = st.get('crop_drag')
+        if drag and event.type in ('MOUSEMOVE', 'INBETWEEN_MOUSEMOVE'):
+            drag['b'] = self._sheet_point(event, region)
+            area.tag_redraw()
+            return {'RUNNING_MODAL'}
+        if drag and event.type == 'LEFTMOUSE' and event.value == 'RELEASE':
+            st['crop_drag'] = None
+            self._finish_crop(context, drag,
+                              self._sheet_point(event, region))
+            area.tag_redraw()
+            return {'RUNNING_MODAL'}
         move = st.get('move')
         if move and event.type == 'MOUSEMOVE':
             move['now'] = (event.mouse_x, event.mouse_y)
@@ -793,6 +822,16 @@ class HOME_BUILDER_OT_drawings_preview(bpy.types.Operator):
                     self._change_note(context, entry,
                                       lambda n: dict(n, tip=tip),
                                       "leader added")
+                area.tag_redraw()
+                return {'RUNNING_MODAL'}
+            if st.get('pick') == 'CROP' and st.get('rect'):
+                # A box dragged round what the view should keep.
+                item = hud.selected_item(st)
+                if item is None or not item.get('k'):
+                    st['pick'] = None
+                else:
+                    at = self._sheet_point(event, region)
+                    st['crop_drag'] = {'item': item, 'a': at, 'b': at}
                 area.tag_redraw()
                 return {'RUNNING_MODAL'}
             if st.get('pick') == 'DIM' and st.get('rect'):

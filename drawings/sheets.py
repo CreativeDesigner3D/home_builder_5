@@ -23,7 +23,7 @@ import json
 from .. import hb_pdf
 from ..operators import elevation_mode as em
 from . import draft, section, views
-from .drawing import Drawing
+from .drawing import Drawing, crop as crop_drawing
 
 PAPER = (17 * 72.0, 11 * 72.0)
 MARGIN = 18.0
@@ -135,8 +135,9 @@ def default_set(scene, room_index=0):
 
 # ---- The user's edits ----------------------------------------------------------
 
-EDIT_KEYS = ('moved', 'scales', 'cuts', 'together', 'notes', 'dims')
-LAYOUT_KEYS = ('moved', 'scales', 'cuts', 'together')
+EDIT_KEYS = ('moved', 'scales', 'cuts', 'together', 'notes', 'dims',
+             'crops')
+LAYOUT_KEYS = ('moved', 'scales', 'cuts', 'together', 'crops')
 SCALE_LADDER = (8, 12, 16, 24, 32, 48, 64, 96)      # the n of 1:n
 
 
@@ -144,7 +145,8 @@ def edits(scene):
     """{'moved': {view key: [dx, dy] in points}, 'scales': {view key: n},
     'cuts': {wall: [metres along it, ...]}, 'together': {wall: True},
     'notes': {view key: [{'x', 'y', 'text', 'tip'}]},
-    'dims': {view key: [{'a', 'b', 'at', 'axis'}]}} -- a note's place,
+    'dims': {view key: [{'a', 'b', 'at', 'axis'}]},
+    'crops': {view key: [x0, y0, x1, y1]}} -- a note's place, a crop,
     its leader's tip and a dimension's points are in the view's own
     metres, so they stay on what they point at when the view is moved
     or drawn at another scale."""
@@ -497,6 +499,8 @@ def drawing_set(scene, counters=None):
             view['_move'] = tuple(kept['moved'].get(key) or (0.0, 0.0))
             if key in kept['scales']:
                 view['scale'] = int(kept['scales'][key])
+            if key in kept['crops']:
+                view['_crop'] = kept['crops'][key]
     letters, cuts = {}, {}
     n_sections = counters.get('sections', 0)
     for number, sheet in enumerate(sheets, first_sheet + 1):
@@ -552,19 +556,63 @@ def _scale_n(drawing):
     return int(round(72.0 / 0.0254 / k)) if k else None
 
 
-def _placed(page, view, drawing, x, y, origin=None):
+def set_crop(scene, key, box):
+    """Keep only `box` (x0, y0, x1, y1 in the view's metres) of a view,
+    or with None show all of it again."""
+    data = edits(scene)
+    if box:
+        x0, x1 = sorted((box[0], box[2]))
+        y0, y1 = sorted((box[1], box[3]))
+        data['crops'][key] = [round(v, 5) for v in (x0, y0, x1, y1)]
+    else:
+        data['crops'].pop(key, None)
+    store_edits(scene, data)
+    views.touch(scene)
+
+
+def _put(page, view, drawing, x, y, zero=(0.0, 0.0)):
+    """Set a view on the sheet at (x, y), cut to the user's crop, and
+    note where it landed. `zero` is where the view's own zero is in its
+    drawing, which the crop is measured from."""
+    box = view.get('_crop')
+    frame = None
+    if box:
+        k = (drawing.info or {}).get('k') or 1.0
+        frame = (zero[0] + box[0] * k, zero[1] + box[1] * k,
+                 zero[0] + box[2] * k, zero[1] + box[3] * k)
+        drawing = crop_drawing(drawing, frame)
+    drawing.place(page, x, y)
+    _placed(page, view, drawing, x, y, origin=(x + zero[0], y + zero[1]),
+            frame=frame)
+    return drawing
+
+
+def _shows(page, x, y=None, pad=0.0):
+    """False when the view just placed was cropped and (x, y) on the
+    sheet -- or with no y, x across it -- is cut away: a marker pointing
+    at what is no longer drawn is left off."""
+    placed = page.info.get('placed') or ()
+    if not placed or not placed[-1].get('cropped'):
+        return True
+    x0, y0, x1, y1 = placed[-1]['box']
+    return (x0 - pad <= x <= x1 + pad
+            and (y is None or y0 - pad <= y <= y1 + pad))
+
+
+def _placed(page, view, drawing, x, y, origin=None, frame=None):
     """Note where a view landed on the sheet, for whatever lets the
     user pick it up there. `origin` is where the view's own zero is on
     the sheet; with its 'k' (points to the metre, 1 for a view that has
     no scale) it turns a place on the sheet into a place in the view."""
-    bx0, by0, bx1, by1 = drawing.bounds()
+    # A cropped view is as big as its crop, whatever is left inside.
+    bx0, by0, bx1, by1 = frame or drawing.bounds()
     page.info.setdefault('placed', []).append({
         'key': view.get('_key'), 'kind': view.get('kind'),
         'wall': view.get('wall'), 'x': view.get('x'),
         'box': (x + bx0, y + by0, x + bx1, y + by1),
         'n': _scale_n(drawing),
         'k': (drawing.info or {}).get('k') or 1.0,
-        'origin': origin or (x, y)})
+        'origin': origin or (x, y), 'cropped': frame is not None})
 
 
 SCALE_TEXT = {8: '1 1/2"', 12: '1"', 16: '3/4"', 24: '1/2"', 32: '3/8"',
@@ -647,8 +695,7 @@ def compose(context, sheets, index, count=None):
             y -= d.height
             dx = column_x + (col_w - d.width) / 2.0 + view['_move'][0]
             dy = y + view['_move'][1]
-            d.place(page, dx, dy)
-            _placed(page, view, d, dx, dy)
+            _put(page, view, d, dx, dy)
             y -= DETAILS_GAP * 2
         column_x -= DETAILS_GAP
     for view in by_kind.get('ROOM_ISO', [])[:1]:
@@ -659,8 +706,7 @@ def compose(context, sheets, index, count=None):
         dx = x0 + (x1 - x0 - d.width) / 2.0 + view['_move'][0]
         dy = (y0 + 50.0 + ((y1 - y0) - 50.0 - d.height) / 2.0
               + view['_move'][1])
-        d.place(page, dx, dy)
-        _placed(page, view, d, dx, dy)
+        _put(page, view, d, dx, dy)
         draft.view_title(page, x0 + 40.0, y0 + 30.0, '3D', view['_sheet'],
                          f"3D: {scene.name.upper()}", "")
     if elevations:
@@ -675,45 +721,48 @@ def compose(context, sheets, index, count=None):
                           (y1 - y0) - plan_room)
         if e is not None:
             ex, ey = x0 + elev['_move'][0], y0 + elev['_move'][1]
-            e.place(page, ex, ey)
             ax, ay = e.anchors['wall_start']
             k = e.info['k']
-            _placed(page, elev, e, ex, ey, origin=(ex + ax, ey + ay))
+            _put(page, elev, e, ex, ey, zero=(ax, ay))
             draft.view_title(
                 page, ex + 40.0, ey + 30.0, elev['_mark'], elev['_sheet'],
                 f"ELEVATION: {_wall_title(scene, elev.get('wall'))}",
                 _scale_text(e.info.get('scale')),
                 width=min(250.0, column_x - x0 - 80.0))
-            top = e.anchors['wall_top'][1]
+            mark_y = ey + e.anchors['wall_top'][1] + 30.0
+            if page.info['placed'][-1].get('cropped'):
+                # Over the top of the crop, when it cuts the wall's top off.
+                mark_y = min(mark_y, page.info['placed'][-1]['box'][3] + 30.0)
             for x_cut, mark, number in elev.get('_cuts', ()):
-                draft.section_marker(page, ex + ax + x_cut * k,
-                                     ey + top + 30.0, mark, number)
+                if not _shows(page, ex + ax + x_cut * k):
+                    continue
+                draft.section_marker(page, ex + ax + x_cut * k, mark_y,
+                                     mark, number)
             if plan is not None:
                 p = views.resolve(context, dict(plan, k=k), 0.0, 0.0)
                 if p is not None:
                     px = ex + ax + plan['_move'][0]
                     py = y1 - 6.0 - p.info['top'] + plan['_move'][1]
-                    p.place(page, px, py)
-                    _placed(page, plan, p, px, py)
+                    _put(page, plan, p, px, py)
                     mx, my = p.anchors['marker']
-                    draft.elevation_marker(page, px + mx, py + my,
-                                           elev['_mark'], elev['_sheet'])
+                    if _shows(page, px + mx, py + my, 40.0):
+                        draft.elevation_marker(page, px + mx, py + my,
+                                               elev['_mark'], elev['_sheet'])
     for view in by_kind.get('ROOM_PLAN', [])[:1]:
         room = views.resolve(context, view, column_x - x0 if elevations
                              else x1 - x0, (y1 - y0) - 50.0)
         if room is None:
             continue
         rx, ry = x0 + view['_move'][0], y0 + 50.0 + view['_move'][1]
-        room.place(page, rx, ry)
-        zero = room.anchors.get('origin', (0.0, 0.0))
-        _placed(page, view, room, rx, ry,
-                origin=(rx + zero[0], ry + zero[1]))
+        _put(page, view, room, rx, ry,
+             zero=room.anchors.get('origin', (0.0, 0.0)))
         draft.view_title(page, x0 + 40.0, y0 + 30.0, 'P', view['_sheet'],
                          f"PLAN: {scene.name.upper()}",
                          _scale_text(room.info.get('scale')))
         for wall_name, (mark, number) in view.get('_marks', {}).items():
             at = room.anchors.get('marker:' + wall_name)
-            if at is not None:
+            if at is not None and _shows(page, rx + at[0], ry + at[1],
+                                         40.0):
                 draft.elevation_marker_toward(
                     page, rx + at[0], ry + at[1], (at[2], at[3]),
                     mark, number)
@@ -730,8 +779,7 @@ def compose(context, sheets, index, count=None):
             continue
         ox, oy = cursor + view['_move'][0], (y1 - 22.0 - d.height
                                              + view['_move'][1])
-        d.place(page, ox, oy)
-        _placed(page, view, d, ox, oy)
+        _put(page, view, d, ox, oy)
         cursor += d.width + 22.0
     for i, view in enumerate(sections):
         s, scale = _fit_section(context, view, (y1 - y0) - 110.0)
@@ -740,8 +788,7 @@ def compose(context, sheets, index, count=None):
         wall_x = (column_x + SECTION_COLUMN * (i + 1) - 90.0
                   + view['_move'][0])
         base_y = y0 + view['_move'][1]
-        s.place(page, wall_x, base_y + 92.0)
-        _placed(page, view, s, wall_x, base_y + 92.0)
+        _put(page, view, s, wall_x, base_y + 92.0)
         draft.view_title(page, wall_x - 130.0, base_y + 26.0, view['_mark'],
                          view['_sheet'],
                          f"SECTION: {_wall_title(scene, view.get('wall'))}",
