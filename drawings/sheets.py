@@ -33,6 +33,9 @@ SECTIONS_A_SHEET = 4
 SECTIONS_WITH_ELEVATION = 2
 DETAILS_GAP = 12.0          # beside the column of detail cards
 DETAILS_TOP = 54.0          # kept clear over and under it
+ISO_WIDTH = 230.0           # the wall's 3D view over its detail cards
+ISO_HEIGHT = 210.0
+ISO_MIN_HEIGHT = 90.0       # less room than this and it is left off
 SECTION_SCALES = ((12, '1"'),(16, '3/4"'), (24, '1/2"'), (32, '3/8"'))
 
 
@@ -102,8 +105,10 @@ def default_set(scene, room_index=0):
     whole_room = len(walls) > 1
     if whole_room:
         sheets.append({'views': [{'kind': 'ROOM_PLAN'}]})
+        sheets.append({'views': [{'kind': 'ROOM_ISO'}]})
     for wall in walls:
         on_sheet = [{'kind': 'ELEVATION', 'wall': wall.name},
+                    {'kind': 'ISO', 'wall': wall.name},
                     {'kind': 'DETAILS', 'wall': wall.name}]
         if not whole_room:
             on_sheet.append({'kind': 'PLAN', 'wall': wall.name})
@@ -340,6 +345,8 @@ def sheet_name(scene, sheet):
             return _wall_title(scene, view.get('wall')).title()
     if 'ROOM_PLAN' in kinds:
         return "Plan"
+    if 'ROOM_ISO' in kinds:
+        return "3D"
     marks = [v.get('_mark') for v in sheet.get('views', ())
              if v.get('kind') == 'SECTION' and v.get('_mark')]
     if marks:
@@ -495,21 +502,52 @@ def compose(context, sheets, index, count=None):
     column_x = x1 - SECTION_COLUMN * len(sections)
     if not elevations:
         column_x = x0
-    # The wall's detail cards stand in a column between the elevation
-    # and its sections, centred up the sheet as the elevation is (clear
-    # of a logo in the sheet's corner).
-    for view in by_kind.get('DETAILS', [])[:1]:
-        room = (y1 - y0) - 2 * DETAILS_TOP
-        d = views.resolve(context, view, 0.0, room)
+    # The wall seen in 3D over its detail cards, in a column between the
+    # elevation and its sections, centred up the sheet as the elevation
+    # is (clear of a logo in the sheet's corner).
+    room = (y1 - y0) - 2 * DETAILS_TOP
+    cards = by_kind.get('DETAILS', [])[:1]
+    card_d = (views.resolve(context, cards[0], 0.0, room)
+              if cards else None)
+    col_w = max(card_d.width if card_d else 0.0, ISO_WIDTH)
+    # The cards come first; the 3D view takes the height they leave.
+    iso_h = min(ISO_HEIGHT, room - (card_d.height + 2 * DETAILS_GAP
+                                    if card_d else 0.0))
+    column = []
+    for view in by_kind.get('ISO', [])[:1]:
+        if iso_h < ISO_MIN_HEIGHT:
+            break
+        d = views.resolve(context, view, col_w, iso_h)
+        if d is not None:
+            column.append((view, d))
+    if card_d is not None:
+        column.append((cards[0], card_d))
+    if column:
+        col_w = max(d.width for _v, d in column)
+        tall = (sum(d.height for _v, d in column)
+                + DETAILS_GAP * 2 * (len(column) - 1))
+        column_x -= col_w + DETAILS_GAP
+        y = y0 + DETAILS_TOP + max(0.0, (room - tall) / 2.0) + tall
+        for view, d in column:
+            y -= d.height
+            dx = column_x + (col_w - d.width) / 2.0 + view['_move'][0]
+            dy = y + view['_move'][1]
+            d.place(page, dx, dy)
+            _placed(page, view, d, dx, dy)
+            y -= DETAILS_GAP * 2
+        column_x -= DETAILS_GAP
+    for view in by_kind.get('ROOM_ISO', [])[:1]:
+        d = views.resolve(context, view, x1 - x0 - 80.0,
+                          (y1 - y0) - 2 * DETAILS_TOP - 40.0)
         if d is None:
             continue
-        column_x -= d.width + DETAILS_GAP
-        dx = column_x + view['_move'][0]
-        dy = (y0 + DETAILS_TOP + max(0.0, (room - d.height) / 2.0)
+        dx = x0 + (x1 - x0 - d.width) / 2.0 + view['_move'][0]
+        dy = (y0 + 50.0 + ((y1 - y0) - 50.0 - d.height) / 2.0
               + view['_move'][1])
         d.place(page, dx, dy)
         _placed(page, view, d, dx, dy)
-        column_x -= DETAILS_GAP
+        draft.view_title(page, x0 + 40.0, y0 + 30.0, '3D', view['_sheet'],
+                         f"3D: {scene.name.upper()}", "")
     if elevations:
         elev = elevations[0]
         plan = next((p for p in plans if p.get('wall') == elev.get('wall')),
@@ -569,7 +607,8 @@ def compose(context, sheets, index, count=None):
     cursor = x0 + 22.0
     for view in sheet['views']:
         if view.get('kind') in ('ELEVATION', 'PLAN', 'SECTION',
-                                'ROOM_PLAN', 'DETAILS'):
+                                'ROOM_PLAN', 'DETAILS', 'ISO',
+                                'ROOM_ISO'):
             continue
         d = views.resolve(context, view, x1 - cursor, y1 - y0)
         if d is None:
