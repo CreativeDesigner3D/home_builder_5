@@ -1085,7 +1085,8 @@ class CabinetShelves(CabinetInterior):
 
         self.add_property('Shelf Quantity', 'QUANTITY', 1)
         self.add_property('Material Thickness', 'DISTANCE', props.default_carcass_part_thickness)
-        self.add_property('Shelf Clip Gap', 'DISTANCE', inch(.125))
+        # Per side: the shelf is 1/8" narrower than the opening overall.
+        self.add_property('Shelf Clip Gap', 'DISTANCE', inch(.0625))
         self.add_property('Shelf Setback', 'DISTANCE', inch(.25))
 
         # One shelf, arrayed up the interior by the solver.

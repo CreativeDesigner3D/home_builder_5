@@ -109,6 +109,13 @@ def back_tongue_length():
     return max(float(getattr(props, 'back_tongue_length', 0.0)), 0.0)
 
 
+def back_inset():
+    """How far a captured back stands in from the back edge of the sides,
+    bottom and top. The grooves follow the back."""
+    props = getattr(bpy.context.scene, 'hb_frameless', None)
+    return max(float(getattr(props, 'back_inset', 0.0)), 0.0)
+
+
 # ---------------------------------------------------------------------------
 # Shared part writers
 # ---------------------------------------------------------------------------
@@ -534,6 +541,8 @@ class _Prompts:
                                max(float(prompt(root, KICK_END_INSET_KEY, 0.0)), 0.0))
         # A sink base keeps the butt back.
         self.tongue = 0.0 if self.btc == TOP_SINK else back_tongue_length()
+        # Only a captured back stands in; a butt back stays flush.
+        self.back_inset = back_inset() if self.tongue > 0.0 else 0.0
 
 
 def _set_back(part, p, inner, z0, z1, bottom, top):
@@ -546,7 +555,7 @@ def _set_back(part, p, inner, z0, z1, bottom, top):
         z0 -= t
     if top:
         z1 += t
-    set_part(part, (p.mt - t, 0.0, z0), length=z1 - z0,
+    set_part(part, (p.mt - t, -p.back_inset, z0), length=z1 - z0,
              width=inner + t * 2.0, thickness=p.mt)
 
 
@@ -638,13 +647,15 @@ def _solve_base(root, parts, p, dim_x, dim_y, dim_z):
         _solve_hand_hole(root, part, p, dim_x, dim_y, dim_z,
                          length=inner, width=dim_y + top_y)
 
-    _solve_top_options(parts, p, dim_x, dim_y, dim_z, -p.sw - mt)
+    _solve_top_options(parts, p, dim_x, dim_y, dim_z,
+                       -p.sw - mt - p.back_inset)
 
     bottom_t = 0.0 if rb else mt
     part = parts.get('BAY')
     if part is not None:
         set_cage(part, (mt, -dim_y, tkh + bottom_t), dim_x=inner,
-                 dim_y=dim_y - mt, dim_z=dim_z - tkh - bottom_t - mt)
+                 dim_y=dim_y - mt - p.back_inset,
+                 dim_z=dim_z - tkh - bottom_t - mt)
         _sync_bay_sink(root, part, dim_z - tkh - bottom_t)
 
     _solve_toe_kick_extras(parts, p, dim_x, dim_y, root)
@@ -720,7 +731,8 @@ def _solve_tall(root, parts, p, dim_x, dim_y, dim_z):
     part = parts.get('BAY')
     if part is not None:
         set_cage(part, (mt, -dim_y, tkh + bottom_t), dim_x=inner,
-                 dim_y=dim_y - mt, dim_z=dim_z - tkh - bottom_t - mt)
+                 dim_y=dim_y - mt - p.back_inset,
+                 dim_z=dim_z - tkh - bottom_t - mt)
 
     _solve_toe_kick_extras(parts, p, dim_x, dim_y, root)
 
@@ -749,7 +761,8 @@ def _solve_upper(root, parts, p, dim_x, dim_y, dim_z):
 
     part = parts.get('BAY')
     if part is not None:
-        set_cage(part, (mt, -dim_y, fb + mt), dim_x=inner, dim_y=dim_y - mt,
+        set_cage(part, (mt, -dim_y, fb + mt), dim_x=inner,
+                 dim_y=dim_y - mt - p.back_inset,
                  dim_z=dim_z - fb - mt * 2.0)
 
 
@@ -1033,7 +1046,8 @@ def _solve_lap_drawer(root, parts, p, dim_x, dim_y, dim_z):
 
     part = parts.get('BAY')
     if part is not None:
-        set_cage(part, (mt, -dim_y, mt), dim_x=inner, dim_y=dim_y - mt,
+        set_cage(part, (mt, -dim_y, mt), dim_x=inner,
+                 dim_y=dim_y - mt - p.back_inset,
                  dim_z=dim_z - mt * 2.0)
 
 
@@ -2299,7 +2313,7 @@ def _solve_shelves(interior_obj):
     dim_x, dim_y, dim_z = cage_dims(interior_obj)
     mt = float(prompt(interior_obj, 'Material Thickness', inch(0.75)))
     qty = int(prompt(interior_obj, 'Shelf Quantity', 1))
-    clip_gap = float(prompt(interior_obj, 'Shelf Clip Gap', inch(0.125)))
+    clip_gap = float(prompt(interior_obj, 'Shelf Clip Gap', inch(0.0625)))
     setback = float(prompt(interior_obj, 'Shelf Setback', inch(0.25)))
     blind = blind_reach(interior_obj.parent)
     if blind is not None:
