@@ -51,10 +51,61 @@ class Appliance(GeoNodeCage):
         appliance_text.obj.parent = self.obj
         appliance_text.obj['IS_APPLIANCE_TEXT'] = True
         appliance_text.obj.rotation_euler.x = math.radians(90)
-        appliance_text.driver_location("x", 'dim_x/2', [dim_x])
-        appliance_text.driver_location("y", '-dim_y', [dim_y])
-        appliance_text.driver_location("z", 'dim_z/2', [dim_z])
+        # The drivers ride on delta_location so the label still follows
+        # the appliance's size while its location stays free to move.
+        z_expr = (LOW_LABEL_Z_EXPR if appliance_type in LOW_LABEL_TYPES
+                  else 'dim_z/2')
+        _drive_delta(appliance_text.obj, 0, 'dim_x/2', [dim_x])
+        _drive_delta(appliance_text.obj, 1, '-dim_y', [dim_y])
+        _drive_delta(appliance_text.obj, 2, z_expr, [dim_z])
         appliance_text.set_alignment('CENTER', 'CENTER')
+
+
+# Floor-standing appliances whose label reads in the open lower part of
+# the face: mid-height is where opening dimensions run on elevations.
+LOW_LABEL_TYPES = {'DISHWASHER', 'RANGE', 'UNDER_COUNTER'}
+LOW_LABEL_Z_EXPR = 'min(dim_z/2, 0.1524)'   # 6 in up, or mid on a short unit
+
+
+def _drive_delta(obj, index, expression, variables):
+    from ... import hb_utils
+    driver = obj.driver_add('delta_location', index)
+    hb_utils.add_driver_variables(driver, variables)
+    driver.driver.expression = expression
+
+
+def free_appliance_labels():
+    """Move the size drivers of older appliance labels from location to
+    delta_location, so a label can be dragged clear of other notes and
+    still follow the appliance. Where it sits does not change."""
+    count = 0
+    for obj in bpy.data.objects:
+        if not obj.get('IS_APPLIANCE_TEXT'):
+            continue
+        parent = obj.parent
+        if parent is None or not parent.get('IS_APPLIANCE'):
+            continue
+        ad = obj.animation_data
+        if ad is None:
+            continue
+        olds = [fc for fc in ad.drivers if fc.data_path == 'location']
+        if not olds:
+            continue
+        for fc in olds:
+            index = fc.array_index
+            new = obj.driver_add('delta_location', index)
+            for var in fc.driver.variables:
+                nv = new.driver.variables.new()
+                nv.type = var.type
+                nv.name = var.name
+                for t_old, t_new in zip(var.targets, nv.targets):
+                    t_new.id = t_old.id
+                    t_new.data_path = t_old.data_path
+            new.driver.expression = fc.driver.expression
+            obj.driver_remove('location', index)
+            obj.location[index] = 0.0
+        count += 1
+    return count
 
 
 class Range(Appliance):

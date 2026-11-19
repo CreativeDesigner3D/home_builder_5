@@ -3562,6 +3562,11 @@ def _hidden_models_load_post(_dummy):
     Only the switched-off rooms are touched, and only to hide: nothing
     is built and a room showing its models is left alone.
     """
+    try:
+        from .types_appliances import free_appliance_labels
+        free_appliance_labels()
+    except Exception as exc:
+        print("appliance labels:", exc)
     for scene in bpy.data.scenes:
         if models_shown(scene):
             continue
