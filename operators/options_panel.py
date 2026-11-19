@@ -248,6 +248,18 @@ class _DistanceParser:
 _parser = _DistanceParser()
 
 
+def field_distance_text(unit_settings, value):
+    """A distance field's value as it reads. Inches normally show to the
+    nearest 1/16", but a value typed off that grid (0.76") shows to the
+    thousandth, so the field doesn't look like it threw the entry away."""
+    if (unit_settings.system == 'IMPERIAL'
+            and unit_settings.length_unit not in ('FEET', 'MILES')):
+        inches = units.meter_to_inch(value)
+        if abs(inches * 16 - round(inches * 16)) > 0.008:
+            return units.format_number(round(inches, 3)) + '"'
+    return units.unit_to_string(unit_settings, value)
+
+
 def parse_distance(text):
     """Typed string -> metres, or None."""
     try:
@@ -1553,7 +1565,7 @@ def _field_entries(context, field, owner, x, top, row_w, row_h, s):
         if _value_edit.editing(_owner_key(owner, prop)):
             value = ""      # the edit paints itself over the field
         else:
-            value = units.unit_to_string(
+            value = field_distance_text(
                 context.scene.unit_settings,
                 float(getattr(owner, prop, 0.0) or 0.0))
     elif fkind == 'text':
