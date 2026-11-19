@@ -61,10 +61,13 @@ class Appliance(GeoNodeCage):
         appliance_text.set_alignment('CENTER', 'CENTER')
 
 
-# Floor-standing appliances whose label reads in the open lower part of
-# the face: mid-height is where opening dimensions run on elevations.
+# Floor-standing appliances in a base run label below the floor line,
+# centred under the unit, level with the text of the first dimension
+# row under the run (its line is 4 in down). That row has no dimension
+# across the appliance, and the face stays clear for the opening and
+# height dimensions.
 LOW_LABEL_TYPES = {'DISHWASHER', 'RANGE', 'UNDER_COUNTER'}
-LOW_LABEL_Z_EXPR = 'min(dim_z/2, 0.1524)'   # 6 in up, or mid on a short unit
+LOW_LABEL_Z_EXPR = '-0.098425'   # 3-7/8 in below the bottom of the unit
 
 
 def _drive_delta(obj, index, expression, variables):
@@ -77,7 +80,9 @@ def _drive_delta(obj, index, expression, variables):
 def free_appliance_labels():
     """Move the size drivers of older appliance labels from location to
     delta_location, so a label can be dragged clear of other notes and
-    still follow the appliance. Where it sits does not change."""
+    still follow the appliance. A floor-standing unit's label that was
+    never moved goes down below the floor line; any other label stays
+    where it was."""
     count = 0
     for obj in bpy.data.objects:
         if not obj.get('IS_APPLIANCE_TEXT'):
@@ -89,8 +94,7 @@ def free_appliance_labels():
         if ad is None:
             continue
         olds = [fc for fc in ad.drivers if fc.data_path == 'location']
-        if not olds:
-            continue
+        changed = bool(olds)
         for fc in olds:
             index = fc.array_index
             new = obj.driver_add('delta_location', index)
@@ -104,7 +108,15 @@ def free_appliance_labels():
             new.driver.expression = fc.driver.expression
             obj.driver_remove('location', index)
             obj.location[index] = 0.0
-        count += 1
+        if (parent.get('APPLIANCE_TYPE') in LOW_LABEL_TYPES
+                and abs(obj.location[2]) < 1e-6):
+            for fc in ad.drivers:
+                if (fc.data_path == 'delta_location' and fc.array_index == 2
+                        and fc.driver.expression != LOW_LABEL_Z_EXPR):
+                    fc.driver.expression = LOW_LABEL_Z_EXPR
+                    changed = True
+        if changed:
+            count += 1
     return count
 
 
