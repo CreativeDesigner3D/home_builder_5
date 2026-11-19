@@ -2337,9 +2337,22 @@ class home_builder_details_OT_add_fillet(bpy.types.Operator):
         dist_to_prev = (p_corner - p_prev).length
         dist_to_next = (p_next - p_corner).length
         
-        if tan_dist > dist_to_prev * 0.9 or tan_dist > dist_to_next * 0.9:
+        # The arc may use the whole of either edge. When it ends right on
+        # the neighbouring point, that point is dropped so no zero-length
+        # segment is left behind.
+        tol = 1e-6 + 1e-4 * max(dist_to_prev, dist_to_next)
+        if tan_dist > dist_to_prev + tol or tan_dist > dist_to_next + tol:
             self.report({'WARNING'}, "Radius too large for this corner")
             return {'CANCELLED'}
+        drop = set()
+        if tan_dist >= dist_to_prev - tol:
+            tan_dist = min(tan_dist, dist_to_prev)
+            drop.add(prev_idx)
+        if tan_dist >= dist_to_next - tol:
+            tan_dist = min(tan_dist, dist_to_next)
+            drop.add(next_idx)
+        if len(drop) == 2 and is_cyclic and num_points <= 3:
+            drop = set()    # nothing would be left of the shape but the arc
         
         # Calculate tangent points
         tangent_in = p_corner - dir_in * tan_dist
@@ -2389,7 +2402,7 @@ class home_builder_details_OT_add_fillet(bpy.types.Operator):
                 # Replace corner with arc points
                 for arc_pt in arc_points:
                     new_points.append(arc_pt)
-            else:
+            elif i not in drop:
                 new_points.append(pt_data)
         
         # Clear and recreate spline
