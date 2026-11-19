@@ -13,7 +13,7 @@ import math
 
 from mathutils import Vector
 
-from .. import hb_pdf
+from .. import hb_pdf, hb_types
 
 from ..operators import elevation_mode as em
 from . import draft
@@ -306,4 +306,137 @@ def resolve_room(context, view, width, height):
         sx, sy = P(stand)
         out.anchors['marker:' + name] = (sx, sy, toward[0], toward[1])
     out.info = {'k': k, 'scale': label}
+    return out
+
+
+# ---- An island ---------------------------------------------------------------------
+
+def resolve_island(context, view, _width, _height):
+    """ISLAND_PLAN view: an island from above, square to its front side
+    (the view's 'wall') and at the view's 'k', so it stands under that
+    side's elevation and lines up with it. Origin = the front side's
+    start at the island's far face; the front is at the bottom."""
+    side = views.wall_of(view)
+    if side is None or not getattr(side, 'is_stand_in', False):
+        return None
+    scene = context.scene
+    k = view.get('k') or views.HALF_INCH_SCALE
+    _F, Fi, length, _Hw = em._frame(side)
+    deps = context.evaluated_depsgraph_get()
+    out = Drawing()
+
+    def P(p):
+        return (p[0] * k, p[1] * k)
+
+    def hull_of(obj):
+        ev = obj.evaluated_get(deps)
+        pts = [Fi @ (ev.matrix_world @ Vector(c)) for c in ev.bound_box]
+        return draft.hull([(p.x, p.y) for p in pts])
+
+    def outline(poly):
+        pp = [P(p) for p in poly]
+        out.lines([(pp[i], pp[(i + 1) % len(pp)]) for i in range(len(pp))])
+
+    tops = [o for root in side.children
+            for o in [root] + list(root.children_recursive)
+            if o.get('IS_COUNTERTOP') and o.type == 'MESH']
+    out.stroke_color(draft.GREY)
+    out.line_width(0.35)
+    for top in tops:
+        poly = hull_of(top)
+        if len(poly) >= 3:
+            outline(poly)
+    def footprint(obj):
+        """Its own size, not its bounds: a cabinet's bounds can take in
+        what hangs off it (the cabinet behind, at an island's back)."""
+        try:
+            cage = hb_types.GeoNodeCage(obj)
+            dx, dy = cage.get_input('Dim X'), cage.get_input('Dim Y')
+            mirror = cage.has_input('Mirror Y') and cage.get_input('Mirror Y')
+        except Exception:
+            return hull_of(obj)
+        if not dx or not dy:
+            return hull_of(obj)
+        y0, y1 = (-dy, 0.0) if mirror else (0.0, dy)
+        mw = obj.matrix_world
+        pts = [Fi @ (mw @ Vector((x, y, 0.0)))
+               for x, y in ((0.0, y0), (dx, y0), (dx, y1), (0.0, y1))]
+        return [(p.x, p.y) for p in pts]
+
+    products = [c for c in side.group.children if em._is_product(c)]
+    deepest = 0.0
+    bands = []                  # each cabinet's depth, front to back
+    for obj in products:
+        poly = footprint(obj)
+        if len(poly) < 3:
+            continue
+        deepest = min(deepest, min(p[1] for p in poly))
+        band = (min(p[1] for p in poly), max(p[1] for p in poly))
+        if all(abs(band[0] - b[0]) > 0.003 or abs(band[1] - b[1]) > 0.003
+               for b in bands):
+            bands.append(band)
+        appliance = bool(obj.get('IS_APPLIANCE'))
+        out.stroke_color(draft.INK)
+        if appliance:
+            out.line_width(0.45)
+            out.dash(8.0, 2.0)
+        else:
+            out.line_width(0.8)
+            out.dash()
+        outline(poly)
+        out.dash()
+        xs = [P(p)[0] for p in poly]
+        cx = sum(xs) / len(xs)
+        cy = sum(P(p)[1] for p in poly) / len(poly)
+        number = _number(obj)
+        if number and max(xs) - min(xs) > 16.0:
+            views.number_tag(out, cx, cy, number, max(xs) - min(xs) - 3.0)
+        elif appliance:
+            _fitted_label(out, cx, cy, obj.name.upper(),
+                          max(xs) - min(xs) - 4.0)
+        # Its doors' swings, worked in the product's own frame (its
+        # front is its -y) and turned into the island's.
+        M = Fi @ obj.matrix_world
+        Mi = obj.matrix_world.inverted_safe()
+        out.stroke_color(draft.GREY)
+        out.line_width(0.3)
+        for part in obj.children_recursive:
+            hand = DOOR_ROLES.get(part.get('hb_part_role'))
+            if hand is None or part.type != 'MESH' or part.hide_render:
+                continue
+            pe = part.evaluated_get(deps)
+            pts = [Mi @ (pe.matrix_world @ Vector(c)) for c in pe.bound_box]
+            px0, px1 = min(p.x for p in pts), max(p.x for p in pts)
+            front = min(p.y for p in pts)
+            width = px1 - px0
+            if width < 0.05:
+                continue
+            hinge = px0 if hand < 0 else px1
+            arc = []
+            for i in range(7):
+                a = DOOR_OPEN * i / 6.0
+                q = M @ Vector((hinge - hand * width * math.cos(a),
+                                front - width * math.sin(a), 0.0))
+                arc.append(P((q.x, q.y)))
+            h = M @ Vector((hinge, front, 0.0))
+            out.lines([(P((h.x, h.y)), arc[-1])]
+                      + [(arc[i], arc[i + 1]) for i in range(len(arc) - 1)])
+    # Its length over the top, its depth down the left.
+    draft.dim_h(out, 0.0, length * k, 22.0, em.format_length(scene, length),
+                ext_to=0.0)
+    if deepest < -0.01:
+        # Back to back: each cabinet's depth down the left, the whole
+        # depth down the right. One depth: down the left.
+        x_all = -22.0
+        if len(bands) > 1:
+            x_all = length * k + 22.0
+            for y0, y1 in bands:
+                draft.dim_v(out, y0 * k, y1 * k, -22.0,
+                            em.format_length(scene, y1 - y0), ext_to=0.0)
+        draft.dim_v(out, deepest * k, 0.0, x_all,
+                    em.format_length(scene, -deepest),
+                    ext_to=length * k if x_all > 0 else 0.0,
+                    side=1 if x_all > 0 else -1)
+    out.anchors['wall_start'] = (0.0, 0.0)
+    out.info = {'k': k, 'scale': None}
     return out

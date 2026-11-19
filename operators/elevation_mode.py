@@ -717,7 +717,27 @@ def _user_note_prims(wall, note, index):
 
 # ---- Wall frame ------------------------------------------------------------
 
+# Something that is not a wall but is drawn as one (an island's side):
+# it carries its own frame and size, and is found by its name.
+_stand_ins = {}
+
+
+def register_stand_in(obj):
+    _stand_ins[obj.name] = obj
+    return obj
+
+
+def wall_object(name):
+    """The wall -- or what stands in for one -- called `name`."""
+    if name in _stand_ins:
+        return _stand_ins[name]
+    return bpy.data.objects.get(name or '')
+
+
 def _wall_dims(wall_obj):
+    dims = getattr(wall_obj, 'stand_in_dims', None)
+    if dims is not None:
+        return dims
     wall = hb_types.GeoNodeWall(wall_obj)
     if not wall.has_modifier():
         return None
@@ -737,7 +757,9 @@ def _frame(wall_obj):
         return None
     from .. import hb_layouts
     length, height, thickness = dims
-    F = hb_layouts.wall_view_frame(wall_obj, length, thickness)
+    F = getattr(wall_obj, 'stand_in_frame', None)
+    if F is None:
+        F = hb_layouts.wall_view_frame(wall_obj, length, thickness)
     return F, F.inverted_safe(), length, height
 
 
@@ -1663,7 +1685,7 @@ def _items(scene, wall, extra=None, preview=None):
         roots = list(wall.children)
         for name in extra:
             obj = bpy.data.objects.get(name)
-            if obj is not None:
+            if obj is not None and obj not in roots:
                 roots.append(obj)
         cands = []
         for obj in roots:
@@ -1699,6 +1721,9 @@ def _items(scene, wall, extra=None, preview=None):
             if it is not None and it.x1 > 0.0 and it.x0 < length:
                 items.append(it)
         items = _drop_contents(items)
+        keep = getattr(wall, 'filter_items', None)
+        if keep is not None:
+            items = keep(items)
     _item_cache['key'] = key
     _item_cache['items'] = items
     return items
@@ -5375,6 +5400,8 @@ def _print_view(Fi, k, ox, oy, W, H):
 
 def _front_names(scene, wall):
     """Names of the roots standing in front of `wall` (_items' extra)."""
+    if getattr(wall, 'is_stand_in', False):
+        return []           # it names what it shows itself
     fr = _frame(wall)
     if fr is None:
         return []

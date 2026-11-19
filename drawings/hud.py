@@ -324,7 +324,10 @@ def _tools(st, bounds, scene, s):
         items.append(('HOME', "Reset Position",
                       _wide("Reset Position", s), None))
     wall = item.get('wall')
-    if item['kind'] == 'ELEVATION':
+    # An island's side is drawn as a wall but has no sections to cut.
+    if getattr(sheets.em.wall_object(wall or ''), 'is_stand_in', False):
+        wall = None
+    if item['kind'] == 'ELEVATION' and wall:
         items.append(('ADD_CUT', "+ Section", _wide("+ Section", s),
                       'ON' if st.get('pick') == 'CUT' else None))
     if item['kind'] == 'SECTION':

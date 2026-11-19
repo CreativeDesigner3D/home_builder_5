@@ -22,7 +22,7 @@ import json
 
 from .. import hb_pdf
 from ..operators import elevation_mode as em
-from . import draft, section, views
+from . import draft, island, section, views
 from .drawing import Drawing, crop as crop_drawing
 
 PAPER = (17 * 72.0, 11 * 72.0)
@@ -104,7 +104,9 @@ def default_set(scene, room_index=0):
     # A room with products on more than one wall gets a plan and a 3D
     # view of the whole room. Each wall's sheet shows the run whole: its
     # plan strip over its elevation, its 3D view and its detail cards.
-    whole_room = len(walls) > 1
+    islands = [g for g in island.islands(scene)
+               if island.sides(scene, g)]
+    whole_room = len(walls) > 1 or (walls and islands)
     if whole_room:
         sheets.append({'views': [{'kind': 'ROOM_PLAN'}]})
         sheets.append({'views': [{'kind': 'ROOM_ISO'}]})
@@ -121,6 +123,15 @@ def default_set(scene, room_index=0):
             mine = mine[SECTIONS_WITH_ELEVATION:]
         sheets.append({'views': on_sheet})
         cuts += mine
+    # Each island on a sheet of its own: its four sides round its plan.
+    for group in islands:
+        sides = island.sides(scene, group)
+        front = sides['FRONT'].name
+        sheets.append({'island': group.name, 'views': [
+            {'kind': 'ELEVATION', 'wall': sides[s].name}
+            for s in island.SIDES] + [
+            {'kind': 'ISLAND_PLAN', 'wall': front},
+            {'kind': 'ISO', 'wall': front}]})
     # The sections of every wall share sheets, after the walls.
     for i in range(0, len(cuts), SECTIONS_A_SHEET):
         sheets.append({'views': cuts[i:i + SECTIONS_A_SHEET]})
@@ -274,7 +285,7 @@ def view_notes(scene, view):
     import bpy
     kind, wall_name, key = _view_ident(view)
     if kind == 'ELEVATION':
-        wall = bpy.data.objects.get(wall_name or '')
+        wall = em.wall_object(wall_name or '')
         if wall is None:
             return []
         return [{'x': n['x'], 'y': n['z'], 'text': n['text'],
@@ -299,7 +310,7 @@ def set_view_notes(scene, view, notes):
     kind, wall_name, key = _view_ident(view)
     notes = [n for n in notes if (n.get('text') or '').strip()]
     if kind == 'ELEVATION':
-        wall = bpy.data.objects.get(wall_name or '')
+        wall = em.wall_object(wall_name or '')
         if wall is None:
             return
         em._set_user_notes(wall, [
@@ -457,6 +468,8 @@ def sheet_name(scene, sheet):
     """A short name for a sheet, from what is on it: 'Plan', 'Wall 2',
     'Sections S1-S3'."""
     kinds = [v.get('kind') for v in sheet.get('views', ())]
+    if sheet.get('island'):
+        return str(sheet['island'])
     for view in sheet.get('views', ()):
         if view.get('kind') == 'ELEVATION':
             return _wall_title(scene, view.get('wall')).title()
@@ -490,7 +503,8 @@ def drawing_set(scene, counters=None):
     data = default_set(scene, counters.get('rooms', 0))
     kept = edits(scene)
     sheets = [{'views': [dict(v) for v in s.get('views', [])
-                         if isinstance(v, dict)]}
+                         if isinstance(v, dict)],
+               'island': s.get('island')}
               for s in data['sheets']]
     for sheet in sheets:
         for view in sheet['views']:
@@ -653,6 +667,11 @@ def compose(context, sheets, index, count=None):
     furniture = _furniture[-1] if _furniture else _plain_furniture
     x0, y0, x1, y1 = furniture(page, context, info, width, height)
 
+    if sheet.get('island'):
+        _compose_island(context, page, sheet, (x0, y0, x1, y1))
+        _draw_notes(page, scene)
+        _draw_dims(page, scene)
+        return page
     by_kind = {}
     for view in sheet['views']:
         by_kind.setdefault(view.get('kind'), []).append(view)
@@ -796,6 +815,127 @@ def compose(context, sheets, index, count=None):
     _draw_notes(page, scene)
     _draw_dims(page, scene)
     return page
+
+
+ISLAND_GAP = 26.0           # between an island's views
+ISLAND_TITLE = 34.0         # under each, for its title
+ISLAND_SCALES = (12, 16, 24, 32, 48, 64)
+ISLAND_TITLES = ("FRONT", "BACK", "LEFT END", "RIGHT END")
+
+
+def _compose_island(context, page, sheet, area):
+    """An island's sheet: its front over its plan over its back down
+    the middle, an end each side of the plan, its 3D view in the corner
+    left free -- all four sides at one scale, the largest that fits."""
+    x0, y0, x1, y1 = area
+    x0, y0, x1, y1 = x0 + 20.0, y0 + 10.0, x1 - 20.0, y1 - 20.0
+    elevs = [v for v in sheet['views'] if v.get('kind') == 'ELEVATION'][:4]
+    plan_v = next((v for v in sheet['views']
+                   if v.get('kind') == 'ISLAND_PLAN'), None)
+    iso_v = next((v for v in sheet['views'] if v.get('kind') == 'ISO'), None)
+    if len(elevs) < 4 or plan_v is None:
+        return
+
+    def ext(d):
+        b = d.bounds()
+        return b, b[2] - b[0], b[3] - b[1]
+
+    def drawn(n):
+        k = 72.0 / 0.0254 / n
+        ds = [views.resolve(context, dict(v, scale=v.get('scale') or n),
+                            x1 - x0, y1 - y0) for v in elevs]
+        p = views.resolve(context, dict(plan_v, k=k), 0.0, 0.0)
+        if any(d is None for d in ds) or p is None:
+            return None
+        return k, ds, p
+
+    def measure(ds, p):
+        F, B, L, R = (ext(d) for d in ds)
+        P = ext(p)
+        centre = max(F[1], P[1], B[1])
+        return ((F, B, L, R, P, centre),
+                L[1] + R[1] + centre + 2 * ISLAND_GAP,
+                F[2] + P[2] + B[2] + 2 * ISLAND_GAP + 3 * ISLAND_TITLE)
+
+    # Draw once at a trial scale: a view's size is its model size at the
+    # scale plus what its dimensions and text take, which do not scale,
+    # so the largest scale that fits is known without drawing each one.
+    trial = 24
+    got = drawn(trial)
+    if got is None:
+        return
+    k_t, ds, p = got
+    _parts, wide_t, tall_t = measure(ds, p)
+    # Across: an end, the front, an end. Down: front, plan, back.
+    length, height = em._wall_dims(em.wall_object(elevs[0]['wall']))[:2]
+    depth = em._wall_dims(em.wall_object(elevs[2]['wall']))[0]
+    model_w = length + 2 * depth
+    model_h = 2 * height + depth
+    n_fit = ISLAND_SCALES[-1]
+    for n in ISLAND_SCALES:
+        k = 72.0 / 0.0254 / n
+        if (wide_t + model_w * (k - k_t) <= x1 - x0
+                and tall_t + model_h * (k - k_t) <= y1 - y0):
+            n_fit = n
+            break
+    n = trial
+    if n_fit != trial:
+        again = drawn(n_fit)
+        if again is not None:
+            got, n = again, n_fit
+    k, ds, p = got
+    (F, B, L, R, P, centre), wide, tall = measure(ds, p)
+    left = x0 + max(0.0, (x1 - x0 - wide) / 2.0)
+    cx = left + L[1] + ISLAND_GAP + centre / 2.0
+    top = y1 - max(0.0, (y1 - y0 - tall) / 2.0)
+    scale = SCALE_TEXT.get(n, '')
+    scale = scale + " = 1'-0\"" if scale else ''
+
+    def put(view, d, e, x, y, title, mark):
+        """Set view `d` with its box's bottom left at (x, y)."""
+        (bx0, by0, bx1, _by1), w, _h = e
+        dx = x - bx0 + view['_move'][0]
+        dy = y - by0 + view['_move'][1]
+        zero = d.anchors.get('wall_start', (0.0, 0.0))
+        _put(page, view, d, dx, dy, zero=zero)
+        draft.view_title(page, x + view['_move'][0] - 13.0,
+                         y + view['_move'][1] - 20.0, mark,
+                         view.get('_sheet', ''), title,
+                         _scale_text(d.info.get('scale') or scale),
+                         width=max(120.0, min(220.0, w - 20.0)))
+
+    # Down the middle: the front, its plan lined up under it, the back.
+    p_ws = p.anchors['wall_start'][0]
+    px = cx - (P[0][0] + P[0][2]) / 2.0
+    f_ws = ds[0].anchors['wall_start'][0]
+    fx = px + p_ws - f_ws + F[0][0]           # the front's box left
+    fy = top - F[2]
+    put(elevs[0], ds[0], F, fx, fy, ISLAND_TITLES[0], elevs[0].get('_mark'))
+    py = fy - ISLAND_TITLE - ISLAND_GAP - P[2]
+    put(plan_v, p, P, px + P[0][0], py, "PLAN", "P")
+    by_ = py - ISLAND_TITLE - ISLAND_GAP - B[2]
+    put(elevs[1], ds[1], B, cx - B[1] / 2.0, by_, ISLAND_TITLES[1],
+        elevs[1].get('_mark'))
+    # The ends either side of the plan.
+    mid = py + P[2] / 2.0
+    put(elevs[2], ds[2], L, cx - centre / 2.0 - ISLAND_GAP - L[1],
+        mid - L[2] / 2.0, ISLAND_TITLES[2], elevs[2].get('_mark'))
+    put(elevs[3], ds[3], R, cx + centre / 2.0 + ISLAND_GAP,
+        mid - R[2] / 2.0, ISLAND_TITLES[3], elevs[3].get('_mark'))
+    # The 3D view in the top right corner, when there is room for it.
+    if iso_v is not None:
+        ix0 = max(cx + centre / 2.0, cx + F[1] / 2.0) + ISLAND_GAP
+        iy0 = mid + R[2] / 2.0 + ISLAND_TITLE
+        w, h = x1 - ix0, y1 - iy0
+        if w >= 150.0 and h >= 110.0:
+            d = views.resolve(context, iso_v, min(w, ISO_WIDTH * 1.4),
+                              min(h, ISO_HEIGHT * 1.4))
+            if d is not None:
+                b = d.bounds()
+                dx = ix0 + (w - (b[2] - b[0])) / 2.0 - b[0]
+                dy = iy0 + (h - (b[3] - b[1])) / 2.0 - b[1]
+                _put(page, iso_v, d, dx + iso_v['_move'][0],
+                     dy + iso_v['_move'][1])
 
 
 def compose_all(context):

@@ -188,7 +188,7 @@ def resolve(context, view, width, height):
 
 
 def wall_of(view):
-    wall = bpy.data.objects.get(view.get('wall') or '')
+    wall = em.wall_object(view.get('wall') or '')
     if wall is None or em._frame(wall) is None:
         return None
     return wall
@@ -214,7 +214,11 @@ def _elevation(context, view, width, height):
         return None
     drawing = Drawing(width, height)
     info = {}
-    with em.show_overrides(ELEVATION_SHOWS):
+    shows = ELEVATION_SHOWS
+    if getattr(wall, 'plain', False):
+        # Cabinets seen from the side or behind: no insides through them.
+        shows = dict(ELEVATION_SHOWS, INTERIORS=False)
+    with em.show_overrides(shows):
         em.draw_wall(drawing, context, wall, width, height, title=False,
                      info=info, scale=view.get('scale'))
     k = info['k']
@@ -280,7 +284,9 @@ def _elevation_marks(drawing, context, wall, k, ox, oy):
         return (ox + x * k, oy + z * k)
 
     hinge_lines, shelf_labels, tags = [], [], []
-    for it in wall_items(scene, wall):
+    # A side seen from behind or end-on shows no fronts to mark.
+    for it in () if getattr(wall, 'plain', False) else wall_items(scene,
+                                                                  wall):
         if it.kind == 'OPENING' or it.obj.get('IS_APPLIANCE'):
             continue
         for part in it.obj.children_recursive:
@@ -383,6 +389,7 @@ def register():
     iso.register()
     register_view_kind('PLAN', plan.resolve)
     register_view_kind('ROOM_PLAN', plan.resolve_room)
+    register_view_kind('ISLAND_PLAN', plan.resolve_island)
     register_view_kind('SECTION', section.resolve)
     handlers = bpy.app.handlers
     if _on_change not in handlers.depsgraph_update_post:
