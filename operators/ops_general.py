@@ -7,6 +7,37 @@ import bpy
 from .walls import ISOLATE_HIDDEN_TAG
 
 
+def draw_selection_mode_row(layout, context):
+    """The selection-mode picker (cabinet / bay / opening / part) as a
+    row at the top of a right-click menu, for the product the room's
+    tab is on, so the mode changes without a trip to the header.
+
+    Draws nothing when the product's selection mode is switched off or
+    no product tab applies. Returns True when the row was drawn.
+    """
+    from . import viewport_hud
+    for wiring in (viewport_hud._FF_SELECTION, viewport_hud._FL_SELECTION,
+                   viewport_hud._CL_SELECTION):
+        if not wiring.ui_visible(context):
+            continue
+        props = getattr(context.scene, wiring.scene_attr, None)
+        if props is None:
+            return False
+        if wiring.enabled_attr and not getattr(
+                props, wiring.enabled_attr, False):
+            return False
+        enum = props.bl_rna.properties[wiring.enum_attr]
+        row = layout.row(align=True)
+        for item in enum.enum_items:
+            # Applied Panels is reached from its own command, never the
+            # main picker (same as the sidebar and header).
+            if item.identifier == 'Applied Panels':
+                continue
+            row.prop_enum(props, wiring.enum_attr, item.identifier)
+        return True
+    return False
+
+
 class HB_MT_call_menu_wrapper(bpy.types.Menu):
     """Wrapper menu that forces INVOKE_DEFAULT on its contents.
 
@@ -34,6 +65,8 @@ class HB_MT_call_menu_wrapper(bpy.types.Menu):
             layout.separator()
         if (obj and "MENU_ID" in obj and obj["MENU_ID"]
                 and hasattr(bpy.types, obj["MENU_ID"])):
+            if draw_selection_mode_row(layout, context):
+                layout.separator()
             layout.menu_contents(obj["MENU_ID"])
 
 

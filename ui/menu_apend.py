@@ -43,6 +43,9 @@ def draw_object_mode_right_click_menu(self, context):
         menu_id = "HOME_BUILDER_MT_floor_ceiling_commands"
 
     if menu_id and hasattr(bpy.types, menu_id):
+        from ..operators import ops_general
+        if ops_general.draw_selection_mode_row(layout, context):
+            layout.separator()
         layout.menu(menu_id)
         layout.separator()
 
