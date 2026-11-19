@@ -1100,6 +1100,20 @@ def _restyle_fronts_in_room(self, scene):
                 style = active
             if style is not None and style.door_style == target_name:
                 wood_hoods.rebuild_built_hood(obj)
+        # Inset panels (paneled ends, panel backs) carry no style tag of
+        # their own: they wear their cabinet style's door style, so a
+        # door style edit restyles the ones whose cabinet builds with it.
+        from . import types_face_frame as _tff
+        by_name = {s.name: s for s in ff.cabinet_styles}
+        panels = [obj for obj in scene.objects
+                  if obj.get('hb_part_role') == 'INSET_PANEL'
+                  and 'CABINET_PART' in obj]
+        for obj in panels:
+            root = _tff.find_cabinet_root(obj)
+            name = root.get('STYLE_NAME') if root is not None else None
+            style = by_name.get(name) if name else None
+            if style is not None and style.door_style == target_name:
+                style_inset_panel(obj, self)
     # A door-style change can move the rail width that match-door-rail
     # drawer styles mirror, so re-push those styles' fronts too. Drawer
     # styles are terminal here (_front_is_drawer) - no recursion.
