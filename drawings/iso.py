@@ -195,7 +195,7 @@ def resolve(context, view, width, height):
     if wall is None:
         return None
     scene = context.scene
-    items = [it for it in views.wall_items(scene, wall)
+    items = [it for it in views.wall_items(scene, wall, whole=True)
              if it.kind != 'OPENING']
     if not items:
         return None

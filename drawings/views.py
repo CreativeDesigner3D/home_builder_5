@@ -194,8 +194,9 @@ def wall_of(view):
     return wall
 
 
-def wall_items(scene, wall):
-    return em._items(scene, wall, em._front_names(scene, wall), ())
+def wall_items(scene, wall, whole=False):
+    return em._items(scene, wall, em._front_names(scene, wall), (),
+                     whole=whole)
 
 
 # What a sheet's elevation leaves to the sheet: the plan and the iso are

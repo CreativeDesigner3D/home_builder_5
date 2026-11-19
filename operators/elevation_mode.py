@@ -1507,8 +1507,17 @@ def _is_floating_shelf(obj):
                     and obj.get('PART_TYPE') == 'FLOATING_SHELF'))
 
 
+def _is_support_frame(obj):
+    """A support frame (its legs and rails round an island or a run): a
+    product in its own right, though not tagged as a cabinet."""
+    return obj.get('PART_TYPE') == 'SUPPORT_FRAME' and bool(
+        obj.get('IS_FACE_FRAME_PRODUCT_CAGE')
+        or obj.get('IS_FRAMELESS_PRODUCT_CAGE'))
+
+
 def _is_product(obj):
-    return any(obj.get(m) for m in PRODUCT_MARKERS) or _is_floating_shelf(obj)
+    return (any(obj.get(m) for m in PRODUCT_MARKERS)
+            or _is_floating_shelf(obj) or _is_support_frame(obj))
 
 
 def _is_opening(obj):
@@ -1665,7 +1674,7 @@ def _closet_panel_heights(it, Fi):
     return out
 
 
-def _items(scene, wall, extra=None, preview=None):
+def _items(scene, wall, extra=None, preview=None, whole=False):
     """The products and openings that show on `wall`. `extra` (names of
     roots standing in front of it) and `preview` default to the
     elevation on screen."""
@@ -1674,7 +1683,7 @@ def _items(scene, wall, extra=None, preview=None):
         extra = st.get('extra', ())
     if preview is None:
         preview = st.get('preview', ())
-    key = (_gen, wall.name, frozenset(preview), frozenset(extra))
+    key = (_gen, wall.name, frozenset(preview), frozenset(extra), whole)
     hit = _item_cache.get('key')
     if hit == key:
         return _item_cache['items']
@@ -1721,8 +1730,10 @@ def _items(scene, wall, extra=None, preview=None):
             if it is not None and it.x1 > 0.0 and it.x0 < length:
                 items.append(it)
         items = _drop_contents(items)
+        # A stand-in shows only what faces it -- unless all of it is
+        # wanted, as a 3D view of it does.
         keep = getattr(wall, 'filter_items', None)
-        if keep is not None:
+        if keep is not None and not whole:
             items = keep(items)
     _item_cache['key'] = key
     _item_cache['items'] = items
