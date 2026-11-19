@@ -1199,6 +1199,11 @@ BOTTOM_RETURN_KEY = 'Bottom Return'
 # A wall scribe filler's top return turned on by hand, whatever the
 # cabinet beside it shows.
 TOP_RETURN_KEY = 'Force Top Return'
+# Extra width a wall scribe filler is cut with, running on into the wall
+# so it can be trimmed to the wall on site. The exposed width stays the
+# filler's own; fillers built before the option have none.
+TRIM_SCRIBE_KEY = 'Wall Trim Scribe'
+TRIM_SCRIBE_DEFAULT = inch(0.5)
 # Whether a wall scribe filler flush with the case has a return cleat.
 FILLER_RETURN_CLEAT_KEY = 'Return Cleat'
 
@@ -1215,7 +1220,7 @@ def _paint_product(root):
 
 
 def _solve_filler_return(root, parts, role, name, z, dim_x, depth, mt, on,
-                         finish):
+                         finish, x=0.0):
     """A return lying behind a filler face's bottom (or top) edge, from
     the face back to the wall, made when ``on`` and removed when not.
     ``finish`` is (Finish Top, Finish Bottom). True when the part was
@@ -1238,7 +1243,7 @@ def _solve_filler_return(root, parts, role, name, z, dim_x, depth, mt, on,
     changed = made or (bool(part.get('Finish Top')), bool(
         part.get('Finish Bottom'))) != tuple(finish)
     part['Finish Top'], part['Finish Bottom'] = finish
-    _set_part(part, (0.0, 0.0, z), length=dim_x, width=depth, thickness=mt)
+    _set_part(part, (x, 0.0, z), length=dim_x, width=depth, thickness=mt)
     return changed
 
 
@@ -1259,29 +1264,34 @@ def _solve_corner_filler(root, parts, dim_x, dim_y, dim_z):
     # Off over a separate toe kick platform, which runs on under it.
     kick_on = bool(root.get('Toe Kick Piece', True))
     face_y = -dim_y + (0.0 if on_doors else FRONT_THICKNESS)
+    # The trim scribe widens the face and its returns on the wall side
+    # (the side away from the cabinet).
+    scribe = max(0.0, float(root.get(TRIM_SCRIBE_KEY, 0.0) or 0.0))
+    cut_x = -scribe if cab_right else 0.0
+    cut_w = dim_x + scribe
     from . import scribe_fit
     # Under an upper only: a base or tall stands on its kick or the floor.
     # Its underside is finished when the cabinet beside it shows its
     # bottom.
     bottom_on = bool(root.get(BOTTOM_RETURN_KEY, False)) and tkh <= 0.0
     repaint = _solve_filler_return(
-        root, parts, 'FILLER_BOTTOM_RETURN', 'Bottom Return', 0.0, dim_x,
+        root, parts, 'FILLER_BOTTOM_RETURN', 'Bottom Return', 0.0, cut_w,
         -(face_y + mt), mt, bottom_on,
-        (False, scribe_fit.bottom_return_finished(root)))
+        (False, scribe_fit.bottom_return_finished(root)), x=cut_x)
     # Over an upper or tall whose top is finished, a top return closes
     # the filler over the top the same way, finished on its top face.
     top_on = scribe_fit.top_return_wanted(root)
     repaint = _solve_filler_return(
-        root, parts, 'FILLER_TOP_RETURN', 'Top Return', dim_z - mt, dim_x,
-        -(face_y + mt), mt, top_on, (True, False)) or repaint
+        root, parts, 'FILLER_TOP_RETURN', 'Top Return', dim_z - mt, cut_w,
+        -(face_y + mt), mt, top_on, (True, False), x=cut_x) or repaint
     # The return leg stands on the bottom return, under the top one.
     leg_z = tkh + (mt if bottom_on else 0.0)
     leg_top = dim_z - (mt if top_on else 0.0)
 
     part = parts.get('FILLER_FACE')
     if part is not None:
-        _set_part(part, (0.0, face_y, tkh),
-                  length=dim_z - tkh, width=dim_x, thickness=mt)
+        _set_part(part, (cut_x, face_y, tkh),
+                  length=dim_z - tkh, width=cut_w, thickness=mt)
 
     part = parts.get('FILLER_KICK')
     if part is not None:
@@ -1377,6 +1387,7 @@ class CornerFiller(Product):
         self.create_product(name)
         self.obj['PART_TYPE'] = 'CORNER_FILLER'
         self.obj['IS_CORNER_FILLER'] = True
+        self.obj[TRIM_SCRIBE_KEY] = TRIM_SCRIBE_DEFAULT
         self.obj['MENU_ID'] = 'HOME_BUILDER_MT_part_commands'
 
         self.add_properties_common()

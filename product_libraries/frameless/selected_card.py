@@ -258,6 +258,20 @@ def _filler_top_return():
     return prop_proxy.computed(get, set, type='BOOLEAN')
 
 
+def _filler_trim_scribe():
+    """How much wider than it shows a wall scribe filler is cut, into
+    the wall."""
+    from ...operators import prop_proxy
+    from . import types_products
+
+    def get(obj):
+        return float(obj.get(types_products.TRIM_SCRIBE_KEY, 0.0) or 0.0)
+
+    def set(obj, value):
+        obj[types_products.TRIM_SCRIBE_KEY] = max(0.0, float(value))
+    return prop_proxy.computed(get, set, unit='LENGTH', precision=4)
+
+
 def _houses_appliance(owner):
     from . import types_frameless
     return types_frameless.appliance_opening(owner.id_data) is not None
@@ -946,6 +960,7 @@ def _register_schemas():
         'height_off_floor': P.height_off_floor(),
         'top_off_floor': _top_off_floor(),
         'top_return': _filler_top_return(),
+        'trim_scribe': _filler_trim_scribe(),
     }, after=_solve_product)
     # A misc part is a cut part: its size is length, width and thickness.
     P.register(MISC_PART_SCHEMA, {
@@ -1135,6 +1150,7 @@ PRODUCT_FIELDS = (
     ('distance', 'top_off_floor', "Top Above Floor",
      {'when': _upper_scribe_filler}),
     ('bool', 'top_return', "Top Return", {'when': _scribe_filler}),
+    ('distance', 'trim_scribe', "Wall Trim Scribe", {'when': _scribe_filler}),
 )
 
 
