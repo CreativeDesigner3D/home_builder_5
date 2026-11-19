@@ -5570,6 +5570,87 @@ def _ink_edges(page, edges):
         page.lines(edges[n:])
 
 
+# The colour a part is filled with on paper: its cabinet style's 2D
+# drawing colour (white, the first style's, is no fill). An add-on that
+# reads styles more closely (a part painted with another style) puts its
+# own reading in place with register_face_fill.
+_face_fill = None
+
+
+def register_face_fill(fn):
+    """fn(obj) -> (r, g, b) or None: the fill of obj's faces in print.
+    None puts the default reading back."""
+    global _face_fill
+    _face_fill = fn
+
+
+def _style_fill(obj):
+    """The 2D colour of the style of the cabinet obj is part of."""
+    from .. import hb_project
+    cur = obj
+    while cur is not None:
+        if cur.get('STYLE_NAME') or (cur.get('IS_FRAMELESS_CABINET_CAGE')
+                                     and cur.get('CABINET_STYLE_NAME')):
+            break
+        cur = cur.parent
+    if cur is None:
+        return None
+    main = hb_project.get_main_scene(bpy.context)
+    if main is None:
+        return None
+    name = cur.get('STYLE_NAME')
+    if name:
+        pool = getattr(getattr(main, 'hb_face_frame', None),
+                       'cabinet_styles', None) or ()
+        key = name.strip().casefold()
+        style = next((s for s in pool
+                      if s.name.strip().casefold() == key), None)
+        rgb = tuple(style.color_in_2d_drawings) if style else None
+    else:
+        # Frameless styles take the palette colour of their place.
+        from ..product_libraries.face_frame import props_hb_face_frame as ffp
+        pool = getattr(getattr(main, 'hb_frameless', None),
+                       'cabinet_styles', None) or ()
+        name = cur.get('CABINET_STYLE_NAME')
+        index = next((i for i, s in enumerate(pool) if s.name == name), None)
+        rgb = tuple(ffp.style_palette_color(index)) if index else None
+    if rgb is None or min(rgb) >= 0.999:
+        return None
+    return rgb[:3]
+
+
+def _fill_reader():
+    """A cached obj -> fill colour (or None) for one drawing."""
+    seen = {}
+
+    def fill(obj):
+        name = obj.name
+        if name not in seen:
+            colour = None
+            try:
+                colour = (_face_fill or _style_fill)(obj)
+            except Exception as exc:
+                print(f"Elevation print: fill of {name}: {exc}")
+            if colour is not None:
+                colour = tuple(float(c) for c in colour[:3])
+                if min(colour) >= 0.999:
+                    colour = None
+            seen[name] = colour
+        return seen[name]
+    return fill
+
+
+def part_fill(obj):
+    """obj's fill on paper (a plan's cabinet), or None for white."""
+    return _fill_reader()(obj)
+
+
+def face_color(face, default=None):
+    """The fill of a face from _print_faces (or default when unfilled)."""
+    colour = face[3] if len(face) > 3 else None
+    return colour if colour is not None else default
+
+
 def _print_owners(items, scene, molding=False):
     """Names of the objects whose geometry the drawing shows: the
     products and openings on the wall, and everything under them, less
@@ -5642,6 +5723,7 @@ def _print_faces_now(context, owners, Fi, view, deep=False):
     k, ox, oy = view.k, view.ox, view.oy
     cos_feature = math.cos(PRINT_FEATURE_ANGLE)
     dg = context.evaluated_depsgraph_get()
+    fill_of = _fill_reader()
     faces = []
     for inst in dg.object_instances:
         owner = inst.parent if inst.is_instance else inst.object
@@ -5686,6 +5768,7 @@ def _print_faces_now(context, owners, Fi, view, deep=False):
         facing = nrm[:, 1] < -1e-4
         if not facing.any():
             continue
+        fill = fill_of(owner.original)
         # The faces either side of each edge: an edge is drawn where the
         # surface folds past the feature angle, at a silhouette (one side
         # faces away), or along an open border.
@@ -5728,7 +5811,7 @@ def _print_faces_now(context, owners, Fi, view, deep=False):
                     (light if detail[e] else edges).append(seg)
             edges.heavy = len(edges)
             edges += light
-            faces.append((float(co[vs, 1].mean()), poly, edges))
+            faces.append((float(co[vs, 1].mean()), poly, edges, fill))
     return faces
 
 
@@ -5765,8 +5848,8 @@ def _edge_set(faces):
     """The faces' edges, each once."""
     seen = set()
     out = []
-    for _depth, _poly, edges in faces:
-        for p, q in edges:
+    for face in faces:
+        for p, q in face[2]:
             a = (round(float(p[0]), 4), round(float(p[1]), 4))
             b = (round(float(q[0]), 4), round(float(q[1]), 4))
             if a == b:
@@ -5904,13 +5987,22 @@ def _print_linework(page, context, extra, Fi, view, L, H):
     if not faces:
         return False
     faces.sort(key=lambda f: -f[0])        # far first
-    page.fill_color(PAPER)
     page.stroke_color(PRINT_EDGE)
-    for _depth, poly, edges in faces:
-        page.polygon(poly, fill=True, stroke=False)
-        if edges:
-            _ink_edges(page, edges)
+    _fill_faces(page, faces, PAPER)
     return True
+
+
+def _fill_faces(page, faces, default):
+    """Paint faces in order, each in its colour, edges inked over."""
+    current = None
+    for face in faces:
+        colour = face_color(face, default)
+        if colour != current:
+            page.fill_color(colour)
+            current = colour
+        page.polygon(face[1], fill=True, stroke=False)
+        if face[2]:
+            _ink_edges(page, face[2])
 
 
 # Camera space (x right, y up, the camera looking down -z) to the print's
@@ -6002,17 +6094,19 @@ def _raster_faces(faces, x, y, w, h):
     scale = min(scale, PRINT_RASTER_MAX / (ss * max(w, h)))
     tw = max(1, int(math.ceil(w * scale))) * ss
     th = max(1, int(math.ceil(h * scale))) * ss
-    depths = [q[2] for _d, poly, _e in faces for q in poly]
+    depths = [q[2] for face in faces for q in face[1]]
     d0, d1 = min(depths), max(depths)
 
     def z(d, lift=0.0):
         return -(d - d0 + 1.0 - lift)
 
-    tris, lines = [], []
-    for _depth, poly, edges in faces:
+    tris, lines = {}, []
+    for face in faces:
+        poly, edges = face[1], face[2]
         pts = [(q[0], q[1], z(q[2])) for q in poly]
+        group = tris.setdefault(face_color(face, PAPER), [])
         for i in range(1, len(pts) - 1):
-            tris += [pts[0], pts[i], pts[i + 1]]
+            group += [pts[0], pts[i], pts[i + 1]]
         for a, b in edges:
             lines += [(a[0], a[1], z(a[2], PRINT_RASTER_LIFT)),
                       (b[0], b[1], z(b[2], PRINT_RASTER_LIFT))]
@@ -6031,9 +6125,10 @@ def _raster_faces(faces, x, y, w, h):
                         _ortho(x, x + w, y, y + h, 0.5, (d1 - d0) + 2.0))
                     shader = gpu.shader.from_builtin('UNIFORM_COLOR')
                     shader.bind()
-                    shader.uniform_float("color", (1.0, 1.0, 1.0, 1.0))
-                    batch_for_shader(shader, 'TRIS',
-                                     {"pos": tris}).draw(shader)
+                    for colour, group in tris.items():
+                        shader.uniform_float("color", (*colour, 1.0))
+                        batch_for_shader(shader, 'TRIS',
+                                         {"pos": group}).draw(shader)
                     if lines:
                         shader = gpu.shader.from_builtin(
                             'POLYLINE_UNIFORM_COLOR')
@@ -6110,15 +6205,11 @@ def _print_side_views(page, context, wall, extra):
             back += _box_faces(M, rb, view)
         front = _print_faces(context, extra['items'], Fi, view,
                              only=names, molding=iso) if names else []
-        for faces in (back, front):
-            # The plan cuts the walls: they read light grey.
-            page.fill_color(WALL_GRAY if faces is back and kind == 'PLAN'
-                            else PAPER)
+        # The plan cuts the walls: they read light grey.
+        wall_fill = WALL_GRAY if kind == 'PLAN' else PAPER
+        for faces, fill in ((back, wall_fill), (front, PAPER)):
             faces.sort(key=lambda f: -f[0])        # far first
-            for _depth, poly, edges in faces:
-                page.polygon(poly, fill=True, stroke=False)
-                if edges:
-                    _ink_edges(page, edges)
+            _fill_faces(page, faces, fill)
     # The plan names its wall, in the wall.
     size = ANNOTATION_FONT_SIZE * _s()
     page.fill_color(TEXT)

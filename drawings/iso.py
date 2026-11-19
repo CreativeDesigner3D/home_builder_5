@@ -81,22 +81,18 @@ def _draw(context, C, span, products, walls, width, height):
         out.image(rgb, pw, ph, 0.0, 0.0, w, h)
     else:
         if deep:        # drawn for the depth buffer: flatten
-            front = [(d, [q[:2] for q in poly],
-                      _flat_edges(edges)) for d, poly, edges in front]
-            back = [(d, [q[:2] for q in poly],
-                     _flat_edges(edges)) for d, poly, edges in back]
+            front = [(f[0], [q[:2] for q in f[1]], _flat_edges(f[2]))
+                     + tuple(f[3:]) for f in front]
+            back = [(f[0], [q[:2] for q in f[1]], _flat_edges(f[2]))
+                    for f in back]
         out.stroke_color(GHOST)
         out.line_width(GHOST_WIDTH)
-        for _d, _poly, edges in back:
-            if edges:
-                out.lines(list(edges))
-        out.fill_color(em.PAPER)
+        for face in back:
+            if face[2]:
+                out.lines(list(face[2]))
         out.stroke_color(em.PRINT_EDGE)
         front.sort(key=lambda f: -f[0])            # far first
-        for _d, poly, edges in front:
-            out.polygon(poly, fill=True, stroke=False)
-            if edges:
-                em._ink_edges(out, edges)
+        em._fill_faces(out, front, em.PAPER)
     out.info = {'k': None, 'scale': None}
     return out
 
@@ -120,25 +116,27 @@ def _raster(front, back, w, h):
     scale = min(RASTER_DPI / 72.0, RASTER_MAX / (ss * max(w, h)))
     tw = max(1, int(math.ceil(w * scale))) * ss
     th = max(1, int(math.ceil(h * scale))) * ss
-    depths = [q[2] for _d, poly, _e in front + back for q in poly]
+    depths = [q[2] for face in front + back for q in face[1]]
     d0, d1 = min(depths), max(depths)
 
     def z(d, lift=0.0):
         return -(d - d0 + 1.0 - lift)
 
-    tris = []
+    tris = {}
     heavy, light, ghost = [], [], []
-    for _depth, poly, edges in front:
+    for face in front:
+        poly, edges = face[1], face[2]
         pts = [(q[0], q[1], z(q[2])) for q in poly]
+        group = tris.setdefault(em.face_color(face, em.PAPER), [])
         for i in range(1, len(pts) - 1):
-            tris += [pts[0], pts[i], pts[i + 1]]
+            group += [pts[0], pts[i], pts[i + 1]]
         n = getattr(edges, 'heavy', len(edges))
         for i, (a, c) in enumerate(edges):
             seg = [(a[0], a[1], z(a[2], em.PRINT_RASTER_LIFT)),
                    (c[0], c[1], z(c[2], em.PRINT_RASTER_LIFT))]
             (heavy if i < n else light).extend(seg)
-    for _depth, _poly, edges in back:
-        for a, c in edges:
+    for face in back:
+        for a, c in face[2]:
             ghost += [(a[0], a[1], z(a[2], em.PRINT_RASTER_LIFT)),
                       (c[0], c[1], z(c[2], em.PRINT_RASTER_LIFT))]
     off = gpu.types.GPUOffScreen(tw, th)
@@ -156,11 +154,11 @@ def _raster(front, back, w, h):
                     gpu.matrix.load_projection_matrix(
                         em._ortho(0.0, w, 0.0, h, 0.5, (d1 - d0) + 2.0))
                     flat = gpu.shader.from_builtin('UNIFORM_COLOR')
-                    if tris:
-                        flat.bind()
-                        flat.uniform_float("color", (1.0, 1.0, 1.0, 1.0))
+                    flat.bind()
+                    for colour, group in tris.items():
+                        flat.uniform_float("color", (*colour, 1.0))
                         batch_for_shader(flat, 'TRIS',
-                                         {"pos": tris}).draw(flat)
+                                         {"pos": group}).draw(flat)
                     line = gpu.shader.from_builtin('POLYLINE_UNIFORM_COLOR')
                     for pts, width, colour in (
                             (ghost, GHOST_WIDTH, GHOST),

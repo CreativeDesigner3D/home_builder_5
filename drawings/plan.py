@@ -48,6 +48,14 @@ def _fitted_label(page, cx, cy, text, room):
                         size)
 
 
+def _fill(out, obj, skip, poly):
+    """A cabinet standing on the floor, filled in its style's colour."""
+    colour = None if skip else em.part_fill(obj)
+    if colour is not None:
+        out.fill_color(colour)
+        out.polygon(poly, fill=True, stroke=False)
+
+
 def resolve(context, view, _width, _height):
     wall = views.wall_of(view)
     if wall is None:
@@ -84,6 +92,8 @@ def resolve(context, view, _width, _height):
     for it, x0, x1, y0 in sorted(boxes, key=lambda b: b[0].kind != 'UPPER'):
         a, b = P(x0, y0), P(x1, 0.0)
         appliance = bool(it.obj.get('IS_APPLIANCE'))
+        _fill(out, it.obj, it.kind == 'UPPER' or appliance,
+              [a, (b[0], a[1]), b, (a[0], b[1])])
         out.stroke_color(draft.INK)
         if it.kind == 'UPPER':
             out.line_width(0.45)
@@ -177,6 +187,7 @@ def _room_parts(context):
                 'poly': [W(it.x0, y0), W(it.x1, y0), W(it.x1, 0.0),
                          W(it.x0, 0.0)],
                 'kind': 'APPLIANCE' if appliance else it.kind,
+                'fill': em.part_fill(it.obj),
                 'label': (it.name.upper()[:12] if appliance
                           else _number(it.obj)),
                 'at': W((it.x0 + it.x1) / 2.0,
@@ -219,6 +230,7 @@ def _room_parts(context):
                 cx = sum(p[0] for p in poly) / len(poly)
                 cy = sum(p[1] for p in poly) / len(poly)
                 out['boxes'].append({'poly': poly, 'kind': 'LOWER',
+                                     'fill': em.part_fill(obj),
                                      'label': _number(obj), 'at': (cx, cy)})
     return out
 
@@ -270,6 +282,9 @@ def resolve_room(context, view, width, height):
             outline(poly)
     order = {'UPPER': 0, 'APPLIANCE': 1, 'LOWER': 2}
     for box in sorted(parts['boxes'], key=lambda b: order.get(b['kind'], 2)):
+        if box['kind'] == 'LOWER' and box.get('fill') and len(box['poly']) >= 3:
+            out.fill_color(box['fill'])
+            out.polygon([P(p) for p in box['poly']], fill=True, stroke=False)
         out.stroke_color(draft.INK)
         if box['kind'] == 'UPPER':
             out.line_width(0.45)
@@ -376,6 +391,7 @@ def resolve_island(context, view, _width, _height):
                for b in bands):
             bands.append(band)
         appliance = bool(obj.get('IS_APPLIANCE'))
+        _fill(out, obj, appliance, [P(p) for p in poly])
         out.stroke_color(draft.INK)
         if appliance:
             out.line_width(0.45)
