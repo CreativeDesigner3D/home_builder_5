@@ -669,6 +669,9 @@ def update_front_shape(self, context):
     # Shape-width series (Konza): the shape IS the member width, so the
     # construction fields must re-derive on a shape change too.
     _apply_series_frame_to_door_style(self)
+    # Slab series name the grain in the shape, and the panel reset above
+    # does not fire when the panel name stays the same.
+    _sync_grain_to_panel(self)
     # The shape drives geometry (arched tops); the panel reset above
     # only propagates when the panel value actually changes, so push
     # explicitly -- shape-only changes must rebuild fronts too.
@@ -688,29 +691,83 @@ def panel_grain_is_horizontal(panel):
     return style_options.raised_slab_kind(panel) is not None
 
 
+def shape_names_grain(shape):
+    """True for the slab-series shape choices that already name the grain
+    ("Horizontal (no grain match)", "Match Grain ..."): a separate grain
+    direction would only repeat it."""
+    shape = (shape or '').strip().lower()
+    return ('grain' in shape or shape.startswith('horizontal')
+            or shape.startswith('vertical'))
+
+
+# Solid wood slab fronts carry no grain callout.
+_SOLID_WOOD_SLAB_PANELS = ('Solid Wood Slab', 'Grooved Solid Wood Slab')
+
+
+def default_grain_for_style(ds):
+    """The grain direction a front style takes from its catalog picks, or
+    None where the plain default (VERTICAL) applies:
+
+    - MDF panels, solid wood slabs, and series whose shape names the
+      grain: NONE.
+    - Raised slab faces (horizontal-only stock): HORIZONTAL.
+    - Veneer or solid wood drawer fronts: HORIZONTAL.
+    """
+    panel = (ds.front_panel or '').strip()
+    if (panel_is_mdf(panel) or panel in _SOLID_WOOD_SLAB_PANELS
+            or shape_names_grain(getattr(ds, 'front_shape', ''))):
+        return 'NONE'
+    if panel_grain_is_horizontal(panel):
+        return 'HORIZONTAL'
+    if _front_is_drawer(ds) and ('Veneer' in panel or 'Solid Wood' in panel):
+        return 'HORIZONTAL'
+    return None
+
+
 def _sync_grain_to_panel(ds):
-    """An MDF panel has no grain: switch the style to grain NONE. The
-    style remembers that the switch was automatic, so moving back to a
-    grained panel restores VERTICAL; a NONE the user picked stays. A
-    horizontal-only panel switches to HORIZONTAL the same way, and
-    leaving it restores the direction the style had."""
-    if panel_grain_is_horizontal(ds.front_panel):
-        if ds.grain_direction != 'HORIZONTAL':
-            ds['_grain_auto_horizontal'] = ds.grain_direction
-            ds.grain_direction = 'HORIZONTAL'
-    elif ds.get('_grain_auto_horizontal'):
-        was = ds['_grain_auto_horizontal']
-        del ds['_grain_auto_horizontal']
-        if ds.grain_direction == 'HORIZONTAL':
-            ds.grain_direction = was if was in ('NONE', 'VERTICAL') else 'VERTICAL'
-    if panel_is_mdf(ds.front_panel):
-        if ds.grain_direction != 'NONE':
-            ds['_grain_auto_none'] = True
-            ds.grain_direction = 'NONE'
-    elif ds.get('_grain_auto_none'):
+    """Set the style's grain to the default its catalog picks call for
+    (default_grain_for_style). The style remembers the direction it had
+    and the one set for it, so moving to a pick with no default restores
+    the old direction -- unless the user has changed it since."""
+    # Markers written by earlier versions of this switch.
+    if ds.get('_grain_auto_none'):
         del ds['_grain_auto_none']
-        if ds.grain_direction == 'NONE':
-            ds.grain_direction = 'VERTICAL'
+        ds['_grain_auto_was'], ds['_grain_auto_set'] = 'VERTICAL', 'NONE'
+    if '_grain_auto_horizontal' in ds:
+        ds['_grain_auto_was'] = ds['_grain_auto_horizontal']
+        ds['_grain_auto_set'] = 'HORIZONTAL'
+        del ds['_grain_auto_horizontal']
+    want = default_grain_for_style(ds)
+    if want is not None:
+        if ds.grain_direction != want:
+            # Remember the direction being replaced, unless it is the one
+            # this switch set earlier (then the older one still stands).
+            if ('_grain_auto_was' not in ds
+                    or ds.grain_direction != ds.get('_grain_auto_set')):
+                ds['_grain_auto_was'] = ds.grain_direction
+            ds['_grain_auto_set'] = want
+            ds.grain_direction = want
+        return
+    if '_grain_auto_was' in ds:
+        was = ds['_grain_auto_was']
+        auto_set = ds.get('_grain_auto_set')
+        del ds['_grain_auto_was']
+        if '_grain_auto_set' in ds:
+            del ds['_grain_auto_set']
+        if ds.grain_direction == auto_set:
+            ds.grain_direction = (was if was in ('NONE', 'VERTICAL', 'HORIZONTAL')
+                                  else 'VERTICAL')
+
+
+def grain_is_implied(ds):
+    """True when the grain field has nothing to say for this style: an
+    MDF panel or a grain-named shape left at NONE, or a raised slab at
+    HORIZONTAL. The sidebar greys the field and the style manager hides
+    it; any other value (an older file) stays editable."""
+    return ((panel_is_mdf(ds.front_panel) or shape_names_grain(ds.front_shape))
+            and ds.grain_direction == 'NONE'
+            or (panel_grain_is_horizontal(ds.front_panel)
+                and ds.grain_direction == 'HORIZONTAL'))
 
 
 def update_front_panel(self, context):
@@ -1130,6 +1187,10 @@ def ensure_default_styles(context):
             and len(ff.drawer_front_styles) == 0):
         from . import style_templates
         style_templates.apply_default_template(context)
+        # Templates saved before the grain defaults carry VERTICAL on
+        # every front; start the new project on the catalog defaults.
+        for ds in list(ff.door_styles) + list(ff.drawer_front_styles):
+            _sync_grain_to_panel(ds)
     if len(ff.cabinet_styles) == 0:
         cs = ff.cabinet_styles.add()
         cs.name = "Default"
@@ -1161,6 +1222,7 @@ def ensure_default_styles(context):
     if len(ff.drawer_front_styles) == 0:
         ds = ff.drawer_front_styles.add()
         _apply_default_front_style(ds)
+        _sync_grain_to_panel(ds)
         ds.name = _auto_front_style_name(*_DEFAULT_FRONT, drawer=True)
         ff.active_drawer_front_style_index = 0
 
@@ -6801,11 +6863,7 @@ class Face_Frame_Door_Style(PropertyGroup):
         grain_row = box.row()
         # MDF panels have no grain; still editable if an older file left
         # a direction set on one.
-        grain_row.enabled = not (
-            (panel_is_mdf(self.front_panel)
-             and self.grain_direction == 'NONE')
-            or (panel_grain_is_horizontal(self.front_panel)
-                and self.grain_direction == 'HORIZONTAL'))
+        grain_row.enabled = not grain_is_implied(self)
         grain_row.prop(self, "grain_direction", text="Grain Direction")
 
         # Hardware callouts: the checkbox DECLARES the option for the

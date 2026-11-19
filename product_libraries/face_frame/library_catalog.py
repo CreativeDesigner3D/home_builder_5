@@ -358,12 +358,8 @@ def _front_style_fields(kind):
     def grained(p):
         # MDF panels have no grain; still shown if an older file left a
         # direction set on one.
-        from .props_hb_face_frame import (panel_is_mdf,
-                                          panel_grain_is_horizontal)
-        return not ((panel_is_mdf(p.front_panel)
-                     and p.grain_direction == 'NONE')
-                    or (panel_grain_is_horizontal(p.front_panel)
-                        and p.grain_direction == 'HORIZONTAL'))
+        from .props_hb_face_frame import grain_is_implied
+        return not grain_is_implied(p)
 
     fields = [
         ('label', None, "Catalog"),
