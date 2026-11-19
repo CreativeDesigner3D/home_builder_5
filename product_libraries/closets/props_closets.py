@@ -421,11 +421,21 @@ def _set_all_bay_heights(sp, root):
     h = const.millimeter(int(sp.overall_height_preset))
     idx = const.panel_height_preset_index(sp.overall_height_preset)
     with types_closets.suspend_recalc():
-        for bay in types_closets._run_bays(root):
+        bays = types_closets._run_bays(root)
+        for bay in bays:
             bp = bay.hb_closet_bay
             bp.unlock_height = True
             bp.height = h
             bp['height_preset'] = idx
+        # A run whose every bay hangs is as tall as its bays: the outline
+        # follows them down from the hang line, which stays put.
+        if (sp.closet_type == 'HANGING' and bays
+                and not any(b.hb_closet_bay.floor_mounted for b in bays)
+                and abs(float(sp.height) - h) > 1e-6):
+            root.location.z += float(sp.height) - h
+            root['hb_last_height'] = h
+            sp['height'] = h
+            sp['height_preset'] = idx
         types_closets.recalculate_closet_starter(root)
 
 

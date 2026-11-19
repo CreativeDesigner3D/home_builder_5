@@ -513,7 +513,13 @@ def fields(root):
         ('distance', 'height', "Height"),
         ('distance', 'depth', "Depth"),
     ]
-    if not is_filler:
+    if is_filler:
+        pass
+    elif sp.closet_type == 'HANGING' and not is_corner:
+        # A hanging run is sized by Hanging Height and Set All Bay
+        # Heights; its own height only moved the outline, not the bays.
+        del out[2]
+    else:
         # The height is a pick off the standard list. The typed field
         # shows beside it only for a run standing off the holes.
         def off_holes(_ow=None):
