@@ -242,6 +242,48 @@ def cabinet_root(obj):
     return None
 
 
+# ---------------------------------------------------------------------------
+# Front thickness
+# ---------------------------------------------------------------------------
+
+# Set on a front holder while its Front Thickness follows the cabinet's
+# Material Thickness, so a change to a five-piece style can hand the
+# fronts back their own thickness.
+FRONT_FOLLOWS_KEY = 'FRONT_THICKNESS_FOLLOWS_CARCASS'
+FIVE_PIECE_FRONT_THICKNESS = inch(0.75)
+
+
+def is_five_piece_front(front_obj):
+    """True when a door or drawer front carries a five-piece style."""
+    return any(m.type == 'NODES' and 'Door Style' in m.name
+               for m in front_obj.modifiers)
+
+
+def sync_front_thickness(holder, fronts):
+    """Slab fronts are cut from the carcass board, so they take the
+    cabinet's Material Thickness like the sides, top and bottom. A
+    five-piece front keeps a thickness of its own. ``holder`` carries the
+    'Front Thickness' prompt (an insert, or a corner cabinet itself);
+    ``fronts`` are the front parts it sizes."""
+    if 'Front Thickness' not in holder:
+        return
+    fronts = [f for f in fronts if f is not None]
+    if not fronts:
+        return
+    root = cabinet_root(holder)
+    if root is None or 'Material Thickness' not in root:
+        return
+    if any(is_five_piece_front(f) for f in fronts):
+        if holder.get(FRONT_FOLLOWS_KEY):
+            holder['Front Thickness'] = FIVE_PIECE_FRONT_THICKNESS
+            del holder[FRONT_FOLLOWS_KEY]
+        return
+    mt = float(prompt(root, 'Material Thickness', inch(0.75)))
+    if abs(float(prompt(holder, 'Front Thickness', 0.0)) - mt) > 1e-9:
+        holder['Front Thickness'] = mt
+    holder[FRONT_FOLLOWS_KEY] = True
+
+
 def carcass_kind(root):
     kind = root.get(CARCASS_KEY)
     if kind:
@@ -1082,6 +1124,7 @@ def _solve_corner_doors(root, parts, p, dim_x, dim_y, dim_z):
     mt, tkh = p.mt, p.tkh
     ld = float(prompt(root, 'Left Depth', dim_y))
     rd = float(prompt(root, 'Right Depth', dim_y))
+    sync_front_thickness(root, (left, right))
     ft = float(prompt(root, 'Front Thickness', inch(0.75)))
     gap = float(prompt(root, 'Door to Cabinet Gap', inch(0.125)))
     inset = bool(root.get('Inset Front', False))
@@ -1238,6 +1281,7 @@ def _solve_diagonal_door(root, parts, p, dim_x, dim_y, dim_z):
         return
     (ax, ay), u, n, face = frame
     mt, tkh = p.mt, p.tkh
+    sync_front_thickness(root, (door,))
     ft = float(prompt(root, 'Front Thickness', inch(0.75)))
     gap = float(prompt(root, 'Door to Cabinet Gap', inch(0.125)))
     reveal = float(prompt(root, 'Outer Reveal', inch(0.0625)))
@@ -2832,6 +2876,9 @@ def solve_insert_parts(insert_obj):
     dim_x, dim_y, dim_z = cage_dims(insert_obj)
     overlays = front_overlays(insert_obj) if has_fronts else (0.0, 0.0, 0.0, 0.0)
     top, bottom, left, right = overlays
+    if has_fronts:
+        sync_front_thickness(insert_obj, [
+            c for c in insert_obj.children if c.get('IS_CABINET_FRONT')])
     thickness = float(prompt(insert_obj, 'Front Thickness', inch(0.75)))
     gap = float(prompt(insert_obj, 'Vertical Gap', inch(0.125)))
     swing = int(prompt(insert_obj, 'Door Swing', SWING_DOUBLE))
