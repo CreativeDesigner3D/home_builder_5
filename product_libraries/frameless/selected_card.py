@@ -233,6 +233,31 @@ def _hung(owner):
     return owner.id_data.get('CABINET_TYPE') == 'UPPER'
 
 
+def _scribe_filler(owner):
+    return owner.id_data.get('PART_TYPE') == 'CORNER_FILLER'
+
+
+def _upper_scribe_filler(owner):
+    from . import scribe_fit
+    obj = owner.id_data
+    return (scribe_fit.is_wall_scribe_filler(obj)
+            and scribe_fit.filler_kind(obj) != 'BASE')
+
+
+def _filler_top_return():
+    """A wall scribe filler's top return turned on by hand. Off, it
+    still comes on by itself over a finished cabinet top."""
+    from ...operators import prop_proxy
+    from . import types_products
+
+    def get(obj):
+        return bool(obj.get(types_products.TOP_RETURN_KEY, False))
+
+    def set(obj, value):
+        obj[types_products.TOP_RETURN_KEY] = bool(value)
+    return prop_proxy.computed(get, set, type='BOOLEAN')
+
+
 def _houses_appliance(owner):
     from . import types_frameless
     return types_frameless.appliance_opening(owner.id_data) is not None
@@ -919,6 +944,8 @@ def _register_schemas():
         'depth': _product_depth(),
         'height': P.node_input('Dim Z'),
         'height_off_floor': P.height_off_floor(),
+        'top_off_floor': _top_off_floor(),
+        'top_return': _filler_top_return(),
     }, after=_solve_product)
     # A misc part is a cut part: its size is length, width and thickness.
     P.register(MISC_PART_SCHEMA, {
@@ -1105,6 +1132,9 @@ PRODUCT_FIELDS = (
     ('distance', 'height', "Height"),
     ('distance', 'depth', "Depth"),
     ('distance', 'height_off_floor', "Above Floor"),
+    ('distance', 'top_off_floor', "Top Above Floor",
+     {'when': _upper_scribe_filler}),
+    ('bool', 'top_return', "Top Return", {'when': _scribe_filler}),
 )
 
 

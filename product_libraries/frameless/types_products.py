@@ -1196,6 +1196,9 @@ def set_product_depth(root, depth):
 
 # A panel closing the gap under an upper's wall scribe filler.
 BOTTOM_RETURN_KEY = 'Bottom Return'
+# A wall scribe filler's top return turned on by hand, whatever the
+# cabinet beside it shows.
+TOP_RETURN_KEY = 'Force Top Return'
 # Whether a wall scribe filler flush with the case has a return cleat.
 FILLER_RETURN_CLEAT_KEY = 'Return Cleat'
 

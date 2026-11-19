@@ -363,6 +363,9 @@ class hb_frameless_OT_product_prompts(bpy.types.Operator):
         key = types_products.BOTTOM_RETURN_KEY
         if key in obj and float(obj.get('Toe Kick Height', 0.0)) <= 0.0:
             col.prop(obj, '["%s"]' % key, text="Bottom Return")
+        key = types_products.TOP_RETURN_KEY
+        if key in obj:
+            col.prop(obj, '["%s"]' % key, text="Top Return")
         if float(obj.get('Toe Kick Height', 0.0)) > 0.0:
             box = layout.box()
             box.label(text="Toe Kick")

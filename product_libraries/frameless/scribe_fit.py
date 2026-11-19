@@ -156,10 +156,13 @@ def filler_kind(filler):
 
 
 def top_return_wanted(filler):
-    """Whether an upper or tall filler closes over its top: it does when
-    the top of the cabinet beside it is finished."""
+    """Whether a filler closes over its top: it does when turned on by
+    hand, and an upper or tall one does when the top of the cabinet
+    beside it is finished."""
     if filler.get('PART_TYPE') != 'CORNER_FILLER':
         return False
+    if bool(filler.get(types_products.TOP_RETURN_KEY, False)):
+        return True
     cabinet = neighbour_cabinet(filler)
     if cabinet is None or filler_kind(filler) == 'BASE':
         return False
