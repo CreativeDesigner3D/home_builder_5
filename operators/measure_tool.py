@@ -75,6 +75,7 @@ class MeasureTheme:
 
     LINE = (1.00, 0.72, 0.20, 1.00)
     LINE_PENDING = (1.00, 0.72, 0.20, 0.65)
+    LINE_HOVER = (1.00, 0.35, 0.25, 1.00)
     CHIP_BG = (0.08, 0.08, 0.08, 0.90)
     CHIP_TEXT = (1.00, 0.85, 0.55, 1.00)
     SNAP = (0.35, 0.85, 1.00, 1.00)
@@ -87,6 +88,7 @@ ARROW = 7           # unscaled px, dimension arrow barb
 CHIP_PAD = 5
 FONT_SIZE = 12
 SNAP_MARK = 6
+PICK_RADIUS = 10    # unscaled px, how close the cursor must be to pick one
 
 
 # ---- Store ------------------------------------------------------------------
@@ -133,6 +135,44 @@ def pop_measurement(scene):
             del _measurements[i]
             return True
     return False
+
+
+def remove_measurement(m):
+    """Drop one measurement; False when it was already gone."""
+    for i, other in enumerate(_measurements):
+        if other is m:
+            del _measurements[i]
+            return True
+    return False
+
+
+def _segment_distance(p, a, b):
+    ab = b - a
+    length_sq = ab.length_squared
+    if length_sq < 1e-9:
+        return (p - a).length
+    t = max(0.0, min(1.0, (p - a).dot(ab) / length_sq))
+    return (p - (a + ab * t)).length
+
+
+def measurement_at(scene, region, rv3d, mouse, radius):
+    """The measurement in this scene whose line passes nearest the mouse
+    (region pixels), within ``radius``; None when nothing is that close."""
+    cursor = Vector(mouse)
+    best, best_d = None, radius
+    for m in measurements_for(scene):
+        pts = [_project(region, rv3d, p) for p in m.points]
+        if any(p is None for p in pts):
+            continue
+        pts = [Vector((p.x, p.y)) for p in pts]
+        if m.kind == 'ANGULAR':
+            segs = [(pts[0], pts[1]), (pts[0], pts[2])]
+        else:
+            segs = [(pts[0], pts[1])]
+        d = min(_segment_distance(cursor, a, b) for a, b in segs)
+        if d <= best_d:
+            best, best_d = m, d
+    return best
 
 
 def clear_measurements(scene=None):
@@ -318,10 +358,12 @@ def _draw():
     gpu.state.line_width_set(2.0)
     shader = gpu.shader.from_builtin('UNIFORM_COLOR')
     shader.bind()
+    hovered = getattr(_active, 'hover', None) if _active is not None else None
     try:
         for m in committed:
             _draw_measurement(shader, font_id, region, rv3d, m, s,
-                              MeasureTheme.LINE)
+                              MeasureTheme.LINE_HOVER if m is hovered
+                              else MeasureTheme.LINE)
         if pending is not None:
             pending.draw_pending(shader, font_id, region, rv3d, s)
     finally:
@@ -360,6 +402,7 @@ class home_builder_OT_measure(bpy.types.Operator):
         self.axis = None
         self.snap_on = True
         self.last_label = ""
+        self.hover = None
         _active = self
         context.window_manager.modal_handler_add(self)
         self._update_header(context)
@@ -391,12 +434,14 @@ class home_builder_OT_measure(bpy.types.Operator):
             bits.append(f"[{self.hit.kind.replace('_', ' ').title()}]")
         elif not self.snap_on:
             bits.append("[No Snap]")
-        if self.last_label:
+        if self.hover is not None:
+            bits.append(f"[{self.hover.label}: Delete removes it]")
+        elif self.last_label:
             bits.append(f"= {self.last_label}")
         if exact_values(context):
             bits.append("[Exact]")
         bits.append("Tab: mode | X/Y/Z: axis | E: exact | Ctrl: snap | "
-                    "Backspace: undo | Esc: done")
+                    "Backspace: undo | Del: remove hovered | Esc: done")
         context.area.header_text_set("  ".join(b for b in bits if b))
 
     # -- points ------------------------------------------------------------
@@ -448,6 +493,18 @@ class home_builder_OT_measure(bpy.types.Operator):
         if self.axis and self.points:
             point = constrain_to_axis(point, self.points[0], self.axis)
         self.cursor = point
+
+    def _pick_hover(self, context, event):
+        """The finished measurement under the cursor, while nothing is
+        half-placed, so Delete can take out just that one."""
+        self.hover = None
+        if self.points:
+            return
+        region, rv3d, mouse = self._region(context, event)
+        if region is None:
+            return
+        self.hover = measurement_at(context.scene, region, rv3d, mouse,
+                                    PICK_RADIUS * scale())
 
     # -- committing --------------------------------------------------------
 
@@ -532,6 +589,7 @@ class home_builder_OT_measure(bpy.types.Operator):
 
         if event.type == 'MOUSEMOVE':
             self._sample(context, event)
+            self._pick_hover(context, event)
             self._update_header(context)
             tag_redraw()
             return {'RUNNING_MODAL'}
@@ -574,6 +632,15 @@ class home_builder_OT_measure(bpy.types.Operator):
                 if self.last_label:
                     context.window_manager.clipboard = self.last_label
                     self.report({'INFO'}, f"Copied {self.last_label}")
+                return {'RUNNING_MODAL'}
+
+            if event.type == 'DEL':
+                if self.hover is not None:
+                    remove_measurement(self.hover)
+                    self.hover = None
+                    self._pick_hover(context, event)
+                self._update_header(context)
+                tag_redraw()
                 return {'RUNNING_MODAL'}
 
             if event.type == 'BACK_SPACE':
