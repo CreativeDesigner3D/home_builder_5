@@ -14922,8 +14922,8 @@ class Face_Frame_Leg_Props(PropertyGroup):
         unit='LENGTH', precision=4, update=_update_cabinet_dim,
     )  # type: ignore
     is_column: BoolProperty(
-        name="Column", default=False,
-        description="Column variant: no toe kick (runs full height)",
+        name="Stile to Floor", default=False,
+        description="No toe kick: the stile runs down to the floor",
         update=_update_cabinet_dim,
     )  # type: ignore
     # Collapsible-section toggles for the Leg Properties dialog. UI

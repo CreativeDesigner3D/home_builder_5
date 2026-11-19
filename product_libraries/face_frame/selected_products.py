@@ -151,7 +151,7 @@ def _leg(root):
     options = (
         ('enum', 'finish_type', "Finish"),
         ('bool', 'only_stile', "Only Stile"),
-        ('bool', 'is_column', "Column"),
+        ('bool', 'is_column', "Stile to Floor"),
         ('distance', 'toe_kick_height', "Kick Height", {'when': _not_column}),
         ('distance', 'toe_kick_setback', "Kick Setback", {'when': _not_column}),
         ('group', 'ff_leg_curved', "Curved Support Leg", {

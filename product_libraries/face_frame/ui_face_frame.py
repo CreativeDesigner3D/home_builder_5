@@ -1140,7 +1140,7 @@ def draw_leg_product(layout, root):
     box.prop(leg, 'finish_type', text="Finish")
     row = box.row(align=True)
     row.prop(leg, 'only_stile', text="Only Stile", toggle=True)
-    row.prop(leg, 'is_column', text="Column", toggle=True)
+    row.prop(leg, 'is_column', text="Stile to Floor", toggle=True)
     # is_appliance_leg / is_island_leg are not drawn: nothing reads
     # them, so the buttons promised a distinction the leg never made.
     # The properties stay for files that already carry them.
