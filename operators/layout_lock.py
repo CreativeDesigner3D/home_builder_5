@@ -24,12 +24,39 @@ LOCK_PROP = "hb_lock_3d_model"
 LAYOUT_VIEW_TAG = "IS_LAYOUT_VIEW"
 
 
+ANNOTATION_TAG = "IS_2D_ANNOTATION"
+
+
+def _is_instancer(obj):
+    return obj.type == "EMPTY" and obj.instance_type == "COLLECTION"
+
+
 def content_instancers(scene):
-    """The drawing-content collection instances on a layout view."""
+    """The drawing-content collection instances on a layout view.
+
+    Instancers tagged as annotations (a detail card placed on the sheet)
+    are drafting content, not the model, so the lock leaves them alone.
+    """
     if scene is None:
         return []
     return [obj for obj in scene.objects
-            if obj.type == "EMPTY" and obj.instance_type == "COLLECTION"]
+            if _is_instancer(obj) and not obj.get(ANNOTATION_TAG)]
+
+
+def _release_annotation_instancers(scene):
+    """Make annotation instancers selectable again.
+
+    Pages locked before annotations were exempt still carry the flag on
+    them. Only top-level ones are released: an annotation instancer
+    parented to another instancer is part of that one (a fill behind a
+    card) and keeps whatever its owner set.
+    """
+    for obj in scene.objects:
+        if (_is_instancer(obj) and obj.get(ANNOTATION_TAG)
+                and obj.hide_select
+                and not (obj.parent is not None
+                         and _is_instancer(obj.parent))):
+            obj.hide_select = False
 
 
 def is_layout_view(scene):
@@ -51,6 +78,7 @@ def apply_lock(scene):
     if not is_layout_view(scene):
         return 0
     locked = is_locked(scene)
+    _release_annotation_instancers(scene)
     touched = 0
     for obj in content_instancers(scene):
         if locked:
