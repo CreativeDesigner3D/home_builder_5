@@ -381,6 +381,7 @@ OPTION_PAGES = {
         'scope': 'scene',
         'fields': (
             ('distance', 'default_carcass_part_thickness', "Material Thickness"),
+            ('distance', 'default_front_thickness', "Front Thickness"),
             ('gap', None, None),
             # Ends and backs that show finish themselves.
             ('bool', 'auto_finished_ends', "Automatic Finished Ends"),

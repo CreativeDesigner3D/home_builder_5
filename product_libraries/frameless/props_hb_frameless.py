@@ -855,8 +855,34 @@ def _follow_base_height(scene, old_height, new_height,
         obj.data.update()
 
 
+def fronts_match_case():
+    """Whether the doors and drawer fronts are the cabinet material in
+    every style, so they are cut from the same sheet as the case."""
+    from ..closets import materials_closets
+    try:
+        styles = list(hb_project.get_main_scene().hb_frameless.cabinet_styles)
+    except Exception:
+        return False
+    for style in styles:
+        front = style.front_material
+        if front != materials_closets.MATCH and front != style.sheet_material:
+            return False
+    return True
+
+
 def update_material_thickness_default(self, context):
     bpy.ops.hb_frameless.update_material_thickness_prompts()
+    # Fronts cut from the case material are the same thickness.
+    if (fronts_match_case() and abs(self.default_front_thickness
+                                    - self.default_carcass_part_thickness) > 1e-6):
+        self.default_front_thickness = self.default_carcass_part_thickness
+
+
+def update_front_thickness_default(self, context):
+    bpy.ops.hb_frameless.update_front_thickness_prompts()
+    if (fronts_match_case() and abs(self.default_front_thickness
+                                    - self.default_carcass_part_thickness) > 1e-6):
+        self.default_carcass_part_thickness = self.default_front_thickness
 
 
 def update_toe_kick_defaults(self, context):
@@ -2482,6 +2508,15 @@ class Frameless_Scene_Props(PropertyGroup):
                                                  unit='LENGTH',
                        update=update_material_thickness_default)# type: ignore
 
+    default_front_thickness: FloatProperty(
+        name="Front Thickness",
+        description="Door and drawer front thickness. While the fronts are "
+                    "the cabinet material it moves with Material Thickness",
+        default=units.inch(.75),
+        min=0.0,
+        unit='LENGTH',
+        update=update_front_thickness_default)# type: ignore
+
     back_tongue_length: FloatProperty(name="Back Tongue Engagement",
                                       description="How far the back runs into the grooves in the sides, bottom and top. "
                                                   "0 builds the back between the sides, sitting on the bottom",
@@ -3046,6 +3081,8 @@ class Frameless_Scene_Props(PropertyGroup):
         row.operator('hb_frameless.update_material_thickness_prompts',text="",icon='FILE_REFRESH')
         row = size_box.row()
         row.prop(self,'default_carcass_part_thickness',text="Material Thickness")
+        row = size_box.row()
+        row.prop(self,'default_front_thickness',text="Front Thickness")
         row = size_box.row()
         row.prop(self,'back_tongue_length',text="Back Tongue")
         row = size_box.row()

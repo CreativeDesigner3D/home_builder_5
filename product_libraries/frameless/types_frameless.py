@@ -7,6 +7,15 @@ from ... import units
 from ...units import inch
 from . import solver_frameless
 
+
+def default_front_thickness():
+    """The room's door and drawer front thickness, for a new front."""
+    try:
+        return bpy.context.scene.hb_frameless.default_front_thickness
+    except Exception:
+        return inch(.75)
+
+
 class Cabinet(GeoNodeCage):
 
     default_exterior = "Doors"
@@ -1164,7 +1173,7 @@ class Doors(CabinetOpening):
     def create(self):
         super().create("Doors")
 
-        self.add_property('Front Thickness', 'DISTANCE', inch(.75))
+        self.add_property('Front Thickness', 'DISTANCE', default_front_thickness())
         self.add_property('Vertical Gap', 'DISTANCE', inch(.125))
         self.add_property("Door Swing",'COMBOBOX',2,combobox_items=["Left","Right","Double"])
         self.add_property('Door Mechanism', 'COMBOBOX', 0,
@@ -1212,7 +1221,7 @@ class FlipUpDoor(CabinetOpening):
     def create(self):
         super().create("Flip Up Door")
 
-        self.add_property('Front Thickness', 'DISTANCE', inch(.75))
+        self.add_property('Front Thickness', 'DISTANCE', default_front_thickness())
         from . import lift_hardware
         self.add_property(lift_hardware.LIFT_KEY, 'COMBOBOX', lift_hardware.STAY,
                           combobox_items=lift_hardware.LIFT_NAMES)
@@ -1244,7 +1253,7 @@ class Drawer(CabinetOpening):
     def create(self):
         super().create("Drawers")
 
-        self.add_property('Front Thickness', 'DISTANCE', inch(.75))
+        self.add_property('Front Thickness', 'DISTANCE', default_front_thickness())
         self.add_properties_opening_thickness()
         self.add_properties_front_overlays()
         overlay_prompts = self.add_properties_front_overlay_calculations()
@@ -1271,7 +1280,7 @@ class Pullout(CabinetOpening):
     def create(self):
         super().create("Pullout")
 
-        self.add_property('Front Thickness', 'DISTANCE', inch(.75))
+        self.add_property('Front Thickness', 'DISTANCE', default_front_thickness())
         self.add_properties_opening_thickness()
         self.add_properties_front_overlays()
         overlay_prompts = self.add_properties_front_overlay_calculations()
@@ -1298,7 +1307,7 @@ class FalseFront(CabinetOpening):
     def create(self):
         super().create("False Front")
 
-        self.add_property('Front Thickness', 'DISTANCE', inch(.75))
+        self.add_property('Front Thickness', 'DISTANCE', default_front_thickness())
         self.add_properties_opening_thickness()
         self.add_properties_front_overlays()
         overlay_prompts = self.add_properties_front_overlay_calculations()
@@ -2058,7 +2067,7 @@ class InteriorSplitterHorizontal(CabinetInterior):
 def _add_angled_face_door(cabinet):
     """One door on a cabinet's angled face (a diagonal corner or an
     angled end), hinged left or right; the solver places it."""
-    cabinet.add_property('Front Thickness', 'DISTANCE', inch(.75))
+    cabinet.add_property('Front Thickness', 'DISTANCE', default_front_thickness())
     cabinet.add_property('Door to Cabinet Gap', 'DISTANCE', inch(.125))
     cabinet.add_property('Top Reveal', 'DISTANCE', inch(.125))
     cabinet.add_property('Bottom Reveal', 'DISTANCE', inch(0))
@@ -2134,7 +2143,7 @@ class CornerCabinet(Cabinet):
         The doors and their pulls are placed by the solver.
         """
         # Overlay properties
-        self.add_property('Front Thickness', 'DISTANCE', inch(.75))
+        self.add_property('Front Thickness', 'DISTANCE', default_front_thickness())
         self.add_property('Door to Cabinet Gap', 'DISTANCE', inch(.125))
         self.add_property('Inset Front', 'CHECKBOX', False)
         self.add_property('Inset Reveal', 'DISTANCE', inch(.125))
