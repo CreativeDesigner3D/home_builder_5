@@ -77,24 +77,6 @@ class hb_frameless_OT_update_material_thickness_prompts(bpy.types.Operator):
         return {'FINISHED'}
 
 
-class hb_frameless_OT_update_front_thickness_prompts(bpy.types.Operator):
-    bl_idname = "hb_frameless.update_front_thickness_prompts"
-    bl_label = "Update Front Thickness Prompts"
-    bl_description = "Update every door and drawer front in the project to the current front thickness"
-
-    def execute(self, context):
-        thickness = context.scene.hb_frameless.default_front_thickness
-        updated_count = 0
-        for obj in context.scene.objects:
-            if 'Front Thickness' in obj:
-                if abs(float(obj['Front Thickness']) - thickness) > 1e-7:
-                    obj['Front Thickness'] = thickness
-                    hb_utils.run_calc_fix(context, obj)
-                    updated_count += 1
-        self.report({'INFO'}, f"Updated front thickness on {updated_count} object(s)")
-        return {'FINISHED'}
-
-
 class hb_frameless_OT_update_base_top_construction_prompts(bpy.types.Operator):
     bl_idname = "hb_frameless.update_base_top_construction_prompts"
     bl_label = "Update Base Top Construction Prompts"
@@ -283,7 +265,6 @@ class hb_frameless_OT_update_cabinet_sizes(bpy.types.Operator):
 classes = (
     hb_frameless_OT_update_toe_kick_prompts,
     hb_frameless_OT_update_material_thickness_prompts,
-    hb_frameless_OT_update_front_thickness_prompts,
     hb_frameless_OT_update_base_top_construction_prompts,
     hb_frameless_OT_update_drawer_front_height_prompts,
     hb_frameless_OT_update_door_and_drawer_front_style,

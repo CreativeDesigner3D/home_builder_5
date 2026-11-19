@@ -9,9 +9,17 @@ from . import solver_frameless
 
 
 def default_front_thickness():
-    """The room's door and drawer front thickness, for a new front."""
+    """Thickness for a new door or drawer front: the fronts thickness of
+    the cabinet style being placed, else the room's."""
     try:
-        return bpy.context.scene.hb_frameless.default_front_thickness
+        from ... import hb_project
+        props = bpy.context.scene.hb_frameless
+        styles = hb_project.get_main_scene().hb_frameless.cabinet_styles
+        if len(styles):
+            index = props.active_cabinet_style_index
+            style = styles[index if 0 <= index < len(styles) else 0]
+            return style.front_thickness
+        return props.default_front_thickness
     except Exception:
         return inch(.75)
 

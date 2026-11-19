@@ -484,9 +484,9 @@ def _solve_toe_kick(root, parts, p, dim_x, dim_y):
     if part is None:
         return
     visible = not p.rb
-    inner = dim_x - p.mt * 2.0
+    inner = dim_x - p.lt - p.rt
     # Where the kick's visible face stands, and the span it runs.
-    x0, length = p.mt, inner
+    x0, length = p.lt, inner
     if p.flush:
         inset, front_t, gap = _front_plane(root)
         if inset:
@@ -543,6 +543,74 @@ class _Prompts:
         self.tongue = 0.0 if self.btc == TOP_SINK else back_tongue_length()
         # Only a captured back stands in; a butt back stays flush.
         self.back_inset = back_inset() if self.tongue > 0.0 else 0.0
+        # The boards' own thicknesses (left side, right side, bottom,
+        # top, back): Material Thickness until board_thicknesses() finds
+        # one cut from an exterior material of another thickness.
+        self.ext = float(prompt(root, EXTERIOR_THICKNESS_KEY, self.mt))
+        self.lt = self.rt = self.bt = self.tt = self.bk = self.mt
+
+    def board_thicknesses(self, root, parts, kind, dim_y):
+        """A carcass board cut from the exterior material is that
+        material's thickness (Exterior Thickness), every other board the
+        interior's (Material Thickness). The cabinet keeps its outside
+        size; the parts between the boards take up the difference.
+        Square-fronted straight cabinets only: corners and angled fronts
+        and backs build every board at Material Thickness."""
+        if abs(self.ext - self.mt) <= 1e-9 or kind not in STRAIGHT_KINDS:
+            return
+        if int(prompt(root, ANGLED_BACK_KEY, 0) or 0):
+            return
+        depths = angled_front_depths(root, dim_y, self.mt)
+        if depths is not None and any(abs(d - dim_y) > 1e-6 for d in depths):
+            return
+        two_sided = _style_two_sided(root)
+
+        def board(role):
+            part = parts.get(role)
+            if part is not None and cut_from_exterior(root, part, two_sided):
+                return self.ext
+            return self.mt
+        self.lt = board('LEFT_SIDE')
+        self.rt = board('RIGHT_SIDE')
+        self.bt = board('BOTTOM')
+        self.tt = board('TOP')
+        self.bk = board('BACK')
+
+
+# A cabinet's exterior-material thickness (props_hb_frameless writes it
+# from the cabinet style); missing = every board at Material Thickness.
+EXTERIOR_THICKNESS_KEY = 'Exterior Thickness'
+
+
+def _style_two_sided(root):
+    try:
+        from ... import hb_project
+        styles = hb_project.get_main_scene().hb_frameless.cabinet_styles
+        if not len(styles):
+            return False
+        index = root.get('CABINET_STYLE_INDEX', 0)
+        style = styles[index if 0 <= index < len(styles) else 0]
+        return style.exterior_two_sided()
+    except Exception:
+        return False
+
+
+def cut_from_exterior(root, part, two_sided=False):
+    """True when a carcass board is cut from the exterior material: a
+    finished face (Finish Top / Finish Bottom), a part given the finish
+    or front material on its page, or any board of a Finished Interior
+    cabinet. A part given the interior material on its page is not."""
+    from . import part_material
+    from . import sheet_faces
+    choice = part_material.choice(part)
+    if choice == 'INTERIOR':
+        return False
+    if choice in ('FINISH', 'FRONT'):
+        return True
+    if root.get('Finished Interior', False):
+        return True
+    top, bottom = sheet_faces.finished_faces(part, two_sided)
+    return top or bottom
 
 
 def _set_back(part, p, inner, z0, z1, bottom, top):
@@ -555,12 +623,12 @@ def _set_back(part, p, inner, z0, z1, bottom, top):
         z0 -= t
     if top:
         z1 += t
-    set_part(part, (p.mt - t, -p.back_inset, z0), length=z1 - z0,
-             width=inner + t * 2.0, thickness=p.mt)
+    set_part(part, (p.lt - t, -p.back_inset, z0), length=z1 - z0,
+             width=inner + t * 2.0, thickness=p.bk)
 
 
 def _solve_sides(parts, p, dim_x, dim_y, dim_z, tkh):
-    for role, x in (('LEFT_SIDE', 0.0), ('RIGHT_SIDE', dim_x)):
+    for role, x, t in (('LEFT_SIDE', 0.0, p.lt), ('RIGHT_SIDE', dim_x, p.rt)):
         part = parts.get(role)
         if part is None:
             continue
@@ -568,7 +636,7 @@ def _solve_sides(parts, p, dim_x, dim_y, dim_z, tkh):
             # A notched side runs to the floor with the toe kick cut out
             # of its front bottom corner.
             set_part(part, (x, 0.0, 0.0), length=dim_z, width=dim_y,
-                     thickness=p.mt)
+                     thickness=t)
             if p.flush:
                 notch_y = 0.0
             elif p.kick_end_inset > 0.0:
@@ -578,25 +646,25 @@ def _solve_sides(parts, p, dim_x, dim_y, dim_z, tkh):
             else:
                 notch_y = p.tks
             set_modifier(part, NOTCH_MOD_NAME,
-                         (('X', tkh), ('Y', notch_y), ('Route Depth', p.mt)))
+                         (('X', tkh), ('Y', notch_y), ('Route Depth', t)))
         else:
             set_part(part, (x, 0.0, tkh), length=dim_z - tkh, width=dim_y,
-                     thickness=p.mt)
+                     thickness=t)
 
 
 def _solve_top_options(parts, p, dim_x, dim_y, dim_z, back_stretcher_y):
-    inner = dim_x - p.mt * 2.0
+    inner = dim_x - p.lt - p.rt
     part = parts.get('FRONT_STRETCHER')
     if part is not None:
-        set_part(part, (p.mt, -dim_y, dim_z), length=inner, width=p.sw,
+        set_part(part, (p.lt, -dim_y, dim_z), length=inner, width=p.sw,
                  thickness=p.mt, visible=p.btc == TOP_STRETCHERS)
     part = parts.get('BACK_STRETCHER')
     if part is not None:
-        set_part(part, (p.mt, back_stretcher_y, dim_z), length=inner,
+        set_part(part, (p.lt, back_stretcher_y, dim_z), length=inner,
                  width=p.sw, thickness=p.mt, visible=p.btc == TOP_STRETCHERS)
     part = parts.get('SINK_APRON')
     if part is not None:
-        set_part(part, (p.mt, -dim_y, dim_z), length=inner, width=p.saw,
+        set_part(part, (p.lt, -dim_y, dim_z), length=inner, width=p.saw,
                  thickness=p.mt, visible=p.btc == TOP_SINK)
 
 
@@ -617,14 +685,15 @@ def _solve_toe_kick_extras(parts, p, dim_x, dim_y, root=None):
 
 
 def _solve_base(root, parts, p, dim_x, dim_y, dim_z):
-    mt, tkh, rb = p.mt, p.tkh, p.rb
-    inner = dim_x - mt * 2.0
+    tkh, rb = p.tkh, p.rb
+    lt, bt, tt, bk = p.lt, p.bt, p.tt, p.bk
+    inner = dim_x - lt - p.rt
     _solve_sides(parts, p, dim_x, dim_y, dim_z, tkh)
 
     part = parts.get('BOTTOM')
     if part is not None:
-        set_part(part, (mt, 0.0, tkh), length=inner, width=dim_y,
-                 thickness=mt, visible=not rb)
+        set_part(part, (lt, 0.0, tkh), length=inner, width=dim_y,
+                 thickness=bt, visible=not rb)
 
     # A captured back stops under a full top, which then runs the full
     # depth over it like the bottom; otherwise the back runs to the top
@@ -632,30 +701,30 @@ def _solve_base(root, parts, p, dim_x, dim_y, dim_z):
     top_captures = p.btc == TOP_FULL and p.tongue > 0.0
     part = parts.get('BACK')
     if part is not None:
-        _set_back(part, p, inner, 0.0 if rb else tkh + mt,
-                  dim_z - mt if top_captures else dim_z,
+        _set_back(part, p, inner, 0.0 if rb else tkh + bt,
+                  dim_z - tt if top_captures else dim_z,
                   bottom=not rb, top=top_captures)
 
     _solve_toe_kick(root, parts, p, dim_x, dim_y)
 
     part = parts.get('TOP')
     if part is not None:
-        top_y = 0.0 if top_captures else -mt
-        set_part(part, (mt, top_y, dim_z), length=inner,
-                 width=dim_y + top_y, thickness=mt,
+        top_y = 0.0 if top_captures else -bk
+        set_part(part, (lt, top_y, dim_z), length=inner,
+                 width=dim_y + top_y, thickness=tt,
                  visible=p.btc == TOP_FULL)
         _solve_hand_hole(root, part, p, dim_x, dim_y, dim_z,
                          length=inner, width=dim_y + top_y)
 
     _solve_top_options(parts, p, dim_x, dim_y, dim_z,
-                       -p.sw - mt - p.back_inset)
+                       -p.sw - bk - p.back_inset)
 
-    bottom_t = 0.0 if rb else mt
+    bottom_t = 0.0 if rb else bt
     part = parts.get('BAY')
     if part is not None:
-        set_cage(part, (mt, -dim_y, tkh + bottom_t), dim_x=inner,
-                 dim_y=dim_y - mt - p.back_inset,
-                 dim_z=dim_z - tkh - bottom_t - mt)
+        set_cage(part, (lt, -dim_y, tkh + bottom_t), dim_x=inner,
+                 dim_y=dim_y - bk - p.back_inset,
+                 dim_z=dim_z - tkh - bottom_t - tt)
         _sync_bay_sink(root, part, dim_z - tkh - bottom_t)
 
     _solve_toe_kick_extras(parts, p, dim_x, dim_y, root)
@@ -691,7 +760,7 @@ def _solve_hand_hole(root, top, p, dim_x, dim_y, dim_z, length, width):
     set_modifier(top, HAND_HOLE_MOD_NAME,
                  (('X', margin), ('End X', length - margin),
                   ('Y', margin), ('End Y', width - margin),
-                  ('Route Depth', p.mt + inch(0.0625))),
+                  ('Route Depth', p.tt + inch(0.0625))),
                  visible=want)
 
 
@@ -706,40 +775,41 @@ def _sync_bay_sink(root, bay_obj, top_z):
 
 
 def _solve_tall(root, parts, p, dim_x, dim_y, dim_z):
-    mt, tkh, rb = p.mt, p.tkh, p.rb
-    inner = dim_x - mt * 2.0
+    tkh, rb = p.tkh, p.rb
+    lt, bt, tt, bk = p.lt, p.bt, p.tt, p.bk
+    inner = dim_x - lt - p.rt
     _solve_sides(parts, p, dim_x, dim_y, dim_z, tkh)
 
     part = parts.get('BOTTOM')
     if part is not None:
-        set_part(part, (mt, 0.0, tkh), length=inner, width=dim_y,
-                 thickness=mt, visible=not rb)
+        set_part(part, (lt, 0.0, tkh), length=inner, width=dim_y,
+                 thickness=bt, visible=not rb)
 
     part = parts.get('BACK')
     if part is not None:
-        _set_back(part, p, inner, 0.0 if rb else tkh + mt, dim_z - mt,
+        _set_back(part, p, inner, 0.0 if rb else tkh + bt, dim_z - tt,
                   bottom=not rb, top=True)
 
     _solve_toe_kick(root, parts, p, dim_x, dim_y)
 
     part = parts.get('TOP')
     if part is not None:
-        set_part(part, (mt, 0.0, dim_z), length=inner, width=dim_y,
-                 thickness=mt)
+        set_part(part, (lt, 0.0, dim_z), length=inner, width=dim_y,
+                 thickness=tt)
 
-    bottom_t = 0.0 if rb else mt
+    bottom_t = 0.0 if rb else bt
     part = parts.get('BAY')
     if part is not None:
-        set_cage(part, (mt, -dim_y, tkh + bottom_t), dim_x=inner,
-                 dim_y=dim_y - mt - p.back_inset,
-                 dim_z=dim_z - tkh - bottom_t - mt)
+        set_cage(part, (lt, -dim_y, tkh + bottom_t), dim_x=inner,
+                 dim_y=dim_y - bk - p.back_inset,
+                 dim_z=dim_z - tkh - bottom_t - tt)
 
     _solve_toe_kick_extras(parts, p, dim_x, dim_y, root)
 
 
 def _solve_upper(root, parts, p, dim_x, dim_y, dim_z):
-    mt = p.mt
-    inner = dim_x - mt * 2.0
+    lt, bt, tt, bk = p.lt, p.bt, p.tt, p.bk
+    inner = dim_x - lt - p.rt
     # A panel applied under the cabinet is part of its height: the box
     # stands on it.
     fb = finished_bottom_thickness(root)
@@ -747,23 +817,23 @@ def _solve_upper(root, parts, p, dim_x, dim_y, dim_z):
 
     part = parts.get('BOTTOM')
     if part is not None:
-        set_part(part, (mt, 0.0, fb), length=inner, width=dim_y,
-                 thickness=mt)
+        set_part(part, (lt, 0.0, fb), length=inner, width=dim_y,
+                 thickness=bt)
 
     part = parts.get('BACK')
     if part is not None:
-        _set_back(part, p, inner, fb + mt, dim_z - mt, bottom=True, top=True)
+        _set_back(part, p, inner, fb + bt, dim_z - tt, bottom=True, top=True)
 
     part = parts.get('TOP')
     if part is not None:
-        set_part(part, (mt, 0.0, dim_z), length=inner, width=dim_y,
-                 thickness=mt)
+        set_part(part, (lt, 0.0, dim_z), length=inner, width=dim_y,
+                 thickness=tt)
 
     part = parts.get('BAY')
     if part is not None:
-        set_cage(part, (mt, -dim_y, fb + mt), dim_x=inner,
-                 dim_y=dim_y - mt - p.back_inset,
-                 dim_z=dim_z - fb - mt * 2.0)
+        set_cage(part, (lt, -dim_y, fb + bt), dim_x=inner,
+                 dim_y=dim_y - bk - p.back_inset,
+                 dim_z=dim_z - fb - bt - tt)
 
 
 # Finished bottom on an upper: an applied panel of finished stock under
@@ -1021,34 +1091,34 @@ def _solve_own_finished_bottom(root, parts, p, dim_x, dim_y, dim_z):
 
 
 def _solve_lap_drawer(root, parts, p, dim_x, dim_y, dim_z):
-    mt = p.mt
-    inner = dim_x - mt * 2.0
+    lt, bt, tt, bk = p.lt, p.bt, p.tt, p.bk
+    inner = dim_x - lt - p.rt
     _solve_sides(parts, p, dim_x, dim_y, dim_z, 0.0)
 
     part = parts.get('BOTTOM')
     if part is not None:
-        set_part(part, (mt, 0.0, 0.0), length=inner, width=dim_y,
-                 thickness=mt)
+        set_part(part, (lt, 0.0, 0.0), length=inner, width=dim_y,
+                 thickness=bt)
 
     part = parts.get('BACK')
     if part is not None:
         # Under a sink apron the back runs up to the top of the box.
-        top_t = 0.0 if p.btc == TOP_SINK else mt
-        _set_back(part, p, inner, mt, dim_z - top_t,
+        top_t = 0.0 if p.btc == TOP_SINK else tt
+        _set_back(part, p, inner, bt, dim_z - top_t,
                   bottom=True, top=p.btc == TOP_FULL)
 
     part = parts.get('TOP')
     if part is not None:
-        set_part(part, (mt, 0.0, dim_z), length=inner, width=dim_y,
-                 thickness=mt, visible=p.btc == TOP_FULL)
+        set_part(part, (lt, 0.0, dim_z), length=inner, width=dim_y,
+                 thickness=tt, visible=p.btc == TOP_FULL)
 
     _solve_top_options(parts, p, dim_x, dim_y, dim_z, -p.sw)
 
     part = parts.get('BAY')
     if part is not None:
-        set_cage(part, (mt, -dim_y, mt), dim_x=inner,
-                 dim_y=dim_y - mt - p.back_inset,
-                 dim_z=dim_z - mt * 2.0)
+        set_cage(part, (lt, -dim_y, bt), dim_x=inner,
+                 dim_y=dim_y - bk - p.back_inset,
+                 dim_z=dim_z - bt - tt)
 
 
 def _solve_corner_shape(root, parts, p, dim_x, dim_y, dim_z):
@@ -1689,16 +1759,16 @@ def _solve_blind_corner(root, parts, p, dim_x, dim_y, dim_z):
     if panel is None or bay is None:
         return
     mt = p.mt
-    inner = dim_x - mt * 2.0
+    inner = dim_x - p.lt - p.rt
     blind = float(prompt(root, 'Blind Width', dim_x / 2.0))
     span = max(min(blind, inner - BLIND_MIN_DOOR_OPENING), 0.0)
     bay_x, bay_y, bay_z = bay.location
     bay_h = GeoNodeCage(bay).get_input('Dim Z')
     if root.get('Blind Side') == 'Right':
-        panel_x = dim_x - mt - span
+        panel_x = dim_x - p.rt - span
     else:
-        panel_x = mt
-        bay_x = mt + span
+        panel_x = p.lt
+        bay_x = p.lt + span
     set_part(panel, (panel_x, -dim_y + mt, bay_z), length=bay_h, width=span,
              thickness=mt)
     set_cage(bay, (bay_x, bay_y, bay_z), dim_x=inner - span)
@@ -1855,6 +1925,7 @@ def recalculate_cabinet(obj):
     prompts = _Prompts(root)
     dims = (cage.get_input('Dim X'), cage.get_input('Dim Y'),
             cage.get_input('Dim Z'))
+    prompts.board_thicknesses(root, parts, kind, dims[1])
     # Applied ends stand inside the cabinet's width: the box is solved
     # at what is left between them, from its own left face, and then
     # moved over by the left panel. Whatever the last solve moved goes

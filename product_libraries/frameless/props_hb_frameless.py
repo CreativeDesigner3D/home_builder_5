@@ -855,34 +855,161 @@ def _follow_base_height(scene, old_height, new_height,
         obj.data.update()
 
 
-def fronts_match_case():
-    """Whether the doors and drawer fronts are the cabinet material in
-    every style, so they are cut from the same sheet as the case."""
-    from ..closets import materials_closets
+def update_material_thickness_default(self, context):
+    """The room's Material Thickness is every material's thickness: it
+    goes onto every cabinet, and every style's exterior, interior and
+    fronts take it. A material's own thickness is then set on a style."""
+    bpy.ops.hb_frameless.update_material_thickness_prompts()
+    value = self.default_carcass_part_thickness
+    self.default_front_thickness = value
     try:
         styles = list(hb_project.get_main_scene().hb_frameless.cabinet_styles)
     except Exception:
-        return False
+        styles = []
     for style in styles:
-        front = style.front_material
-        if front != materials_closets.MATCH and front != style.sheet_material:
-            return False
+        for slot in THICKNESS_SLOTS:
+            setattr(style, slot + '_thickness_store', value)
+    for style in styles:
+        push_style_thickness(style)
+
+
+# ---- Material thickness ------------------------------------------------
+# The thickness belongs to the material, not to the kind of part: every
+# carcass part cut from a style's exterior (a finished side, a part set
+# to the exterior) is the exterior thickness, every other carcass part
+# the interior thickness, and the doors and drawer fronts the fronts
+# material's. One material has one thickness: a style whose interior or
+# fronts Match the exterior has a single value for both, and every style
+# using that material shares it. A style that never had a thickness set
+# reads the room's Material Thickness.
+
+THICKNESS_SLOTS = ('exterior', 'interior', 'front')
+# Cabinet prompt the solver builds the exterior-material parts at; the
+# interior thickness is the cabinet's Material Thickness.
+EXTERIOR_THICKNESS_KEY = 'Exterior Thickness'
+
+
+def _room_thickness():
+    try:
+        return hb_project.get_main_scene().hb_frameless.default_carcass_part_thickness
+    except Exception:
+        return units.inch(.75)
+
+
+def thickness_material(style, slot):
+    """The material a style's exterior / interior / front slot is cut
+    from, by name, resolving Match to the material it follows."""
+    m = _sheet_materials()
+    exterior = style.sheet_material
+    if exterior in ('', m.MATCH):
+        exterior = m.DEFAULT_MATERIAL
+    if slot == 'exterior':
+        return exterior
+    if slot == 'interior':
+        pick = style.interior_sheet_material
+        if pick == m.MATCH:
+            return exterior
+        if pick in ('', INTERIOR_STANDARD):
+            return INTERIOR_MATERIAL
+        return pick
+    pick = style.front_material
+    return exterior if pick in ('', m.MATCH) else pick
+
+
+def style_thickness(style, slot):
+    value = float(getattr(style, slot + '_thickness_store', 0.0) or 0.0)
+    return value if value > 0.0 else _room_thickness()
+
+
+def set_material_thickness(style, slot, value):
+    """Give the material behind one slot of a style its thickness: every
+    slot of every style cut from that material takes it, and the
+    cabinets wearing those styles are rebuilt."""
+    key = thickness_material(style, slot)
+    try:
+        styles = list(hb_project.get_main_scene().hb_frameless.cabinet_styles)
+    except Exception:
+        styles = []
+    if not any(s.as_pointer() == style.as_pointer() for s in styles):
+        styles.append(style)
+    touched = []
+    for other in styles:
+        for other_slot in THICKNESS_SLOTS:
+            if thickness_material(other, other_slot) != key:
+                continue
+            store = other_slot + '_thickness_store'
+            if abs(float(getattr(other, store)) - value) > 1e-9:
+                setattr(other, store, value)
+                if not any(t.as_pointer() == other.as_pointer() for t in touched):
+                    touched.append(other)
+    for other in touched:
+        push_style_thickness(other)
+
+
+def link_style_thicknesses(style):
+    """After a material pick: a slot now cut from the exterior material
+    takes the exterior's thickness, so one material never carries two."""
+    exterior = thickness_material(style, 'exterior')
+    value = style_thickness(style, 'exterior')
+    for slot in ('interior', 'front'):
+        if (thickness_material(style, slot) == exterior
+                and abs(style_thickness(style, slot) - value) > 1e-9):
+            setattr(style, slot + '_thickness_store', value)
+
+
+def _put(obj, key, value, create=False):
+    if key not in obj and not create:
+        return False
+    if key in obj and abs(float(obj[key]) - value) <= 1e-7:
+        return False
+    obj[key] = value
     return True
 
 
-def update_material_thickness_default(self, context):
-    bpy.ops.hb_frameless.update_material_thickness_prompts()
-    # Fronts cut from the case material are the same thickness.
-    if (fronts_match_case() and abs(self.default_front_thickness
-                                    - self.default_carcass_part_thickness) > 1e-6):
-        self.default_front_thickness = self.default_carcass_part_thickness
+def push_cabinet_thickness(style, cabinet_obj):
+    """Write the style's thicknesses onto one cabinet: Material Thickness
+    (the interior) on the cabinet and everything inside it, the exterior
+    thickness the solver builds finished parts at, and Front Thickness on
+    its doors and drawer fronts. Re-solves the cabinet when anything
+    changed, and says whether it did."""
+    if not cabinet_obj.get('IS_FRAMELESS_CABINET_CAGE'):
+        return False
+    interior = style_thickness(style, 'interior')
+    exterior = style_thickness(style, 'exterior')
+    front = style_thickness(style, 'front')
+    changed = _put(cabinet_obj, 'Material Thickness', interior)
+    # Older cabinets carry no exterior thickness and build every part at
+    # Material Thickness; they gain one only once it differs.
+    changed |= _put(cabinet_obj, EXTERIOR_THICKNESS_KEY, exterior,
+                    create=abs(exterior - interior) > 1e-7)
+    changed |= _put(cabinet_obj, 'Front Thickness', front)
+    for child in cabinet_obj.children_recursive:
+        if (child.get('IS_FRAMELESS_CABINET_CAGE')
+                or child.get('IS_FRAMELESS_PRODUCT_CAGE')):
+            continue
+        changed |= _put(child, 'Material Thickness', interior)
+        changed |= _put(child, 'Front Thickness', front)
+        for key in ('Left Thickness', 'Right Thickness', 'Top Thickness',
+                    'Bottom Thickness'):
+            changed |= _put(child, key, interior)
+    if changed:
+        hb_utils.run_calc_fix(bpy.context, cabinet_obj)
+    return changed
 
 
-def update_front_thickness_default(self, context):
-    bpy.ops.hb_frameless.update_front_thickness_prompts()
-    if (fronts_match_case() and abs(self.default_front_thickness
-                                    - self.default_carcass_part_thickness) > 1e-6):
-        self.default_carcass_part_thickness = self.default_front_thickness
+def push_style_thickness(style):
+    for obj in _cabinets_wearing_style(style):
+        push_cabinet_thickness(style, obj)
+
+
+def _thickness_prop(slot, name, description):
+    def get(self):
+        return style_thickness(self, slot)
+
+    def set(self, value):
+        set_material_thickness(self, slot, value)
+    return FloatProperty(name=name, description=description, min=0.0,
+                         unit='LENGTH', precision=4, get=get, set=set)
 
 
 def update_toe_kick_defaults(self, context):
@@ -1146,6 +1273,9 @@ def update_style_materials(self, context):
     for obj in _cabinets_wearing_style(self):
         self.apply_materials_to_cabinet(obj)
     _repaint_appliance_panels(self)
+    # A slot now cut from the exterior material takes its thickness.
+    link_style_thicknesses(self)
+    push_style_thickness(self)
 
 
 def _repaint_appliance_panels(style):
@@ -1354,6 +1484,25 @@ class Frameless_Cabinet_Style(PropertyGroup):
         update=update_style_materials,
     )  # type: ignore
 
+    # Thickness of the material behind each slot (0 = never set: the
+    # room's Material Thickness). Edited through the properties below,
+    # which keep every slot cut from one material at one thickness.
+    exterior_thickness_store: FloatProperty(default=0.0, options={'HIDDEN'})# type: ignore
+    interior_thickness_store: FloatProperty(default=0.0, options={'HIDDEN'})# type: ignore
+    front_thickness_store: FloatProperty(default=0.0, options={'HIDDEN'})# type: ignore
+    exterior_thickness: _thickness_prop(
+        'exterior', "Exterior Thickness",
+        "Thickness of the exterior material: finished sides and every "
+        "part set to the exterior. Shared by every style using it")# type: ignore
+    interior_thickness: _thickness_prop(
+        'interior', "Interior Thickness",
+        "Thickness of the interior material: unfinished sides, tops, "
+        "bottoms, backs and shelves. Shared by every style using it")# type: ignore
+    front_thickness: _thickness_prop(
+        'front', "Fronts Thickness",
+        "Thickness of the door and drawer front material. Shared by "
+        "every style using it")# type: ignore
+
     # What the style is ordered with that the model does not build:
     # printed on the style section of the drawings.
     hinge_type: EnumProperty(
@@ -1481,6 +1630,15 @@ class Frameless_Cabinet_Style(PropertyGroup):
                 m.rotated_variant(self._sheet(self.front_edge_material,
                                               front)))
 
+    def interior_matches_exterior(self):
+        """The interior is cut from the exterior material (one thickness)."""
+        return (thickness_material(self, 'interior')
+                == thickness_material(self, 'exterior'))
+
+    def front_matches_exterior(self):
+        return (thickness_material(self, 'front')
+                == thickness_material(self, 'exterior'))
+
     def exterior_two_sided(self):
         """True when the exterior is a board made the same both faces,
         so a part is that or the interior material right through."""
@@ -1599,6 +1757,7 @@ class Frameless_Cabinet_Style(PropertyGroup):
 
         #Update all cabinet parts with correct materials
         self.apply_materials_to_cabinet(cabinet_obj)
+        push_cabinet_thickness(self, cabinet_obj)
 
         #Update cabinet door and drawer front overlays
         for child in cabinet_obj.children_recursive:
@@ -1655,6 +1814,14 @@ class Frameless_Cabinet_Style(PropertyGroup):
         col.prop(self, "sheet_material", text="Exterior")
         col.prop(self, "front_material", text="Fronts")
         col.prop(self, "interior_sheet_material", text="Interior")
+
+        col = box.column(align=True)
+        col.label(text="Material Thickness:")
+        col.prop(self, "exterior_thickness", text="Exterior")
+        if not self.interior_matches_exterior():
+            col.prop(self, "interior_thickness", text="Interior")
+        if not self.front_matches_exterior():
+            col.prop(self, "front_thickness", text="Fronts")
 
         col = box.column(align=True)
         col.label(text="Edgebanding:")
@@ -2503,19 +2670,19 @@ class Frameless_Scene_Props(PropertyGroup):
         update=update_applied_back_to_floor)# type: ignore
 
     default_carcass_part_thickness: FloatProperty(name="Default Carcass Part Thickness",
-                                                 description="",
+                                                 description="Every material's thickness. Set one material's "
+                                                             "own thickness on a cabinet style",
                                                  default=units.inch(.75),
                                                  unit='LENGTH',
                        update=update_material_thickness_default)# type: ignore
 
     default_front_thickness: FloatProperty(
         name="Front Thickness",
-        description="Door and drawer front thickness. While the fronts are "
-                    "the cabinet material it moves with Material Thickness",
+        description="Thickness new doors and drawer fronts start at. "
+                    "A cabinet style's Fronts thickness sets its cabinets' fronts",
         default=units.inch(.75),
         min=0.0,
-        unit='LENGTH',
-        update=update_front_thickness_default)# type: ignore
+        unit='LENGTH')# type: ignore
 
     back_tongue_length: FloatProperty(name="Back Tongue Engagement",
                                       description="How far the back runs into the grooves in the sides, bottom and top. "
@@ -3081,8 +3248,6 @@ class Frameless_Scene_Props(PropertyGroup):
         row.operator('hb_frameless.update_material_thickness_prompts',text="",icon='FILE_REFRESH')
         row = size_box.row()
         row.prop(self,'default_carcass_part_thickness',text="Material Thickness")
-        row = size_box.row()
-        row.prop(self,'default_front_thickness',text="Front Thickness")
         row = size_box.row()
         row.prop(self,'back_tongue_length',text="Back Tongue")
         row = size_box.row()

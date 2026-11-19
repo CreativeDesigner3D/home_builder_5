@@ -286,6 +286,13 @@ OPTION_PAGES = {
             ('enum', 'sheet_material', "Exterior"),
             ('enum', 'front_material', "Fronts"),
             ('enum', 'interior_sheet_material', "Interior"),
+            # Each material's thickness; a slot cut from the exterior
+            # material shares its thickness, so only the exterior shows.
+            ('distance', 'exterior_thickness', "Exterior Thickness"),
+            ('distance', 'interior_thickness', "Interior Thickness",
+             {'when': lambda s: not s.interior_matches_exterior()}),
+            ('distance', 'front_thickness', "Fronts Thickness",
+             {'when': lambda s: not s.front_matches_exterior()}),
             ('enum', 'edge_material', "Cabinet Edge"),
             ('enum', 'front_edge_material', "Front Edge"),
             ('enum', 'door_overlay_type', "Door Overlay"),
@@ -381,7 +388,6 @@ OPTION_PAGES = {
         'scope': 'scene',
         'fields': (
             ('distance', 'default_carcass_part_thickness', "Material Thickness"),
-            ('distance', 'default_front_thickness', "Front Thickness"),
             ('gap', None, None),
             # Ends and backs that show finish themselves.
             ('bool', 'auto_finished_ends', "Automatic Finished Ends"),
