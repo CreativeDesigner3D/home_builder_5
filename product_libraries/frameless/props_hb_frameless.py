@@ -2736,8 +2736,8 @@ class Frameless_Scene_Props(PropertyGroup):
     # for moving the cabinet and a reach-in for screwing it to the wall.
     base_top_hand_hole: BoolProperty(name="Hand Hole in Base Tops",
                        description="Cut a rectangular hand hole through the full top of base cabinets. "
-                                   "Skipped on finished interiors, cabinets under 16in wide or deep, "
-                                   "and cabinets over 60in tall",
+                                   "Cabinets under 16in wide or deep get a 5in x 3in hole centered in the top. "
+                                   "Skipped on finished interiors and cabinets over 60in tall",
                        default=True,
                        update=update_back_tongue_length)# type: ignore
 

@@ -737,19 +737,38 @@ HAND_HOLE_MOD_NAME = 'Hand Hole'
 HAND_HOLE_MIN_CASE = inch(16)    # narrower or shallower cases skip it
 HAND_HOLE_MAX_HEIGHT = inch(60)  # taller cases skip it
 HAND_HOLE_MIN_OPENING = inch(1)  # less than this left over is no hole
+# Cases too small for the margin hole get a fixed hole centred in the
+# top instead, as long as this much material is left around it.
+HAND_HOLE_SMALL_LENGTH = inch(5)   # across the cabinet width
+HAND_HOLE_SMALL_WIDTH = inch(3)    # front to back
+HAND_HOLE_SMALL_MIN_EDGE = inch(1)
+
+
+def _hand_hole_rect(dim_x, dim_y, length, width, margin):
+    """(x, end_x, y, end_y) on the top, or None when no hole fits."""
+    if (dim_x >= HAND_HOLE_MIN_CASE and dim_y >= HAND_HOLE_MIN_CASE
+            and length - margin * 2.0 >= HAND_HOLE_MIN_OPENING
+            and width - margin * 2.0 >= HAND_HOLE_MIN_OPENING):
+        return (margin, length - margin, margin, width - margin)
+    hl, hw = HAND_HOLE_SMALL_LENGTH, HAND_HOLE_SMALL_WIDTH
+    edge = HAND_HOLE_SMALL_MIN_EDGE * 2.0
+    if length - hl < edge or width - hw < edge:
+        return None
+    x, y = (length - hl) / 2.0, (width - hw) / 2.0
+    return (x, x + hl, y, y + hw)
 
 
 def _solve_hand_hole(root, top, p, dim_x, dim_y, dim_z, length, width):
     props = getattr(bpy.context.scene, 'hb_frameless', None)
     margin = float(getattr(props, 'base_top_hand_hole_margin', inch(5)))
+    rect = _hand_hole_rect(dim_x, dim_y, length, width, margin)
     want = (bool(getattr(props, 'base_top_hand_hole', False))
             and p.btc == TOP_FULL
             and not root.get('Finished Interior', False)
-            and dim_x >= HAND_HOLE_MIN_CASE
-            and dim_y >= HAND_HOLE_MIN_CASE
             and dim_z <= HAND_HOLE_MAX_HEIGHT
-            and length - margin * 2.0 >= HAND_HOLE_MIN_OPENING
-            and width - margin * 2.0 >= HAND_HOLE_MIN_OPENING)
+            and rect is not None)
+    if rect is None:
+        rect = (margin, length - margin, margin, width - margin)
     mod = top.modifiers.get(HAND_HOLE_MOD_NAME)
     if want and mod is None:
         GeoNodeCutpart(top).add_part_modifier('CPM_CUTOUT', HAND_HOLE_MOD_NAME)
@@ -758,8 +777,8 @@ def _solve_hand_hole(root, top, p, dim_x, dim_y, dim_z, length, width):
         return
     # Through the board: the route runs a little past its thickness.
     set_modifier(top, HAND_HOLE_MOD_NAME,
-                 (('X', margin), ('End X', length - margin),
-                  ('Y', margin), ('End Y', width - margin),
+                 (('X', rect[0]), ('End X', rect[1]),
+                  ('Y', rect[2]), ('End Y', rect[3]),
                   ('Route Depth', p.tt + inch(0.0625))),
                  visible=want)
 
