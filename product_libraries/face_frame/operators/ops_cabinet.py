@@ -2912,6 +2912,7 @@ class hb_face_frame_OT_drawer_box_prompts(bpy.types.Operator):
         rear_min = types_face_frame.drawer_box_clearances(scene_props)[3]
         blum = types_face_frame.uses_blum_tandem_sizing(scene_props)
         notes = []
+        suggestions = []
         if (op_props.drawer_box_override_width
                 and op_props.drawer_box_width > box['HB_BOX_MAX_WIDTH'] + eps):
             notes.append(('ERROR', "Width is under the side clearance"))
@@ -2931,7 +2932,14 @@ class hb_face_frame_OT_drawer_box_prompts(bpy.types.Operator):
             if blum and op_props.drawer_box_override_depth:
                 if all(abs(depth - inch(n)) > eps for n in
                        types_face_frame.BLUM_TANDEM_RUNNER_LENGTHS_IN):
-                    notes.append(('INFO', "Depth is not a runner length"))
+                    suggestions = nearby_runner_lengths(
+                        depth, box['HB_BOX_DEPTH_SPACE'] - rear_min)
+                    if suggestions:
+                        notes.append(('ERROR', "Depth is not a runner length. "
+                                               "Use a standard size:"))
+                    else:
+                        notes.append(('ERROR', "Depth is not a runner length, "
+                                               "and no runner length fits"))
                 if rear > types_face_frame.BLUM_TANDEM_BLOCKING_REAR_CLEARANCE + eps:
                     notes.append(('INFO', "Over 2-9/16\" behind the box: "
                                           "runners may need blocking"))
@@ -2939,6 +2947,14 @@ class hb_face_frame_OT_drawer_box_prompts(bpy.types.Operator):
             box_col = layout.column(align=True)
             for icon, text in notes:
                 box_col.label(text=text, icon=icon)
+            if suggestions:
+                row = box_col.row(align=True)
+                for length in suggestions:
+                    op = row.operator(
+                        hb_face_frame_OT_set_drawer_box_depth.bl_idname,
+                        text=f'{length:g}"')
+                    op.opening_name = opening_obj.name
+                    op.depth_in = length
 
     def execute(self, context):
         # The active opening is live-bound via its props' update
@@ -2963,6 +2979,49 @@ class hb_face_frame_OT_drawer_box_prompts(bpy.types.Operator):
                     roots.append(root)
         for root in roots:
             types_face_frame.recalculate_face_frame_cabinet(root)
+        return {'FINISHED'}
+
+
+def nearby_runner_lengths(depth, max_depth):
+    """Standard runner lengths (inches) to offer for a box depth that is
+    not one: the nearest length at or under `depth` and the nearest one
+    over it, keeping only lengths that fit within `max_depth` (meters).
+    Shortest first."""
+    eps = inch(0.001)
+    fits = sorted(n for n in types_face_frame.BLUM_TANDEM_RUNNER_LENGTHS_IN
+                  if inch(n) <= max_depth + eps)
+    under = [n for n in fits if inch(n) <= depth + eps]
+    over = [n for n in fits if inch(n) > depth + eps]
+    picks = []
+    if under:
+        picks.append(under[-1])
+    if over:
+        picks.append(over[0])
+    return picks
+
+
+class hb_face_frame_OT_set_drawer_box_depth(bpy.types.Operator):
+    """Set an overridden drawer box depth to a standard runner length"""
+    bl_idname = "hb_face_frame.set_drawer_box_depth"
+    bl_label = "Use Runner Length"
+    bl_description = "Set the drawer box depth to this standard runner length"
+    bl_options = {'INTERNAL'}
+
+    opening_name: bpy.props.StringProperty(
+        default='', options={'HIDDEN', 'SKIP_SAVE'},
+    )  # type: ignore
+    depth_in: bpy.props.FloatProperty(
+        default=0.0, options={'HIDDEN', 'SKIP_SAVE'},
+    )  # type: ignore
+
+    def execute(self, context):
+        opening_obj = bpy.data.objects.get(self.opening_name)
+        if opening_obj is None or self.depth_in <= 0.0:
+            return {'CANCELLED'}
+        op_props = opening_obj.face_frame_opening
+        op_props.drawer_box_override_depth = True
+        # RNA write: the update callback rebuilds the box.
+        op_props.drawer_box_depth = inch(self.depth_in)
         return {'FINISHED'}
 
 
@@ -8563,6 +8622,7 @@ classes = (
     hb_face_frame_OT_finish_opening_prompts,
     hb_face_frame_OT_finish_bay_prompts,
     hb_face_frame_OT_drawer_box_prompts,
+    hb_face_frame_OT_set_drawer_box_depth,
     hb_face_frame_OT_sink_duo_drawer_prompts,
     hb_face_frame_OT_rollout_above_drawer_prompts,
     hb_face_frame_OT_add_rollout_above,
