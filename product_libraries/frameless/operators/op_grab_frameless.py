@@ -44,6 +44,9 @@ TAG_CABINET = 'IS_FRAMELESS_CABINET_CAGE'
 # A wall scribe filler is grabbed like a cabinet: ends, a joint with
 # the cabinet it stands against, its top and bottom, and a move handle.
 TAG_FILLER = 'IS_CORNER_FILLER'
+# A base assembly is grabbed by its ends, joints and move handle. Its
+# height is the toe kick height, so it has no top or bottom handle.
+TAG_BASE_ASSEMBLY = 'IS_BASE_ASSEMBLY'
 
 HIT_TOLERANCE_PX = 12.0
 MIN_WIDTH = inch(3.0)
@@ -122,9 +125,10 @@ def _fills_gap(obj):
 
 
 def _grabbed(obj):
-    """A product Grab puts handles on: a cabinet or a wall scribe
-    filler."""
-    return bool(obj.get(TAG_CABINET) or obj.get(TAG_FILLER))
+    """A product Grab puts handles on: a cabinet, a wall scribe filler
+    or a base assembly."""
+    return bool(obj.get(TAG_CABINET) or obj.get(TAG_FILLER)
+                or obj.get(TAG_BASE_ASSEMBLY))
 
 
 def _shown(obj):
@@ -169,6 +173,7 @@ def _entry(obj, appliance=False):
         'z_high': mw.translation.z + dim_z,
         'appliance': appliance,
         'gap_filler': _fills_gap(obj),
+        'base_assembly': bool(obj.get(TAG_BASE_ASSEMBLY)),
     }
 
 
@@ -196,6 +201,11 @@ def _run_entries(scene):
 
 def _same_run(a, b):
     if a['x'].dot(b['x']) < 0.999:
+        return False
+    # A base assembly stands under the cabinets it carries: it meets
+    # other assemblies and appliances, never a cabinet.
+    if (a['base_assembly'] != b['base_assembly']
+            and not (a['appliance'] or b['appliance'])):
         return False
     if abs((b['origin'] - a['origin']).dot(a['y'])) >= RUN_PLANE_TOL:
         return False
@@ -290,6 +300,8 @@ def collect_cabinet_handles(scene):
             'pos': a['dim_x'] / 2.0,
             'z_low': a['dim_z'] / 2.0, 'z_high': a['dim_z'] / 2.0,
         })
+        if a['base_assembly']:
+            continue
         handles.append({'kind': 'TOP', 'cab': a['name'], 'frame': a,
                         'pos': 0.0, 'z': a['dim_z']})
         if a['z_low'] > HUNG_MIN_Z:

@@ -92,7 +92,7 @@ class HOME_BUILDER_MT_carcass_part_commands(bpy.types.Menu):
     bl_label = "Carcass Part Commands"
 
     def draw(self, context):
-        from . import solver_frameless
+        from . import exposure, solver_frameless
         from .operators import ops_finished_ends
         layout = self.layout
         obj = context.object
@@ -106,7 +106,10 @@ class HOME_BUILDER_MT_carcass_part_commands(bpy.types.Menu):
                                     panels=side in ops_finished_ends.PANEL_SIDES,
                                     auto=(side in ('LEFT', 'RIGHT', 'BACK')
                                           or (side == 'TOP' and ops_finished_ends
-                                              .takes_finished_bottom(obj.parent))))
+                                              .takes_finished_bottom(obj.parent))
+                                          or (side == 'BOTTOM' and obj.parent is not None
+                                              and exposure.takes_auto_bottom(
+                                                  obj.parent))))
             layout.separator()
         layout.operator("hb_frameless.cabinet_prompts", text="Cabinet Prompts")
         layout.operator("hb_frameless.finish_interior", text="Finish Interior")

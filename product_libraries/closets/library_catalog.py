@@ -176,6 +176,12 @@ def _base_thumbnail(ident):
     return _asset_thumbnail(molding_closets.BASE_DIR, ident)
 
 
+def _more_hanger_models():
+    """True when a host add-on offers a download for more hanger models."""
+    from . import pulls_closets
+    return bool(pulls_closets.more_models_operator())
+
+
 def _accessory_notes(context):
     """The accessories the room's finish does not come in, as lines."""
     from . import accessories_closets
@@ -273,6 +279,9 @@ OPTION_PAGES = {
                           'hb_closets.randomize_hangers'),
                          ("Install Model Pack",
                           'hb_closets.install_model_pack')), None),
+            ('actions', (("Get More Hanger Models",
+                          'hb_closets.get_more_hanger_models'),), None,
+             {'when': lambda p: _more_hanger_models()}),
         ),
     },
     'draw_accessory_options_ui': {

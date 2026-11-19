@@ -4938,6 +4938,22 @@ def _mark_removed_rail_edges(leaves, top_z=None, bottom_z=None):
             lf['rail_removed_bottom'] = True
 
 
+def _mark_mid_rail_edges(leaves, top=None, bottom=None):
+    """Stamp mid_rail_top / mid_rail_bottom (the rail's width) on the leaf
+    rects whose face frame opening edge sits on a framed mid rail. top /
+    bottom are (edge_z, rail_width) in bay-local Z, or None. front_overlay
+    uses the width to keep the fronts above and below the rail from
+    running into each other."""
+    for lf in leaves:
+        if (top is not None
+                and abs(lf['cage_z'] + lf['cage_dim_z'] - lf['reveal_top']
+                        - top[0]) < 1e-6):
+            lf['mid_rail_top'] = top[1]
+        if (bottom is not None
+                and abs(lf['cage_z'] + lf['reveal_bottom'] - bottom[0]) < 1e-6):
+            lf['mid_rail_bottom'] = bottom[1]
+
+
 # Frontless bottom-opening front types: openings that carry no door/drawer
 # front and run open to the kick (the front-leaf builder emits no leaf for
 # either). When such an opening is the bottom-most child of a remove_bottom
@@ -5081,6 +5097,15 @@ def _walk_tree(node, layout, bay_index,
                 top_z=cur_z_top if i > 0 and removes[i - 1] else None,
                 bottom_z=(child_ff_bottom_z
                           if i < n_children - 1 and removes[i] else None),
+            )
+            above = (i > 0 and not removes[i - 1]
+                     and i - 1 != bottom_rail_splitter_index)
+            below = (i < n_children - 1 and not removes[i]
+                     and i != bottom_rail_splitter_index)
+            _mark_mid_rail_edges(
+                leaves[first_leaf:],
+                top=(cur_z_top, eff_widths[i - 1]) if above else None,
+                bottom=(child_ff_bottom_z, eff_widths[i]) if below else None,
             )
             if i < n_children - 1:
                 # Mid rail sits below this child's FF bottom edge. A removed
@@ -5271,6 +5296,27 @@ def resolved_overlay(cab_props, opening_props, side):
 FULL_CORNER_SIDE_OVERLAY = inch(0.25)
 
 
+# Smallest reveal left between two fronts that meet over a mid rail.
+MID_RAIL_MIN_REVEAL = inch(0.25)
+
+
+def _mid_rail_overlay(cab_props, side, overlay, rail):
+    """Overlay for a front edge on a mid rail when it follows the cabinet
+    default. The cabinet's top / bottom overlays are sized for its top and
+    bottom rails (a bottom overlay grown to cover a tall bottom rail, say);
+    on a mid rail the front above takes the bottom overlay and the front
+    below the top overlay, and together they can be more than the rail.
+    When they would leave less than MID_RAIL_MIN_REVEAL, each edge gives
+    way: it keeps at least half the room, plus whatever the other front
+    leaves unused. Both edges reach the same split independently."""
+    other = getattr(cab_props, 'default_bottom_overlay' if side == 'top'
+                    else 'default_top_overlay')
+    room = rail - MID_RAIL_MIN_REVEAL
+    if overlay <= 0.0 or overlay + max(other, 0.0) <= room:
+        return overlay
+    return max(0.0, min(overlay, max(room / 2.0, room - max(other, 0.0))))
+
+
 def front_overlay(rect, cab_props, opening_props, side):
     """resolved_overlay plus two edges stamped on the rect.
 
@@ -5286,6 +5332,9 @@ def front_overlay(rect, cab_props, opening_props, side):
             and not getattr(opening_props, f'unlock_{side}_overlay')):
         return FULL_CORNER_SIDE_OVERLAY
     overlay = resolved_overlay(cab_props, opening_props, side)
+    rail = rect.get(f'mid_rail_{side}') if side in ('top', 'bottom') else None
+    if rail and not getattr(opening_props, f'unlock_{side}_overlay'):
+        overlay = _mid_rail_overlay(cab_props, side, overlay, rail)
     # Side-mount retracting doors ride up off the member below so they
     # can slide back into the opening; an unlocked bottom overlay wins.
     if (side == 'bottom'
