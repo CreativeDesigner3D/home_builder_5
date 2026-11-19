@@ -444,6 +444,8 @@ class hb_face_frame_OT_draw_product_path(bpy.types.Operator,
             # single shape, so it should not come apart into loose boxes.
             target = ops_cabinet.create_cabinet_group_from_roots(
                 roots, name=self.spec['group'])
+            # Grouped with an island later, the island's group is kept.
+            target['IS_PATH_GROUP'] = True
         # A fresh drop is only reachable in the current selection mode
         # once it has been put through it.
         for root in roots:

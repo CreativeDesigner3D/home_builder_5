@@ -6532,6 +6532,87 @@ def _find_group_member_root(obj):
     return None
 
 
+def group_roots_from_selection(objects):
+    """Member roots to put in a new cabinet group, plus the existing group
+    cages they come out of.
+
+    A selected group cage (IS_CAGE_GROUP) stands for all of its members,
+    so grouping two groups (e.g. a drawn support frame shape and the
+    island it wraps) merges them into one group instead of failing or
+    nesting one group inside another. Members picked individually from
+    inside a group come along on their own, as before.
+
+    Returns (roots, source_groups): roots in a stable order, and the
+    group cages any of those roots currently hang under.
+    """
+    roots = []
+    seen = set()
+
+    def _add(root):
+        if root is not None and root.name not in seen:
+            seen.add(root.name)
+            roots.append(root)
+
+    def _walk(obj):
+        if obj.get('IS_CAGE_GROUP'):
+            for child in obj.children:
+                _walk(child)
+        else:
+            _add(_find_group_member_root(obj))
+
+    for obj in objects:
+        _walk(obj)
+
+    source_groups = []
+    for root in roots:
+        cur = root.parent
+        while cur is not None and not cur.get('IS_CAGE_GROUP'):
+            cur = cur.parent
+        if cur is not None and cur not in source_groups:
+            source_groups.append(cur)
+    return roots, source_groups
+
+
+# Group names the draw-path tool gives the runs it builds. When such a
+# group is merged with another, the other one is kept.
+PATH_GROUP_NAMES = ("Support Frame Shape", "Panel Run")
+
+
+def _is_path_group(group):
+    if group.get('IS_PATH_GROUP'):
+        return True
+    base = group.name.rsplit('.', 1)[0] if '.' in group.name else group.name
+    return base in PATH_GROUP_NAMES
+
+
+def pick_group_to_keep(groups, active=None):
+    """Of the groups being merged, the one that survives: a group the
+    user built (not a drawn support frame / panel run) first, then the
+    active object's group, then the one with the most members."""
+    if not groups:
+        return None
+    active_group = _find_group_cage(active) if active is not None else None
+
+    def _rank(g):
+        members = sum(1 for c in g.children
+                      if _find_group_member_root(c) is c)
+        return (not _is_path_group(g), g is active_group, members)
+    return max(groups, key=_rank)
+
+
+def remove_merged_groups(groups):
+    """Delete group cages whose members moved into another group, along
+    with whatever else still hangs under them (their generated
+    annotations; the kept group gets its own on the next sync)."""
+    for group in groups:
+        obj = bpy.data.objects.get(group.name)
+        if obj is None or not obj.get('IS_CAGE_GROUP'):
+            continue
+        if any(_find_group_member_root(c) is c for c in obj.children):
+            continue
+        hb_utils.delete_obj_and_children(obj)
+
+
 class hb_face_frame_OT_create_cabinet_group(bpy.types.Operator):
     """Group selected face frame cabinets under a single cage that can be
     saved to the user library.
@@ -6549,14 +6630,10 @@ class hb_face_frame_OT_create_cabinet_group(bpy.types.Operator):
         # Walk each selected object up to its group-member root: a face-
         # frame cabinet cage OR an appliance. Appliances (dishwasher,
         # range, etc.) belong in an island group too, even though their
-        # widths don't change with resize ops.
-        roots = []
-        seen = set()
-        for obj in context.selected_objects:
-            root = _find_group_member_root(obj)
-            if root is not None and root.name not in seen:
-                seen.add(root.name)
-                roots.append(root)
+        # widths don't change with resize ops. A selected group cage
+        # brings all of its members, so two groups merge into one.
+        roots, source_groups = group_roots_from_selection(
+            context.selected_objects)
 
         if not roots:
             self.report({'WARNING'},
@@ -6564,7 +6641,20 @@ class hb_face_frame_OT_create_cabinet_group(bpy.types.Operator):
             return {'CANCELLED'}
 
         bpy.ops.object.select_all(action='DESELECT')
-        group_obj = create_cabinet_group_from_roots(roots)
+        keep = pick_group_to_keep(source_groups, context.active_object)
+        if keep is not None:
+            # Merging groups: refit the kept group (its name, page and
+            # stored settings stay) around every member and drop the rest.
+            group_obj = merge_roots_into_group(keep, roots)
+            remove_merged_groups([g for g in source_groups if g is not keep])
+        else:
+            group_obj = create_cabinet_group_from_roots(roots)
+        if source_groups:
+            # Members of a group had their cages hidden and the old
+            # group's cage as the selection target; put the new group
+            # through the current selection mode like a fresh drop.
+            for root in roots:
+                apply_face_frame_selection_mode(context, root)
         group_obj.select_set(True)
         context.view_layer.objects.active = group_obj
         return {'FINISHED'}
@@ -6691,6 +6781,55 @@ def _resolved_world_matrix(obj):
     return mw.copy()
 
 
+def _parent_roots_to_group(group_obj, roots, loc, rot, keep=()):
+    """Parent ``roots`` (and re-seat ``keep``, objects already under the
+    group) to a group cage whose transform is ``loc`` / ``rot``, holding
+    every object's world transform."""
+    group_matrix = (Matrix.Translation(loc)
+                    @ Euler(rot, 'XYZ').to_matrix().to_4x4())
+    group_matrix_inv = group_matrix.inverted_safe()
+    worlds = [(o, _resolved_world_matrix(o)) for o in keep]
+    for o, world_matrix in worlds:
+        o.parent = group_obj
+        hb_utils.note_parent_change()
+        o.matrix_parent_inverse = Matrix.Identity(4)
+        o.matrix_basis = group_matrix_inv @ world_matrix
+    for root in roots:
+        world_matrix = _resolved_world_matrix(root)
+        root.parent = group_obj
+        hb_utils.note_parent_change()
+        root.matrix_parent_inverse = Matrix.Identity(4)
+        root.matrix_basis = group_matrix_inv @ world_matrix
+        # Cabinet / product cages get hidden so only the group cage
+        # shows (their part children stay visible); appliances keep
+        # their visible geometry on the root, so hiding them would
+        # make the dishwasher / range disappear.
+        if (root.get(types_face_frame.TAG_CABINET_CAGE)
+                or root.get(types_face_frame.TAG_PRODUCT_CAGE)
+                or root.get('IS_FRAMELESS_PRODUCT_CAGE')):
+            root.hide_viewport = True
+
+
+def merge_roots_into_group(group_obj, roots):
+    """Refit an existing group cage around ``roots`` (its own members
+    included) and parent them to it, keeping every member and anything
+    else under the cage where it is in the world."""
+    loc, rot, w, d, h = (hb_face_frame_OT_create_cabinet_group.
+                         _calculate_group_bounds(None, roots))
+    root_names = {r.name for r in roots}
+    keep = [c for c in group_obj.children if c.name not in root_names]
+    # Members are re-seated against the new transform before the cage
+    # moves, while their world matrices still read the old placement.
+    _parent_roots_to_group(group_obj, roots, loc, rot, keep=keep)
+    group_obj.location = loc
+    group_obj.rotation_euler = rot
+    group = hb_types.GeoNodeCage(group_obj)
+    group.set_input('Dim X', w)
+    group.set_input('Dim Y', d)
+    group.set_input('Dim Z', h)
+    return group_obj
+
+
 def create_cabinet_group_from_roots(roots, name="New Cabinet Group"):
     """Programmatic core of hb_face_frame.create_cabinet_group: wrap the
     given cabinet / appliance roots in a new IS_CAGE_GROUP cage,
@@ -6737,23 +6876,7 @@ def create_cabinet_group_from_roots(roots, name="New Cabinet Group"):
     # object (and stays identity for as long as the cage's scene goes
     # unevaluated), so every member would land displaced by the cage's
     # location. The cage's transform is known exactly right here, so use it.
-    group_matrix = (Matrix.Translation(loc)
-                    @ Euler(rot, 'XYZ').to_matrix().to_4x4())
-    group_matrix_inv = group_matrix.inverted_safe()
-    for root in roots:
-        world_matrix = _resolved_world_matrix(root)
-        root.parent = group.obj
-        hb_utils.note_parent_change()
-        root.matrix_parent_inverse = Matrix.Identity(4)
-        root.matrix_basis = group_matrix_inv @ world_matrix
-        # Cabinet / product cages get hidden so only the group cage
-        # shows (their part children stay visible); appliances keep
-        # their visible geometry on the root, so hiding them would
-        # make the dishwasher / range disappear.
-        if (root.get(types_face_frame.TAG_CABINET_CAGE)
-                or root.get(types_face_frame.TAG_PRODUCT_CAGE)
-                or root.get('IS_FRAMELESS_PRODUCT_CAGE')):
-            root.hide_viewport = True
+    _parent_roots_to_group(group.obj, roots, loc, rot)
 
     # Shade the group cage like a cabinet (solid, addon's cabinet
     # color, drawn in front). Same helper frameless uses on its

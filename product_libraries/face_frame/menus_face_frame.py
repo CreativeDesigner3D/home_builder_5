@@ -216,12 +216,9 @@ class HOME_BUILDER_MT_face_frame_cabinet_commands(bpy.types.Menu):
         # find_cabinet_root walks any selected part up to its root, so the
         # menu surfaces correctly whether the user picked roots, bays, or
         # individual face frame parts.
-        selected_roots = set()
         from .operators import ops_cabinet
-        for obj in context.selected_objects:
-            root = ops_cabinet._find_group_member_root(obj)
-            if root is not None:
-                selected_roots.add(root.name)
+        selected_roots, _groups = ops_cabinet.group_roots_from_selection(
+            context.selected_objects)
         if len(selected_roots) >= 1:
             layout.operator("hb_face_frame.create_cabinet_group",
                             text="Create Cabinet Group", icon='ADD')
@@ -308,6 +305,15 @@ class HOME_BUILDER_MT_face_frame_cabinet_group_commands(bpy.types.Menu):
         layout = self.layout
         layout.operator("hb_face_frame.grab_cabinet_group",
                         text="Grab Cabinet Group", icon='OBJECT_ORIGIN')
+        # With another group or cabinet also selected, offer to merge them
+        # into one group (e.g. a drawn support frame and the island it
+        # wraps, so they come out as one view).
+        from .operators import ops_cabinet
+        others = [o for o in context.selected_objects
+                  if o is not context.active_object]
+        if others and ops_cabinet.group_roots_from_selection(others)[0]:
+            layout.operator("hb_face_frame.create_cabinet_group",
+                            text="Group Selected Together", icon='ADD')
         layout.separator()
         layout.operator("hb_face_frame.ungroup_cabinet",
                         text="Ungroup Cabinet", icon='GROUP')
