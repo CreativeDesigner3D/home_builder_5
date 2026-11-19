@@ -2786,6 +2786,24 @@ class hb_face_frame_OT_drawer_box_prompts(bpy.types.Operator):
     opening_name: bpy.props.StringProperty(
         default='', options={'HIDDEN', 'SKIP_SAVE'},
     )  # type: ignore
+    # Other drawer openings in the selection, cached by name at invoke
+    # (the live rebuild kills the selected boxes). OK copies the active
+    # opening's sizes onto them.
+    other_opening_names: bpy.props.StringProperty(
+        default='', options={'HIDDEN', 'SKIP_SAVE'},
+    )  # type: ignore
+    apply_to_stack: bpy.props.BoolProperty(
+        name="Apply to All Drawer Boxes in This Bay",
+        description=("On OK, give every drawer box in this bay the same "
+                     "width, height and depth settings"),
+        default=False, options={'SKIP_SAVE'},
+    )  # type: ignore
+
+    _COPY_PROPS = (
+        'drawer_box_override_width', 'drawer_box_width',
+        'drawer_box_override_height', 'drawer_box_height',
+        'drawer_box_override_depth', 'drawer_box_depth',
+    )
 
     _AXES = (
         ("Width",  'drawer_box_override_width',  'drawer_box_width'),
@@ -2827,7 +2845,30 @@ class hb_face_frame_OT_drawer_box_prompts(bpy.types.Operator):
                 op_props['drawer_box_depth'] = dim_y
             if not op_props.drawer_box_override_height:
                 op_props['drawer_box_height'] = dim_z
+        others = []
+        for obj in context.selected_objects:
+            other = _find_owning_opening(obj)
+            if (other is not None and other is not opening_obj
+                    and other.name not in others
+                    and _has_drawer_box(other)):
+                others.append(other.name)
+        self.other_opening_names = "\n".join(others)
         return context.window_manager.invoke_props_dialog(self, width=280)
+
+    def _target_openings(self, opening_obj):
+        """Openings OK copies the sizes onto: the other selected drawers,
+        plus every drawer in the bay when Apply to All is on."""
+        names = [n for n in self.other_opening_names.split("\n") if n]
+        if self.apply_to_stack:
+            names += [o.name for o in _bay_drawer_openings(opening_obj)]
+        targets = []
+        for name in names:
+            obj = bpy.data.objects.get(name)
+            if (obj is not None and obj is not opening_obj
+                    and obj not in targets
+                    and obj.get(types_face_frame.TAG_OPENING_CAGE)):
+                targets.append(obj)
+        return targets
 
     def draw(self, context):
         layout = self.layout
@@ -2845,6 +2886,15 @@ class hb_face_frame_OT_drawer_box_prompts(bpy.types.Operator):
             sub.prop(op_props, val_prop, text=label)
         col.separator()
         col.label(text="Unchecked sizes stay automatic", icon='INFO')
+        stack = len(_bay_drawer_openings(opening_obj))
+        if stack > 1:
+            layout.prop(self, 'apply_to_stack',
+                        text=f"Apply to All {stack} Drawer Boxes in This Bay")
+        selected = len([n for n in self.other_opening_names.split("\n") if n])
+        if selected and not self.apply_to_stack:
+            layout.label(text=f"Also applies to {selected} other selected "
+                              f"drawer{'s' if selected > 1 else ''}",
+                         icon='RESTRICT_SELECT_OFF')
         self._draw_clearance_warnings(context, layout, opening_obj, op_props)
 
     @staticmethod
@@ -2891,9 +2941,51 @@ class hb_face_frame_OT_drawer_box_prompts(bpy.types.Operator):
                 box_col.label(text=text, icon=icon)
 
     def execute(self, context):
-        # Live-bound via the opening props' update callbacks; OK needs
-        # no extra work.
+        # The active opening is live-bound via its props' update
+        # callbacks. Copy its sizes onto the other targets with ID-property
+        # writes (no per-prop rebuild), then rebuild each cabinet once.
+        src_obj = bpy.data.objects.get(self.opening_name)
+        if src_obj is None:
+            return {'FINISHED'}
+        src = src_obj.face_frame_opening
+        roots = []
+        for obj in self._target_openings(src_obj):
+            dst = obj.face_frame_opening
+            changed = False
+            for prop in self._COPY_PROPS:
+                value = getattr(src, prop)
+                if getattr(dst, prop) != value:
+                    dst[prop] = value
+                    changed = True
+            if changed:
+                root = types_face_frame.find_cabinet_root(obj)
+                if root is not None and root not in roots:
+                    roots.append(root)
+        for root in roots:
+            types_face_frame.recalculate_face_frame_cabinet(root)
         return {'FINISHED'}
+
+
+def _has_drawer_box(opening_obj):
+    fo = getattr(opening_obj, 'face_frame_opening', None)
+    return (fo is not None
+            and fo.front_type in types_face_frame.DRAWER_BOX_FRONT_TYPES)
+
+
+def _bay_drawer_openings(opening_obj):
+    """Every opening in opening_obj's bay that builds a drawer box,
+    opening_obj included, top of the walk first."""
+    bay = _find_bay(opening_obj)
+    if bay is None:
+        return [opening_obj] if _has_drawer_box(opening_obj) else []
+    found = []
+    stack = list(bay.children)
+    while stack:
+        o = stack.pop(0)
+        stack.extend(o.children)
+        if o.get(types_face_frame.TAG_OPENING_CAGE) and _has_drawer_box(o):
+            found.append(o)
+    return found
 
 
 def rollout_above_target(obj):
