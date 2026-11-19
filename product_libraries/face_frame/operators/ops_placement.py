@@ -153,6 +153,10 @@ def _cage_dimensions(scene_props, cabinet_type):
 # same hood with its wood hood built on placement.
 RANGE_HOOD_NAMES = ("Range Hood", "Wood Hood")
 
+# A face frame dishwasher opening runs the full base height (34-1/2"
+# box), so the unit fills it and the top gap is the only gap above.
+FF_DISHWASHER_HEIGHT = units.inch(34.5)
+
 
 def _appliance_dimensions(scene_props, appliance_name):
     """Return (width, height, depth) for an appliance preview cage and
@@ -170,7 +174,7 @@ def _appliance_dimensions(scene_props, appliance_name):
     if appliance_name == "Corbel":
         return cls.size_for(corbel_style_key())
     if appliance_name == "Dishwasher":
-        return (scene_props.dishwasher_width, cls.height, cls.depth)
+        return (scene_props.dishwasher_width, FF_DISHWASHER_HEIGHT, cls.depth)
     if appliance_name == "Range":
         return (scene_props.range_width, cls.height, cls.depth)
     if appliance_name == "Standalone Refrigerator":
