@@ -6326,6 +6326,23 @@ class home_builder_walls_OT_delete_soffit(bpy.types.Operator):
         return {'FINISHED'}
 
 
+def _settle_all_depsgraphs():
+    """Re-evaluate every scene's view layers after objects are removed.
+
+    Other scenes (sheets, views) can instance the removed objects through
+    their collections. The viewport's batch cache walks those scenes'
+    dependency graphs on the next redraw, and one still pointing at a
+    freed object crashes there, so each graph is rebuilt right away.
+    """
+    for scene in bpy.data.scenes:
+        for view_layer in scene.view_layers:
+            try:
+                view_layer.update()
+            except Exception as exc:
+                print(f"[walls] depsgraph settle skipped "
+                      f"{scene.name}/{view_layer.name}: {exc}")
+
+
 class home_builder_walls_OT_delete_wall(bpy.types.Operator):
     """Delete selected walls and properly disconnect from adjacent walls"""
     bl_idname = "home_builder_walls.delete_wall"
@@ -6404,9 +6421,9 @@ class home_builder_walls_OT_delete_wall(bpy.types.Operator):
         for child in wall_bp.children_recursive:
             objects_to_delete.add(child)
 
-        # Delete all collected objects
-        for obj in objects_to_delete:
-            bpy.data.objects.remove(obj, do_unlink=True)
+        # One batch removal instead of an object-by-object loop, so the
+        # dependency graphs are rebuilt once for the whole set.
+        bpy.data.batch_remove(list(objects_to_delete))
 
         return left_wall, right_wall
 
@@ -6433,6 +6450,7 @@ class home_builder_walls_OT_delete_wall(bpy.types.Operator):
         # seam, and any T that landed on it.
         if deleted_count:
             refresh_wall_junctions(context.scene)
+            _settle_all_depsgraphs()
 
         if deleted_count == 1:
             self.report({'INFO'}, "Wall deleted")
