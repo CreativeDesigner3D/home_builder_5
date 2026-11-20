@@ -1723,6 +1723,21 @@ def _set_opening_slides(opening, code):
     return True
 
 
+def _picked_drawer_openings(context, opening_name):
+    """The clicked opening (by cached name, else the active object's)
+    first, then the drawer openings of every other selected object.
+    Gathered before anything is set: the first set rebuilds the cabinet
+    and wipes the selected boxes."""
+    first = (bpy.data.objects.get(opening_name) if opening_name
+             else _find_owning_opening(context.active_object))
+    out = [first] if first is not None else []
+    for obj in getattr(context, 'selected_objects', None) or ():
+        other = _drawer_opening_for(obj)
+        if other is not None and other not in out:
+            out.append(other)
+    return out
+
+
 class hb_face_frame_OT_set_drawer_box_construction(bpy.types.Operator):
     """Build the clicked drawer's / rollout's boxes to the chosen
     construction. Stored on the owning opening, so it survives the
@@ -1737,13 +1752,12 @@ class hb_face_frame_OT_set_drawer_box_construction(bpy.types.Operator):
     opening_name: bpy.props.StringProperty(default="", options={'HIDDEN', 'SKIP_SAVE'})  # type: ignore
 
     def execute(self, context):
-        opening = (bpy.data.objects.get(self.opening_name)
-                   if self.opening_name
-                   else _find_owning_opening(context.active_object))
-        if opening is None:
+        openings = _picked_drawer_openings(context, self.opening_name)
+        if not openings:
             self.report({'WARNING'}, "No opening selected")
             return {'CANCELLED'}
-        _set_opening_construction(opening, self.code)
+        for opening in openings:
+            _set_opening_construction(opening, self.code)
         return {'FINISHED'}
 
 
@@ -1760,13 +1774,12 @@ class hb_face_frame_OT_set_drawer_slides(bpy.types.Operator):
     opening_name: bpy.props.StringProperty(default="", options={'HIDDEN', 'SKIP_SAVE'})  # type: ignore
 
     def execute(self, context):
-        opening = (bpy.data.objects.get(self.opening_name)
-                   if self.opening_name
-                   else _find_owning_opening(context.active_object))
-        if opening is None:
+        openings = _picked_drawer_openings(context, self.opening_name)
+        if not openings:
             self.report({'WARNING'}, "No opening selected")
             return {'CANCELLED'}
-        _set_opening_slides(opening, self.code)
+        for opening in openings:
+            _set_opening_slides(opening, self.code)
         return {'FINISHED'}
 
 
