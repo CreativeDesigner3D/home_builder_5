@@ -32,6 +32,21 @@ EDGE_TOL = inch(1.0 / 32.0)
 
 _OTHER = {'left': 'right', 'right': 'left'}
 
+# Standard break details, by the reveal the style holds between fronts.
+# Each sets the two butt stiles at the joint (the covering side's, then
+# the neighbor's) and keeps that reveal across it; the covering fronts'
+# overlay follows from those (cover_amount with the detail's reveal).
+# id -> (label, reveal, covering stile, neighbor stile), inches.
+DETAILS = {
+    'R1_CLASSIC': ("1-1/4\" + 2\" Stiles", 1.0, 1.25, 2.0),
+    'R1_STANDARD': ("1-1/4\" + 1-1/2\" Stiles (Match Existing)",
+                    1.0, 1.25, 1.5),
+    'R14_EVEN': ("1-1/4\" + 1-1/4\" Stiles", 0.25, 1.25, 1.25),
+    'R14_WIDE': ("1-1/4\" + 1-1/2\" Stiles", 0.25, 1.25, 1.5),
+}
+# A style's reveal matches a detail's within this.
+REVEAL_TOL = inch(1.0 / 16.0)
+
 
 def can_cover(cab_props):
     """False for inset fronts (a negative side overlay): they stand
@@ -47,16 +62,41 @@ def door_gap(cab_props):
     return max(gap, MIN_GAP)
 
 
-def cover_amount(cover_props, side, other_props):
+def details_for(cab_props):
+    """The DETAILS ids that hold this style's reveal, in table order."""
+    gap = door_gap(cab_props)
+    return [key for key, (_l, reveal, _c, _n) in DETAILS.items()
+            if abs(inch(reveal) - gap) <= REVEAL_TOL]
+
+
+def set_detail_stiles(cover_root, side, other_root, detail):
+    """Give the joint's two butt stiles the widths ``detail`` calls
+    for, locked so a restyle keeps them. Returns True when set."""
+    entry = DETAILS.get(detail)
+    if entry is None:
+        return False
+    _label, _reveal, cover_w, other_w = entry
+    other_side = _OTHER[side]
+    for root, s, width in ((cover_root, side, cover_w),
+                           (other_root, other_side, other_w)):
+        props = root.face_frame_cabinet
+        setattr(props, f'unlock_{s}_stile', True)
+        setattr(props, f'{s}_stile_width', inch(width))
+    return True
+
+
+def cover_amount(cover_props, side, other_props, reveal=None):
     """The break-side overlay that takes the covering cabinet's fronts
     across the joint: its own butt stile, plus the neighbor's, less
-    what the neighbor's fronts lap of theirs and the style's gap.
+    what the neighbor's fronts lap of theirs and the style's gap
+    (or ``reveal`` when a break detail names it).
     ``side`` is the covering cabinet's side the break is on."""
     other_side = _OTHER[side]
     own = getattr(cover_props, f'{side}_stile_width')
     theirs = getattr(other_props, f'{other_side}_stile_width')
     lapped = getattr(other_props, f'default_{other_side}_overlay')
-    amount = own + theirs - lapped - door_gap(cover_props)
+    gap = door_gap(cover_props) if reveal is None else reveal
+    amount = own + theirs - lapped - gap
     # Never less than the fronts already lap.
     return max(amount, getattr(cover_props, f'default_{side}_overlay'))
 
@@ -101,7 +141,7 @@ def edge_openings(root, side):
 
 
 def apply(cover_root, side, other_root, fronts='BOTH', hinge='KEEP',
-          amount=0.0):
+          amount=0.0, detail='STYLE'):
     """Have ``cover_root``'s fronts along its ``side`` cover the joint
     with ``other_root``.
 
@@ -109,13 +149,18 @@ def apply(cover_root, side, other_root, fronts='BOTH', hinge='KEEP',
     hinge: 'KEEP', 'LEFT' or 'RIGHT' -- the swing a covering single
     door is given (a pair, a flip-up and a drawer are left alone).
     amount: the break-side overlay; 0 works it out (cover_amount).
+    detail: a DETAILS id sets the joint's stiles first and holds its
+    reveal; 'STYLE' keeps the style's butt stiles and gap.
     Returns the openings changed."""
     cover_props = cover_root.face_frame_cabinet
     if not can_cover(cover_props):
         return []
+    reveal = None
+    if set_detail_stiles(cover_root, side, other_root, detail):
+        reveal = inch(DETAILS[detail][1])
     if amount <= 0.0:
         amount = cover_amount(cover_props, side,
-                              other_root.face_frame_cabinet)
+                              other_root.face_frame_cabinet, reveal)
     wanted = ()
     if fronts in ('DOORS', 'BOTH'):
         wanted += DOOR_FRONTS

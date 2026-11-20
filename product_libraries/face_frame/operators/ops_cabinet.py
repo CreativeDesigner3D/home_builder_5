@@ -3,6 +3,7 @@ import bpy
 from mathutils import Vector, Matrix, Euler
 
 from .... import hb_utils
+from .... import units
 
 from .. import types_face_frame
 from .. import types_face_frame_corner
@@ -259,6 +260,27 @@ def _bay_count(root):
                if c.get(types_face_frame.TAG_BAY_CAGE))
 
 
+# Blender keeps only the strings of a dynamic enum's items while Python
+# holds them, so the last list handed out stays referenced here.
+_BREAK_DETAIL_ITEMS = []
+
+
+def _break_detail_items(self, context):
+    from .. import break_cover
+    items = [('STYLE', "Style's Butt Stiles",
+              "Keep the style's butt stile widths at the joint")]
+    _bay, root = _find_active_bay_and_root(context)
+    if root is not None:
+        for key in break_cover.details_for(root.face_frame_cabinet):
+            label, reveal, cover_w, other_w = break_cover.DETAILS[key]
+            items.append((key, label,
+                          "Covering side stile %g\", other side %g\", "
+                          "holds a %g\" reveal" % (cover_w, other_w,
+                                                   reveal)))
+    _BREAK_DETAIL_ITEMS[:] = items
+    return _BREAK_DETAIL_ITEMS
+
+
 class _BreakOptions:
     """What the three break commands ask before they cut: whether the
     picked bay keeps its width, and whether fronts cover the joint."""
@@ -301,6 +323,11 @@ class _BreakOptions:
             ('RIGHT', "Right", "Hinge the covering door on its right"),
         ],
         default='KEEP')  # type: ignore
+    cover_detail: bpy.props.EnumProperty(
+        name="Break Detail",
+        description="Standard stile widths for the joint, offered by the "
+                    "reveal the style holds between fronts",
+        items=_break_detail_items)  # type: ignore
     cover_amount: bpy.props.FloatProperty(
         name="Overlay",
         description="How far the covering fronts lap past their opening "
@@ -329,14 +356,24 @@ class _BreakOptions:
         col = layout.column()
         col.prop(self, 'cover_fronts')
         col.prop(self, 'cover_hinge')
+        col.prop(self, 'cover_detail')
         col.prop(self, 'cover_amount')
         if self.cover_amount <= 0.0 and props is not None:
             from ....units import unit_to_string
-            butt = (types_face_frame._resolve_style_stile_width(
-                root, props, 'butt_stile') or props.bay_mid_stile_width)
+            detail = break_cover.DETAILS.get(self.cover_detail)
+            if detail is not None:
+                _label, reveal, cover_w, other_w = detail
+                planned = max(
+                    units.inch(cover_w + other_w - reveal)
+                    - props.default_left_overlay,
+                    props.default_left_overlay)
+            else:
+                butt = (types_face_frame._resolve_style_stile_width(
+                    root, props, 'butt_stile')
+                    or props.bay_mid_stile_width)
+                planned = break_cover.planned_amount(props, butt)
             col.label(text="Automatic: %s" % unit_to_string(
-                context.scene.unit_settings,
-                break_cover.planned_amount(props, butt)))
+                context.scene.unit_settings, planned))
 
     def _cover_joints(self, joints):
         """joints: (picked cabinet, its break side, the neighbor) for
@@ -354,7 +391,8 @@ class _BreakOptions:
                 cover_side = 'left' if side == 'right' else 'right'
             count += len(break_cover.apply(
                 cover_root, cover_side, other, fronts=self.cover_fronts,
-                hinge=self.cover_hinge, amount=self.cover_amount))
+                hinge=self.cover_hinge, amount=self.cover_amount,
+                detail=self.cover_detail))
         return count
 
 
