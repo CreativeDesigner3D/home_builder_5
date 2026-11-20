@@ -9,6 +9,7 @@ import math
 import os
 import re
 from contextlib import contextmanager
+from ..common import door_labels as DL
 from bpy.types import (
     PropertyGroup,
     UIList,
@@ -8166,11 +8167,11 @@ class Face_Frame_Corner_Section(PropertyGroup):
     garage_door_type: EnumProperty(
         name="Garage Door",
         items=[
-            ('DOUBLE', "Double Hinged Door",
+            ('DOUBLE', DL.DOUBLE,
              "Hinged door pair on the diagonal opening"),
-            ('SINGLE_LEFT', "Single Hinged Door (Hinge Left)",
+            ('SINGLE_LEFT', DL.LEFT_SWING,
              "One full-width door hinged on the left"),
-            ('SINGLE_RIGHT', "Single Hinged Door (Hinge Right)",
+            ('SINGLE_RIGHT', DL.RIGHT_SWING,
              "One full-width door hinged on the right"),
             ('TAMBOUR', "Tambour Door",
              "Slatted roll-up door inside the opening"),
@@ -11079,9 +11080,9 @@ class Face_Frame_Cabinet_Props(PropertyGroup):
         name="Door Swing",
         description="Door leaf layout for the diagonal face's door sections",
         items=[
-            ('DOUBLE_DOOR', "Double Door", "Pair of doors meeting at the center, hinged on the outer edges"),
-            ('LEFT_SWING',  "Left Swing",  "Single full-width door hinged on the left edge"),
-            ('RIGHT_SWING', "Right Swing", "Single full-width door hinged on the right edge"),
+            ('DOUBLE_DOOR', DL.DOUBLE, "Pair of doors meeting at the center, hinged on the outer edges"),
+            ('LEFT_SWING',  DL.LEFT_SWING,  "Single full-width door hinged on the left edge"),
+            ('RIGHT_SWING', DL.RIGHT_SWING, "Single full-width door hinged on the right edge"),
         ],
         default='LEFT_SWING',
         update=_update_cabinet_dim,
@@ -12618,9 +12619,9 @@ class Face_Frame_Opening_Props(PropertyGroup):
         # Plain bi-fold pairs (no retract): the pair hinges on the named
         # side and folds open, one pull on the lead leaf. Appended so
         # stored enum values keep their meaning.
-        ('BIFOLD_LEFT', "Bi-fold (Left)",
+        ('BIFOLD_LEFT', DL.BIFOLD_LEFT,
          "Door pair hinged on the left that folds open; pull on the right"),
-        ('BIFOLD_RIGHT', "Bi-fold (Right)",
+        ('BIFOLD_RIGHT', DL.BIFOLD_RIGHT,
          "Door pair hinged on the right that folds open; pull on the left"),
     ]
     door_mechanism: EnumProperty(

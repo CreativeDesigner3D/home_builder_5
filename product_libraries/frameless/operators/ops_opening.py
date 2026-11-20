@@ -5,6 +5,7 @@ from .. import props_hb_frameless
 from .. import drawer_look
 from .. import opening_apron
 from .... import hb_utils, hb_types, units
+from ...common import door_labels as DL
 from . import ops_interior
 
 
@@ -105,21 +106,21 @@ class hb_frameless_OT_change_bay_opening(bpy.types.Operator):
         name="Opening Type",
         items=[
             # Doors
-            ('LEFT_DOOR', "Left Door", "Single left swing door"),
-            ('RIGHT_DOOR', "Right Door", "Single right swing door"),
-            ('DOUBLE_DOORS', "Double Doors", "Double swing doors"),
+            ('LEFT_DOOR', DL.LEFT_SWING, "Single left swing door"),
+            ('RIGHT_DOOR', DL.RIGHT_SWING, "Single right swing door"),
+            ('DOUBLE_DOORS', DL.DOUBLE, "Double swing doors"),
             ('FLIP_UP_DOOR', "Flip Up Door", "Door hinged at top, swings up"),
             # Stacked Doors
-            ('LEFT_STACKED_DOOR', "Left Stacked Door", "Two left swing doors stacked"),
-            ('RIGHT_STACKED_DOOR', "Right Stacked Door", "Two right swing doors stacked"),
-            ('DOUBLE_STACKED_DOOR', "Double Stacked Door", "Two double doors stacked"),
-            ('LEFT_3_STACKED_DOOR', "Left 3 Stacked Door", "Three left swing doors stacked"),
-            ('RIGHT_3_STACKED_DOOR', "Right 3 Stacked Door", "Three right swing doors stacked"),
-            ('DOUBLE_3_STACKED_DOOR', "Double 3 Stacked Door", "Three double doors stacked"),
+            ('LEFT_STACKED_DOOR', DL.LEFT_STACKED, "Two left swing doors stacked"),
+            ('RIGHT_STACKED_DOOR', DL.RIGHT_STACKED, "Two right swing doors stacked"),
+            ('DOUBLE_STACKED_DOOR', DL.DOUBLE_STACKED, "Two double doors stacked"),
+            ('LEFT_3_STACKED_DOOR', DL.LEFT_3_STACKED, "Three left swing doors stacked"),
+            ('RIGHT_3_STACKED_DOOR', DL.RIGHT_3_STACKED, "Three right swing doors stacked"),
+            ('DOUBLE_3_STACKED_DOOR', DL.DOUBLE_3_STACKED, "Three double doors stacked"),
             # Drawer/Door Combos (Base)
-            ('DOOR_DRAWER', "1 Drawer 1 Door", "One drawer over one door"),
-            ('1_DRAWER_2_DOOR', "1 Drawer 2 Door", "One drawer over double doors"),
-            ('2_DRAWER_2_DOOR', "2 Drawer 2 Door", "Two drawers over double doors"),
+            ('DOOR_DRAWER', DL.DRAWER_1_DOOR, "One drawer over one door"),
+            ('1_DRAWER_2_DOOR', DL.DRAWER_2_DOORS, "One drawer over double doors"),
+            ('2_DRAWER_2_DOOR', DL.TWO_DRAWERS_2_DOORS, "Two drawers over double doors"),
             # Drawers
             ('SINGLE_DRAWER', "Single Drawer", "Single drawer"),
             ('2_DRAWER_STACK', "2 Drawer Stack", "Two equal drawers"),
@@ -892,9 +893,9 @@ class hb_frameless_OT_change_opening_type(bpy.types.Operator):
     opening_type: bpy.props.EnumProperty(
         name="Opening Type",
         items=[
-            ('LEFT_DOOR', "Left Door", "Single left swing door"),
-            ('RIGHT_DOOR', "Right Door", "Single right swing door"),
-            ('DOUBLE_DOORS', "Double Doors", "Double swing doors"),
+            ('LEFT_DOOR', DL.LEFT_SWING, "Single left swing door"),
+            ('RIGHT_DOOR', DL.RIGHT_SWING, "Single right swing door"),
+            ('DOUBLE_DOORS', DL.DOUBLE, "Double swing doors"),
             ('FLIP_UP_DOOR', "Flip Up Door", "Door hinged at top, swings up"),
             ('SINGLE_DRAWER', "Single Drawer", "Single drawer"),
             ('PULLOUT', "Pullout", "Pullout with pull at top"),

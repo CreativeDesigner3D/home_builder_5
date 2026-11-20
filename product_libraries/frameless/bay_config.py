@@ -10,6 +10,7 @@ bay changed since (an opening split, a front swapped) reads as Custom.
 """
 
 import bpy
+from ..common import door_labels as DL
 
 CUSTOM = 'CUSTOM'
 
@@ -17,12 +18,12 @@ CUSTOM = 'CUSTOM'
 # cabinet type, in its order.
 PRESETS = {
     'BASE': (
-        ('LEFT_DOOR', "Left Swing Door"),
-        ('RIGHT_DOOR', "Right Swing Door"),
-        ('DOUBLE_DOORS', "Double Doors"),
-        ('DOOR_DRAWER', "1 Drawer 1 Door"),
-        ('1_DRAWER_2_DOOR', "1 Drawer 2 Door"),
-        ('2_DRAWER_2_DOOR', "2 Drawer 2 Door"),
+        ('LEFT_DOOR', DL.LEFT_SWING),
+        ('RIGHT_DOOR', DL.RIGHT_SWING),
+        ('DOUBLE_DOORS', DL.DOUBLE),
+        ('DOOR_DRAWER', DL.DRAWER_1_DOOR),
+        ('1_DRAWER_2_DOOR', DL.DRAWER_2_DOORS),
+        ('2_DRAWER_2_DOOR', DL.TWO_DRAWERS_2_DOORS),
         ('4_DRAWER_STACK', "4 Drawers"),
         ('3_DRAWER_STACK', "3 Drawers"),
         ('2_DRAWER_STACK', "2 Drawers"),
@@ -35,16 +36,16 @@ PRESETS = {
         ('OPEN', "Open"),
     ),
     'UPPER': (
-        ('LEFT_DOOR', "Left Swing Door"),
-        ('RIGHT_DOOR', "Right Swing Door"),
-        ('DOUBLE_DOORS', "Double Doors"),
+        ('LEFT_DOOR', DL.LEFT_SWING),
+        ('RIGHT_DOOR', DL.RIGHT_SWING),
+        ('DOUBLE_DOORS', DL.DOUBLE),
         ('FLIP_UP_DOOR', "Lift Up Door"),
-        ('LEFT_STACKED_DOOR', "Left Swing Stacked Door"),
-        ('RIGHT_STACKED_DOOR', "Right Swing Stacked Door"),
-        ('DOUBLE_STACKED_DOOR', "Double Stacked Door"),
-        ('DOORS_WITH_1_DRAWER', "Doors with 1 Drawer"),
-        ('DOORS_WITH_2_DRAWER', "Doors with 2 Drawers"),
-        ('DOORS_WITH_3_DRAWER', "Doors with 3 Drawers"),
+        ('LEFT_STACKED_DOOR', DL.LEFT_STACKED),
+        ('RIGHT_STACKED_DOOR', DL.RIGHT_STACKED),
+        ('DOUBLE_STACKED_DOOR', DL.DOUBLE_STACKED),
+        ('DOORS_WITH_1_DRAWER', DL.DOORS_WITH_1_DRAWER),
+        ('DOORS_WITH_2_DRAWER', DL.DOORS_WITH_2_DRAWERS),
+        ('DOORS_WITH_3_DRAWER', DL.DOORS_WITH_3_DRAWERS),
         ('DOORS_WITH_PULLOUT', "Doors with Pullout"),
         ('PULLOUT', "Pullout"),
         ('FALSE_FRONT', "False Front"),
@@ -52,15 +53,15 @@ PRESETS = {
         ('OPEN', "Open"),
     ),
     'TALL': (
-        ('LEFT_DOOR', "Left Swing Door"),
-        ('RIGHT_DOOR', "Right Swing Door"),
-        ('DOUBLE_DOORS', "Double Doors"),
-        ('LEFT_STACKED_DOOR', "Left Swing Stacked Door"),
-        ('RIGHT_STACKED_DOOR', "Right Swing Stacked Door"),
-        ('DOUBLE_STACKED_DOOR', "Double Stacked Door"),
-        ('LEFT_3_STACKED_DOOR', "Left Swing 3 Stacked Door"),
-        ('RIGHT_3_STACKED_DOOR', "Right Swing 3 Stacked Door"),
-        ('DOUBLE_3_STACKED_DOOR', "Double 3 Stacked Door"),
+        ('LEFT_DOOR', DL.LEFT_SWING),
+        ('RIGHT_DOOR', DL.RIGHT_SWING),
+        ('DOUBLE_DOORS', DL.DOUBLE),
+        ('LEFT_STACKED_DOOR', DL.LEFT_STACKED),
+        ('RIGHT_STACKED_DOOR', DL.RIGHT_STACKED),
+        ('DOUBLE_STACKED_DOOR', DL.DOUBLE_STACKED),
+        ('LEFT_3_STACKED_DOOR', DL.LEFT_3_STACKED),
+        ('RIGHT_3_STACKED_DOOR', DL.RIGHT_3_STACKED),
+        ('DOUBLE_3_STACKED_DOOR', DL.DOUBLE_3_STACKED),
         ('APPLIANCE', "Built In Appliance"),
         ('DOUBLE_APPLIANCE', "Built In Double Appliance"),
         ('DOORS_WITH_TALL_PULLOUT', "Doors with Tall Pullout"),

@@ -1,6 +1,7 @@
 import bpy
 from ... import hb_utils, units
 from ..common import appliance_geo
+from ..common import door_labels as DL
 
 class HOME_BUILDER_MT_applied_end_commands(bpy.types.Menu):
     bl_label = "Applied End Commands"
@@ -198,13 +199,13 @@ class HOME_BUILDER_MT_bay_change_configuration(bpy.types.Menu):
     
     def draw_base_options(self, layout):
         """Draw options for base cabinets."""
-        layout.operator("hb_frameless.change_bay_opening", text="Left Swing Door").opening_type = 'LEFT_DOOR'
-        layout.operator("hb_frameless.change_bay_opening", text="Right Swing Door").opening_type = 'RIGHT_DOOR'
-        layout.operator("hb_frameless.change_bay_opening", text="Double Doors").opening_type = 'DOUBLE_DOORS'
+        layout.operator("hb_frameless.change_bay_opening", text=DL.LEFT_SWING).opening_type = 'LEFT_DOOR'
+        layout.operator("hb_frameless.change_bay_opening", text=DL.RIGHT_SWING).opening_type = 'RIGHT_DOOR'
+        layout.operator("hb_frameless.change_bay_opening", text=DL.DOUBLE).opening_type = 'DOUBLE_DOORS'
         layout.separator()
-        layout.operator("hb_frameless.change_bay_opening", text="1 Drawer 1 Door").opening_type = 'DOOR_DRAWER'
-        layout.operator("hb_frameless.change_bay_opening", text="1 Drawer 2 Door").opening_type = '1_DRAWER_2_DOOR'
-        layout.operator("hb_frameless.change_bay_opening", text="2 Drawer 2 Door").opening_type = '2_DRAWER_2_DOOR'
+        layout.operator("hb_frameless.change_bay_opening", text=DL.DRAWER_1_DOOR).opening_type = 'DOOR_DRAWER'
+        layout.operator("hb_frameless.change_bay_opening", text=DL.DRAWER_2_DOORS).opening_type = '1_DRAWER_2_DOOR'
+        layout.operator("hb_frameless.change_bay_opening", text=DL.TWO_DRAWERS_2_DOORS).opening_type = '2_DRAWER_2_DOOR'
         layout.separator()
         layout.operator("hb_frameless.change_bay_opening", text="4 Drawers").opening_type = '4_DRAWER_STACK'
         layout.operator("hb_frameless.change_bay_opening", text="3 Drawers").opening_type = '3_DRAWER_STACK'
@@ -221,18 +222,18 @@ class HOME_BUILDER_MT_bay_change_configuration(bpy.types.Menu):
     
     def draw_upper_options(self, layout):
         """Draw options for upper cabinets."""
-        layout.operator("hb_frameless.change_bay_opening", text="Left Swing Door").opening_type = 'LEFT_DOOR'
-        layout.operator("hb_frameless.change_bay_opening", text="Right Swing Door").opening_type = 'RIGHT_DOOR'
-        layout.operator("hb_frameless.change_bay_opening", text="Double Doors").opening_type = 'DOUBLE_DOORS'
+        layout.operator("hb_frameless.change_bay_opening", text=DL.LEFT_SWING).opening_type = 'LEFT_DOOR'
+        layout.operator("hb_frameless.change_bay_opening", text=DL.RIGHT_SWING).opening_type = 'RIGHT_DOOR'
+        layout.operator("hb_frameless.change_bay_opening", text=DL.DOUBLE).opening_type = 'DOUBLE_DOORS'
         layout.operator("hb_frameless.change_bay_opening", text="Lift Up Door").opening_type = 'FLIP_UP_DOOR'
         layout.separator()
-        layout.operator("hb_frameless.change_bay_opening", text="Left Swing Stacked Door").opening_type = 'LEFT_STACKED_DOOR'
-        layout.operator("hb_frameless.change_bay_opening", text="Right Swing Stacked Door").opening_type = 'RIGHT_STACKED_DOOR'
-        layout.operator("hb_frameless.change_bay_opening", text="Double Stacked Door").opening_type = 'DOUBLE_STACKED_DOOR'
+        layout.operator("hb_frameless.change_bay_opening", text=DL.LEFT_STACKED).opening_type = 'LEFT_STACKED_DOOR'
+        layout.operator("hb_frameless.change_bay_opening", text=DL.RIGHT_STACKED).opening_type = 'RIGHT_STACKED_DOOR'
+        layout.operator("hb_frameless.change_bay_opening", text=DL.DOUBLE_STACKED).opening_type = 'DOUBLE_STACKED_DOOR'
         layout.separator()
-        layout.operator("hb_frameless.change_bay_opening", text="Doors with 1 Drawer").opening_type = 'DOORS_WITH_1_DRAWER'
-        layout.operator("hb_frameless.change_bay_opening", text="Doors with 2 Drawers").opening_type = 'DOORS_WITH_2_DRAWER'
-        layout.operator("hb_frameless.change_bay_opening", text="Doors with 3 Drawers").opening_type = 'DOORS_WITH_3_DRAWER'
+        layout.operator("hb_frameless.change_bay_opening", text=DL.DOORS_WITH_1_DRAWER).opening_type = 'DOORS_WITH_1_DRAWER'
+        layout.operator("hb_frameless.change_bay_opening", text=DL.DOORS_WITH_2_DRAWERS).opening_type = 'DOORS_WITH_2_DRAWER'
+        layout.operator("hb_frameless.change_bay_opening", text=DL.DOORS_WITH_3_DRAWERS).opening_type = 'DOORS_WITH_3_DRAWER'
         layout.separator()
         layout.operator("hb_frameless.change_bay_opening", text="Doors with Pullout").opening_type = 'DOORS_WITH_PULLOUT'
         layout.operator("hb_frameless.change_bay_opening", text="Pullout").opening_type = 'PULLOUT'
@@ -244,17 +245,17 @@ class HOME_BUILDER_MT_bay_change_configuration(bpy.types.Menu):
     
     def draw_tall_options(self, layout):
         """Draw options for tall cabinets."""
-        layout.operator("hb_frameless.change_bay_opening", text="Left Swing Door").opening_type = 'LEFT_DOOR'
-        layout.operator("hb_frameless.change_bay_opening", text="Right Swing Door").opening_type = 'RIGHT_DOOR'
-        layout.operator("hb_frameless.change_bay_opening", text="Double Doors").opening_type = 'DOUBLE_DOORS'
+        layout.operator("hb_frameless.change_bay_opening", text=DL.LEFT_SWING).opening_type = 'LEFT_DOOR'
+        layout.operator("hb_frameless.change_bay_opening", text=DL.RIGHT_SWING).opening_type = 'RIGHT_DOOR'
+        layout.operator("hb_frameless.change_bay_opening", text=DL.DOUBLE).opening_type = 'DOUBLE_DOORS'
         layout.separator()
-        layout.operator("hb_frameless.change_bay_opening", text="Left Swing Stacked Door").opening_type = 'LEFT_STACKED_DOOR'
-        layout.operator("hb_frameless.change_bay_opening", text="Right Swing Stacked Door").opening_type = 'RIGHT_STACKED_DOOR'
-        layout.operator("hb_frameless.change_bay_opening", text="Double Stacked Door").opening_type = 'DOUBLE_STACKED_DOOR'
+        layout.operator("hb_frameless.change_bay_opening", text=DL.LEFT_STACKED).opening_type = 'LEFT_STACKED_DOOR'
+        layout.operator("hb_frameless.change_bay_opening", text=DL.RIGHT_STACKED).opening_type = 'RIGHT_STACKED_DOOR'
+        layout.operator("hb_frameless.change_bay_opening", text=DL.DOUBLE_STACKED).opening_type = 'DOUBLE_STACKED_DOOR'
         layout.separator()
-        layout.operator("hb_frameless.change_bay_opening", text="Left Swing 3 Stacked Door").opening_type = 'LEFT_3_STACKED_DOOR'
-        layout.operator("hb_frameless.change_bay_opening", text="Right Swing 3 Stacked Door").opening_type = 'RIGHT_3_STACKED_DOOR'
-        layout.operator("hb_frameless.change_bay_opening", text="Double 3 Stacked Door").opening_type = 'DOUBLE_3_STACKED_DOOR'
+        layout.operator("hb_frameless.change_bay_opening", text=DL.LEFT_3_STACKED).opening_type = 'LEFT_3_STACKED_DOOR'
+        layout.operator("hb_frameless.change_bay_opening", text=DL.RIGHT_3_STACKED).opening_type = 'RIGHT_3_STACKED_DOOR'
+        layout.operator("hb_frameless.change_bay_opening", text=DL.DOUBLE_3_STACKED).opening_type = 'DOUBLE_3_STACKED_DOOR'
         layout.separator()
         layout.operator("hb_frameless.change_bay_opening", text="Built In Appliance").opening_type = 'APPLIANCE'
         layout.operator("hb_frameless.change_bay_opening", text="Built In Double Appliance").opening_type = 'DOUBLE_APPLIANCE'
@@ -315,9 +316,9 @@ class HOME_BUILDER_MT_opening_change(bpy.types.Menu):
 
     def draw(self, context):
         layout = self.layout
-        layout.operator("hb_frameless.change_opening_type", text="Left Door").opening_type = 'LEFT_DOOR'
-        layout.operator("hb_frameless.change_opening_type", text="Right Door").opening_type = 'RIGHT_DOOR'
-        layout.operator("hb_frameless.change_opening_type", text="Double Doors").opening_type = 'DOUBLE_DOORS'
+        layout.operator("hb_frameless.change_opening_type", text=DL.LEFT_SWING).opening_type = 'LEFT_DOOR'
+        layout.operator("hb_frameless.change_opening_type", text=DL.RIGHT_SWING).opening_type = 'RIGHT_DOOR'
+        layout.operator("hb_frameless.change_opening_type", text=DL.DOUBLE).opening_type = 'DOUBLE_DOORS'
         layout.operator("hb_frameless.change_opening_type", text="Flip Up Door").opening_type = 'FLIP_UP_DOOR'
         layout.separator()
         layout.operator("hb_frameless.change_opening_type", text="Drawer").opening_type = 'SINGLE_DRAWER'

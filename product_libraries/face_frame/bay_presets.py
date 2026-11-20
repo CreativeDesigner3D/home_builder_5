@@ -24,6 +24,7 @@ split_opening dialog.
 """
 
 from ...units import inch
+from ..common import door_labels as DL
 
 
 # Recipe tuples carry a trailing `size_role` slot. The size_role tells
@@ -356,16 +357,16 @@ FLOOR_STILE_CONFIGS = {'LAP_DRAWER', 'SUPPORT_FRAME'}
 SEP = ('SEP',)
 
 BASE_MENU_ENTRIES = [
-    ('LEFT_SWING_DOOR',          "Left Swing Door"),
-    ('RIGHT_SWING_DOOR',         "Right Swing Door"),
-    ('DOUBLE_DOOR',              "Double Door"),
+    ('LEFT_SWING_DOOR',          DL.LEFT_SWING),
+    ('RIGHT_SWING_DOOR',         DL.RIGHT_SWING),
+    ('DOUBLE_DOOR',              DL.DOUBLE),
     ('DOOR_LOOKS_2_DRAWER',      "Door - Looks like 2 Drawers"),
     ('DOOR_LOOKS_3_DRAWER',      "Door - Looks like 3 Drawers"),
     ('DOOR_LOOKS_4_DRAWER',      "Door - Looks like 4 Drawers"),
     SEP,
-    ('DRAWER_DOOR',              "1 Drawer 1 Door"),
-    ('DRAWER_DOUBLE_DOOR',       "1 Drawer 2 Door"),
-    ('TWO_DRAWERS_DOUBLE_DOOR',  "2 Drawer 2 Door"),
+    ('DRAWER_DOOR',              DL.DRAWER_1_DOOR),
+    ('DRAWER_DOUBLE_DOOR',       DL.DRAWER_2_DOORS),
+    ('TWO_DRAWERS_DOUBLE_DOOR',  DL.TWO_DRAWERS_2_DOORS),
     SEP,
     ('FOUR_DRAWERS',             "4 Drawers"),
     ('THREE_DRAWERS',            "3 Drawers"),
@@ -374,8 +375,8 @@ BASE_MENU_ENTRIES = [
     ('DRAWER_LOOKS_2_DRAWER',    "Drawer - Looks like 2 Drawers"),
     ('DRAWER_LOOKS_3_DRAWER',    "Drawer - Looks like 3 Drawers"),
     ('FALSE_FRONT',              "False Front"),
-    ('FALSE_FRONT_DOOR',         "False Front 1 Door"),
-    ('FALSE_FRONT_DOUBLE_DOOR',  "False Front 2 Door"),
+    ('FALSE_FRONT_DOOR',         DL.FALSE_FRONT_1_DOOR),
+    ('FALSE_FRONT_DOUBLE_DOOR',  DL.FALSE_FRONT_2_DOORS),
     SEP,
     ('PULLOUT',                  "Pullout"),
     ('PULLOUT_WITH_DRAWER',      "Pullout with Drawer"),
@@ -393,17 +394,17 @@ BASE_MENU_ENTRIES = [
 ]
 
 TALL_MENU_ENTRIES = [
-    ('LEFT_SWING_DOOR',           "Left Swing Door"),
-    ('RIGHT_SWING_DOOR',          "Right Swing Door"),
-    ('DOUBLE_DOOR',               "Double Door"),
+    ('LEFT_SWING_DOOR',           DL.LEFT_SWING),
+    ('RIGHT_SWING_DOOR',          DL.RIGHT_SWING),
+    ('DOUBLE_DOOR',               DL.DOUBLE),
     SEP,
-    ('LEFT_STACKED_DOOR',         "Left Swing Stacked Door"),
-    ('RIGHT_STACKED_DOOR',        "Right Swing Stacked Door"),
-    ('DOUBLE_STACKED_DOOR',       "Double Stacked Door"),
+    ('LEFT_STACKED_DOOR',         DL.LEFT_STACKED),
+    ('RIGHT_STACKED_DOOR',        DL.RIGHT_STACKED),
+    ('DOUBLE_STACKED_DOOR',       DL.DOUBLE_STACKED),
     SEP,
-    ('LEFT_3_STACKED_DOOR',       "Left Swing 3 Stacked Door"),
-    ('RIGHT_3_STACKED_DOOR',      "Right Swing 3 Stacked Door"),
-    ('DOUBLE_3_STACKED_DOOR',     "Double 3 Stacked Door"),
+    ('LEFT_3_STACKED_DOOR',       DL.LEFT_3_STACKED),
+    ('RIGHT_3_STACKED_DOOR',      DL.RIGHT_3_STACKED),
+    ('DOUBLE_3_STACKED_DOOR',     DL.DOUBLE_3_STACKED),
     SEP,
     ('BUILT_IN_APPLIANCE',        "Built In Appliance"),
     ('BUILT_IN_DOUBLE_APPLIANCE', "Built In Double Appliance"),
@@ -420,18 +421,18 @@ TALL_MENU_ENTRIES = [
 ]
 
 UPPER_MENU_ENTRIES = [
-    ('LEFT_SWING_DOOR',           "Left Swing Door"),
-    ('RIGHT_SWING_DOOR',          "Right Swing Door"),
-    ('DOUBLE_DOOR',               "Double Door"),
+    ('LEFT_SWING_DOOR',           DL.LEFT_SWING),
+    ('RIGHT_SWING_DOOR',          DL.RIGHT_SWING),
+    ('DOUBLE_DOOR',               DL.DOUBLE),
     ('LIFT_UP_DOOR',              "Lift Up Door"),
     SEP,
-    ('LEFT_STACKED_DOOR',         "Left Swing Stacked Door"),
-    ('RIGHT_STACKED_DOOR',        "Right Swing Stacked Door"),
-    ('DOUBLE_STACKED_DOOR',       "Double Stacked Door"),
+    ('LEFT_STACKED_DOOR',         DL.LEFT_STACKED),
+    ('RIGHT_STACKED_DOOR',        DL.RIGHT_STACKED),
+    ('DOUBLE_STACKED_DOOR',       DL.DOUBLE_STACKED),
     SEP,
-    ('DOORS_WITH_DRAWER',         "Doors with Drawer"),
-    ('DOORS_WITH_2_DRAWERS',      "Doors with 2 Drawers"),
-    ('DOORS_WITH_3_DRAWERS',      "Doors with 3 Drawers"),
+    ('DOORS_WITH_DRAWER',         DL.DOORS_WITH_1_DRAWER),
+    ('DOORS_WITH_2_DRAWERS',      DL.DOORS_WITH_2_DRAWERS),
+    ('DOORS_WITH_3_DRAWERS',      DL.DOORS_WITH_3_DRAWERS),
     SEP,
     ('DOORS_WITH_UPPER_PULLOUT',  "Doors with Upper Pullout"),
     ('UPPER_PULLOUT',             "Upper Pullout"),

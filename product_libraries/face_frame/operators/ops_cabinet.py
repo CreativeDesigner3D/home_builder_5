@@ -8,6 +8,7 @@ from .... import units
 from .. import types_face_frame
 from .. import types_face_frame_corner
 from .. import bay_presets
+from ...common import door_labels as DL
 from .. import props_hb_face_frame
 from .. import split_preview
 from .. import quiet_cages
@@ -4920,23 +4921,23 @@ class hb_face_frame_OT_change_opening(bpy.types.Operator):
         items=[
             ('OPEN',              "Open",              "Open opening with no interior items"),
             ('OPEN_WITH_SHELVES', "Open with Shelves", "Open opening with adjustable shelves"),
-            ('LEFT_DOOR',         "Left Door",         "Single door hinged on the left"),
-            ('RIGHT_DOOR',        "Right Door",        "Single door hinged on the right"),
-            ('DOUBLE_DOOR',       "Double Door",       "Pair of doors meeting in the middle"),
+            ('LEFT_DOOR',         DL.LEFT_SWING,       "Single door hinged on the left"),
+            ('RIGHT_DOOR',        DL.RIGHT_SWING,      "Single door hinged on the right"),
+            ('DOUBLE_DOOR',       DL.DOUBLE,           "Pair of doors meeting in the middle"),
             ('DOOR_LOOKS_2_DRAWER', "Door - Looks like 2 Drawers", "One door shown as two drawer fronts"),
             ('DOOR_LOOKS_3_DRAWER', "Door - Looks like 3 Drawers", "One door shown as three drawer fronts"),
             ('DOOR_LOOKS_4_DRAWER', "Door - Looks like 4 Drawers", "One door shown as four drawer fronts"),
             ('DOOR_LOOKS_2_DOOR', "Door - Looks like 2 Doors", "One door shown as two doors battened together"),
-            ('DOUBLE_DOOR_2_HIGH', "Double Door - 2 Doors High", "Pair of doors, each two doors battened together top to bottom"),
-            ('DOUBLE_DOOR_3_HIGH', "Double Door - 3 Doors High", "Pair of doors, each three doors battened together top to bottom"),
+            ('DOUBLE_DOOR_2_HIGH', DL.DOUBLE_2_HIGH, "Pair of doors, each two doors battened together top to bottom"),
+            ('DOUBLE_DOOR_3_HIGH', DL.DOUBLE_3_HIGH, "Pair of doors, each three doors battened together top to bottom"),
             ('FLIP_UP_DOOR',      "Flip Up Door",      "Door hinged on the top edge"),
             ('FLIP_DOWN_DOOR',    "Flip Down Door",    "Door hinged on the bottom edge"),
             ('RETRACTING_DOOR',   "Retracting Door",   "Single door that opens, then slides back into the cabinet"),
-            ('RETRACTING_DOOR_PAIR', "Retracting Doors (Pair)", "Pair of doors that open, then slide back into the cabinet"),
+            ('RETRACTING_DOOR_PAIR', DL.RETRACTING_DOUBLE, "Pair of doors that open, then slide back into the cabinet"),
             ('BIFOLD_RETRACTING_DOOR', "Bi-fold Retracting Doors", "Hinged pair that folds, then slides back into the cabinet"),
             ('TOP_RETRACTING_DOOR', "Top-Mount Retracting Door", "Full-width door that retracts up into the cabinet"),
-            ('BIFOLD_LEFT_DOOR',  "Bi-fold Doors (Left)",  "Door pair hinged on the left that folds open"),
-            ('BIFOLD_RIGHT_DOOR', "Bi-fold Doors (Right)", "Door pair hinged on the right that folds open"),
+            ('BIFOLD_LEFT_DOOR',  DL.BIFOLD_LEFT,  "Door pair hinged on the left that folds open"),
+            ('BIFOLD_RIGHT_DOOR', DL.BIFOLD_RIGHT, "Door pair hinged on the right that folds open"),
             ('DRAWER',            "Drawer",            "Drawer front"),
             ('DRAWER_LOOKS_2_DRAWER', "Drawer - Looks like 2 Drawers", "One drawer shown as two drawer fronts"),
             ('DRAWER_LOOKS_3_DRAWER', "Drawer - Looks like 3 Drawers", "One drawer shown as three drawer fronts"),

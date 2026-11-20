@@ -12,6 +12,7 @@ later pass once those operators are implemented.
 import bpy
 
 from . import bay_presets
+from ..common import door_labels as DL
 from . import cabinet_column
 from . import types_face_frame
 from . import types_face_frame_corner
@@ -1020,14 +1021,14 @@ class HOME_BUILDER_MT_face_frame_change_opening(bpy.types.Menu):
         ('OPEN',              "Open"),
         ('OPEN_WITH_SHELVES', "Open with Shelves"),
         ('SEP',),
-        ('LEFT_DOOR',         "Left Door"),
-        ('RIGHT_DOOR',        "Right Door"),
-        ('DOUBLE_DOOR',       "Double Door"),
-        ('BIFOLD_LEFT_DOOR',  "Bi-fold Doors (Left)"),
-        ('BIFOLD_RIGHT_DOOR', "Bi-fold Doors (Right)"),
+        ('LEFT_DOOR',         DL.LEFT_SWING),
+        ('RIGHT_DOOR',        DL.RIGHT_SWING),
+        ('DOUBLE_DOOR',       DL.DOUBLE),
+        ('BIFOLD_LEFT_DOOR',  DL.BIFOLD_LEFT),
+        ('BIFOLD_RIGHT_DOOR', DL.BIFOLD_RIGHT),
         ('DOOR_LOOKS_2_DOOR', "Door - Looks like 2 Doors"),
-        ('DOUBLE_DOOR_2_HIGH', "Double Door - 2 Doors High"),
-        ('DOUBLE_DOOR_3_HIGH', "Double Door - 3 Doors High"),
+        ('DOUBLE_DOOR_2_HIGH', DL.DOUBLE_2_HIGH),
+        ('DOUBLE_DOOR_3_HIGH', DL.DOUBLE_3_HIGH),
         ('DOOR_LOOKS_2_DRAWER', "Door - Looks like 2 Drawers"),
         ('DOOR_LOOKS_3_DRAWER', "Door - Looks like 3 Drawers"),
         ('DOOR_LOOKS_4_DRAWER', "Door - Looks like 4 Drawers"),
@@ -1036,7 +1037,7 @@ class HOME_BUILDER_MT_face_frame_change_opening(bpy.types.Menu):
         ('FLIP_DOWN_DOOR',    "Flip Down Door"),
         ('SEP',),
         ('RETRACTING_DOOR',        "Retracting Door"),
-        ('RETRACTING_DOOR_PAIR',   "Retracting Doors (Pair)"),
+        ('RETRACTING_DOOR_PAIR',   DL.RETRACTING_DOUBLE),
         ('BIFOLD_RETRACTING_DOOR', "Bi-fold Retracting Doors"),
         ('TOP_RETRACTING_DOOR',    "Top-Mount Retracting Door"),
         ('SEP',),
