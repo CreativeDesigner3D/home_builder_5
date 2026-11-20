@@ -2176,6 +2176,19 @@ def _trail(root, bay_obj, opening_obj, part_obj):
     return trail
 
 
+def _part_name_block(part_obj):
+    """The picked part's name ("Base Left Side Finished"), or None when
+    the pick is not a cut part."""
+    if part_obj is None or not part_obj.get('CABINET_PART'):
+        return None
+    try:
+        from . import part_names
+        name = part_names.part_name(part_obj)
+    except Exception:
+        name = None
+    return ('value', ("Part Name", name)) if name else None
+
+
 def _several(kind):
     """How many of the pick's kind are picked, when it is more than one."""
     n = _count({'cabinet': 'cabinet', 'opening': 'opening',
@@ -2192,6 +2205,10 @@ def blocks(context, item):
         out = ([('head', (f"{n} Products", False, None)),
                 ('label', f"Changes apply to all {n}")] if n
                else [('head', (root.name, False, None))])
+        if not n:
+            named = _part_name_block(context.active_object)
+            if named:
+                out.append(named)
         _product_page(context, out, root)
         return out
 
@@ -2212,6 +2229,9 @@ def blocks(context, item):
     out.extend(style_blocks(context, root))
     if not n:
         out.extend(_scope_blocks(context, root, level))
+        named = _part_name_block(part_obj or context.active_object)
+        if named:
+            out.append(named)
     out.append(('gap', None))
 
     if kind == 'cabinet':
