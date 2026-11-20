@@ -467,6 +467,27 @@ def _paint(root, parts):
                 pass
 
 
+def _keep_with(objs, like):
+    """Keep built parts (and anything hung on them, such as cutters) in
+    the collections of the cage they belong to. Parts are created in the
+    active scene, which is not the cabinet's room when a rebuild runs
+    while another room is open."""
+    wanted = list(like.users_collection)
+    if not wanted:
+        return
+    wanted_set = set(wanted)
+    for obj in objs:
+        if obj is None:
+            continue
+        for each in (obj, *obj.children_recursive):
+            if set(each.users_collection) == wanted_set:
+                continue
+            for coll in list(each.users_collection):
+                coll.objects.unlink(each)
+            for coll in wanted:
+                coll.objects.link(each)
+
+
 def solve(interior_obj, force=False):
     """Build the parts of one items interior."""
     if interior_obj.name in _SOLVING:
@@ -480,6 +501,8 @@ def solve(interior_obj, force=False):
         existing = _item_parts(interior_obj)
         if (not force and interior_obj.get(SIGNATURE_KEY) == signature
                 and interior_obj.get(PART_COUNT_KEY) == len(existing)):
+            # Parts an older rebuild left in another room come home.
+            _keep_with(existing, interior_obj)
             return
         for obj in existing:
             _remove_part(obj)
@@ -502,6 +525,7 @@ def solve(interior_obj, force=False):
                 obj = _create_mesh_part(interior_obj, desc)
                 built.append(obj)
                 painted.append(obj)
+        _keep_with(built, interior_obj)
         root = solver_frameless.cabinet_root(interior_obj)
         _paint(root, painted)
         _paint_finish(root, finished)
@@ -686,12 +710,14 @@ def solve_drawer_inserts(opening_obj, box_obj, dims, hidden):
     ))
     if (box_obj.get(INSERT_SIGNATURE_KEY) == signature
             and box_obj.get(PART_COUNT_KEY) == len(existing)):
+        _keep_with(existing, box_obj)
         return
     for obj in existing:
         _remove_part(obj)
     if items:
         builder._spawn_drawer_inserts(box_obj, dx, dy, dz, props)
     built = [c for c in box_obj.children if c.get(DRAWER_INSERT_TAG)]
+    _keep_with(built, box_obj)
     for obj in built:
         obj.hide_viewport = hidden
         obj.hide_render = hidden
