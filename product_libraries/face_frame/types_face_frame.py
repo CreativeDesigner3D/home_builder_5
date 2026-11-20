@@ -21796,7 +21796,9 @@ class WoodTopPart(CabinetPart):
         edge_t = getattr(wt, 'edge_thickness', 0.0)
         edged = [s for s in ('front', 'back', 'left', 'right')
                  if getattr(wt, 'edge_' + s, False)]
+        # A solid top's edge is cut into the slab: no applied band.
         if (getattr(wt, 'edge_type', 'NONE') == 'NONE'
+                or getattr(wt, 'top_type', '') == 'SOLID'
                 or wt.nosing_style not in (None, '', 'NONE')
                 or edge_t <= 0.0 or shaped):
             edged = []
@@ -22096,7 +22098,8 @@ class WoodTopPart(CabinetPart):
         if wood_top_shape.is_shaped(obj):
             return
         wt = obj.wood_top
-        if wt.nosing_style in (None, '', 'NONE') and wt.edge_type != 'NONE':
+        if (wt.nosing_style in (None, '', 'NONE') and wt.edge_type != 'NONE'
+                and wt.top_type != 'SOLID'):
             flags = (wt.edge_front, wt.edge_right, wt.edge_back,
                      wt.edge_left)
         else:
@@ -22166,6 +22169,7 @@ class WoodTopPart(CabinetPart):
         nosed = wt.nosing_style not in (None, '', 'NONE')
         edge_t = getattr(wt, 'edge_thickness', 0.0)
         banded = (not nosed and getattr(wt, 'edge_type', 'NONE') != 'NONE'
+                  and getattr(wt, 'top_type', '') != 'SOLID'
                   and edge_t > 0.0)
 
         bm = bmesh.new()

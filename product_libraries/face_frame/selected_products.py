@@ -368,15 +368,22 @@ def _wood_top_sided(wt):
 
 
 def _edged(wt):
-    return wt.nosing_style == 'NONE' and wt.edge_type != 'NONE'
+    return (wt.nosing_style == 'NONE' and wt.edge_type != 'NONE'
+            and wt.top_type != 'SOLID')
 
 
 def _edge_on(side):
     return lambda wt: _edge_side(wt) and getattr(wt, 'edge_' + side)
 
 
+def _unbanded(wt):
+    """No applied edge band: none picked, or a solid top, whose edge is
+    cut into the slab (the edge profile covers it)."""
+    return wt.edge_type == 'NONE' or wt.top_type == 'SOLID'
+
+
 def _nosed(wt):
-    return wt.edge_type == 'NONE' and wt.nosing_style != 'NONE'
+    return _unbanded(wt) and wt.nosing_style != 'NONE'
 
 
 def _edge_side(wt):
@@ -403,7 +410,7 @@ WOOD_TOP_FIELDS = (
         ('distance', 'overhang_right', "Right"),
     )}),
     ('group', 'ff_wood_top_edge', "Edge", {
-        'when': lambda wt: wt.nosing_style == 'NONE',
+        'when': lambda wt: wt.nosing_style == 'NONE' and wt.top_type != 'SOLID',
         'summary': lambda wt: _enum_label(wt, 'edge_type'), 'fields': (
             ('enum', 'edge_type', "Edge"),
             ('distance', 'edge_thickness', "Thickness", {'when': _edged}),
@@ -424,7 +431,7 @@ WOOD_TOP_FIELDS = (
             ('distance', 'edge_right_trim_back', "Right - Back", {'when': _edge_on('right')}),
         )}),
     ('group', 'ff_wood_top_nosing', "Edge Profile", {
-        'when': lambda wt: wt.edge_type == 'NONE',
+        'when': _unbanded,
         'summary': lambda wt: _enum_label(wt, 'nosing_style'), 'fields': (
             ('enum', 'nosing_style', "Profile"),
             ('distance', 'nosing_height', "Height", {'when': _nosed}),

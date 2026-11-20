@@ -1203,13 +1203,16 @@ class hb_face_frame_OT_wood_top_prompts(bpy.types.Operator):
         # Applied edge: the top splits into a core board plus a separate
         # edge band. Off while a milled nosing is set - both work the
         # same edges.
+        # A solid top's edge is cut into the slab, so it has none.
+        solid = wt.top_type == 'SOLID'
         edge_col = col.column(align=True)
         edge_col.use_property_split = True
         edge_col.enabled = wt.nosing_style == 'NONE'
-        edge_col.prop(wt, 'edge_type')
-        if wt.edge_type != 'NONE':
+        if not solid:
+            edge_col.prop(wt, 'edge_type')
+        if wt.edge_type != 'NONE' and not solid:
             edge_col.prop(wt, 'edge_thickness')
-        if wt.edge_type != 'NONE' and not shaped:
+        if wt.edge_type != 'NONE' and not shaped and not solid:
             row = edge_col.row(align=True)
             row.label(text="Edge Sides:")
             row = edge_col.row(align=True)
@@ -1235,7 +1238,7 @@ class hb_face_frame_OT_wood_top_prompts(bpy.types.Operator):
         # pick which edges are milled (exposed sides, not walls).
         nose_col = col.column(align=True)
         nose_col.use_property_split = True
-        nose_col.enabled = wt.edge_type == 'NONE'
+        nose_col.enabled = wt.edge_type == 'NONE' or solid
         if wt.top_type == 'SOLID':
             # A solid top offers only profiles cut into the slab.
             row = nose_col.split(factor=0.4, align=True)
