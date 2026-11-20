@@ -10612,7 +10612,8 @@ def clear_opening_contents(opening):
     for child in list(opening.children):
         if child.get('hb_part_role') in (PART_ROLE_ROD,
                                          PART_ROLE_FIXED_SHELF,
-                                         PART_ROLE_ACCESSORY):
+                                         PART_ROLE_ACCESSORY,
+                                         PART_ROLE_CLEAT):
             # rods carry hanger children; accessories carry their model
             # and any melamine cut for them
             _remove_part_tree(child)
@@ -10754,7 +10755,18 @@ def serialize_opening(opening):
         # what is built under one is worked out again on the solve.
         'accessories': [_accessory_settings(c) for c in opening.children
                         if c.get('hb_part_role') == PART_ROLE_ACCESSORY],
+        # Cleats dropped into the opening, with their height and any
+        # length, width or place along the opening set on them.
+        'cleats': [{k: (float(c[k]) if k != 'hb_anchor_top' else int(c[k]))
+                    for k in _OPENING_CLEAT_KEYS if k in c}
+                   for c in opening.children
+                   if c.get('hb_part_role') == PART_ROLE_CLEAT],
     }
+
+
+# What a cleat dropped into an opening carries of its own.
+_OPENING_CLEAT_KEYS = ('hb_z_offset', 'hb_anchor_top', PROP_CLEAT_LENGTH,
+                       PROP_CLEAT_WIDTH, PROP_CLEAT_X)
 
 
 # Cage settings an accessory copy leaves behind: the ones add_accessory
@@ -10915,6 +10927,12 @@ def apply_opening_data(opening, data, recalc=True):
     for z in data.get('rods', ()):
         add_rod(opening, z)
     _paste_accessories(opening, data.get('accessories'))
+    for row in data.get('cleats') or ():
+        cleat = add_opening_cleat(opening, row.get('hb_z_offset', 0.0),
+                                  anchor_top=bool(row.get('hb_anchor_top')))
+        for k in (PROP_CLEAT_LENGTH, PROP_CLEAT_WIDTH, PROP_CLEAT_X):
+            if k in row:
+                cleat[k] = float(row[k])
     if recalc and root is not None:
         recalculate_closet_starter(root)
 
