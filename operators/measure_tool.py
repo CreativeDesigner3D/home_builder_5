@@ -18,10 +18,15 @@ reopening the file, which is the right trade for something you take to
 answer a question. They stay on screen until cleared so you can set
 several, orbit, and look at them together.
 
-Two modes, cycled with Tab:
+Three modes, cycled with Tab:
 
 ``LINEAR``   two points, straight-line distance.
 ``ANGULAR``  a corner then two arms, in degrees.
+``QUICK``    two points, read as their X, Y and Z distances at once.
+             Nothing is kept: the reading holds on screen until the next
+             click or Esc, so there is nothing to clear afterwards. Q
+             switches to it from inside the tool, and Alt+M starts the
+             tool in it.
 
 Snapping comes from `hb_snap_engine`, so it follows the same magnet
 menu as everything else, and Ctrl inverts it exactly as it does in
@@ -59,13 +64,14 @@ from ..hb_gpu_ui import (
 )
 
 
-MODES = ('LINEAR', 'ANGULAR')
+MODES = ('LINEAR', 'ANGULAR', 'QUICK')
 MODE_LABELS = {
     'LINEAR': "Distance",
     'ANGULAR': "Angle",
+    'QUICK': "Quick XYZ",
 }
 # How many points each mode collects before it has a measurement.
-MODE_POINTS = {'LINEAR': 2, 'ANGULAR': 3}
+MODE_POINTS = {'LINEAR': 2, 'ANGULAR': 3, 'QUICK': 2}
 
 AXES = ('X', 'Y', 'Z')
 
@@ -221,6 +227,18 @@ def angle_label(degrees, exact=False):
     return f"{_trimmed(degrees, 3 if exact else 1)}°"
 
 
+def xyz_parts(a, b):
+    """The world X, Y and Z distances from a to b, unsigned."""
+    d = b - a
+    return [(axis, abs(d[i])) for i, axis in enumerate(AXES)]
+
+
+def xyz_label(context, a, b):
+    """'X 1/8"  Y 22"  Z 1/2"' for a quick reading."""
+    return "  ".join(f"{axis} {length_label(context, v)}"
+                     for axis, v in xyz_parts(a, b))
+
+
 def measurement_label(context, m):
     """A committed measurement's text under the current rounding choice."""
     if m.kind == 'ANGULAR':
@@ -299,6 +317,32 @@ def _draw_angle(shader, font_id, corner, arm_a, arm_b, text, s, color):
         _chip(shader, font_id,
               corner.x + math.cos(mid) * (radius + 18 * s),
               corner.y + math.sin(mid) * (radius + 18 * s), text, s)
+
+
+def _draw_xyz(shader, font_id, region, rv3d, a, b, s):
+    """A quick reading: the straight line a to b, then the three world-axis
+    legs that make it up, each in its axis colour with its own value.
+    A leg with no length is left out so a square-on pick reads cleanly."""
+    pa, pb = _project(region, rv3d, a), _project(region, rv3d, b)
+    if pa is None or pb is None:
+        return
+    draw_lines(shader, [(pa.x, pa.y), (pb.x, pb.y)], MeasureTheme.LINE_PENDING)
+    context = bpy.context
+    corner = a.copy()
+    tiny = 1e-6
+    for i, axis in enumerate(AXES):
+        nxt = corner.copy()
+        nxt[i] = b[i]
+        length = abs(b[i] - a[i])
+        if length > tiny:
+            p0 = _project(region, rv3d, corner)
+            p1 = _project(region, rv3d, nxt)
+            if p0 is not None and p1 is not None:
+                draw_lines(shader, [(p0.x, p0.y), (p1.x, p1.y)],
+                           MeasureTheme.AXIS[axis])
+                _chip(shader, font_id, (p0.x + p1.x) * 0.5, (p0.y + p1.y) * 0.5,
+                      f"{axis} {length_label(context, length)}", s)
+        corner = nxt
 
 
 def _draw_snap_marker(shader, kind, x, y, s):
@@ -388,6 +432,13 @@ class home_builder_OT_measure(bpy.types.Operator):
     # No bpy.data is written, so there is nothing for undo to hold.
     bl_options = {'REGISTER'}
 
+    quick: bpy.props.BoolProperty(
+        name="Quick XYZ",
+        description=("Start in Quick XYZ: read the X, Y and Z distances "
+                     "between two points without leaving a measurement behind"),
+        default=False,
+        options={'SKIP_SAVE'})
+
     @classmethod
     def poll(cls, context):
         return context.area is not None and context.area.type == 'VIEW_3D'
@@ -395,7 +446,10 @@ class home_builder_OT_measure(bpy.types.Operator):
     def invoke(self, context, event):
         global _active
         self.scene_name = context.scene.name
-        self.mode = context.window_manager.hb_measure_mode
+        self.mode = 'QUICK' if self.quick else context.window_manager.hb_measure_mode
+        self.prev_mode = 'LINEAR'
+        # The last quick reading, (a, b): shown until the next click.
+        self.held = None
         self.points = []
         self.hit = None
         self.cursor = None
@@ -434,14 +488,19 @@ class home_builder_OT_measure(bpy.types.Operator):
             bits.append(f"[{self.hit.kind.replace('_', ' ').title()}]")
         elif not self.snap_on:
             bits.append("[No Snap]")
-        if self.hover is not None:
+        if self.mode == 'QUICK' and self.points and self.cursor is not None:
+            a = self.points[0]
+            bits.append(f"{xyz_label(context, a, self.cursor)}  "
+                        f"({length_label(context, (self.cursor - a).length)})")
+        elif self.hover is not None:
             bits.append(f"[{self.hover.label}: Delete removes it]")
         elif self.last_label:
             bits.append(f"= {self.last_label}")
         if exact_values(context):
             bits.append("[Exact]")
-        bits.append("Tab: mode | X/Y/Z: axis | E: exact | Ctrl: snap | "
-                    "Backspace: undo | Del: remove hovered | Esc: done")
+        bits.append("Tab: mode | Q: quick XYZ | X/Y/Z: axis | E: exact | "
+                    "Ctrl: snap | Backspace: undo | Del: remove hovered | "
+                    "Esc: done")
         context.area.header_text_set("  ".join(b for b in bits if b))
 
     # -- points ------------------------------------------------------------
@@ -498,7 +557,7 @@ class home_builder_OT_measure(bpy.types.Operator):
         """The finished measurement under the cursor, while nothing is
         half-placed, so Delete can take out just that one."""
         self.hover = None
-        if self.points:
+        if self.points or self.mode == 'QUICK':
             return
         region, rv3d, mouse = self._region(context, event)
         if region is None:
@@ -528,15 +587,37 @@ class home_builder_OT_measure(bpy.types.Operator):
                                     self.scene_name, degrees, label))
         return label
 
+    def _commit_quick(self, context):
+        """Hold the reading on screen; nothing goes in the store, so there
+        is nothing to clear when you are done."""
+        a, b = self.points[0], self.points[1]
+        self.held = (a.copy(), b.copy())
+        return (f"{xyz_label(context, a, b)}  "
+                f"({length_label(context, (b - a).length)})")
+
     def _place(self, context, event):
         if self.cursor is None:
             return
         self.points.append(self.cursor.copy())
+        if self.mode == 'QUICK' and len(self.points) == 1:
+            self.held = None
         if len(self.points) < self._needed():
             return
-        label = (self._commit_angular(context) if self.mode == 'ANGULAR'
-                 else self._commit_linear(context))
+        if self.mode == 'ANGULAR':
+            label = self._commit_angular(context)
+        elif self.mode == 'QUICK':
+            label = self._commit_quick(context)
+        else:
+            label = self._commit_linear(context)
         self._reset_pending(label)
+
+    def _set_mode(self, context, mode):
+        self.mode = mode
+        self.held = None
+        self.last_label = ""
+        self._reset_pending(None)
+        self._update_header(context)
+        tag_redraw()
 
     def _reset_pending(self, label):
         if label:
@@ -551,6 +632,24 @@ class home_builder_OT_measure(bpy.types.Operator):
         color = MeasureTheme.LINE_PENDING
         placed = [_project(region, rv3d, p) for p in self.points]
         live = _project(region, rv3d, self.cursor) if self.cursor else None
+
+        if self.mode == 'QUICK':
+            if self.points and self.cursor is not None:
+                _draw_xyz(shader, font_id, region, rv3d,
+                          self.points[0], self.cursor, s)
+            elif self.held is not None:
+                _draw_xyz(shader, font_id, region, rv3d,
+                          self.held[0], self.held[1], s)
+                for p in self.held:
+                    q = _project(region, rv3d, p)
+                    if q is not None:
+                        _draw_snap_marker(shader, 'VERTEX', q.x, q.y, s)
+            for p in placed:
+                if p is not None:
+                    _draw_snap_marker(shader, 'VERTEX', p.x, p.y, s)
+            if self.hit is not None and live is not None:
+                _draw_snap_marker(shader, self.hit.kind, live.x, live.y, s)
+            return
 
         if self.axis and placed and placed[0] is not None and live is not None:
             draw_lines(shader, [(placed[0].x, placed[0].y), (live.x, live.y)],
@@ -604,11 +703,19 @@ class home_builder_OT_measure(bpy.types.Operator):
         if event.value == 'PRESS':
             if event.type == 'TAB':
                 index = MODES.index(self.mode)
-                self.mode = MODES[(index + 1) % len(MODES)]
-                context.window_manager.hb_measure_mode = self.mode
-                self._reset_pending(None)
-                self._update_header(context)
-                tag_redraw()
+                mode = MODES[(index + 1) % len(MODES)]
+                context.window_manager.hb_measure_mode = mode
+                self._set_mode(context, mode)
+                return {'RUNNING_MODAL'}
+
+            if event.type == 'Q':
+                # In and out of Quick XYZ, back to whichever mode you
+                # were in; not remembered as the mode to start in.
+                if self.mode == 'QUICK':
+                    self._set_mode(context, self.prev_mode)
+                else:
+                    self.prev_mode = self.mode
+                    self._set_mode(context, 'QUICK')
                 return {'RUNNING_MODAL'}
 
             if event.type in AXES:
@@ -647,6 +754,9 @@ class home_builder_OT_measure(bpy.types.Operator):
                 # Whatever is half-placed first, then the last finished one.
                 if self.points:
                     self._reset_pending(None)
+                elif self.mode == 'QUICK':
+                    self.held = None
+                    self.last_label = ""
                 else:
                     pop_measurement(context.scene)
                 self._update_header(context)
@@ -661,6 +771,7 @@ class home_builder_OT_measure(bpy.types.Operator):
     def _finish(self, context):
         global _active
         _active = None
+        self.held = None
         if context.area is not None:
             context.area.header_text_set(None)
         tag_redraw()
@@ -712,6 +823,7 @@ def draw_measure_options(layout, context):
     box = col.box()
     box.label(text="Snapping follows the magnet menu", icon='SNAP_ON')
     box.label(text="Hold Ctrl to invert it while measuring")
+    box.label(text="Alt+M or Q: Quick XYZ, nothing left behind")
 
 
 # ---- Registration -----------------------------------------------------------
@@ -727,11 +839,38 @@ def _clear_on_load(*args):
     clear_measurements(None)
 
 
+# Alt+M starts the tool in Quick XYZ. Alt+M is free in the 3D View and
+# Object Mode keymaps, and sits next to the M of Measure.
+_addon_keymaps = []
+
+
+def _register_keymaps():
+    kc = bpy.context.window_manager.keyconfigs.addon
+    if not kc:
+        return
+    km = kc.keymaps.new(name='3D View', space_type='VIEW_3D')
+    kmi = km.keymap_items.new(home_builder_OT_measure.bl_idname, 'M', 'PRESS',
+                              alt=True)
+    kmi.properties.quick = True
+    _addon_keymaps.append((km, kmi))
+
+
+def _unregister_keymaps():
+    for km, kmi in _addon_keymaps:
+        try:
+            km.keymap_items.remove(kmi)
+        except Exception:
+            pass
+    _addon_keymaps.clear()
+
+
 def register():
     bpy.types.WindowManager.hb_measure_mode = bpy.props.EnumProperty(
         name="Measure Mode",
         items=[('LINEAR', "Distance", "Straight-line distance between two points"),
-               ('ANGULAR', "Angle", "Angle at a corner between two arms")],
+               ('ANGULAR', "Angle", "Angle at a corner between two arms"),
+               ('QUICK', "Quick XYZ",
+                "X, Y and Z distances between two points, nothing left behind")],
         default='LINEAR')
     bpy.types.WindowManager.hb_measure_exact = bpy.props.BoolProperty(
         name="Exact Values",
@@ -741,6 +880,7 @@ def register():
         update=lambda self, context: tag_redraw())
     for cls in classes:
         bpy.utils.register_class(cls)
+    _register_keymaps()
 
     global _draw_handle
     _draw_handle = bpy.types.SpaceView3D.draw_handler_add(
@@ -759,6 +899,7 @@ def unregister():
     global _draw_handle, _active
     _active = None
     clear_measurements(None)
+    _unregister_keymaps()
 
     from . import room_palette
     room_palette.unregister_tool_options(MEASURE_OPTIONS)
