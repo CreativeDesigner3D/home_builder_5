@@ -169,6 +169,16 @@ def _room_defaults(scene=None):
             getattr(props, 'default_accessory_fabric', '') or '')
 
 
+# One finish known by two names: the room's Metal dropdown offers
+# 'Slate Graphite' (the name the pulls and drawer boxes use) while a
+# provider may list the same finish as plain 'Slate'. Either one matches
+# the other rather than falling back to black.
+COLOR_ALIASES = {
+    'Slate Graphite': ('Slate',),
+    'Slate': ('Slate Graphite',),
+}
+
+
 def _pick(offered, wanted, fallback):
     """(choice, fell_back) from what an accessory is offered in. Black
     when the wanted one is not offered; the first offered when black
@@ -177,6 +187,9 @@ def _pick(offered, wanted, fallback):
         return '', False
     if not wanted or wanted in offered:
         return (wanted or offered[0]), False
+    for alias in COLOR_ALIASES.get(wanted, ()):
+        if alias in offered:
+            return alias, False
     if fallback in offered:
         return fallback, True
     return offered[0], True
