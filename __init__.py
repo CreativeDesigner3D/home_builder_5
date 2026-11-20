@@ -163,6 +163,13 @@ def load_file_post(scene):
     # the option is switched.
     from .product_libraries.face_frame import props_hb_face_frame
     try:
+        # Frameless finished ends are marked first, so a file saved
+        # before the marking existed shows it as soon as it opens.
+        from .product_libraries.frameless import finish_cues
+        finish_cues.mark_scene()
+    except Exception:
+        traceback.print_exc()
+    try:
         props_hb_face_frame.apply_style_colors(bpy.context)
     except Exception:
         pass

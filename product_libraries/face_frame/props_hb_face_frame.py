@@ -1849,6 +1849,8 @@ def apply_style_colors(context):
     # Frameless cabinets wear their own cabinet style's colour the same
     # way (a face frame product built on frameless parts was reached
     # through its own stamp above).
+    # A finished end keeps its marking colour (see frameless finish_cues).
+    from ..frameless import finish_cues
     for cage in [o for o in bpy.data.objects
                  if o.get('IS_FRAMELESS_CABINET_CAGE')]:
         tint = _frameless_style_tint(cage) if on else None
@@ -1861,7 +1863,7 @@ def apply_style_colors(context):
             elif _is_cage(child):
                 _paint_cage(child, tint, context)
             else:
-                child.color = part_colour
+                child.color = finish_cues.cue_color(child) or part_colour
         if tint is not None:
             tinted += 1
 

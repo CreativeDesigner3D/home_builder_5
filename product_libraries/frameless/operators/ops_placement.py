@@ -84,6 +84,12 @@ def _style_color(obj, fallback, highlight):
     Imported at call time -- the style pool lives in a sibling product
     library that imports this module.
     """
+    if not highlight:
+        # A finished end keeps its marking through a mode change.
+        from .. import finish_cues
+        cue = finish_cues.cue_color(obj)
+        if cue is not None:
+            return cue
     try:
         from ...face_frame import props_hb_face_frame
         return props_hb_face_frame.style_color_for_object(

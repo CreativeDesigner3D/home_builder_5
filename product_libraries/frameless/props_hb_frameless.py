@@ -1752,6 +1752,10 @@ class Frameless_Cabinet_Style(PropertyGroup):
             if child.get('IS_CABINET_FRONT'):
                 grain_match.apply_to_front(child)
 
+        # Finished ends show in the viewport in the marking colour.
+        from . import finish_cues
+        finish_cues.mark_cabinet(cabinet_obj)
+
     def assign_style_to_cabinet(self, cabinet_obj):
         #Assign Properties to Cabinet done in ops_hb_frameless.py
 
