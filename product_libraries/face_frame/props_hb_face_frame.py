@@ -8678,8 +8678,9 @@ def _recompute_blind_stile_width(cab_props, side):
     Coupling: stile_type=='BLIND' uses the style's per-type Blind Stile row
     (upper 2" / base + tall 3" by default), falling back to the scene's
     ff_blind_stile_width; the blind_left/blind_right flag adds 0.75" for
-    the adjacent cabinet's face. stile_type=='STANDARD' or 'WALL' restores
-    the plain ff_end_stile_width default.
+    the adjacent cabinet's face. stile_type=='STANDARD' takes the style's
+    End Stile row (the plain ff_end_stile_width default for an unstyled
+    cabinet); the other width-only types take their own style rows.
     """
     scene = bpy.context.scene
     ff_scene = getattr(scene, 'hb_face_frame', None)
@@ -8724,7 +8725,12 @@ def _recompute_blind_stile_width(cab_props, side):
         if width is None:
             return
     else:
-        width = ff_scene.ff_end_stile_width
+        # A standard end stile takes the style's End Stile row for the
+        # cabinet's column, as placing the cabinet from the style does;
+        # the project default only for an unstyled cabinet.
+        width = _style_stile_width_for(cab_props, 'STANDARD')
+        if not width:
+            width = ff_scene.ff_end_stile_width
 
     # Only write if the value actually changed - avoids a redundant
     # _update_cabinet_dim recalc trip in the common case where the user
