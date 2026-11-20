@@ -93,6 +93,45 @@ def _set_x(root, value):
         root.location.x = float(value)
 
 
+# On a wall the run can be placed by either end, the way an obstacle
+# is: Measure From picks the wall end, From Side is the distance from
+# that end to the run's end on the same side. Which end is measured
+# from is all that is stored; the run stays where it is.
+MEASURE_KEY = 'hb_measure_from'
+MEASURE_SIDES = (('LEFT', "Left"), ('RIGHT', "Right"))
+
+
+def _get_measure(root):
+    return 'RIGHT' if root.get(MEASURE_KEY) == 'RIGHT' else 'LEFT'
+
+
+def _set_measure(root, value):
+    if value == 'RIGHT':
+        root[MEASURE_KEY] = 'RIGHT'
+    else:
+        root.pop(MEASURE_KEY, None)
+
+
+def _side_wall_length(root):
+    from . import props_closets
+    wall = props_closets.starter_wall(root)
+    return props_closets._wall_length(wall) if wall is not None else 0.0
+
+
+def _get_from_side(root):
+    left = float(_sp(root).wall_offset)
+    if _get_measure(root) == 'RIGHT':
+        return _side_wall_length(root) - left - float(_sp(root).width)
+    return left
+
+
+def _set_from_side(root, value):
+    value = float(value)
+    if _get_measure(root) == 'RIGHT':
+        value = _side_wall_length(root) - value - float(_sp(root).width)
+    _sp(root).wall_offset = value
+
+
 def _axis(index):
     def get(root):
         return float(root.location[index])
@@ -263,6 +302,10 @@ def _ensure():
             lambda root, value: setattr(root, 'hide_viewport', bool(value)),
             type='BOOLEAN'),
         'loc_x': P.computed(_get_x, _set_x, unit='LENGTH', precision=4),
+        'measure_from': P.computed(_get_measure, _set_measure, type='ENUM',
+                                   items=list(MEASURE_SIDES)),
+        'from_side': P.computed(_get_from_side, _set_from_side,
+                                unit='LENGTH', precision=4),
         'loc_y': P.computed(y_get, y_set, unit='LENGTH', precision=4),
         'loc_z': P.computed(z_get, z_set, unit='LENGTH', precision=4),
         'turn': P.computed(_get_turn, _set_turn, unit='ROTATION',
@@ -309,7 +352,12 @@ def summary(root):
 
 def _location_fields(root):
     return (
-        ('distance', 'loc_x', "X"),
+        ('choices', 'measure_from', "Measure From",
+         {'cols': 2, 'when': lambda _ow: _on_wall(root)}),
+        ('distance', 'from_side', "From Side",
+         {'when': lambda _ow: _on_wall(root)}),
+        ('distance', 'loc_x', "X",
+         {'when': lambda _ow: not _on_wall(root)}),
         ('distance', 'loc_y', "Y"),
         ('distance', 'loc_z', "Z"),
         ('number', 'turn', "Z Rotation",
@@ -537,7 +585,10 @@ def fields(root):
         out.append(('enum', 'hang_height', "Hanging Height"))
         out.append(('enum', 'all_heights', "Set All Bay Heights"))
     out.append(('group', 'cl_st_location', "Location", {
-        'summary': lambda _ow: "X " + _dist(_get_x(root)),
+        'summary': lambda _ow: (
+            ("%s %s" % (_get_measure(root).title(),
+                        _dist(_get_from_side(root))))
+            if _on_wall(root) else "X " + _dist(_get_x(root))),
         'fields': _location_fields(root)
         + (('bool', 'hidden', "Hide In Viewport"),)}))
     if is_filler:
