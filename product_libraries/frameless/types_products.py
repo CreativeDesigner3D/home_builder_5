@@ -2125,6 +2125,8 @@ L_CROWN_HEIGHT = inch(6.0)
 # Front to back, the face board's own thickness included.
 L_CROWN_RETURN_DEPTH = inch(4.0)
 RETURN_CLEAT_KEY = 'Return Cleat Depth'
+# What the return cleat was last painted for (1 = in the door plane).
+L_CROWN_FINISH_KEY = 'hb_crown_finish'
 
 
 def _solve_l_crown(root, parts, dim_x, dim_y, dim_z):
@@ -2150,6 +2152,16 @@ def _solve_l_crown(root, parts, dim_x, dim_y, dim_z):
         _set_part(part, (0.0, face_y + mt, 0.0),
                   length=dim_x, width=ret - mt, thickness=mt,
                   visible=ret - mt > 0.0)
+        # The flags only take effect when the parts are painted: repaint
+        # when the face has moved between the two planes (and once on a
+        # closure painted before this was tracked), so the return does
+        # not keep the interior material after the option is switched.
+        if root.get(L_CROWN_FINISH_KEY) != int(on_doors):
+            root[L_CROWN_FINISH_KEY] = int(on_doors)
+            try:
+                _paint_product(root)
+            except Exception:
+                pass
 
     # The cage is what gets clicked, so it is drawn back to the face
     # when that stands behind the door plane.
