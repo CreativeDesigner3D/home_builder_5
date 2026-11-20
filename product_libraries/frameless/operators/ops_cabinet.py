@@ -101,6 +101,15 @@ class hb_frameless_OT_cabinet_prompts(bpy.types.Operator):
     fb_doors_cover: bpy.props.BoolProperty(
         name="Doors Cover Panel", default=True,
         description="The bottom doors and drawer fronts come down over the front edge of the panel") # type: ignore
+    light_valance: bpy.props.BoolProperty(
+        name="Light Valance", default=False,
+        description="A 3/4 in strip of finished stock under the front of the upper; the box is 3/4 in shorter") # type: ignore
+    lv_depth: bpy.props.FloatProperty(
+        name="Depth", unit='LENGTH', precision=4, min=0.00635, default=0.0508,
+        description="How far back the light valance runs from the front") # type: ignore
+    lv_doors_cover: bpy.props.BoolProperty(
+        name="Doors Cover Valance", default=True,
+        description="The bottom doors and drawer fronts come down over the front edge of the light valance") # type: ignore
     fb_led_route: bpy.props.BoolProperty(
         name="LED Route", default=False,
         description="Route a groove for an LED strip in the panel's underside") # type: ignore
@@ -190,6 +199,9 @@ class hb_frameless_OT_cabinet_prompts(bpy.types.Operator):
         self.finished_bottom = str(int(cabinet_bp.get(solver_frameless.FINISHED_BOTTOM_KEY, 0)))
         self.fb_doors_cover = bool(cabinet_bp.get(solver_frameless.FB_DOORS_COVER_KEY, True))
         self.fb_led_route = bool(cabinet_bp.get(solver_frameless.FB_LED_KEY, False))
+        self.light_valance = bool(cabinet_bp.get(solver_frameless.LV_KEY, False))
+        self.lv_depth = float(cabinet_bp.get(solver_frameless.LV_DEPTH_KEY, solver_frameless.LV_DEPTH_DEFAULT))
+        self.lv_doors_cover = bool(cabinet_bp.get(solver_frameless.LV_DOORS_COVER_KEY, True))
         self.fb_led_width = float(cabinet_bp.get(solver_frameless.FB_LED_WIDTH_KEY, units.inch(0.875)))
         self.fb_led_depth = float(cabinet_bp.get(solver_frameless.FB_LED_DEPTH_KEY, units.inch(0.375)))
         self.fb_led_inset = float(cabinet_bp.get(solver_frameless.FB_LED_INSET_KEY, units.inch(1.5)))
@@ -286,6 +298,13 @@ class hb_frameless_OT_cabinet_prompts(bpy.types.Operator):
             obj[solver_frameless.FB_LED_WIDTH_KEY] = self.fb_led_width
             obj[solver_frameless.FB_LED_DEPTH_KEY] = self.fb_led_depth
             obj[solver_frameless.FB_LED_INSET_KEY] = self.fb_led_inset
+        if self._is_upper() and (self.light_valance
+                                 or solver_frameless.LV_KEY in obj):
+            obj[solver_frameless.LV_KEY] = self.light_valance
+            obj[solver_frameless.LV_DEPTH_KEY] = self.lv_depth
+            if (not self.lv_doors_cover
+                    or solver_frameless.LV_DOORS_COVER_KEY in obj):
+                obj[solver_frameless.LV_DOORS_COVER_KEY] = self.lv_doors_cover
         if self._can_angle_back() and (self.angled_back != '0'
                                        or 'Angled Back' in self.cabinet.obj):
             self.cabinet.obj['Angled Back'] = int(self.angled_back)
@@ -395,6 +414,13 @@ class hb_frameless_OT_cabinet_prompts(bpy.types.Operator):
                         row = col.row(align=True)
                         row.label(text=label)
                         row.prop(self, prop, text="")
+            col.separator()
+            col.prop(self, 'light_valance')
+            if self.light_valance:
+                row = col.row(align=True)
+                row.label(text="Valance Depth:")
+                row.prop(self, 'lv_depth', text="")
+                col.prop(self, 'lv_doors_cover')
 
         if self._show_angle_back():
             box = layout.box()

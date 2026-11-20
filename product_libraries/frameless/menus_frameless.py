@@ -43,6 +43,10 @@ def _draw_bottom_finish(layout, side, label):
     for ident, name, _desc in ops_finished_ends.FINISHED_BOTTOM_PANELS:
         layout.operator("hb_frameless.set_finished_bottom_panel",
                         text=name).panel = ident
+    on = ops_finished_ends.light_valance_on(bpy.context)
+    layout.operator("hb_frameless.toggle_light_valance",
+                    text="3/4\" Light Valance",
+                    icon='CHECKBOX_HLT' if on else 'CHECKBOX_DEHLT')
 
 
 def _draw_panel_options(layout, cabinet, side):

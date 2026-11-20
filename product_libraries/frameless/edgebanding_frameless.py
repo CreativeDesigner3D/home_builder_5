@@ -64,6 +64,8 @@ BAND_EDGES = {
     # A sink sub front stands on edge under the countertop, between the
     # sides: only its bottom edge shows.
     'SINK_APRON': ('L2',),
+    # A light valance under an upper shows both long edges.
+    'LIGHT_VALANCE': ('L1', 'L2'),
     # Likewise an apron behind an opening's doors.
     'OPENING_APRON': ('L2',),
     # An L crown's face shows its bottom edge; the cleat behind it

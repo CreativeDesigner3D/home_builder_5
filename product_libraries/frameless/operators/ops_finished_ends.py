@@ -739,7 +739,42 @@ class hb_frameless_OT_set_finished_bottom_panel(bpy.types.Operator):
         return {'FINISHED'}
 
 
+def light_valance_on(context):
+    """Every selected upper has a light valance."""
+    cabinets = finished_bottom_cabinets(context)
+    return bool(cabinets) and all(
+        bool(c.get(solver_frameless.LV_KEY, False)) for c in cabinets)
+
+
+class hb_frameless_OT_toggle_light_valance(bpy.types.Operator):
+    """Add or remove a 3/4 in light valance under the front of the
+    selected upper cabinets"""
+    bl_idname = "hb_frameless.toggle_light_valance"
+    bl_label = "Light Valance"
+    bl_description = ("Add or remove a 3/4 in light valance under the front "
+                      "of the cabinet. The box gets 3/4 in shorter and the "
+                      "doors come down over it")
+    bl_options = {'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        return context.object is not None and hb_utils.get_cabinet_bp(context.object) is not None
+
+    def execute(self, context):
+        cabinets = finished_bottom_cabinets(context)
+        if not cabinets:
+            self.report({'WARNING'}, "Select an upper cabinet")
+            return {'CANCELLED'}
+        on = not light_valance_on(context)
+        for cabinet in cabinets:
+            cabinet[solver_frameless.LV_KEY] = on
+            hb_utils.run_calc_fix(context, cabinet)
+            _paint(cabinet)
+        return {'FINISHED'}
+
+
 classes = (
+    hb_frameless_OT_toggle_light_valance,
     hb_frameless_OT_update_finished_end,
     hb_frameless_OT_applied_panel_prompts,
     hb_frameless_OT_set_finish_condition,

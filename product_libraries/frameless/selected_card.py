@@ -460,6 +460,12 @@ def _fb_on(owner):
         owner.id_data.get(solver_frameless.FINISHED_BOTTOM_KEY))
 
 
+def _lv_on(owner):
+    from . import solver_frameless
+    return _upper_box(owner) and bool(
+        owner.id_data.get(solver_frameless.LV_KEY))
+
+
 def _fb_led(owner):
     from . import solver_frameless
     return _fb_on(owner) and bool(
@@ -587,6 +593,9 @@ def _ends_fields():
         ('distance', 'fb_led_width', "Route Width", {'when': _fb_led}),
         ('distance', 'fb_led_depth', "Route Depth", {'when': _fb_led}),
         ('distance', 'fb_led_inset', "Route From Front", {'when': _fb_led}),
+        ('bool', 'light_valance', "Light Valance", {'when': _upper_box}),
+        ('distance', 'lv_depth', "Valance Depth", {'when': _lv_on}),
+        ('bool', 'lv_doors_cover', "Doors Cover Valance", {'when': _lv_on}),
     ))
     return tuple(fields)
 
@@ -918,6 +927,9 @@ def _register_schemas():
         'fb_led_width': P.length(solver_frameless.FB_LED_WIDTH_KEY, units.inch(0.875)),
         'fb_led_depth': P.length(solver_frameless.FB_LED_DEPTH_KEY, units.inch(0.375)),
         'fb_led_inset': P.length(solver_frameless.FB_LED_INSET_KEY, units.inch(1.5)),
+        'light_valance': P.flag(solver_frameless.LV_KEY),
+        'lv_depth': P.length(solver_frameless.LV_DEPTH_KEY, solver_frameless.LV_DEPTH_DEFAULT),
+        'lv_doors_cover': P.flag(solver_frameless.LV_DOORS_COVER_KEY, True),
         'left_depth': P.length('Left Depth'),
         'right_depth': P.length('Right Depth'),
         'material_thickness': P.length('Material Thickness', units.inch(0.75)),
@@ -1998,6 +2010,9 @@ def _carcass_fields(side, cabinet):
             ('distance', 'fb_led_width', "Route Width", {'when': _fb_led}),
             ('distance', 'fb_led_depth', "Route Depth", {'when': _fb_led}),
             ('distance', 'fb_led_inset', "Route From Front", {'when': _fb_led}),
+            ('bool', 'light_valance', "Light Valance", {'when': _upper_box}),
+            ('distance', 'lv_depth', "Valance Depth", {'when': _lv_on}),
+            ('bool', 'lv_doors_cover', "Doors Cover Valance", {'when': _lv_on}),
         )
     return ()
 

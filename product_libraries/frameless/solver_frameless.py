@@ -832,9 +832,9 @@ def _solve_tall(root, parts, p, dim_x, dim_y, dim_z):
 def _solve_upper(root, parts, p, dim_x, dim_y, dim_z):
     lt, bt, tt, bk = p.lt, p.bt, p.tt, p.bk
     inner = dim_x - lt - p.rt
-    # A panel applied under the cabinet is part of its height: the box
-    # stands on it.
-    fb = finished_bottom_thickness(root)
+    # A panel applied under the cabinet, and a light valance, are part of
+    # its height: the box stands on them.
+    fb = under_box_height(root)
     _solve_sides(parts, p, dim_x, dim_y, dim_z, fb)
 
     part = parts.get('BOTTOM')
@@ -878,6 +878,33 @@ def finished_bottom_thickness(root):
     except (TypeError, ValueError):
         return 0.0
     return FINISHED_BOTTOM_THICKNESS.get(number, 0.0)
+
+
+# Light valance on an upper: a strip of finished stock under the front
+# of the cabinet (under the applied bottom panel when there is one),
+# banded on both long edges. Like the panel it is inside the cabinet's
+# height, so the box is that much shorter, and the bottom fronts come
+# down over it unless told not to.
+LV_KEY = 'Light Valance'
+LV_DEPTH_KEY = 'Light Valance Depth'
+LV_DOORS_COVER_KEY = 'Light Valance Doors Cover'
+LV_THICKNESS = inch(0.75)
+LV_DEPTH_DEFAULT = inch(2.0)
+
+
+def light_valance_thickness(root):
+    """Thickness of the light valance under an upper cabinet, 0 with
+    none."""
+    if (root is None or carcass_kind(root) != 'UPPER'
+            or root.get('IS_CORNER_CABINET')):
+        return 0.0
+    return LV_THICKNESS if bool(prompt(root, LV_KEY, False)) else 0.0
+
+
+def under_box_height(root):
+    """How far an upper's box stands above the bottom of the cabinet:
+    the applied bottom panel and the light valance under it."""
+    return finished_bottom_thickness(root) + light_valance_thickness(root)
 FB_LED_KEY = 'Finished Bottom LED Route'
 FB_LED_WIDTH_KEY = 'LED Route Width'
 FB_LED_DEPTH_KEY = 'LED Route Depth'
@@ -1065,8 +1092,33 @@ def refresh_finished_bottoms(scene):
     return count
 
 
+def _solve_light_valance(root, parts, dim_x, dim_y):
+    """The valance strip under the front of the cabinet, full width,
+    at the very bottom (any applied panel sits on top of it)."""
+    t = light_valance_thickness(root)
+    part = parts.get('LIGHT_VALANCE')
+    if t <= 0.0:
+        if part is not None:
+            parts.pop('LIGHT_VALANCE')
+            bpy.data.objects.remove(part, do_unlink=True)
+        return
+    if part is None:
+        from . import types_frameless
+        # Built from the front back like the applied panel, so its long
+        # edges are the front and the back.
+        part = types_frameless.Cabinet(root)._add_carcass_part(
+            'Light Valance', 'LIGHT_VALANCE', finish=(False, True)).obj
+        parts['LIGHT_VALANCE'] = part
+        _paint_like_cabinet(root, part)
+    depth = float(prompt(root, LV_DEPTH_KEY, LV_DEPTH_DEFAULT))
+    depth = min(max(depth, inch(0.25)), dim_y)
+    set_part(part, (0.0, -dim_y, 0.0), length=dim_x, width=depth,
+             thickness=t)
+
+
 def _solve_finished_bottom(root, parts, p, dim_x, dim_y, dim_z):
     try:
+        _solve_light_valance(root, parts, dim_x, dim_y)
         _solve_own_finished_bottom(root, parts, p, dim_x, dim_y, dim_z)
     finally:
         if FINISHED_BOTTOM_KEY in root or FB_RUN_KEY in root:
@@ -1093,7 +1145,9 @@ def _solve_own_finished_bottom(root, parts, p, dim_x, dim_y, dim_z):
             'Finished Bottom', 'FINISHED_BOTTOM', finish=(False, True)).obj
         parts['FINISHED_BOTTOM'] = panel
         _paint_like_cabinet(root, panel)
-    set_part(panel, (0.0, -dim_y, 0.0), length=dim_x, width=dim_y, thickness=t)
+    # A light valance goes under the panel.
+    set_part(panel, (0.0, -dim_y, light_valance_thickness(root)),
+             length=dim_x, width=dim_y, thickness=t)
 
     led = bool(prompt(root, FB_LED_KEY, False))
     mod = panel.modifiers.get(FB_LED_MOD_NAME)
@@ -2528,7 +2582,7 @@ def _bottom_row_cabinet(insert_obj, root):
     while obj is not None:
         if obj.get('IS_FRAMELESS_CABINET_CAGE'):
             outer = obj
-            lift += finished_bottom_thickness(obj)
+            lift += under_box_height(obj)
             if not (obj.parent is not None
                     and cabinet_root(obj.parent) is not None):
                 break
@@ -2563,8 +2617,15 @@ def finished_bottom_door_drop(insert_obj):
     thickness on the bottom row, 0 where there is no panel or the
     cabinet's fronts are set to stop above it."""
     root = cabinet_root(insert_obj)
-    drop = finished_bottom_thickness(root)
-    if drop <= 0.0 or not bool(root.get(FB_DOORS_COVER_KEY, True)):
+    fb = finished_bottom_thickness(root)
+    lv = light_valance_thickness(root)
+    drop = 0.0
+    if lv > 0.0 and bool(root.get(LV_DOORS_COVER_KEY, True)):
+        # Down over the valance means over the panel above it too.
+        drop = fb + lv
+    elif fb > 0.0 and bool(root.get(FB_DOORS_COVER_KEY, True)):
+        drop = fb
+    if drop <= 0.0:
         return 0.0
     if _bottom_row_cabinet(insert_obj, root) is None:
         return 0.0
