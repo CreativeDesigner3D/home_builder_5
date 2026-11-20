@@ -2195,8 +2195,10 @@ def _solve_front_heights(splitter_obj, parts, calc, total):
 
 
 def _sink_split_board(splitter_obj, opening_above):
-    """True for a front split board in a sink base that sits under a false
-    front: the bowl and trap need that space, so it is not built."""
+    """True for a front split board in a sink base that sits under the
+    bowl: the bowl and trap need that space, so it is not built. The bowl
+    sits behind a false front, or an opening whose front was taken off;
+    only a working drawer or doors above the board keep it."""
     if splitter_obj.get(INTERIOR_SPLITTER_VERTICAL_TAG):
         return False
     root = cabinet_root(splitter_obj)
@@ -2204,8 +2206,12 @@ def _sink_split_board(splitter_obj, opening_above):
         return False
     if opening_above is None:
         return False
-    return any(o.get('False Front', False)
-               for o in opening_above.children_recursive)
+    if any(o.get('False Front', False)
+           for o in opening_above.children_recursive):
+        return True
+    return not any(o.get('IS_CABINET_FRONT') or o.get('IS_DRAWER_FRONT')
+                   or o.get('IS_DOOR_FRONT') or o.get('IS_PULLOUT_FRONT')
+                   for o in opening_above.children_recursive)
 
 
 def _holds_drawer(opening):

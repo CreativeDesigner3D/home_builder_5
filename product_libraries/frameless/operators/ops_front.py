@@ -189,7 +189,12 @@ class hb_frameless_OT_delete_front(bpy.types.Operator):
 
     def execute(self, context):
         front = context.object
+        root = solver_frameless.cabinet_root(front)
         hb_utils.delete_obj_and_children(front)
+        # What sits behind the opening can depend on its front (a sink
+        # base builds no shelf under the bowl), so the cabinet re-solves.
+        if root is not None:
+            solver_frameless.recalculate_cabinet(root)
         return {'FINISHED'}
 
 
