@@ -197,6 +197,13 @@ INSTALL_TYPE_ITEMS = [
     ('OVERLAY', "Overlay", "Panels overlay the appliance frame"),
     ('FLUSH_INSET', "Flush Inset", "Panels flush with the surrounding cabinetry"),
 ]
+# How the run's width is decided: from the left / right gaps (the panels
+# fill what is between them), or from a typed panel width (the gaps are
+# what is left, split evenly so the panels stay centred).
+WIDTH_MODE_ITEMS = [
+    ('GAPS', "Set Gaps", "Type the left and right gaps; the panel width follows"),
+    ('WIDTH', "Set Width", "Type the panel width; the left and right gaps follow"),
+]
 
 
 # ----------------------------------------------------------------------
@@ -219,6 +226,26 @@ def _on_shape_change(self, context):
     obj = self.id_data
     if isinstance(obj, bpy.types.Object) and obj.get('IS_APPLIANCE'):
         obj.appliance_panels.config = CUSTOM_CONFIG
+    _on_change(self, context)
+
+
+def _on_width_mode(self, context):
+    """Switching to Set Width starts the width at what the panels measure
+    now, so the run does not jump; switching back keeps the gaps."""
+    if _SUSPEND[0]:
+        return
+    obj = self.id_data
+    if (self.width_mode == 'WIDTH' and isinstance(obj, bpy.types.Object)
+            and obj.get('IS_APPLIANCE')):
+        try:
+            dim_x = _cage_dims(obj)[0]
+        except Exception:
+            dim_x = 0.0
+        if dim_x > 0.0:
+            measured = dim_x - reveal(self, 'left') - reveal(self, 'right')
+            if measured > 0.0:
+                with suspended():
+                    self.panel_width = measured
     _on_change(self, context)
 
 
@@ -296,6 +323,13 @@ class Appliance_Panel_Props(PropertyGroup):
                               update=_on_change)  # type: ignore
     reveal_bottom: FloatProperty(name="Bottom", unit='LENGTH', default=-1.0, min=-1.0,
                                  update=_on_change)  # type: ignore
+    width_mode: EnumProperty(name="Width", items=WIDTH_MODE_ITEMS, default='GAPS',
+                             update=_on_width_mode)  # type: ignore
+    panel_width: FloatProperty(name="Panel Width", unit='LENGTH', default=_I(22.5),
+                               min=_I(1),
+                               description="Overall width of the panels when the "
+                                           "width is set rather than the gaps",
+                               update=_on_change)  # type: ignore
     column_gap: FloatProperty(name="Between Columns", unit='LENGTH', default=-1.0,
                               min=-1.0,
                               description="Gap between columns; follows Gap when unset",
@@ -950,6 +984,17 @@ def reveal(props, edge):
     return value if value >= 0.0 else props.end_reveal
 
 
+def side_gaps(props, dim_x):
+    """(left, right) gaps of the run. With the width set, the panels are
+    that wide (never wider than the appliance) and centred, so each side
+    gets half of what is left; otherwise each side is its own gap."""
+    if getattr(props, 'width_mode', 'GAPS') == 'WIDTH':
+        width = min(max(0.0, props.panel_width), dim_x)
+        gap = (dim_x - width) / 2.0
+        return gap, gap
+    return reveal(props, 'left'), reveal(props, 'right')
+
+
 def rail_offset(props, edge):
     """How far an integral rail at a run end sits in from that end: the
     edge's own size when it has one, else 0 (the rail is the end)."""
@@ -1056,7 +1101,7 @@ def solve(props, dim_x, dim_z):
         rails   [(x0, x1, z0, z1)]
     all in appliance-local X (across) / Z (up), metres."""
     ncol = max(1, len(props.columns))
-    left, right = reveal(props, 'left'), reveal(props, 'right')
+    left, right = side_gaps(props, dim_x)
     col_gap = column_gap(props)
     col_w = _share(dim_x - left - right,
                    [c.width_hold for c in props.columns] or [False],
@@ -1820,6 +1865,7 @@ def _stamp(appliance_obj, props, key, faces, backers, rails):
         'rail_bottom': props.rail_bottom, 'rail_between': props.rail_between,
         'rail_top_width': props.rail_top_width,
         'rail_bottom_width': props.rail_bottom_width,
+        'width_mode': props.width_mode, 'panel_width': props.panel_width,
         'faces': {str(i): list(r) for i, r in faces.items()},
         'backers': {str(i): list(r) for i, r in backers.items()}})
     if props.has_rails() and rails:

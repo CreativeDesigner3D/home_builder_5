@@ -760,9 +760,12 @@ def _ap_gap_targets(appliance, props, dims, faces, parts):
         return [(x, lo + (hi - lo) * f) for f in _GAP_SPOTS]
 
     out = [target('AP_GAP_T', along_x(xs0, xs1, (zs1 + dim_z) / 2.0)),
-           target('AP_GAP_B', along_x(xs0, xs1, (kick + zs0) / 2.0)),
-           target('AP_GAP_L', along_z(xs0 / 2.0, zs0, zs1)),
-           target('AP_GAP_R', along_z((xs1 + dim_x) / 2.0, zs0, zs1))]
+           target('AP_GAP_B', along_x(xs0, xs1, (kick + zs0) / 2.0))]
+    # With the panel width set, the side gaps are what is left over, not
+    # sizes of their own, so there is nothing to type into there.
+    if getattr(props, 'width_mode', 'GAPS') != 'WIDTH':
+        out += [target('AP_GAP_L', along_z(xs0 / 2.0, zs0, zs1)),
+                target('AP_GAP_R', along_z((xs1 + dim_x) / 2.0, zs0, zs1))]
 
     # Between the columns, and between the faces stacked in each.
     bands = {}

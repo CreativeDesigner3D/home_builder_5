@@ -295,8 +295,17 @@ def _blocks(context, bp):
     # size back.
     out.append(('field', (('run', 0, 'reveal_top'), "Gap Top", 'SIZE')))
     out.append(('field', (('run', 0, 'reveal_bottom'), "Gap Bottom", 'SIZE')))
-    out.append(('field', (('run', 0, 'reveal_left'), "Gap Left", 'SIZE')))
-    out.append(('field', (('run', 0, 'reveal_right'), "Gap Right", 'SIZE')))
+    # The width comes from the side gaps, or is typed and the side gaps
+    # are what is left over (centred), shown so the reveal can be read.
+    out.append(('field', (('run', 0, 'width_mode'), "Width", 'MENU')))
+    if props.width_mode == 'WIDTH':
+        out.append(('field', (('run', 0, 'panel_width'), "Panel Width", 'SIZE')))
+        left, right = ap.side_gaps(props, _cage(bp)[0])
+        out.append(('note', "Gaps left / right: %s / %s"
+                    % (_fmt(left), _fmt(right))))
+    else:
+        out.append(('field', (('run', 0, 'reveal_left'), "Gap Left", 'SIZE')))
+        out.append(('field', (('run', 0, 'reveal_right'), "Gap Right", 'SIZE')))
     out.append(('field', (('run', 0, 'column_gap'), "Between Columns", 'SIZE')))
     out.append(('field', (('run', 0, 'section_gap'), "Between Faces", 'SIZE')))
     # One backer type for the whole run: they are nearly always the
