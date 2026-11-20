@@ -502,6 +502,9 @@ OPTION_PAGES = {
         'scope': 'main',
         'fields': (
             ('label', None, "Countertops"),
+            # Laminate types set the thickness and take the front
+            # overhang off the doors and a trim scribe at wall ends.
+            ('enum', 'countertop_construction', "Type"),
             ('distance', 'countertop_thickness', "Thickness"),
             # Off: base cabinets keep the height from the cabinet sizes.
             # On: Add Countertops stands them at this height less the
@@ -512,6 +515,8 @@ OPTION_PAGES = {
             ('distance', 'countertop_overhang_front', "Front Overhang"),
             ('distance', 'countertop_overhang_sides', "Side Overhang"),
             ('distance', 'countertop_overhang_back', "Back Overhang"),
+            ('distance', 'countertop_trim_scribe', "Trim Scribe",
+             {'when': lambda p: p.countertop_construction != 'STANDARD'}),
             ('enum', 'countertop_material', "Material"),
             ('enum', 'countertop_edge', "Edge"),
             ('enum', 'countertop_splash', "Splash"),

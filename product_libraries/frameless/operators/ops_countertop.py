@@ -16,6 +16,44 @@ def get_cabinet_depth(cab_obj):
     return cage.get_input('Dim Y')
 
 
+# Laminate constructions are sized off the door faces and scribed into
+# walls; a run end this close to the end of its wall is against the wall.
+WALL_END_TOL = units.inch(1.0)
+MAX_FRONT_PROUD = units.inch(2.0)
+
+
+def uses_laminate_rules(props):
+    return getattr(props, 'countertop_construction', 'STANDARD') != 'STANDARD'
+
+
+def front_proud(cabinets):
+    """How far the doors and drawer fronts stand in front of the cabinet
+    boxes - the most across ``cabinets`` (pulls are not fronts)."""
+    proud = 0.0
+    for cab in cabinets:
+        try:
+            dim_y = hb_types.GeoNodeCage(cab).get_input('Dim Y')
+        except Exception:
+            continue
+        to_cab = cab.matrix_world.inverted()
+        for part in cab.children_recursive:
+            if part.type != 'MESH' or not part.get('IS_CABINET_FRONT'):
+                continue
+            for corner in part.bound_box:
+                y = (to_cab @ (part.matrix_world @ Vector(corner))).y
+                proud = max(proud, -y - dim_y)
+    return min(proud, MAX_FRONT_PROUD)
+
+
+def front_overhang(props, cabinets):
+    """The front overhang measured from the cabinet box: for the laminate
+    constructions the set overhang is off the door faces."""
+    overhang = props.countertop_overhang_front
+    if uses_laminate_rules(props):
+        overhang += front_proud(cabinets)
+    return overhang
+
+
 def get_cabinet_x_range(cab_obj):
     """Get the (x_start, x_end) range for a cabinet, handling back-side rotation."""
     cage = hb_types.GeoNodeCage(cab_obj)
@@ -310,7 +348,7 @@ def create_wall_countertop(context, wall_obj, cabinets, has_left_conn, has_right
     main_scene = hb_project.get_main_scene()
     props = main_scene.hb_frameless
 
-    overhang_front = props.countertop_overhang_front
+    overhang_front = front_overhang(props, cabinets)
     overhang_sides = props.countertop_overhang_sides
     overhang_back = props.countertop_overhang_back
     thickness = props.countertop_thickness
@@ -391,6 +429,22 @@ def create_wall_countertop(context, wall_obj, cabinets, has_left_conn, has_right
     # Apply side overhang
     sx = start_x - (overhang_sides if not suppress_left else 0)
     ex = end_x + (overhang_sides if not suppress_right else 0)
+
+    # Laminate tops: an end that runs into a wall goes to the wall plus
+    # the trim scribe, never an overhang into it. Corners and talls keep
+    # their butt joints.
+    if uses_laminate_rules(props) and not is_back_side:
+        scribe = props.countertop_trim_scribe
+        wall_node = hb_types.GeoNodeWall(wall_obj)
+        wall_length = wall_node.get_input('Length')
+        if (not suppress_left and left_corner is None
+                and start_x <= WALL_END_TOL
+                and wall_node.get_connected_wall('left')):
+            sx = -scribe
+        if (not suppress_right and right_corner is None
+                and end_x >= wall_length - WALL_END_TOL
+                and wall_node.get_connected_wall('right')):
+            ex = wall_length + scribe
 
     # Check if we need an L-shape for corner cabinets
     has_l_shape = False
@@ -568,7 +622,7 @@ def create_group_countertop(context, group_obj, cabinets):
     main_scene = hb_project.get_main_scene()
     props = main_scene.hb_frameless
 
-    overhang_front = props.countertop_overhang_front
+    overhang_front = front_overhang(props, cabinets)
     overhang_sides = props.countertop_overhang_sides
     overhang_back = props.countertop_overhang_back
     thickness = props.countertop_thickness
@@ -672,7 +726,7 @@ def create_island_countertops(context, cabinets, appliances):
             continue        # an appliance on its own is not an island
         ct = countertop_common.create_group_countertop(
             context, group,
-            props.countertop_overhang_front,
+            front_overhang(props, group_cabs),
             props.countertop_overhang_sides,
             props.countertop_overhang_back,
             props.countertop_thickness,
@@ -688,7 +742,7 @@ def create_island_countertop(context, cab_obj):
     main_scene = hb_project.get_main_scene()
     props = main_scene.hb_frameless
 
-    overhang_front = props.countertop_overhang_front
+    overhang_front = front_overhang(props, [cab_obj])
     overhang_sides = props.countertop_overhang_sides
     overhang_back = props.countertop_overhang_back
     thickness = props.countertop_thickness

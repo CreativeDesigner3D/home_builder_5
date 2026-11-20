@@ -749,6 +749,28 @@ def set_countertop_thickness(self, new_value, curr_value, is_set):
     return new_value
 
 
+# Countertop constructions with a fixed build: the thickness they come in.
+COUNTERTOP_CONSTRUCTION_THICKNESS = {
+    'SLAB': units.inch(1.25),       # laminate, 1-1/8" core, backer
+    'BUILT_UP': units.inch(1.5),    # 3/4" deck on 3/4" build-up
+}
+
+
+def update_countertop_construction(self, context):
+    """Picking a laminate construction sets the thickness it is built at;
+    the thickness setter carries that to every room."""
+    thickness = COUNTERTOP_CONSTRUCTION_THICKNESS.get(
+        self.countertop_construction)
+    if thickness is None:
+        return
+    main = hb_project.get_main_scene().hb_frameless
+    if main != self and main.countertop_construction != self.countertop_construction:
+        main.countertop_construction = self.countertop_construction
+        return
+    if abs(main.countertop_thickness - thickness) > 1e-7:
+        main.countertop_thickness = thickness
+
+
 def set_counter_height(self, new_value, curr_value, is_set):
     """With the counter height in use, the rooms standing at the old one
     take the new one: base cabinets, fillers and countertops follow."""
@@ -2932,6 +2954,30 @@ class Frameless_Scene_Props(PropertyGroup):
                                              default=units.inch(0.0),
                                              unit='LENGTH')# type: ignore
 
+    countertop_construction: EnumProperty(
+        name="Countertop Type",
+        description="How the countertops are built. The laminate types "
+                    "measure the front overhang off the door faces and "
+                    "run ends against a wall to the wall plus a trim "
+                    "scribe instead of overhanging",
+        items=[
+            ('STANDARD', "Standard", "A slab at the thickness and "
+             "overhangs set below"),
+            ('SLAB', "Laminate Slab", "Laminate on a 1-1/8\" core with "
+             "a backer, 1-1/4\" overall"),
+            ('BUILT_UP', "Built-Up", "3/4\" deck on 3/4\" build-up "
+             "strips, laminated after, 1-1/2\" overall"),
+        ],
+        default='STANDARD',
+        update=update_countertop_construction)  # type: ignore
+
+    countertop_trim_scribe: FloatProperty(
+        name="Trim Scribe",
+        description="Extra length a laminate countertop gets at each end "
+                    "that runs into a wall, for scribing to it",
+        default=units.inch(0.5), min=0.0, unit='LENGTH',
+        precision=4)  # type: ignore
+
     drawer_box_system: EnumProperty(
         name="Drawer Box",
         description="The drawer box system every frameless drawer is "
@@ -3576,6 +3622,7 @@ class Frameless_Scene_Props(PropertyGroup):
         props = main_scene.hb_frameless
 
         col = layout.column(align=True)
+        col.prop(props, 'countertop_construction', text="Type")
         col.prop(props, 'countertop_thickness', text="Thickness")
         row = col.row(align=True)
         row.prop(props, 'use_counter_height', text="Counter Height")
@@ -3585,6 +3632,8 @@ class Frameless_Scene_Props(PropertyGroup):
         col.prop(props, 'countertop_overhang_front', text="Front Overhang")
         col.prop(props, 'countertop_overhang_sides', text="Side Overhang")
         col.prop(props, 'countertop_overhang_back', text="Back Overhang")
+        if props.countertop_construction != 'STANDARD':
+            col.prop(props, 'countertop_trim_scribe', text="Trim Scribe")
         col.separator()
         col.prop(props, 'countertop_material', text="Material")
         col.prop(props, 'countertop_edge', text="Edge")
