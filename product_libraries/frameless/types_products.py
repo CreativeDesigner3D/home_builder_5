@@ -2127,6 +2127,13 @@ L_CROWN_RETURN_DEPTH = inch(4.0)
 RETURN_CLEAT_KEY = 'Return Cleat Depth'
 # What the return cleat was last painted for (1 = in the door plane).
 L_CROWN_FINISH_KEY = 'hb_crown_finish'
+# Extra face board length for scribing: at an end against a wall, and
+# on the top edge to the ceiling. Closures built before these carry
+# none.
+LEFT_TRIM_SCRIBE_KEY = 'Left Trim Scribe'
+RIGHT_TRIM_SCRIBE_KEY = 'Right Trim Scribe'
+CEILING_TRIM_SCRIBE_KEY = 'Ceiling Trim Scribe'
+L_CROWN_TRIM_SCRIBE = inch(0.5)
 
 
 def _solve_l_crown(root, parts, dim_x, dim_y, dim_z):
@@ -2141,10 +2148,23 @@ def _solve_l_crown(root, parts, dim_x, dim_y, dim_z):
     on_doors = bool(root.get('Flush With Doors', False))
     face_y = -dim_y + (0.0 if on_doors else FRONT_THICKNESS)
 
+    # The face board runs long by its trim scribe at an end set to Wall,
+    # and up by the ceiling scribe, so it can be scribed in place.
+    def _scribe(key):
+        return max(float(_prompt(root, key, 0.0)), 0.0)
+    scribe_l = (_scribe(LEFT_TRIM_SCRIBE_KEY)
+                if end_condition(root, LEFT_END_CONDITION_KEY) == END_WALL
+                else 0.0)
+    scribe_r = (_scribe(RIGHT_TRIM_SCRIBE_KEY)
+                if end_condition(root, RIGHT_END_CONDITION_KEY) == END_WALL
+                else 0.0)
+    scribe_top = _scribe(CEILING_TRIM_SCRIBE_KEY)
+
     part = parts.get('CROWN_FRONT')
     if part is not None:
-        _set_part(part, (0.0, face_y, 0.0),
-                  length=dim_x, width=dim_z, thickness=mt)
+        _set_part(part, (-scribe_l, face_y, 0.0),
+                  length=dim_x + scribe_l + scribe_r,
+                  width=dim_z + scribe_top, thickness=mt)
 
     part = parts.get('CROWN_CLEAT')
     if part is not None:
@@ -2193,6 +2213,8 @@ class LCrown(Product):
         self.depth = props.upper_cabinet_depth + FRONT_THICKNESS
         self.return_depth = L_CROWN_RETURN_DEPTH
         self.flush_with_doors = scribe_filler_flush_with_doors()
+        self.left_end = END_FLUSH
+        self.right_end = END_FLUSH
 
     def create(self, name="Ceiling Closure"):
         self.create_product(name)
@@ -2202,6 +2224,13 @@ class LCrown(Product):
         self.add_properties_common()
         self.add_property(RETURN_CLEAT_KEY, 'DISTANCE', self.return_depth)
         self.add_property('Flush With Doors', 'CHECKBOX', self.flush_with_doors)
+        add_end_conditions(self.obj, self.left_end, self.right_end)
+        self.add_property(LEFT_TRIM_SCRIBE_KEY, 'DISTANCE',
+                          L_CROWN_TRIM_SCRIBE)
+        self.add_property(RIGHT_TRIM_SCRIBE_KEY, 'DISTANCE',
+                          L_CROWN_TRIM_SCRIBE)
+        self.add_property(CEILING_TRIM_SCRIBE_KEY, 'DISTANCE',
+                          L_CROWN_TRIM_SCRIBE)
 
         # The face shows on its bottom surface; the cleat only from
         # below, and only where it stands out past the carcass.

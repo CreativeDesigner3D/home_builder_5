@@ -386,6 +386,23 @@ class hb_frameless_OT_product_prompts(bpy.types.Operator):
         row.label(text="Return Cleat Depth:")
         row.prop(obj, '["%s"]' % types_products.RETURN_CLEAT_KEY, text="")
         col.prop(obj, '["Flush With Doors"]', text="Flush With Doors")
+        tp = types_products
+        for side, cond_key, scribe_key in (
+                ("Left", tp.LEFT_END_CONDITION_KEY, tp.LEFT_TRIM_SCRIBE_KEY),
+                ("Right", tp.RIGHT_END_CONDITION_KEY,
+                 tp.RIGHT_TRIM_SCRIBE_KEY)):
+            if cond_key not in obj:
+                continue        # a closure built before end conditions
+            row = col.row(align=True)
+            row.label(text=side + " End:")
+            row.prop(obj, '["%s"]' % cond_key, text="")
+            if (scribe_key in obj and tp.end_condition(obj, cond_key)
+                    == tp.END_WALL):
+                row.prop(obj, '["%s"]' % scribe_key, text="Scribe")
+        if tp.CEILING_TRIM_SCRIBE_KEY in obj:
+            row = col.row(align=True)
+            row.label(text="Ceiling Trim Scribe:")
+            row.prop(obj, '["%s"]' % tp.CEILING_TRIM_SCRIBE_KEY, text="")
 
     def draw_voided_corner(self, layout, obj):
         box = layout.box()

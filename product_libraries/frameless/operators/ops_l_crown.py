@@ -31,6 +31,7 @@ MIN_PIECE = units.inch(12.0)        # shortest piece a long run is cut into
 MIN_GAP = units.inch(0.25)          # less than this is not worth closing
 MAX_GAP = units.inch(24.0)          # more than this is not a crown's job
 FILLER_TOP_TOL = units.inch(1.0)
+WALL_END_TOL = units.inch(1.0)      # a span end this near a wall end meets it
 
 MEMBERS_KEY = 'L_CROWN_MEMBERS'
 
@@ -152,6 +153,29 @@ def end_fillers(context, frame, members):
     return left, right
 
 
+def wall_ends(parent, frame, x0, x1, fillers):
+    """(left, right): whether each end of a span runs into a wall - a
+    wall scribe filler stands there, or the span reaches the end of its
+    wall where another wall joins it."""
+    left, right = fillers[0] is not None, fillers[1] is not None
+    if parent is None or not parent.get('IS_WALL_BP'):
+        return left, right
+    try:
+        wall = hb_types.GeoNodeWall(parent)
+        length = wall.get_input('Length')
+        to_wall = parent.matrix_world.inverted() @ frame
+        a = (to_wall @ Vector((x0, 0.0, 0.0))).x
+        b = (to_wall @ Vector((x1, 0.0, 0.0))).x
+        lo = min(a, b) <= WALL_END_TOL and wall.get_connected_wall('left')
+        hi = (max(a, b) >= length - WALL_END_TOL
+              and wall.get_connected_wall('right'))
+    except Exception:
+        return left, right
+    if a > b:           # a run facing away from the wall's own x
+        lo, hi = hi, lo
+    return left or bool(lo), right or bool(hi)
+
+
 def ceiling_gap(context, frame, members):
     """How far the top of the run stands below the ceiling: the wall's
     own height for a run on a wall, the room's ceiling otherwise."""
@@ -183,6 +207,8 @@ def create_l_crowns(context, frame, members):
     reach = [hb_types.GeoNodeCage(f).get_input('Dim X') if f is not None
              else 0.0 for f in fillers]
     spans = piece_spans(first.x0 - reach[0], last.x1 + reach[1])
+    at_wall = wall_ends(first.obj.parent, frame, spans[0][0], spans[-1][1],
+                        fillers)
 
     # On a wall or in a cabinet group the crown belongs to that; a lone
     # cabinet's crown goes with it.
@@ -193,6 +219,11 @@ def create_l_crowns(context, frame, members):
         crown.width = end - start
         crown.depth = first.depth + types_products.FRONT_THICKNESS
         crown.height = height
+        wall = types_products.END_WALL
+        flush = types_products.END_FLUSH
+        crown.left_end = wall if at_wall[0] and start == spans[0][0] else flush
+        crown.right_end = (wall if at_wall[1] and end == spans[-1][1]
+                           else flush)
         crown.create('Ceiling Closure')
         obj = crown.obj
         over = [m for m in members
