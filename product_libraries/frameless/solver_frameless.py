@@ -541,8 +541,11 @@ class _Prompts:
                                max(float(prompt(root, KICK_END_INSET_KEY, 0.0)), 0.0))
         # A sink base keeps the butt back.
         self.tongue = 0.0 if self.btc == TOP_SINK else back_tongue_length()
-        # Only a captured back stands in; a butt back stays flush.
-        self.back_inset = back_inset() if self.tongue > 0.0 else 0.0
+        # A captured back stands in, and so does a sink base's butt back;
+        # any other butt back stays flush.
+        self.back_inset = (back_inset()
+                           if self.tongue > 0.0 or self.btc == TOP_SINK
+                           else 0.0)
         # The boards' own thicknesses (left side, right side, bottom,
         # top, back): Material Thickness until board_thicknesses() finds
         # one cut from an exterior material of another thickness.
