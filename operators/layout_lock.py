@@ -43,6 +43,20 @@ def content_instancers(scene):
             if _is_instancer(obj) and not obj.get(ANNOTATION_TAG)]
 
 
+# Wall drawings a page draws as plain meshes rather than instancing the
+# model: the plan's wall outline, and the return-wall fills beside an
+# elevation. They read as the model, so the lock holds them too.
+WALL_DRAWING_TAGS = ("IS_2D_PLAN_MESH", "IS_RETURN_WALL_FILL")
+
+
+def wall_drawings(scene):
+    if scene is None:
+        return []
+    return [obj for obj in scene.objects
+            if obj.type == "MESH"
+            and any(obj.get(tag) for tag in WALL_DRAWING_TAGS)]
+
+
 def _release_annotation_instancers(scene):
     """Make annotation instancers selectable again.
 
@@ -73,14 +87,14 @@ def apply_lock(scene):
     Idempotent, and safe to call on any scene -- a non-layout scene has no
     instancers to touch. Call it after a page rebuild: the fresh
     instancers come back selectable otherwise. Returns the number of
-    instancers set.
+    objects set (instancers and wall drawings).
     """
     if not is_layout_view(scene):
         return 0
     locked = is_locked(scene)
     _release_annotation_instancers(scene)
     touched = 0
-    for obj in content_instancers(scene):
+    for obj in content_instancers(scene) + wall_drawings(scene):
         if locked:
             # Deselect BEFORE flipping the flag: an object left selected
             # keeps its outline and rides along into the next operator,
