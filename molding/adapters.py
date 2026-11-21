@@ -222,6 +222,26 @@ def collect_leg_runs(scene, blockers):
 
 _RECESSED_FF_KICKS = {'NOTCH', 'LOOSE', 'FLOATING', 'BUN_FEET'}
 
+# A toe kick this short is no kick: the bottom rail runs to the floor.
+_KICKLESS_EPS = 0.0008
+
+
+def _kickless_front(cage, ffc):
+    """True when a recessed-kick cabinet is built with its toe kick
+    height zeroed (a wide bottom rail standing on the floor) and no bay
+    keeps a kick of its own: the front is flush to the floor, so the
+    base molding mounts on it exactly as on a FLUSH kick."""
+    if ffc.toe_kick_height > _KICKLESS_EPS:
+        return False
+    for child in _own_parts(cage):
+        if not child.get('IS_FACE_FRAME_BAY_CAGE'):
+            continue
+        bp = getattr(child, 'face_frame_bay', None)
+        if (bp is not None and bp.unlock_kick_height
+                and bp.kick_height > _KICKLESS_EPS):
+            return False
+    return True
+
 # Cages that are a cabinet in their own right rather than a part of the
 # one above them.
 _NESTED_CAGE_KEYS = ('IS_FACE_FRAME_CABINET_CAGE',
@@ -593,7 +613,8 @@ def build_facts(scene, members):
                     'leg': True,
                     'setback': leg.toe_kick_setback if has_kick else 0.0,
                 }
-            elif ffc.toe_kick_type not in _RECESSED_FF_KICKS:
+            elif (ffc.toe_kick_type not in _RECESSED_FF_KICKS
+                  or _kickless_front(obj, ffc)):
                 kick = {'skip': False, 'setback': 0.0}
             else:
                 kick = {
