@@ -1585,8 +1585,10 @@ class HB_UL_face_frame_drawer_items(bpy.types.UIList):
     def draw_item(self, context, layout, data, item, icon, active_data,
                   active_propname):
         split = layout.split(factor=0.75)
+        short = types_face_frame.drawer_short_inserts(data.id_data)
+        index = list(getattr(data, propname)).index(item) if short else -1
         split.label(text=item.accessory_label or item.accessory_code,
-                    icon='SNAP_VERTEX')
+                    icon='ERROR' if index in short else 'SNAP_VERTEX')
         qty = getattr(item, 'accessory_qty', 1)
         split.label(text=("x%d" % qty) if qty > 1 else "")
 
@@ -1824,6 +1826,59 @@ class hb_face_frame_OT_drawer_add_accessory(bpy.types.Operator):
         return {'FINISHED'}
 
 
+def _drawer_divider_code():
+    """Catalog code of the plain removable drawer divider, or ''."""
+    for entry in accessory_registry.get_items('drawer_accessory') or ():
+        kind, _params = types_face_frame.parse_render_hint(
+            (entry.get('render') or '').upper())
+        if kind == 'DIVIDER' and entry.get('code'):
+            return entry['code']
+    return ''
+
+
+class hb_face_frame_OT_drawer_add_divider_behind(bpy.types.Operator):
+    """Close off the space behind an insert that is shorter than the
+    drawer box with a removable divider, so it can't slide back."""
+    bl_idname = "hb_face_frame.drawer_add_divider_behind"
+    bl_label = "Add Divider Behind"
+    bl_description = ("Add a removable divider behind this insert so it "
+                      "can't slide around in the deeper drawer box")
+    bl_options = {'UNDO', 'INTERNAL'}
+
+    opening_name: bpy.props.StringProperty(default="", options={'HIDDEN'})  # type: ignore
+    item_index: bpy.props.IntProperty(default=-1, options={'HIDDEN'})  # type: ignore
+
+    def execute(self, context):
+        opening = bpy.data.objects.get(self.opening_name)
+        if opening is None:
+            return {'CANCELLED'}
+        info = types_face_frame.drawer_short_inserts(opening).get(
+            self.item_index)
+        code = _drawer_divider_code()
+        if info is None or not code:
+            self.report({'WARNING'}, "No removable divider to add")
+            return {'CANCELLED'}
+        entry = accessory_registry.find(code) or {}
+        render = (entry.get('render') or '').upper()
+        _kind, params = types_face_frame.parse_render_hint(render)
+        th = (inch(params.get('TH', 0.0))
+              or types_face_frame.FaceFrameCabinet.DRAWER_DIVIDER_TH)
+        props = opening.face_frame_opening
+        item = props.interior_items.add()
+        item.kind = 'ACCESSORY'
+        item.accessory_label = entry.get('name', code)
+        item.accessory_code = code
+        item.accessory_render = render
+        item.accessory_qty = 1
+        item.divider_lengthwise = False
+        item.divider_offset = info[0] + th / 2.0
+        props.interior_items_index = len(props.interior_items) - 1
+        root = types_face_frame.find_cabinet_root(opening)
+        if root is not None:
+            types_face_frame.recalculate_face_frame_cabinet(root)
+        return {'FINISHED'}
+
+
 class hb_face_frame_OT_drawer_remove_accessory(bpy.types.Operator):
     """Remove the selected accessory from this drawer."""
     bl_idname = "hb_face_frame.drawer_remove_accessory"
@@ -2011,6 +2066,19 @@ class hb_face_frame_OT_drawer_interior(bpy.types.Operator):
         from .. import ui_face_frame
         box = layout.box()
         box.label(text=item.accessory_label or item.accessory_code)
+        info = types_face_frame.drawer_short_inserts(opening).get(idx)
+        if info is not None:
+            warn = box.box()
+            warn.label(text="Insert is %.2f\" deep, the drawer box %.2f\""
+                       % (meter_to_inch(info[1]), meter_to_inch(info[2])),
+                       icon='ERROR')
+            warn.label(text="It can slide back: add a removable divider "
+                            "behind it")
+            if _drawer_divider_code():
+                op = warn.operator("hb_face_frame.drawer_add_divider_behind",
+                                   icon='ADD')
+                op.opening_name = self.opening_name
+                op.item_index = idx
         box.prop(item, 'accessory_qty', text="Quantity")
         ui_face_frame.draw_drawer_insert_settings(box, item)
 
@@ -8666,6 +8734,7 @@ classes = (
     HB_UL_face_frame_drawer_catalog,
     hb_face_frame_OT_drawer_add_accessory,
     hb_face_frame_OT_drawer_remove_accessory,
+    hb_face_frame_OT_drawer_add_divider_behind,
     hb_face_frame_OT_set_drawer_box_construction,
     hb_face_frame_OT_set_drawer_slides,
     hb_face_frame_OT_drawer_interior,

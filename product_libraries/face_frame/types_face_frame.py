@@ -962,6 +962,28 @@ def parse_render_hint(hint):
     return parts[0].strip().upper(), params
 
 
+def drawer_short_inserts(opening_obj):
+    """{item index: (back, depth, box depth)} for the inserts in an
+    opening's drawer box that stop short of its back with nothing
+    behind them (see _flag_short_inserts), or {}."""
+    if opening_obj is None:
+        return {}
+    for obj in opening_obj.children_recursive:
+        if obj.get('hb_part_role') != PART_ROLE_DRAWER_BOX:
+            continue
+        data = obj.get('HB_SHORT_INSERTS')
+        if not data:
+            return {}
+        out = {}
+        for key, val in data.items():
+            try:
+                out[int(key)] = tuple(float(v) for v in val)
+            except (TypeError, ValueError):
+                continue
+        return out
+    return {}
+
+
 def render_hint_kind(hint):
     """The insert kind a render hint resolves to, or '' when the hint
     is empty or names something this build can't model. UI uses this to
@@ -15447,6 +15469,9 @@ class FaceFrameCabinet(GeoNodeCage):
     # Removable divider stock. A render hint may name its own
     # thickness (TH) when a product is cut from something else.
     DRAWER_DIVIDER_TH = inch(0.375)
+    # An insert that stops this far short of the box back can slide
+    # around in it: flagged so a removable divider can close it off.
+    DRAWER_SHORT_INSERT_GAP = inch(1.0)
     # Insert stock: tray walls and partitions, and the thinner panel
     # the bottoms, ribs and sloped shelves are made from.
     INSERT_WALL_TH = inch(0.375)
@@ -15567,6 +15592,7 @@ class FaceFrameCabinet(GeoNodeCage):
             return
         fill_w = self._drawer_insert_fill_width(inner, items)
         cursor = inner.x0
+        placed = []
         for index, item in indexed:
             # Stamped on every part this item builds (DRAWER_ITEM_INDEX).
             self._drawer_item_index = index
@@ -15593,9 +15619,37 @@ class FaceFrameCabinet(GeoNodeCage):
                 if rect is None:
                     break
                 builder(box_obj, rect, item, params)
+                placed.append((index, rect))
                 cursor = rect.x1
         self._emit_drawer_dividers(box_obj, inner)
         self._drawer_item_index = -1
+        self._flag_short_inserts(box_obj, inner, placed)
+
+    def _flag_short_inserts(self, box_obj, inner, placed):
+        """Record on the box every insert that stops well short of the
+        box back with no side-to-side divider closing off the space
+        behind it (HB_SHORT_INSERTS: item index -> back of the insert,
+        its depth and the box's inside depth, all from the inside
+        front). The drawer editor warns on these."""
+        short = {}
+        for index, rect in placed:
+            if inner.y1 - rect.y1 <= self.DRAWER_SHORT_INSERT_GAP:
+                continue
+            closed = any(
+                not run.lengthwise and any(
+                    rect.y1 - run.th <= c <= inner.y1 for c in run.centers)
+                for run in inner.divider_runs)
+            if closed:
+                continue
+            back = rect.y1 - inner.y0
+            prev = short.get(str(index))
+            if prev is None or back < prev[0]:
+                short[str(index)] = [back, rect.y1 - rect.y0,
+                                     inner.y1 - inner.y0]
+        if short:
+            box_obj['HB_SHORT_INSERTS'] = short
+        elif 'HB_SHORT_INSERTS' in box_obj:
+            del box_obj['HB_SHORT_INSERTS']
 
     @staticmethod
     def _drawer_insert_fill_width(inner, items):
