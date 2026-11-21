@@ -989,6 +989,56 @@ def raw_world_matrix(obj, root):
     return root.matrix_world @ obj.matrix_parent_inverse @ m
 
 
+# An appliance panel face on an elevation draws its outline solid and its
+# stiles / rails as hidden lines, so a panel beside busy cabinets still
+# reads without its frame crowding the opening dimensions. The face goes
+# to the hidden-line collection and a flat outline slab -- a stand-in
+# with the face's outline, just in front of it -- goes to the solid one:
+# the slab draws the outline and hides the frame behind it, which the
+# hidden-line pass then draws dashed. Elevations only; 3D, plan and
+# multi-view cells draw the panel as it is.
+ELEVATION_OUTLINE_TAG = 'HB_ELEVATION_OUTLINE_OF'
+ELEVATION_OUTLINE_GAP = units.inch(1 / 16)
+
+
+def appliance_panel_outline(front):
+    """The outline slab for a 5-piece appliance panel face (built or
+    refreshed from where the face is now), or None when the face is not
+    one -- a slab face has no frame to show as hidden lines. Kept out of
+    every scene: only the elevation collections link it."""
+    if (front is None or not front.get('IS_APPLIANCE_PANEL_FRONT')
+            or 'HB_DOOR_FRAME' not in front or front.get('HB_STATIC_SLAB')
+            or front.parent is None):
+        return None
+    app = front.parent
+    inv = app.matrix_world.inverted()
+    pts = [inv @ (front.matrix_world @ Vector(c)) for c in front.bound_box]
+    x0, x1 = min(p.x for p in pts), max(p.x for p in pts)
+    z0, z1 = min(p.z for p in pts), max(p.z for p in pts)
+    if x1 - x0 < 1e-5 or z1 - z0 < 1e-5:
+        return None
+    # The appliance's front is its -Y side.
+    y1 = min(p.y for p in pts) - ELEVATION_OUTLINE_GAP / 2
+    y0 = y1 - ELEVATION_OUTLINE_GAP / 2
+    name = front.name + " Elevation Outline"
+    obj = bpy.data.objects.get(name)
+    if obj is None or obj.type != 'MESH':
+        obj = bpy.data.objects.new(name, bpy.data.meshes.new(name))
+    mesh = obj.data
+    mesh.clear_geometry()
+    verts = [(x, y, z) for x in (x0, x1) for y in (y0, y1) for z in (z0, z1)]
+    faces = [(0, 1, 3, 2), (4, 6, 7, 5), (0, 4, 5, 1),
+             (2, 3, 7, 6), (0, 2, 6, 4), (1, 5, 7, 3)]
+    mesh.from_pydata(verts, [], faces)
+    mesh.update()
+    obj.matrix_basis = app.matrix_world.copy()
+    obj[ELEVATION_OUTLINE_TAG] = front.name
+    for key in ('STYLE_NAME', 'CABINET_STYLE_NAME'):
+        if front.get(key) is not None:
+            obj[key] = front[key]
+    return obj
+
+
 def is_cage_object(obj) -> bool:
     """True if obj is a cage container that should be excluded from layout views."""
     return bool(
@@ -1929,10 +1979,29 @@ class ElevationView(LayoutView):
                 # Non-cabinet child (e.g. applied end panels, other geometry).
                 # Its own children come along (a loose door part's pull).
                 for obj in [child] + list(child.children_recursive):
-                    if self._is_cage(obj) or self._is_helper(obj):
+                    outline = appliance_panel_outline(obj)
+                    if outline is not None:
+                        wall_dashed = self._wall_dashed(
+                            wall_obj, view_name, dashed_freestyle)
+                        if obj.name not in wall_dashed.objects:
+                            wall_dashed.objects.link(obj)
+                        obj = outline
+                    elif self._is_cage(obj) or self._is_helper(obj):
                         continue
                     if obj.name not in wall_solid.objects:
                         wall_solid.objects.link(obj)
+
+    def _wall_dashed(self, wall_obj, view_name, dashed_freestyle):
+        """The wall's own hidden-line collection and its instance, made the
+        first time something standing on the wall needs one."""
+        name = f"{view_name}_{wall_obj.name}_Dashed"
+        coll = bpy.data.collections.get(name)
+        if coll is None:
+            coll = bpy.data.collections.new(name)
+        if not any(getattr(o, 'instance_collection', None) is coll
+                   for o in self.scene.objects):
+            self._create_collection_instance(coll, name, dashed_freestyle)
+        return coll
     
     def _create_collection_instance(self, collection: bpy.types.Collection, name: str, 
                                      freestyle_collection: bpy.types.Collection) -> bpy.types.Object:
@@ -1958,7 +2027,13 @@ class ElevationView(LayoutView):
         Interior parts (frameless or face frame) and closet parts behind a
         door go to dashed, all other visible geometry goes to solid. Cages and helpers are skipped but their children are processed.
         """
-        if not self._is_cage(obj) and not self._is_helper(obj):
+        outline = appliance_panel_outline(obj)
+        if outline is not None:
+            if obj.name not in dashed_col.objects:
+                dashed_col.objects.link(obj)
+            if outline.name not in solid_col.objects:
+                solid_col.objects.link(outline)
+        elif not self._is_cage(obj) and not self._is_helper(obj):
             if hb_utils.is_hidden_interior_part(obj):
                 if obj.name not in dashed_col.objects:
                     dashed_col.objects.link(obj)
