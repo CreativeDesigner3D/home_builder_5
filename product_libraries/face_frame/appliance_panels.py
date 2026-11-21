@@ -1785,6 +1785,15 @@ def rebuild(appliance_obj):
     in_place = (appliance_obj.get('APPLIANCE_PANEL_STRUCTURE') == key
                 and len(fronts) == len(order))
     if not in_place:
+        # A face's own frame (Set Door Frame / Modify Door) is kept on the
+        # face itself, which a restructure replaces: carry it to the new
+        # face of the same section.
+        frames = {}
+        for child in appliance_obj.children:
+            if child.get(TAG_FRONT):
+                frames[child.get('AP_SECTION_INDEX', -1)] = {
+                    k: child[k] for k in child.keys()
+                    if k.startswith('HB_FRAME_')}
         for child in list(appliance_obj.children):
             if child.get(TAG_FRONT) or child.get(TAG_BACKER):
                 for sub in list(child.children):
@@ -1796,6 +1805,8 @@ def rebuild(appliance_obj):
                             'AP_PANEL_INDEX', k, FACE_THICKNESS)
             obj['AP_SECTION_INDEX'] = i
             obj['hb_part_role'] = front_role(props.sections[i])
+            for k, v in frames.get(i, {}).items():
+                obj[k] = v
             fronts.append(obj)
         for i, (bx0, bx1, bz0, bz1, t) in backers.items():
             b = _new_part(appliance_obj, 'Appliance Panel Backer', TAG_BACKER,

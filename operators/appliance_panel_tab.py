@@ -274,6 +274,10 @@ def _blocks(context, bp):
     if sec.kind == 'DOOR':
         out.append(('field', (('sec', index, 'hinge'), "Hinge", 'MENU')))
     out.append(('face_cmds', index))
+    frame = _face_frame(bp, index)
+    if frame is not None:
+        out.append(('note', frame))
+        out.append(('frame_cmd', index))
 
     if sec.column >= 0 and len(props.columns) > 1:
         out.append(('gap', None))
@@ -354,6 +358,33 @@ def _blocks(context, bp):
     return out
 
 
+def face_front(bp, index):
+    """The built face of section `index`, or None."""
+    for child in bp.children:
+        if child.get(ap.TAG_FRONT) and child.get('AP_SECTION_INDEX') == index:
+            return child
+    return None
+
+
+def _face_frame(bp, index):
+    """The face's stile and rail sizes in words, when it is a 5-piece
+    front -- the same frame a cabinet door has, edited the same way."""
+    from ..product_libraries.face_frame.operators import ops_part_commands
+    front = face_front(bp, index)
+    if not ops_part_commands.has_door_style_modifier(front):
+        return None
+    vals = ops_part_commands._front_frame_values(front)
+    if not vals:
+        return None
+    store = ops_part_commands._frame_store(front)
+    text = "Stiles %s / %s   Rails %s / %s" % (
+        _fmt(vals['left']), _fmt(vals['right']),
+        _fmt(vals['top']), _fmt(vals['bottom']))
+    if store.get('HB_FRAME_FRAME_LOCKED'):
+        text += "  (modified)"
+    return text
+
+
 def _has_rail_above(props, index):
     """Whether a between rail sits over this face: it stacks in a column
     with another face above it."""
@@ -399,6 +430,8 @@ def _block_h(block, s):
         return (BTN_H + ROW_GAP) * 2 * s
     if kind == 'run_cmds':
         return (BTN_H + ROW_GAP) * 2 * s
+    if kind == 'frame_cmd':
+        return (BTN_H + ROW_GAP) * s
     if kind == 'grid':
         rows = _grid_rows(len(block[1]))
         return rows * (GRID_CELL_H + GRID_PAD) * s + ROW_GAP * s
@@ -535,6 +568,9 @@ def _block_entries(context, bp, block, x0, top, w, s):
         return _face_cmd_entries(props, payload, x0, top, w, s)
     if kind == 'run_cmds':
         return _run_cmd_entries(props, x0, top, w, s)
+    if kind == 'frame_cmd':
+        return [('btn', (x0, top - BTN_H * s, w, BTN_H * s), 'DOOR_FRAME',
+                 "Door Frame...", True, payload)]
     if kind == 'rails':
         return _rail_entries(props, x0, top, w, s)
     return []
@@ -1273,6 +1309,15 @@ class home_builder_OT_appliance_panel_edit(bpy.types.Operator):
             owner, prop = _resolve(bp, _key_from_str(self.value))
             if owner is not None and prop in AUTO_GAP_PROPS:
                 setattr(owner, prop, -1.0)
+        elif act == 'DOOR_FRAME':
+            # The face is a door like any other: its stiles and rails
+            # open in the cabinet door's Set Door Frame dialog.
+            front = face_front(bp, index)
+            if front is None:
+                return {'CANCELLED'}
+            with context.temp_override(active_object=front, object=front):
+                bpy.ops.hb_face_frame.set_door_frame('INVOKE_DEFAULT')
+            return {'FINISHED'}
         elif act == 'HOLD':
             self._toggle_hold(bp)
         elif act == 'SET':
