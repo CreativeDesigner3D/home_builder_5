@@ -484,6 +484,66 @@ def _front_plane(appliance_obj, dim_y):
     return -dim_y
 
 
+def _ff_neighbour_front(appliance_obj, dim_y):
+    """(frame_front_y, door_thickness, inset_amount) of the face frame base
+    cabinet standing beside a standalone appliance, in the appliance's own
+    space; None when no floor cabinet touches either end on the same wall."""
+    parent = appliance_obj.parent
+    if parent is None:
+        return None
+    x_lo = appliance_obj.location.x
+    x_hi = x_lo + _cage_dims(appliance_obj)[0]
+    tol = _I(1.0)
+    best = None
+    for sib in parent.children:
+        if sib is appliance_obj or not sib.get('IS_FACE_FRAME_CABINET_CAGE'):
+            continue
+        if abs(sib.location.z - appliance_obj.location.z) > tol:
+            continue
+        if abs(sib.rotation_euler.z - appliance_obj.rotation_euler.z) > 1e-3:
+            continue
+        cage = hb_types.GeoNodeCage(sib)
+        sx0 = sib.location.x
+        sx1 = sx0 + (cage.get_input('Dim X') or 0.0)
+        gap = min(abs(sx1 - x_lo), abs(sx0 - x_hi))
+        if gap > tol or (best is not None and gap >= best[0]):
+            continue
+        front = (sib.location.y - (cage.get_input('Dim Y') or 0.0)
+                 - appliance_obj.location.y)
+        cp = getattr(sib, 'face_frame_cabinet', None)
+        if cp is None:
+            continue
+        best = (gap, front, cp.door_thickness, cp.default_door_inset_amount)
+    return best[1:] if best else None
+
+
+def ff_door_face(appliance_obj, dim_y):
+    """Local Y of the door faces a standalone face frame appliance's panels
+    line up with: the neighbouring base cabinet's doors (overlay doors
+    stand a gap and a door off the frame, inset doors finish flush with
+    it), on that cabinet's frame -- or the appliance front when the
+    appliance is the deeper of the two, so a panel never sinks into it.
+    With no cabinet beside it, the style's overlay on the appliance
+    front. None for frameless and housed appliances (they keep their
+    own rule)."""
+    if _is_frameless(appliance_obj) or _is_housed(appliance_obj):
+        return None
+    from . import solver_face_frame as solver
+    gap = solver.DOOR_TO_FRAME_GAP
+    nb = _ff_neighbour_front(appliance_obj, dim_y)
+    if nb is not None:
+        front, door_t, inset = nb
+        front = min(front, -dim_y)
+    else:
+        front, door_t = -dim_y, FACE_THICKNESS
+        cs = face_frame_style(appliance_obj)
+        kind = getattr(cs, 'door_overlay_type', '') if cs is not None else ''
+        full = door_t + gap
+        inset = (full if kind == 'FULL_INSET'
+                 else full / 2.0 if kind == 'PARTIAL_INSET' else 0.0)
+    return front - gap - door_t + inset
+
+
 def _flush_run(appliance_obj, dim_x, dim_z):
     """(x_lo, x_hi, z_lo, z_hi) of the panel run in the appliance's own
     space. The appliance's front, except for a unit set flush in a
@@ -1715,6 +1775,11 @@ def rebuild(appliance_obj):
                  for (a, b, c, d) in rails]
     order = sorted(faces)                       # section index order
     plane = _front_plane(appliance_obj, dim_y)
+    # Face frame: the run moves as a whole so the panel faces land on the
+    # door-face plane (rails keep their place relative to the panels).
+    door_face = ff_door_face(appliance_obj, dim_y)
+    if door_face is not None:
+        plane = door_face + FACE_THICKNESS
     key = _structure_key(props, backers)
     fronts = _parts(appliance_obj, TAG_FRONT, 'AP_PANEL_INDEX')
     in_place = (appliance_obj.get('APPLIANCE_PANEL_STRUCTURE') == key
@@ -1745,7 +1810,13 @@ def rebuild(appliance_obj):
         sec = props.sections[i]
         x0, x1, z0, z1 = faces[i]
         b = backers.get(i)
-        y = plane - (b[4] if b else 0.0)
+        if door_face is not None:
+            # The face on the door plane, the backer behind it.
+            y = door_face + sec.face_thickness
+            back_plane = y + (b[4] if b else 0.0)
+        else:
+            y = plane - (b[4] if b else 0.0)
+            back_plane = plane
         obj = fronts[k]
         obj['AP_SECTION_INDEX'] = i
         obj['AP_SECTION_LABEL'] = sec.label
@@ -1758,7 +1829,7 @@ def rebuild(appliance_obj):
             bobj = backer_objs.get(i)
             if bobj is not None:
                 bx0, bx1, bz0, bz1, t = b
-                _place(bobj, bx0, bx1, bz0, bz1, plane, t)
+                _place(bobj, bx0, bx1, bz0, bz1, back_plane, t)
                 _finish_part(bobj)
                 if bobj.get('APPLIANCE_PANEL_BACKER_TYPE') == 'C':
                     _rout_flange(bobj, bx1 - bx0, bz1 - bz0, t,
