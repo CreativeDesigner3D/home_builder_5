@@ -6953,6 +6953,107 @@ def _shelf_standards_for(item, rect, cage_dim_y, setback):
     return [desc] if desc is not None else []
 
 
+# Door-mounted racks: the rack rides the back of the door through the
+# face frame opening, so the shelves behind it give way by its depth
+# plus this much, letting the door close.
+DOOR_RACK_SHELF_CLEARANCE = inch(0.25)
+DOOR_RACK_DEFAULT_DEPTH = 3.75          # inches, when the entry names none
+
+
+def door_rack_shelf_cut(opening_ff, region_props, rect, allow_notch=True):
+    """How the shelves behind an opening's door-mounted racks give way,
+    or None when there is no rack on a door.
+
+    Returns {'depth': distance from the cavity front the shelves must
+    clear, 'side': 'ALL' | 'LEFT' | 'RIGHT', 'notch_x': opening-local X
+    of the middle of the opening, where a notch ends or starts}. One
+    door, or a rack on every door of a pair: 'ALL', the whole shelf is
+    made shallower. One rack behind a pair of doors: the shelves are
+    notched behind that door only (when allow_notch, else they are made
+    shallower too)."""
+    if opening_ff is None or getattr(opening_ff, 'front_type', '') != 'DOOR':
+        return None
+    seen = set()
+    sources = []
+    for props in (opening_ff, region_props):
+        if props is None:
+            continue
+        ptr = props.as_pointer()
+        if ptr in seen:
+            continue
+        seen.add(ptr)
+        sources.append(props)
+    hinge = getattr(opening_ff, 'hinge_side', 'LEFT')
+    doors = 2 if hinge == 'DOUBLE' else 1
+    depth = 0.0
+    sides = set()
+    for props in sources:
+        for item in getattr(props, 'interior_items', ()):
+            if item.kind != 'ACCESSORY':
+                continue
+            spec = accessory_models.model_for(
+                getattr(item, 'accessory_code', ''))
+            if spec is None or spec[0] != 'door_rack':
+                continue
+            params = spec[1]
+            try:
+                rd = float(params.get('rack_depth', DOOR_RACK_DEFAULT_DEPTH))
+            except (TypeError, ValueError):
+                rd = DOOR_RACK_DEFAULT_DEPTH
+            depth = max(depth, inch(rd))
+            qty = max(int(getattr(item, 'accessory_qty', 1) or 1), 1)
+            if doors == 1 or qty >= doors:
+                sides.add('ALL')
+            else:
+                sides.add(getattr(item, 'accessory_door', 'LEFT'))
+    if depth <= 0.0:
+        return None
+    depth += DOOR_RACK_SHELF_CLEARANCE
+    if 'ALL' in sides or len(sides) > 1 or not allow_notch:
+        side = 'ALL'
+    else:
+        side = next(iter(sides))
+    hx0 = max(0.0, rect.get('reveal_left', 0.0))
+    hx1 = rect['cage_dim_x'] - max(0.0, rect.get('reveal_right', 0.0))
+    return {'depth': depth, 'side': side, 'notch_x': (hx0 + hx1) / 2.0}
+
+
+def _notch_shelves_for_rack(descs, rack):
+    """Notch each shelf in ``descs`` behind the door that carries the
+    rack: the front corner of the shelf on that side is cut back to the
+    rack's depth, out to the middle of the opening. Nosings stop at the
+    notch."""
+    side = rack['side']
+    mid = rack['notch_x']
+    for d in descs:
+        kind = d.get('kind')
+        if kind == 'SHELF_NOSING':
+            x, y, z = d['position']
+            if side == 'LEFT':
+                cut = max(0.0, min(mid - x, d['length']))
+                d['position'] = (x + cut, y, z)
+                d['length'] = d['length'] - cut
+            else:
+                d['length'] = max(0.0, min(d['length'], mid - x))
+            continue
+        if kind != 'ADJUSTABLE_SHELF':
+            continue
+        x, y, _z = d['position']
+        length, width, _t = d['dims']
+        notch_y = rack['depth'] - y
+        if notch_y <= 0.0:
+            continue
+        if side == 'LEFT':
+            notch_x = mid - x
+        else:
+            notch_x = x + length - mid
+        notch_x = max(0.0, min(notch_x, length))
+        if notch_x <= 0.0:
+            continue
+        d['notch'] = {'side': side, 'x': notch_x,
+                      'y': min(notch_y, width)}
+
+
 def interior_item_descriptors(layout, rect, cab_props, opening_props,
                               opening_ff=None):
     """Flatten one opening's interior_items collection into a list of
@@ -7025,22 +7126,37 @@ def interior_item_descriptors(layout, rect, cab_props, opening_props,
                 d['position'] = (x + item_shift, y, z)
         return descs
 
+    # Racks on the back of the doors swing into the cavity: the shelves
+    # behind them stop short (one door, or a rack on every door) or are
+    # notched around the rack (one rack behind a pair of doors).
+    in_region = (opening_ff is not None
+                 and opening_ff.as_pointer() != opening_props.as_pointer())
+    rack = door_rack_shelf_cut(opening_ff or opening_props, opening_props,
+                               shelf_rect, allow_notch=not in_region)
+    rack_setback = rack['depth'] if rack and rack['side'] == 'ALL' else 0.0
+
+    def _rack_notched(descs):
+        if rack and rack['side'] != 'ALL':
+            _notch_shelves_for_rack(descs, rack)
+        return descs
+
     out = []
     for item_index, item in enumerate(opening_props.interior_items):
         if item.kind == 'ADJUSTABLE_SHELF':
             # getattr: tolerate item collections created before the
             # nosing props existed (e.g. a live session spanning an
             # addon update).
-            out.extend(_pocket_shifted(_adjustable_shelf_descriptors(
+            out.extend(_pocket_shifted(_rack_notched(
+                _adjustable_shelf_descriptors(
                 shelf_rect, cage_dim_y, item.shelf_qty,
-                max(item.shelf_setback, cl_f),
+                max(item.shelf_setback, cl_f, rack_setback),
                 getattr(item, 'shelf_nosing_style', 'NONE'),
                 getattr(item, 'shelf_nosing_height', 0.0),
                 getattr(item, 'bottom_offset', 0.0),
-            )))
+            ))))
             out.extend(_pocket_shifted(_shelf_standards_for(
                 item, shelf_rect, cage_dim_y,
-                max(item.shelf_setback, cl_f))))
+                max(item.shelf_setback, cl_f, rack_setback))))
         elif item.kind in PARTIAL_DEPTH_SHELF_KINDS:
             # Partial-depth shelves: the front edge always sits at a
             # set fraction of the cavity depth, so the look holds
@@ -7049,28 +7165,30 @@ def interior_item_descriptors(layout, rect, cab_props, opening_props,
             # downstream consumers treat them like any other
             # adjustable shelf.
             depth_frac, depth_name = PARTIAL_DEPTH_SHELF_KINDS[item.kind]
-            out.extend(_pocket_shifted(_shelf_stack_descriptors(
+            out.extend(_pocket_shifted(_rack_notched(
+                _shelf_stack_descriptors(
                 shelf_rect, cage_dim_y, item.shelf_qty,
-                max(cage_dim_y * (1.0 - depth_frac), cl_f),
+                max(cage_dim_y * (1.0 - depth_frac), cl_f, rack_setback),
                 'ADJUSTABLE_SHELF', 'ADJUSTABLE_SHELF', depth_name,
                 getattr(item, 'shelf_nosing_style', 'NONE'),
                 getattr(item, 'shelf_nosing_height', 0.0),
                 z0=getattr(item, 'bottom_offset', 0.0),
-            )))
+            ))))
             out.extend(_pocket_shifted(_shelf_standards_for(
                 item, shelf_rect, cage_dim_y,
-                max(cage_dim_y * (1.0 - depth_frac), cl_f))))
+                max(cage_dim_y * (1.0 - depth_frac), cl_f, rack_setback))))
         elif item.kind == 'GLASS_SHELF':
+            # Glass is not notched: behind any door rack it stops short.
+            glass_setback = max(item.shelf_setback, cl_f,
+                                rack['depth'] if rack else 0.0)
             out.extend(_pocket_shifted(_glass_shelf_descriptors(
-                shelf_rect, cage_dim_y, item.shelf_qty,
-                max(item.shelf_setback, cl_f),
+                shelf_rect, cage_dim_y, item.shelf_qty, glass_setback,
                 z0=getattr(item, 'bottom_offset', 0.0),
                 thickness=getattr(item, 'glass_thickness',
                                   GLASS_SHELF_THICKNESS),
             )))
             out.extend(_pocket_shifted(_shelf_standards_for(
-                item, shelf_rect, cage_dim_y,
-                max(item.shelf_setback, cl_f))))
+                item, shelf_rect, cage_dim_y, glass_setback)))
         elif item.kind == 'PULLOUT_SHELF':
             out.extend(_between_pockets(_pullout_shelf_descriptors(
                 item_rect, cage_dim_y, item)))

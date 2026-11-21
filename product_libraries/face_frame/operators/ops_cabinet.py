@@ -5494,8 +5494,11 @@ def _apply_accessory_choice(operator, context, target, code, item,
             operator.report({'WARNING'},
                             "Select an opening or interior region first")
             return {'CANCELLED'}
-        # A modeled unit takes up the opening, so the shelves go.
-        if _geometry_kind(item) == 'MODEL':
+        # A modeled unit takes up the opening, so the shelves go - except
+        # a rack on the door, where the shelves stay and are cut back
+        # around it (solver.door_rack_shelf_cut).
+        if (_geometry_kind(item) == 'MODEL'
+                and item.get('model') != 'door_rack'):
             _set_opening_interior(props, 'OPEN')
         new_item = props.interior_items.add()
         new_item.kind = 'ACCESSORY'

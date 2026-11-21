@@ -16829,6 +16829,23 @@ class FaceFrameCabinet(GeoNodeCage):
         part.set_input('Length', length)
         part.set_input('Width', width)
         part.set_input('Thickness', thickness)
+        notch = desc.get('notch')
+        if notch:
+            # Front corner cut back clear of a rack on the door in front
+            # of it (solver._notch_shelves_for_rack).
+            cpm = part.add_part_modifier('CPM_CORNERNOTCH', 'Door Rack Notch')
+            cpm.set_input('Flip X', notch['side'] == 'RIGHT')
+            cpm.set_input('Flip Y', False)
+            ng = cpm.mod.node_group
+            if ng is not None:
+                for input_name, value in (('X', notch['x']),
+                                          ('Y', notch['y']),
+                                          ('Route Depth', thickness)):
+                    node_input = ng.interface.items_tree.get(input_name)
+                    if node_input is not None:
+                        hb_utils.set_gn_input(cpm.mod, node_input.identifier,
+                                              value)
+            part.obj['DOOR_RACK_NOTCH'] = (notch['x'], notch['y'])
         return part
 
     def _create_shelf_nosing(self, opening_obj, desc):
