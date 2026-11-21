@@ -19,8 +19,15 @@ finished:
 Fillers carry the product type too, without "Face": "Base Filler",
 "Upper Filler Kick".
 
+A "Vertical Splitter N" built as the narrow front stretcher under a
+drawer is a "Drawer Stretcher N" ("Base Drawer Stretcher 1"); any other
+splitter keeps its name. The object keeps its own name, which the solver
+matches on - this is the displayed name only.
+
 The Selected card shows this name for a picked part.
 """
+
+import re
 
 PRODUCT_TYPES = {'UPPER': "Upper", 'BASE': "Base", 'TALL': "Tall"}
 
@@ -90,6 +97,27 @@ def _filler_part_name(base):
     return " ".join(["Filler"] + words)
 
 
+_SPLITTER_NAME = re.compile(r"^Vertical Splitter (\d+)$")
+
+
+def _drawer_stretcher_name(obj, base):
+    """'Drawer Stretcher N' for a 'Vertical Splitter N' the solver builds
+    as the front stretcher under a drawer, else None."""
+    m = _SPLITTER_NAME.match(base)
+    splitter = obj.parent
+    if m is None or splitter is None:
+        return None
+    try:
+        from . import solver_frameless as sf
+        index = obj.get(sf.SPLIT_INDEX_KEY) or int(m.group(1))
+        opening = sf.split_parts(splitter).get(('OPENING', int(index)))
+        if sf._drawer_stretcher_board(splitter, opening):
+            return "Drawer Stretcher " + m.group(1)
+    except Exception:
+        pass
+    return None
+
+
 def part_name(obj):
     """The name for one frameless part, or None when the part is not in
     an Upper / Base / Sink / Tall cabinet or a filler."""
@@ -102,6 +130,8 @@ def part_name(obj):
     cab = _top_cage(obj, 'IS_FRAMELESS_CABINET_CAGE')
     if cab is None:
         base = _filler_part_name(base)
+    else:
+        base = _drawer_stretcher_name(obj, base) or base
     words = base.split()
     if words and words[0].lower() == ptype.lower():
         words = words[1:]
