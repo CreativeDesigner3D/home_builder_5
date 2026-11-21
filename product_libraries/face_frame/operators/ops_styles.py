@@ -2,6 +2,8 @@
 styles. Assign / Update ops land in a follow-up alongside the per-part
 material wiring.
 """
+import re
+
 import bpy
 from bpy.types import Operator
 
@@ -26,7 +28,12 @@ def _refresh_style_colors(context):
 
 
 def _next_unique_name(base, existing):
-    """Return base, or base.001 / base.002 / ... if base is taken."""
+    """Return base, or base.001 / base.002 / ... if base is taken. A
+    copy of a copy counts on from the original ('Slab.002', not
+    'Slab.001.001')."""
+    if base not in existing:
+        return base
+    base = re.sub(r"(\.\d{3})+$", "", base) or base
     if base not in existing:
         return base
     i = 1
