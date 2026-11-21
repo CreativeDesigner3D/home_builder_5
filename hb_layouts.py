@@ -1057,6 +1057,10 @@ def appliance_panel_outline(front):
     z0, z1 = min(p.z for p in pts), max(p.z for p in pts)
     if x1 - x0 < 1e-5 or z1 - z0 < 1e-5:
         return None
+    # A hair past the face on every side: an edge lying exactly on the
+    # slab's border reads as visible and draws solid.
+    m = ELEVATION_OUTLINE_GAP / 2
+    x0, x1, z0, z1 = x0 - m, x1 + m, z0 - m, z1 + m
     # The appliance's front is its -Y side.
     y1 = min(p.y for p in pts) - ELEVATION_OUTLINE_GAP / 2
     y0 = y1 - ELEVATION_OUTLINE_GAP / 2
