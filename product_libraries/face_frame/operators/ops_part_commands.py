@@ -1680,11 +1680,18 @@ def _front_frame_values(front):
         return None
     stamp = front.get('HB_DOOR_FRAME')
     if stamp is not None:
+        # A shaped (arched) edge widens the rail by its rise; 'top' /
+        # 'bottom' are the widths as typed (what the dialog edits and
+        # writes back), '*_rendered' what the front is built with.
+        top = stamp.get('top_rail', 0.0)
+        bottom = stamp.get('bottom_rail', 0.0)
         return {
             'left': stamp.get('left_stile', 0.0),
             'right': stamp.get('right_stile', 0.0),
-            'top': stamp.get('top_rail', 0.0),
-            'bottom': stamp.get('bottom_rail', 0.0),
+            'top': top - stamp.get('top_rise', 0.0),
+            'bottom': bottom - stamp.get('bottom_rise', 0.0),
+            'top_rendered': top,
+            'bottom_rendered': bottom,
             'add_mid': bool(stamp.get('add_mid_rail', False)),
             'center_mid': bool(stamp.get('mid_center', True)),
             'mid_w': stamp.get('mid_rail_width', 0.0),
@@ -1769,12 +1776,14 @@ def _front_panel_openings(front):
         length = GeoNodeCutpart(front).get_input("Length")
     except Exception:
         return None
+    top = vals.get('top_rendered', vals['top'])
+    bottom = vals.get('bottom_rendered', vals['bottom'])
     if not vals['add_mid']:
-        return (length - vals['top'] - vals['bottom'], None)
+        return (length - top - bottom, None)
     half = vals['mid_w'] / 2.0
     loc = length / 2.0 if vals['center_mid'] else vals['mid_loc']
-    bottom_opening = (loc - half) - vals['bottom']
-    top_opening = (length - vals['top']) - (loc + half)
+    bottom_opening = (loc - half) - bottom
+    top_opening = (length - top) - (loc + half)
     return (bottom_opening, top_opening)
 
 

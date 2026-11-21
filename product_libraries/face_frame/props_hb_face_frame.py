@@ -6402,6 +6402,12 @@ class Face_Frame_Door_Style(PropertyGroup):
 
         plan = dict(too_small=None, frame_locked=frame_locked,
                     rail_matched=rail_matched,
+                    # What the shaped edge added to the rails, so readers
+                    # of the frame record can recover the typed widths.
+                    top_rise=shape_rise_cap if shape_k is not None else 0.0,
+                    bottom_rise=(shape_rise_cap
+                                 if shape_k is not None
+                                 and shape_k.get('double') else 0.0),
                     left_stile=eff_left_stile, right_stile=eff_right_stile,
                     top_rail=eff_top_rail, bottom_rail=eff_bottom_rail,
                     mid_rail_width=eff_mid_rail, mid_stile_width=eff_mid_stile)
@@ -6791,6 +6797,8 @@ class Face_Frame_Door_Style(PropertyGroup):
                 'mid_rail_width': eff_mid_rail,
                 'mid_stile_width': eff_mid_stile,
                 'mid_stile_count': int(info.get('mid_stile_count', 0) or 0),
+                'top_rise': plan.get('top_rise', 0.0),
+                'bottom_rise': plan.get('bottom_rise', 0.0),
                 'center_kerf_width': (
                     float(info.get('center_kerf_width', 0.0) or 0.0)
                     if info.get('mid_stile_count') else 0.0),
