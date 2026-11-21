@@ -989,16 +989,56 @@ def raw_world_matrix(obj, root):
     return root.matrix_world @ obj.matrix_parent_inverse @ m
 
 
-# An appliance panel face on an elevation draws its outline solid and its
-# stiles / rails as hidden lines, so a panel beside busy cabinets still
-# reads without its frame crowding the opening dimensions. The face goes
-# to the hidden-line collection and a flat outline slab -- a stand-in
-# with the face's outline, just in front of it -- goes to the solid one:
-# the slab draws the outline and hides the frame behind it, which the
-# hidden-line pass then draws dashed. Elevations only; 3D, plan and
-# multi-view cells draw the panel as it is.
+# An appliance panel face on an elevation draws as faint hidden lines,
+# outline, stiles and rails alike, so a panel beside busy cabinets reads
+# as a panel without crowding the opening dimensions. The face goes to
+# the faint collection and a flat slab with the face's outline, just in
+# front of it, to the occluder collection: the slab draws nothing but
+# hides the face behind it, and the faint line set draws the hidden face.
+# Freestyle elevations only; 3D and plan draw the panel as it is.
 ELEVATION_OUTLINE_TAG = 'HB_ELEVATION_OUTLINE_OF'
 ELEVATION_OUTLINE_GAP = units.inch(1 / 16)
+PANEL_FAINT_LINESET = 'Panel Hidden'
+PANEL_FAINT_COLOR = (0.6, 0.6, 0.6)
+PANEL_FAINT_THICKNESS = 0.5
+
+
+def panel_faint_collection(scene):
+    """The page's faint hidden-line collection, with its line set made or
+    re-pointed; None on a page Freestyle doesn't draw (Line Art or vector
+    pages keep drawing the panel as it is)."""
+    if (scene is None or not scene.view_layers
+            or get_scene_line_engine(scene) != LINE_ENGINE_FREESTYLE):
+        return None
+    name = f"{scene.name}_Freestyle_Faint"
+    coll = bpy.data.collections.get(name)
+    if coll is None:
+        coll = bpy.data.collections.new(name)
+        coll['IS_FREESTYLE_FAINT'] = True
+    if coll.name not in scene.collection.children:
+        scene.collection.children.link(coll)
+    freestyle = scene.view_layers[0].freestyle_settings
+    lineset = freestyle.linesets.get(PANEL_FAINT_LINESET)
+    if lineset is None:
+        lineset = freestyle.linesets.new(PANEL_FAINT_LINESET)
+        lineset.select_silhouette = True
+        lineset.select_border = True
+        lineset.select_crease = True
+        lineset.select_edge_mark = True
+        lineset.select_by_collection = True
+        lineset.collection_negation = 'INCLUSIVE'
+        lineset.select_by_visibility = True
+        lineset.visibility = 'HIDDEN'
+        style = lineset.linestyle
+        if style:
+            style.color = PANEL_FAINT_COLOR
+            style.thickness = PANEL_FAINT_THICKNESS
+            style.use_dashed_line = True
+            style.dash1 = 6
+            style.gap1 = 4
+    # A line set with no collection outlines every object on the page.
+    lineset.collection = coll
+    return coll
 
 
 def appliance_panel_outline(front):
@@ -1979,29 +2019,43 @@ class ElevationView(LayoutView):
                 # Non-cabinet child (e.g. applied end panels, other geometry).
                 # Its own children come along (a loose door part's pull).
                 for obj in [child] + list(child.children_recursive):
-                    outline = appliance_panel_outline(obj)
-                    if outline is not None:
-                        wall_dashed = self._wall_dashed(
-                            wall_obj, view_name, dashed_freestyle)
-                        if obj.name not in wall_dashed.objects:
-                            wall_dashed.objects.link(obj)
-                        obj = outline
-                    elif self._is_cage(obj) or self._is_helper(obj):
+                    if (self._file_panel_face(obj) or self._is_cage(obj)
+                            or self._is_helper(obj)):
                         continue
                     if obj.name not in wall_solid.objects:
                         wall_solid.objects.link(obj)
 
-    def _wall_dashed(self, wall_obj, view_name, dashed_freestyle):
-        """The wall's own hidden-line collection and its instance, made the
-        first time something standing on the wall needs one."""
-        name = f"{view_name}_{wall_obj.name}_Dashed"
+    def _panel_collection(self, kind, freestyle):
+        """The page's appliance panel collection of ``kind`` ('Faint' or
+        'Occluder') and its instance, made the first time a panel needs
+        it. The occluder instance sits in no Freestyle collection: it
+        hides without drawing."""
+        name = f"{self.scene.name}_Panel_{kind}"
         coll = bpy.data.collections.get(name)
         if coll is None:
             coll = bpy.data.collections.new(name)
         if not any(getattr(o, 'instance_collection', None) is coll
                    for o in self.scene.objects):
-            self._create_collection_instance(coll, name, dashed_freestyle)
+            self._create_collection_instance(coll, name, freestyle)
         return coll
+
+    def _file_panel_face(self, obj):
+        """File a 5-piece appliance panel face as faint hidden lines behind
+        its outline slab. False when ``obj`` isn't one, or the page isn't
+        drawn by Freestyle; the caller files it as usual."""
+        outline = appliance_panel_outline(obj)
+        if outline is None:
+            return False
+        faint = panel_faint_collection(self.scene)
+        if faint is None:
+            return False
+        faint_col = self._panel_collection('Faint', faint)
+        occluder_col = self._panel_collection('Occluder', None)
+        if obj.name not in faint_col.objects:
+            faint_col.objects.link(obj)
+        if outline.name not in occluder_col.objects:
+            occluder_col.objects.link(outline)
+        return True
     
     def _create_collection_instance(self, collection: bpy.types.Collection, name: str, 
                                      freestyle_collection: bpy.types.Collection) -> bpy.types.Object:
@@ -2027,12 +2081,8 @@ class ElevationView(LayoutView):
         Interior parts (frameless or face frame) and closet parts behind a
         door go to dashed, all other visible geometry goes to solid. Cages and helpers are skipped but their children are processed.
         """
-        outline = appliance_panel_outline(obj)
-        if outline is not None:
-            if obj.name not in dashed_col.objects:
-                dashed_col.objects.link(obj)
-            if outline.name not in solid_col.objects:
-                solid_col.objects.link(outline)
+        if self._file_panel_face(obj):
+            pass
         elif not self._is_cage(obj) and not self._is_helper(obj):
             if hb_utils.is_hidden_interior_part(obj):
                 if obj.name not in dashed_col.objects:

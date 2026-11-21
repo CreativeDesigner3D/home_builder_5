@@ -1749,6 +1749,28 @@ def set_front_pull(objs, override, category):
     return len(targets)
 
 
+def _label_height(label):
+    """How high the label sits on its appliance, from its own location
+    (its drivers ride on delta_location): a hidden label's matrix_world
+    isn't kept up to date."""
+    offset = label.location + label.delta_location
+    return (label.matrix_parent_inverse @ offset).z
+
+
+def show_label_clear_of_panels(appliance_obj):
+    """The appliance's own label is hidden where it would print over the
+    panels (on the face) and kept where it sits clear of them, below the
+    unit, as a dishwasher's or range's does."""
+    for child in appliance_obj.children:
+        if not (child.get('IS_APPLIANCE_TEXT') or child.type == 'FONT'):
+            continue
+        hide = _label_height(child) >= 0.0
+        if child.hide_viewport != hide:
+            child.hide_viewport = hide
+        if child.hide_render != hide:
+            child.hide_render = hide
+
+
 def rebuild(appliance_obj):
     """Build / resize the appliance's fronts, backers and rails from the
     property groups. In place when the structure is unchanged; teardown +
@@ -1870,10 +1892,7 @@ def rebuild(appliance_obj):
         bpy.context.view_layer.update()
         for obj in fronts:
             _apply_front_style(obj, props.sections[obj['AP_SECTION_INDEX']])
-        for child in appliance_obj.children:
-            if child.get('IS_APPLIANCE_TEXT') or child.type == 'FONT':
-                child.hide_viewport = True
-                child.hide_render = True
+    show_label_clear_of_panels(appliance_obj)
 
     _stamp(appliance_obj, props, key, faces, backers, rails)
     # Panels can be built from the panel tab, the command or the prompts
