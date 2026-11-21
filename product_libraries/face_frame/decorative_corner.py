@@ -725,6 +725,152 @@ def _apply_cuts(cabinet_obj, cutters):
                 mod.object = cutter
 
 
+# ----------------------------------------------------------------------
+# Shelves around a clipped corner's pocket
+# ----------------------------------------------------------------------
+# A clipped corner sits in a pocket blocked out with 3/4" stock behind
+# the notch, so the shelves are notched around the pocket and its
+# blocking rather than running through the corner.
+POCKET_BLOCKING = inch(0.75)
+SHELF_NOTCH_ROLES = frozenset({'ADJUSTABLE_SHELF', 'INTERIOR_FIXED_SHELF'})
+SHELF_NOTCH_MOD_PREFIX = 'Corner Pocket '
+# Overlaps thinner than this are float noise, not a notch.
+_NOTCH_EPS = inch(1.0 / 64.0)
+
+
+def _shelf_notch_mod_name(corner):
+    return SHELF_NOTCH_MOD_PREFIX + corner.replace('_', ' ').title()
+
+
+def pocket_rect(corner, width, depth, size):
+    """(x0, x1, y0, y1) in cabinet space that a clipped corner's pocket
+    and its blocking take out of the cabinet interior."""
+    reach = size + POCKET_BLOCKING
+    if corner in ('FRONT_LEFT', 'BACK_LEFT'):
+        x0, x1 = -1.0, reach
+    else:
+        x0, x1 = width - reach, width + 1.0
+    if corner in ('FRONT_LEFT', 'FRONT_RIGHT'):
+        y0, y1 = -depth - 1.0, -depth + reach
+    else:
+        y0, y1 = -reach, 1.0
+    return x0, x1, y0, y1
+
+
+def _local_to_cabinet(obj, cabinet_obj):
+    """obj's matrix in cabinet space from the parent chain's stored
+    transforms, so it is right mid-recalc before the depsgraph runs."""
+    m = obj.matrix_parent_inverse @ obj.matrix_basis
+    p = obj.parent
+    while p is not None and p is not cabinet_obj:
+        m = p.matrix_parent_inverse @ p.matrix_basis @ m
+        p = p.parent
+    return m if p is cabinet_obj else None
+
+
+def _iter_notch_shelves(cabinet_obj):
+    stack = list(cabinet_obj.children)
+    while stack:
+        obj = stack.pop()
+        if obj.get('IS_FACE_FRAME_CABINET_CAGE') and obj is not cabinet_obj:
+            # A nested cabinet notches its own shelves.
+            continue
+        if obj.get('hb_part_role') in SHELF_NOTCH_ROLES and obj.type == 'MESH':
+            yield obj
+        stack.extend(obj.children)
+
+
+def _shelf_corner_notches(shelf, cabinet_obj, rects):
+    """{corner: (flip_x, flip_y, x, y)} for each pocket that takes a
+    corner out of this shelf, in the shelf's own Length / Width axes."""
+    from ...hb_types import GeoNodeObject
+    part = GeoNodeObject(shelf)
+    try:
+        length = part.get_input('Length')
+        w = part.get_input('Width')
+        mirror_y = bool(part.get_input('Mirror Y'))
+    except Exception:
+        return {}
+    m = _local_to_cabinet(shelf, cabinet_obj)
+    if m is None or length <= 0.0 or w <= 0.0:
+        return {}
+    y_far = -w if mirror_y else w
+    out = {}
+    for corner, (rx0, rx1, ry0, ry1) in rects.items():
+        # The pocket back in shelf space. Shelves only ever sit square to
+        # the cabinet, so the rectangle maps to a rectangle.
+        inv = m.inverted()
+        from mathutils import Vector
+        pts = [inv @ Vector((x, y, 0.0)) for x in (rx0, rx1)
+               for y in (ry0, ry1)]
+        lx0 = max(0.0, min(p.x for p in pts))
+        lx1 = min(length, max(p.x for p in pts))
+        ly_lo, ly_hi = sorted((0.0, y_far))
+        ly0 = max(ly_lo, min(p.y for p in pts))
+        ly1 = min(ly_hi, max(p.y for p in pts))
+        nx = lx1 - lx0
+        ny = ly1 - ly0
+        if nx <= _NOTCH_EPS or ny <= _NOTCH_EPS:
+            continue
+        # Only a pocket over a shelf corner is a corner notch; one that
+        # spans the whole shelf would leave nothing to build.
+        at_x0 = lx0 <= _NOTCH_EPS
+        at_x1 = lx1 >= length - _NOTCH_EPS
+        at_y0 = abs(ly0 - min(0.0, y_far)) <= _NOTCH_EPS
+        at_y1 = abs(ly1 - max(0.0, y_far)) <= _NOTCH_EPS
+        if at_x0 == at_x1 or at_y0 == at_y1:
+            continue
+        # The notch node's own corner is the part origin (x = 0, y = 0);
+        # Flip Y moves it to the far Width edge.
+        origin_end_y0 = (min(0.0, y_far) == 0.0)
+        flip_y = at_y1 if origin_end_y0 else at_y0
+        out[corner] = (at_x1, flip_y, nx, ny)
+    return out
+
+
+def notch_shelves(cabinet_obj, width, depth, size, corners):
+    """Keep one corner notch per clipped-corner pocket on every shelf
+    the pocket reaches; drop the notches of corners that are gone.
+    Called after the interiors are rebuilt; idempotent."""
+    rects = {c: pocket_rect(c, width, depth, size) for c in corners}
+    for shelf in _iter_notch_shelves(cabinet_obj):
+        notches = _shelf_corner_notches(shelf, cabinet_obj, rects) if rects else {}
+        for corner, _label in CORNERS:
+            name = _shelf_notch_mod_name(corner)
+            mod = shelf.modifiers.get(name)
+            spec = notches.get(corner)
+            if spec is None:
+                if mod is not None:
+                    shelf.modifiers.remove(mod)
+                continue
+            flip_x, flip_y, nx, ny = spec
+            from ...hb_types import GeoNodeCutpart
+            if mod is None:
+                cpm = GeoNodeCutpart(shelf).add_part_modifier(
+                    'CPM_CORNERNOTCH', name)
+                mod = cpm.mod
+            ng = mod.node_group
+            if ng is None:
+                continue
+            thickness = 0.0
+            try:
+                from ...hb_types import GeoNodeObject
+                thickness = GeoNodeObject(shelf).get_input('Thickness')
+            except Exception:
+                thickness = inch(0.75)
+            for input_name, value in (('X', nx), ('Y', ny),
+                                      ('Route Depth', thickness),
+                                      ('Flip X', flip_x),
+                                      ('Flip Y', flip_y)):
+                node_input = ng.interface.items_tree.get(input_name)
+                if node_input is not None:
+                    hb_utils.set_gn_input(mod, node_input.identifier, value)
+        if notches:
+            shelf['CORNER_POCKET_NOTCH'] = ','.join(sorted(notches))
+        elif 'CORNER_POCKET_NOTCH' in shelf:
+            del shelf['CORNER_POCKET_NOTCH']
+
+
 def cleanup(cabinet_obj, keep_corners=()):
     """Remove posts, cutters and boolean modifiers for every corner not
     in keep_corners. Called with no keep set this reverses the feature."""
@@ -825,6 +971,7 @@ def apply_corners(cabinet_obj, width, depth, height, spec):
     if bands is None:
         cleanup(cabinet_obj)
         _apply_cuts(cabinet_obj, {})
+        notch_shelves(cabinet_obj, width, depth, 0.0, ())
         for key in ('DECORATIVE_CORNER_STYLE', 'DECORATIVE_CORNERS',
                     'DECORATIVE_CORNER_SIZE'):
             if key in cabinet_obj:
@@ -857,6 +1004,10 @@ def apply_corners(cabinet_obj, width, depth, height, spec):
         cutters[corner] = cutter
 
     _apply_cuts(cabinet_obj, cutters)
+    # Shelves give way to a clipped corner's pocket. Turned posts keep
+    # their current shelves.
+    notch_shelves(cabinet_obj, width, depth, size,
+                  corners if is_clipped(style) else ())
     # Publish the applied spec on the root so downstream consumers
     # (drawings, reports) can read it without recomputing. Cleared above
     # when the corners are removed.
