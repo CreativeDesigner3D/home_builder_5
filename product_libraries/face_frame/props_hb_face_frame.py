@@ -5095,6 +5095,11 @@ def _front_frame_store(front_obj):
     rebuilt by a cabinet recalc. NOTE: an opening with two leaves (double
     door) shares one store, so both leaves take the same locked frame.
     """
+    # An appliance panel face lives under the appliance, which may sit
+    # in a cabinet opening; the panel rebuild carries its frame itself
+    # (appliance_panels.rebuild), so the face is its own store.
+    if front_obj.get('IS_APPLIANCE_PANEL_FRONT'):
+        return front_obj
     o = front_obj.parent
     while o is not None:
         if o.get('IS_FACE_FRAME_OPENING_CAGE'):
