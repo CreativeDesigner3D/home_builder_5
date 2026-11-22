@@ -90,6 +90,20 @@ CORNER_RADIUS = 2
 # from. Tops without the key get plain three-field corners.
 EDGES_KEY = 'ct_edges'
 
+# A built-up top: a deck on strips under its front, middle and back,
+# laminated after. A dict of local sizes (see _add_buildup); the slab
+# then becomes the deck and the strips are built under it. Only a square
+# outline is built up for now -- any other shape stays one solid slab.
+BUILDUP_KEY = 'ct_buildup'
+
+# A splash standing on the top at its back edge, and at each end where
+# the top runs into a wall. A dict of local sizes (see _add_splash).
+SPLASH_KEY = 'ct_splash'
+# The pieces of a built-up top or splash stand this far apart, so each
+# stays its own closed solid: faces lying on each other would leave the
+# sink cut's boolean nothing clean to work with.
+PIECE_GAP = 1e-4
+
 # Degrees of arc per segment of a rounded corner.
 ARC_STEP_DEG = 7.5
 
@@ -800,14 +814,17 @@ def rebuild(obj):
         return False
 
     bm = bmesh.new()
-    lower = [bm.verts.new((x, y, top)) for x, y in points]
-    upper = [bm.verts.new((x, y, top + thickness)) for x, y in points]
-    bm.faces.new(list(reversed(lower)))
-    bm.faces.new(upper)
-    count = len(points)
-    for i in range(count):
-        j = (i + 1) % count
-        bm.faces.new((lower[i], lower[j], upper[j], upper[i]))
+    rect = _square_rect(points)
+    buildup = _dict(obj.get(BUILDUP_KEY))
+    deck = float(buildup.get('deck', 0.0)) if buildup and rect else 0.0
+    if 0.0 < deck < thickness:
+        _add_slab(bm, points, top + thickness - deck, top + thickness)
+        _add_buildup(bm, rect, top, thickness - deck, buildup)
+    else:
+        _add_slab(bm, points, top, top + thickness)
+    splash = _dict(obj.get(SPLASH_KEY))
+    if splash and rect:
+        _add_splash(bm, rect, top + thickness, splash)
     bm.normal_update()
     bmesh.ops.recalc_face_normals(bm, faces=bm.faces[:])
     bm.to_mesh(obj.data)
@@ -816,6 +833,105 @@ def rebuild(obj):
     cut_for_sinks(obj)
     apply_world_uvs(obj)
     return True
+
+
+def _dict(value):
+    if value is None:
+        return {}
+    try:
+        return value.to_dict()
+    except AttributeError:
+        return dict(value)
+
+
+def _square_rect(points):
+    """(x0, x1, y0, y1) when the outline is a rectangle square to its
+    own axes, else None."""
+    if len(points) != 4:
+        return None
+    xs = sorted({round(x, 6) for x, _y in points})
+    ys = sorted({round(y, 6) for _x, y in points})
+    if len(xs) != 2 or len(ys) != 2:
+        return None
+    return xs[0], xs[1], ys[0], ys[1]
+
+
+def _add_slab(bm, points, z0, z1):
+    lower = [bm.verts.new((x, y, z0)) for x, y in points]
+    upper = [bm.verts.new((x, y, z1)) for x, y in points]
+    bm.faces.new(list(reversed(lower)))
+    bm.faces.new(upper)
+    count = len(points)
+    for i in range(count):
+        j = (i + 1) % count
+        bm.faces.new((lower[i], lower[j], upper[j], upper[i]))
+
+
+def _add_box(bm, x0, x1, y0, y1, z0, z1):
+    if x1 - x0 <= 1e-6 or y1 - y0 <= 1e-6 or z1 - z0 <= 1e-6:
+        return
+    _add_slab(bm, ((x0, y0), (x1, y0), (x1, y1), (x0, y1)), z0, z1)
+
+
+def _add_buildup(bm, rect, z0, height, spec):
+    """The strips under a built-up top's deck, z0 up by ``height``.
+
+    The front strip runs under the front edge, the back strip stands
+    'back_gap' in from the back, and a middle strip is centred between
+    them. Along the top each strip stops 'left' / 'right' in from that
+    end; an end given -1 is finished and gets a strip across under it.
+    The front is the top's -Y side.
+    """
+    x0, x1, y0, y1 = rect
+    front_w = float(spec.get('front', 0.0))
+    back_w = float(spec.get('back', 0.0))
+    mid_w = float(spec.get('middle', 0.0))
+    end_w = float(spec.get('end', front_w))
+    back_gap = float(spec.get('back_gap', 0.0))
+    left = float(spec.get('left', -1.0))
+    right = float(spec.get('right', -1.0))
+    g = PIECE_GAP
+    z1 = z0 + height - g
+    sx0 = x0 + max(left, 0.0)
+    sx1 = x1 - max(right, 0.0)
+    front_back = y0 + front_w
+    back_front = y1 - back_gap - back_w
+    _add_box(bm, sx0, sx1, y0, front_back, z0, z1)
+    _add_box(bm, sx0, sx1, back_front, y1 - back_gap, z0, z1)
+    # Across under a finished end, between the front and back strips.
+    ix0, ix1 = sx0, sx1
+    if left < 0.0:
+        _add_box(bm, x0, x0 + end_w, front_back + g, back_front - g, z0, z1)
+        ix0 = x0 + end_w + g
+    if right < 0.0:
+        _add_box(bm, x1 - end_w, x1, front_back + g, back_front - g, z0, z1)
+        ix1 = x1 - end_w - g
+    if mid_w > 0.0 and back_front - front_back > mid_w + 1e-6:
+        mid = (front_back + back_front) / 2.0
+        _add_box(bm, ix0, ix1, mid - mid_w / 2.0, mid + mid_w / 2.0, z0, z1)
+
+
+def _add_splash(bm, rect, z0, spec):
+    """A splash 'height' tall and 'thickness' thick standing on the top
+    along its back (+Y) edge, and across each end that runs into a wall:
+    'left' / 'right' are how far in from that end the wall face is, -1
+    for an end with no wall. The back splash runs wall face to wall
+    face; an end splash runs from the front edge to the back splash."""
+    x0, x1, y0, y1 = rect
+    height = float(spec.get('height', 0.0))
+    th = float(spec.get('thickness', 0.0))
+    left = float(spec.get('left', -1.0))
+    right = float(spec.get('right', -1.0))
+    g = PIECE_GAP
+    z0 += g
+    z1 = z0 + height
+    bx0 = x0 + max(left, 0.0)
+    bx1 = x1 - max(right, 0.0)
+    _add_box(bm, bx0, bx1, y1 - th, y1, z0, z1)
+    if left >= 0.0:
+        _add_box(bm, bx0, bx0 + th, y0, y1 - th - g, z0, z1)
+    if right >= 0.0:
+        _add_box(bm, bx1 - th, bx1, y0, y1 - th - g, z0, z1)
 
 
 def cut_for_sinks(obj):

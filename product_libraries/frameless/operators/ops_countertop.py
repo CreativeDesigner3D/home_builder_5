@@ -433,6 +433,7 @@ def create_wall_countertop(context, wall_obj, cabinets, has_left_conn, has_right
     # Laminate tops: an end that runs into a wall goes to the wall plus
     # the trim scribe, never an overhang into it. Corners and talls keep
     # their butt joints.
+    wall_left = wall_right = False
     if uses_laminate_rules(props) and not is_back_side:
         scribe = props.countertop_trim_scribe
         wall_node = hb_types.GeoNodeWall(wall_obj)
@@ -441,10 +442,12 @@ def create_wall_countertop(context, wall_obj, cabinets, has_left_conn, has_right
                 and start_x <= WALL_END_TOL
                 and wall_node.get_connected_wall('left')):
             sx = -scribe
+            wall_left = True
         if (not suppress_right and right_corner is None
                 and end_x >= wall_length - WALL_END_TOL
                 and wall_node.get_connected_wall('right')):
             ex = wall_length + scribe
+            wall_right = True
 
     # Check if we need an L-shape for corner cabinets
     has_l_shape = False
@@ -613,8 +616,64 @@ def create_wall_countertop(context, wall_obj, cabinets, has_left_conn, has_right
     obj['IS_COUNTERTOP'] = True
     context.scene.collection.objects.link(obj)
     countertop_common.finish(obj, 'FRAMELESS')
+    if uses_laminate_rules(props) and not is_back_side and not has_l_shape:
+        ends = []
+        for at_wall, butted in ((wall_left, suppress_left),
+                                (wall_right, suppress_right)):
+            if at_wall:
+                ends.append(('WALL', props.countertop_trim_scribe))
+            elif butted:
+                ends.append(('BUTT', 0.0))
+            else:
+                ends.append(('FINISHED', 0.0))
+        apply_laminate_build(obj, props, ends)
 
     return obj
+
+
+# Built-up strips and the splash, local sizes (meters).
+BUILDUP_DECK = units.inch(0.75)
+BUILDUP_STRIP = {'front': units.inch(4.0), 'middle': units.inch(3.0),
+                 'back': units.inch(3.0), 'end': units.inch(4.0)}
+LAMINATE_SPLASH_THICKNESS = units.inch(0.75)
+
+
+def apply_laminate_build(obj, props, ends):
+    """Give a laminate wall top its build: the deck and strips of a
+    built-up top, and the splash. ``ends`` is (kind, scribe) for the left
+    and right ends: 'WALL' runs into a wall (the scribe is how far the
+    top goes past its face), 'BUTT' meets a tall cabinet or a corner, and
+    'FINISHED' is open. Strips stop the back clearance short of a wall
+    face or a butted end and run on under a finished one."""
+    gap = props.countertop_buildup_back_gap
+    inset = []
+    walls = []
+    for kind, scribe in ends:
+        if kind == 'WALL':
+            inset.append(scribe + gap)
+            walls.append(scribe)
+        elif kind == 'BUTT':
+            inset.append(gap)
+            walls.append(-1.0)
+        else:
+            inset.append(-1.0)
+            walls.append(-1.0)
+    if props.countertop_construction == 'BUILT_UP':
+        spec = dict(BUILDUP_STRIP, deck=BUILDUP_DECK, back_gap=gap,
+                    left=inset[0], right=inset[1])
+        spec['front'] = props.countertop_buildup_front
+        spec['middle'] = props.countertop_buildup_middle
+        spec['back'] = props.countertop_buildup_back
+        obj[countertop_common.BUILDUP_KEY] = spec
+    if props.countertop_splash == 'STANDARD':
+        obj[countertop_common.SPLASH_KEY] = {
+            'height': props.countertop_splash_height,
+            'thickness': LAMINATE_SPLASH_THICKNESS,
+            'left': walls[0], 'right': walls[1]}
+    if (countertop_common.BUILDUP_KEY in obj
+            or countertop_common.SPLASH_KEY in obj):
+        countertop_common.ensure_outline(obj)
+        countertop_common.rebuild(obj)
 
 
 def create_group_countertop(context, group_obj, cabinets):

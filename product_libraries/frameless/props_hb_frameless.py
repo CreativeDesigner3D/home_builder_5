@@ -2990,6 +2990,31 @@ class Frameless_Scene_Props(PropertyGroup):
         default='STANDARD',
         update=update_countertop_construction)  # type: ignore
 
+    countertop_buildup_front: FloatProperty(
+        name="Front Build-Up",
+        description="Width of the build-up strip under a built-up top's "
+                    "front edge (and across its finished ends)",
+        default=units.inch(4.0), min=0.0, unit='LENGTH',
+        precision=4)  # type: ignore
+    countertop_buildup_middle: FloatProperty(
+        name="Middle Build-Up",
+        description="Width of the build-up strip centred under a built-up "
+                    "top",
+        default=units.inch(3.0), min=0.0, unit='LENGTH',
+        precision=4)  # type: ignore
+    countertop_buildup_back: FloatProperty(
+        name="Back Build-Up",
+        description="Width of the build-up strip under a built-up top's "
+                    "back edge",
+        default=units.inch(3.0), min=0.0, unit='LENGTH',
+        precision=4)  # type: ignore
+    countertop_buildup_back_gap: FloatProperty(
+        name="Build-Up Clearance",
+        description="How far the build-up stands off the wall at the back "
+                    "and at an end with no finished edge",
+        default=units.inch(0.25), min=0.0, unit='LENGTH',
+        precision=4)  # type: ignore
+
     countertop_trim_scribe: FloatProperty(
         name="Trim Scribe",
         description="Extra length a laminate countertop gets at each end "
@@ -3653,6 +3678,12 @@ class Frameless_Scene_Props(PropertyGroup):
         col.prop(props, 'countertop_overhang_back', text="Back Overhang")
         if props.countertop_construction != 'STANDARD':
             col.prop(props, 'countertop_trim_scribe', text="Trim Scribe")
+        if props.countertop_construction == 'BUILT_UP':
+            col.prop(props, 'countertop_buildup_front', text="Front Build-Up")
+            col.prop(props, 'countertop_buildup_middle', text="Middle Build-Up")
+            col.prop(props, 'countertop_buildup_back', text="Back Build-Up")
+            col.prop(props, 'countertop_buildup_back_gap',
+                     text="Build-Up Clearance")
         col.separator()
         col.prop(props, 'countertop_material', text="Material")
         col.prop(props, 'countertop_edge', text="Edge")
