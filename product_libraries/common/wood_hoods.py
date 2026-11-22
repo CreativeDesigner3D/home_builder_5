@@ -650,7 +650,21 @@ def _hood_door_mesh_spec(hood_obj, opts, width, height, thickness):
                        if info.get('right_stile_width') is not None
                        else info['stile_width'])
                 cell_w = (width - lsw - rsw - n_ms * msw) / (n_ms + 1)
-                if shape_k.get('curve') and cell_w > inch(2):
+                if (shape_k.get('curve') == 'ARCH' and cell_w > inch(2)):
+                    # The standard arch rises into the rail.
+                    top = (info['top_rail_width']
+                           if info.get('top_rail_width') is not None
+                           else info['rail_width'])
+                    rails = [top]
+                    if shape_k.get('double'):
+                        rails.append(info['bottom_rail_width']
+                                     if info.get('bottom_rail_width')
+                                     is not None else info['rail_width'])
+                    rise = door_builder.arch_rise(rails)
+                    if rise > 1e-6:
+                        kwargs['shape'] = dict(shape_k, rise=rise,
+                                               fixed=True)
+                elif shape_k.get('curve') and cell_w > inch(2):
                     rise = door_builder.shape_rise(shape_k['curve'], cell_w)
                     info['top_rail_width'] = (
                         info['top_rail_width']

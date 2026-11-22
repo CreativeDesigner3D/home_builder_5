@@ -6385,8 +6385,14 @@ class Face_Frame_Door_Style(PropertyGroup):
         # a style trait. The arc owns the whole top, so it supersedes
         # the style's arched-opening shape and needs no rail widening -
         # the curved rail keeps its catalog width around the curve.
+        # The arch is the shop standard instead: it rises ARCH_RISE
+        # into the rail whatever the width, so the rail keeps its width
+        # at the stiles (3" catalog) and is ARCH_RISE narrower at the
+        # crest (2"); nothing is added to the rail.
         shape_k = None
         shape_rise_cap = 0.0
+        shape_added = 0.0
+        shape_fixed = False
         _msw = 0.0
         if member_sec is None and round_top is None:
             shape_k = style_options.shape_kind(self.front_shape)
@@ -6396,9 +6402,18 @@ class Face_Frame_Door_Style(PropertyGroup):
             if shape_k.get('curve'):
                 _cell_w = (front_width - eff_left_stile - eff_right_stile
                            - _n_ms * _msw) / (_n_ms + 1)
-                if _cell_w > units.inch(2):
+                if _cell_w > units.inch(2) and shape_k['curve'] == 'ARCH':
+                    _rails = [eff_top_rail]
+                    if shape_k.get('double'):
+                        _rails.append(eff_bottom_rail)
+                    shape_rise_cap = door_builder.arch_rise(_rails)
+                    shape_fixed = True
+                    if shape_rise_cap <= 1e-6:
+                        shape_k = None
+                elif _cell_w > units.inch(2):
                     shape_rise_cap = door_builder.shape_rise(
                         shape_k['curve'], _cell_w)
+                    shape_added = shape_rise_cap
                     eff_top_rail += shape_rise_cap
                     if shape_k.get('double'):
                         eff_bottom_rail += shape_rise_cap
@@ -6409,8 +6424,8 @@ class Face_Frame_Door_Style(PropertyGroup):
                     rail_matched=rail_matched,
                     # What the shaped edge added to the rails, so readers
                     # of the frame record can recover the typed widths.
-                    top_rise=shape_rise_cap if shape_k is not None else 0.0,
-                    bottom_rise=(shape_rise_cap
+                    top_rise=shape_added if shape_k is not None else 0.0,
+                    bottom_rise=(shape_added
                                  if shape_k is not None
                                  and shape_k.get('double') else 0.0),
                     left_stile=eff_left_stile, right_stile=eff_right_stile,
@@ -6587,7 +6602,8 @@ class Face_Frame_Door_Style(PropertyGroup):
             glass=_pkind['kind'] == 'GLASS',
             panel_thickness=eff_panel_th, panel_inset=eff_panel_inset,
             mid_on=mid_on, mid_center=mid_center, mid_loc=mid_loc,
-            build=dict(shape=(dict(shape_k, rise=shape_rise_cap)
+            build=dict(shape=(dict(shape_k, rise=shape_rise_cap,
+                                   fixed=shape_fixed)
                               if shape_k and shape_k.get('curve') else None),
                        glass_rows=glass_rows or None,
                        round_top=round_top, **secs))
@@ -6850,13 +6866,17 @@ class Face_Frame_Door_Style(PropertyGroup):
         # via the style's rail unlock, a matched door rail on a drawer
         # front, or a locked per-front frame override whose top rail
         # differs from the style.
+        # A shaped edge's rise is not a rail change: the callout reads
+        # the rail as typed.
+        typed_top_rail = eff_top_rail - plan.get('top_rise', 0.0)
         _sync_rail_size_annotation(
-            front_obj, part, eff_top_rail, eff_right_stile,
+            front_obj, part, typed_top_rail, eff_right_stile,
             active=(self.show_rail_annotation
                     and (self.unlock_rail_width
                          or rail_matched
                          or (frame_locked
-                             and abs(eff_top_rail - self.rail_width) > 1e-6))),
+                             and abs(typed_top_rail - self.rail_width)
+                             > 1e-6))),
         )
         # A drawer front on the door's rail width prints as its own
         # line on the style page (the '3R' variant of the style).

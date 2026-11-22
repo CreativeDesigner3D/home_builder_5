@@ -926,6 +926,22 @@ def shape_rise(curve, w):
     return min(0.20 * w, inch(2.25))    # ARCH
 
 
+# Standard arched top: the arch rises ARCH_RISE into the rail on every
+# door whatever its width, so the rail keeps its width at the stiles
+# and is ARCH_RISE narrower at the crest; at least ARCH_MIN_CREST of
+# rail stays at the crest.
+ARCH_RISE = inch(1.0)
+ARCH_MIN_CREST = inch(1.0)
+
+
+def arch_rise(rail_widths):
+    """The standard arch's rise into rails of these widths (the shaped
+    ones: top, and bottom for a double arch); 0 when a rail is too
+    narrow to take any arch."""
+    return max(0.0, min([ARCH_RISE] + [r - ARCH_MIN_CREST
+                                       for r in rail_widths]))
+
+
 def _shape_curve_pts(curve, w, rise, segs=16):
     """Shaped opening-edge polyline across a cell of width w:
     [(x, rise), ...] left to right, x in [0, w], rise >= 0, both
@@ -1946,7 +1962,8 @@ def build_door_mesh(mesh, info, width, height, thickness, materials=None,
     lie on the door outline (_emit_edge_profiled_box), falling back to
     square edges per part when the section doesn't fit.
 
-    ``shape`` (dict(curve='ARCH'|'CROWN', double=bool, rise=<m cap>))
+    ``shape`` (dict(curve='ARCH'|'CROWN', double=bool, rise=<m cap>,
+    fixed=bool -- rise is the exact rise, not a cap))
     arches the top opening edge -- and the bottom for the Double
     shapes -- per top/bottom-row cell: the rails' opening edges follow
     the curve (_emit_shaped_rail), flat panels become shaped prisms,
@@ -2164,7 +2181,7 @@ def build_door_geometry(info, width, height, thickness,
                 w = p['x1'] - p['x0']
                 rise = shape_rise(curve, w)
                 if cap is not None:
-                    rise = min(rise, cap)
+                    rise = cap if shape.get('fixed') else min(rise, cap)
                 c = _shape_curve_pts(curve, w, rise)
                 if not c:
                     continue
