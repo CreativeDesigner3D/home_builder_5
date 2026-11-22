@@ -5138,7 +5138,7 @@ class hb_face_frame_OT_change_opening(bpy.types.Operator):
             ('DOOR_LOOKS_2_DOOR', "Door - Looks like 2 Doors", "One door shown as two doors battened together"),
             ('DOUBLE_DOOR_2_HIGH', DL.DOUBLE_2_HIGH, "Pair of doors, each two doors battened together top to bottom"),
             ('DOUBLE_DOOR_3_HIGH', DL.DOUBLE_3_HIGH, "Pair of doors, each three doors battened together top to bottom"),
-            ('FLIP_UP_DOOR',      "Flip Up Door",      "Door hinged on the top edge"),
+            ('FLIP_UP_DOOR',      DL.LIFT_UP,          "Door hinged on the top edge"),
             ('FLIP_DOWN_DOOR',    "Flip Down Door",    "Door hinged on the bottom edge"),
             ('RETRACTING_DOOR',   "Retracting Door",   "Single door that opens, then slides back into the cabinet"),
             ('RETRACTING_DOOR_PAIR', DL.RETRACTING_DOUBLE, "Pair of doors that open, then slide back into the cabinet"),

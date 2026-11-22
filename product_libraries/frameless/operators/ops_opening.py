@@ -109,7 +109,7 @@ class hb_frameless_OT_change_bay_opening(bpy.types.Operator):
             ('LEFT_DOOR', DL.LEFT_SWING, "Single left swing door"),
             ('RIGHT_DOOR', DL.RIGHT_SWING, "Single right swing door"),
             ('DOUBLE_DOORS', DL.DOUBLE, "Double swing doors"),
-            ('FLIP_UP_DOOR', "Flip Up Door", "Door hinged at top, swings up"),
+            ('FLIP_UP_DOOR', DL.LIFT_UP, "Door hinged at top, swings up"),
             # Stacked Doors
             ('LEFT_STACKED_DOOR', DL.LEFT_STACKED, "Two left swing doors stacked"),
             ('RIGHT_STACKED_DOOR', DL.RIGHT_STACKED, "Two right swing doors stacked"),
@@ -896,7 +896,7 @@ class hb_frameless_OT_change_opening_type(bpy.types.Operator):
             ('LEFT_DOOR', DL.LEFT_SWING, "Single left swing door"),
             ('RIGHT_DOOR', DL.RIGHT_SWING, "Single right swing door"),
             ('DOUBLE_DOORS', DL.DOUBLE, "Double swing doors"),
-            ('FLIP_UP_DOOR', "Flip Up Door", "Door hinged at top, swings up"),
+            ('FLIP_UP_DOOR', DL.LIFT_UP, "Door hinged at top, swings up"),
             ('SINGLE_DRAWER', "Single Drawer", "Single drawer"),
             ('PULLOUT', "Pullout", "Pullout with pull at top"),
             ('FALSE_FRONT', "False Front", "Decorative panel with no hardware"),

@@ -6,6 +6,7 @@ the active object and shows the named Menu class.
 import bpy
 
 from . import types_closets
+from ..common import door_labels as DL
 
 
 def _parents(obj):
@@ -369,11 +370,11 @@ class HOME_BUILDER_MT_closet_doors_drawers(bpy.types.Menu):
 
     def draw(self, context):
         layout = self.layout
-        op = layout.operator("hb_closets.add_doors", text="Left Swing")
+        op = layout.operator("hb_closets.add_doors", text=DL.LEFT_SWING)
         op.swing = 'LEFT'
-        op = layout.operator("hb_closets.add_doors", text="Right Swing")
+        op = layout.operator("hb_closets.add_doors", text=DL.RIGHT_SWING)
         op.swing = 'RIGHT'
-        op = layout.operator("hb_closets.add_doors", text="Double Door")
+        op = layout.operator("hb_closets.add_doors", text=DL.DOUBLE)
         op.swing = 'DOUBLE'
         op = layout.operator("hb_closets.add_doors",
                              text="Tilt Out Hamper")
@@ -389,9 +390,9 @@ class HOME_BUILDER_MT_closet_back_doors(bpy.types.Menu):
 
     def draw(self, context):
         layout = self.layout
-        for swing, text in (('LEFT', "Left Swing"),
-                            ('RIGHT', "Right Swing"),
-                            ('DOUBLE', "Double Door"),
+        for swing, text in (('LEFT', DL.LEFT_SWING),
+                            ('RIGHT', DL.RIGHT_SWING),
+                            ('DOUBLE', DL.DOUBLE),
                             ('TILT_OUT', "Tilt Out Hamper"),
                             ('NONE', "Remove Back Doors")):
             op = layout.operator("hb_closets.add_doors", text=text)

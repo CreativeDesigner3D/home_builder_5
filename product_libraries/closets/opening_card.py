@@ -13,6 +13,7 @@ import bpy
 from . import const_closets as const
 from . import materials_closets
 from . import types_closets
+from ..common import door_labels as DL
 from ... import units
 
 
@@ -22,10 +23,10 @@ SIDES = ('left', 'right', 'top', 'bottom')
 
 _DOOR_ITEMS = (
     ('NONE', "None"),
-    ('LEFT', "Left Swing"),
-    ('RIGHT', "Right Swing"),
-    ('DOUBLE', "Double Door"),
-    ('LIFT_UP', "Lift Up"),
+    ('LEFT', DL.LEFT_SWING),
+    ('RIGHT', DL.RIGHT_SWING),
+    ('DOUBLE', DL.DOUBLE),
+    ('LIFT_UP', DL.LIFT_UP),
     ('TILT_OUT', "Tilt Out Hamper"),
 )
 

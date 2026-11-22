@@ -1033,7 +1033,7 @@ class HOME_BUILDER_MT_face_frame_change_opening(bpy.types.Menu):
         ('DOOR_LOOKS_3_DRAWER', "Door - Looks like 3 Drawers"),
         ('DOOR_LOOKS_4_DRAWER', "Door - Looks like 4 Drawers"),
         ('SEP',),
-        ('FLIP_UP_DOOR',      "Flip Up Door"),
+        ('FLIP_UP_DOOR',      DL.LIFT_UP),
         ('FLIP_DOWN_DOOR',    "Flip Down Door"),
         ('SEP',),
         ('RETRACTING_DOOR',        "Retracting Door"),

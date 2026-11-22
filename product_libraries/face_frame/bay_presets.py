@@ -424,7 +424,7 @@ UPPER_MENU_ENTRIES = [
     ('LEFT_SWING_DOOR',           DL.LEFT_SWING),
     ('RIGHT_SWING_DOOR',          DL.RIGHT_SWING),
     ('DOUBLE_DOOR',               DL.DOUBLE),
-    ('LIFT_UP_DOOR',              "Lift Up Door"),
+    ('LIFT_UP_DOOR',              DL.LIFT_UP),
     SEP,
     ('LEFT_STACKED_DOOR',         DL.LEFT_STACKED),
     ('RIGHT_STACKED_DOOR',        DL.RIGHT_STACKED),

@@ -39,7 +39,7 @@ PRESETS = {
         ('LEFT_DOOR', DL.LEFT_SWING),
         ('RIGHT_DOOR', DL.RIGHT_SWING),
         ('DOUBLE_DOORS', DL.DOUBLE),
-        ('FLIP_UP_DOOR', "Lift Up Door"),
+        ('FLIP_UP_DOOR', DL.LIFT_UP),
         ('LEFT_STACKED_DOOR', DL.LEFT_STACKED),
         ('RIGHT_STACKED_DOOR', DL.RIGHT_STACKED),
         ('DOUBLE_STACKED_DOOR', DL.DOUBLE_STACKED),
@@ -253,7 +253,7 @@ def _config(kind):
 
 FRONT_ROWS = 8
 
-_KIND_NAMES = {'DRAWER': "Drawer", 'PULLOUT': "Pullout", 'LIFT': "Lift Up Door",
+_KIND_NAMES = {'DRAWER': "Drawer", 'PULLOUT': "Pullout", 'LIFT': DL.LIFT_UP,
                'FALSE_FRONT': "False Front"}
 _PLACES = {2: ("Top", "Bottom"), 3: ("Top", "Middle", "Bottom"),
            4: ("Top", "Second", "Third", "Bottom")}
@@ -410,7 +410,7 @@ _SPLITTER_TAGS = ('IS_FRAMELESS_SPLITTER_VERTICAL_CAGE',
 
 FRONT_KINDS = (
     ('DOOR', "Door"),
-    ('FLIP_UP_DOOR', "Lift Up Door"),
+    ('FLIP_UP_DOOR', DL.LIFT_UP),
     ('SINGLE_DRAWER', "Drawer"),
     ('PULLOUT', "Pullout"),
     ('FALSE_FRONT', "False Front"),

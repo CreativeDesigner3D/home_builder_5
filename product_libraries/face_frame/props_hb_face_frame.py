@@ -12661,13 +12661,13 @@ class Face_Frame_Opening_Props(PropertyGroup):
          "Full-width door that retracts up into the cabinet"),
         # Lift-up family (top-hinged uppers). A plain TOP hinge is the
         # tilt-up door; these pick the stay-open lift hardware instead.
-        ('LIFT_UP', "Lift-Up",
+        ('LIFT_UP', DL.LIFT_UP_HW,
          "Top-hinged door on lift stays; opens effortlessly and holds "
          "any position"),
-        ('LIFT_UP_DELUXE', "Deluxe Lift-Up",
+        ('LIFT_UP_DELUXE', DL.LIFT_UP_DELUXE_HW,
          "Parallel-arm lift-up hardware; holds any position, deeper "
          "cabinet required"),
-        ('LIFT_UP_BIFOLD', "Deluxe Bi-fold Lift-Up",
+        ('LIFT_UP_BIFOLD', DL.LIFT_UP_BIFOLD_HW,
          "Two-panel door that folds as it lifts; for taller openings"),
         # Plain bi-fold pairs (no retract): the pair hinges on the named
         # side and folds open, one pull on the lead leaf. Appended so

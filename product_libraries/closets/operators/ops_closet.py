@@ -23,6 +23,7 @@ from ...frameless.operators.ops_placement import toggle_cabinet_color
 from ...face_frame.operators.ops_placement import _detect_wall
 from .. import const_closets as const
 from .. import types_closets
+from ...common import door_labels as DL
 from .. import drawer_boxes_closets
 from .. import materials_closets
 from .. import drop_dims_closets
@@ -3634,10 +3635,10 @@ class hb_closets_OT_add_doors(_ClosetInsertDialog, bpy.types.Operator):
     swing: bpy.props.EnumProperty(
         name="Swing",
         items=[('NONE', "None", "Remove doors"),
-               ('LEFT', "Left", "Single door hinged left"),
-               ('RIGHT', "Right", "Single door hinged right"),
-               ('DOUBLE', "Double", "Pair of doors"),
-               ('LIFT_UP', "Lift Up", "Single top-hinged lift-up door"),
+               ('LEFT', DL.LEFT_SWING, "Single door hinged left"),
+               ('RIGHT', DL.RIGHT_SWING, "Single door hinged right"),
+               ('DOUBLE', DL.DOUBLE, "Pair of doors"),
+               ('LIFT_UP', DL.LIFT_UP, "Single top-hinged lift-up door"),
                ('TILT_OUT', "Tilt Out Hamper",
                 "Single bottom-hinged front that tilts out, with a wire "
                 "basket behind it")],
@@ -11139,10 +11140,10 @@ class hb_closets_OT_opening_prompts(bpy.types.Operator):
     door_swing: bpy.props.EnumProperty(
         name="Door",
         items=[('NONE', "None", "No front on this opening"),
-               ('LEFT', "Left Swing", "Single door hinged left"),
-               ('RIGHT', "Right Swing", "Single door hinged right"),
-               ('DOUBLE', "Double Door", "Pair of doors"),
-               ('LIFT_UP', "Lift Up", "Single top-hinged lift-up door"),
+               ('LEFT', DL.LEFT_SWING, "Single door hinged left"),
+               ('RIGHT', DL.RIGHT_SWING, "Single door hinged right"),
+               ('DOUBLE', DL.DOUBLE, "Pair of doors"),
+               ('LIFT_UP', DL.LIFT_UP, "Single top-hinged lift-up door"),
                ('TILT_OUT', "Tilt Out Hamper",
                 "Single bottom-hinged front that tilts out, with a wire "
                 "basket behind it")],

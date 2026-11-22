@@ -28,6 +28,7 @@ from ...hb_types import (GeoNodeCage, GeoNodeCutpart, GeoNodeObject,
 from mathutils import Matrix, Vector
 
 from ...units import inch, millimeter
+from ..common import door_labels as DL
 from ..frameless.types_frameless import CabinetPart as _FramelessPart
 from . import solver_closets as solver
 from . import const_closets as const
@@ -1118,7 +1119,7 @@ def _door_size_warning(width, height, hinge, opening_w=0.0):
                         "Inches wide; this one is %s" % _in_str(opening_w))
     elif hinge == 'TOP':
         if height < const.LIFT_UP_MIN_HEIGHT:
-            msgs.append("Lift Up Door Height must be at least "
+            msgs.append(DL.LIFT_UP + " Height must be at least "
                         "11 1/4 Inches")
         if width > const.DOOR_MAX_LONG:
             msgs.append("Door Width exceeds 84 Inches")
@@ -11640,10 +11641,10 @@ OPENING_CONFIG_GROUPS = [
     [('ADJ_SHELVES', "Adjustable Shelves")],
     [('HANG_ROD', "Hanging Rod"),
      ('DOUBLE_HANG', "Double Hang")],
-    [('DOOR_LEFT', "Left Swing Door"),
-     ('DOOR_RIGHT', "Right Swing Door"),
-     ('DOOR_DOUBLE', "Double Door"),
-     ('DOOR_LIFT_UP', "Lift Up Door"),
+    [('DOOR_LEFT', DL.LEFT_SWING),
+     ('DOOR_RIGHT', DL.RIGHT_SWING),
+     ('DOOR_DOUBLE', DL.DOUBLE),
+     ('DOOR_LIFT_UP', DL.LIFT_UP),
      ('DOOR_TILT_OUT', "Tilt Out Hamper")],
     # Drawers are not in this list: a bank has a quantity and sizes to
     # ask about, so the menu offers the Add Drawers dialog in this

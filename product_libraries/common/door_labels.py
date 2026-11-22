@@ -9,12 +9,20 @@ Vocabulary:
 - a single door is named by its hinge side: "Left Swing Door"
 - a pair meeting in the middle is "Double Doors"
 - counts are plural where more than one: "1 Drawer 2 Doors"
+- a door hinged on its top edge is a "Lift-up Door"; its stay hardware
+  is picked separately (Lift-up, Deluxe Lift-up, Deluxe Bi-fold Lift-up)
 """
 
 # Single doors and pairs
 LEFT_SWING = "Left Swing Door"
 RIGHT_SWING = "Right Swing Door"
 DOUBLE = "Double Doors"
+
+# Top-hinged door, and the stay hardware it can carry
+LIFT_UP = "Lift-up Door"
+LIFT_UP_HW = "Lift-up"
+LIFT_UP_DELUXE_HW = "Deluxe Lift-up"
+LIFT_UP_BIFOLD_HW = "Deluxe Bi-fold Lift-up"
 
 # Stacked doors (two high)
 LEFT_STACKED = "Left Swing Stacked Door"

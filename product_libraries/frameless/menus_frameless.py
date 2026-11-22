@@ -229,7 +229,7 @@ class HOME_BUILDER_MT_bay_change_configuration(bpy.types.Menu):
         layout.operator("hb_frameless.change_bay_opening", text=DL.LEFT_SWING).opening_type = 'LEFT_DOOR'
         layout.operator("hb_frameless.change_bay_opening", text=DL.RIGHT_SWING).opening_type = 'RIGHT_DOOR'
         layout.operator("hb_frameless.change_bay_opening", text=DL.DOUBLE).opening_type = 'DOUBLE_DOORS'
-        layout.operator("hb_frameless.change_bay_opening", text="Lift Up Door").opening_type = 'FLIP_UP_DOOR'
+        layout.operator("hb_frameless.change_bay_opening", text=DL.LIFT_UP).opening_type = 'FLIP_UP_DOOR'
         layout.separator()
         layout.operator("hb_frameless.change_bay_opening", text=DL.LEFT_STACKED).opening_type = 'LEFT_STACKED_DOOR'
         layout.operator("hb_frameless.change_bay_opening", text=DL.RIGHT_STACKED).opening_type = 'RIGHT_STACKED_DOOR'
@@ -323,7 +323,7 @@ class HOME_BUILDER_MT_opening_change(bpy.types.Menu):
         layout.operator("hb_frameless.change_opening_type", text=DL.LEFT_SWING).opening_type = 'LEFT_DOOR'
         layout.operator("hb_frameless.change_opening_type", text=DL.RIGHT_SWING).opening_type = 'RIGHT_DOOR'
         layout.operator("hb_frameless.change_opening_type", text=DL.DOUBLE).opening_type = 'DOUBLE_DOORS'
-        layout.operator("hb_frameless.change_opening_type", text="Flip Up Door").opening_type = 'FLIP_UP_DOOR'
+        layout.operator("hb_frameless.change_opening_type", text=DL.LIFT_UP).opening_type = 'FLIP_UP_DOOR'
         layout.separator()
         layout.operator("hb_frameless.change_opening_type", text="Drawer").opening_type = 'SINGLE_DRAWER'
         layout.operator("hb_frameless.change_opening_type", text="Pullout").opening_type = 'PULLOUT'
