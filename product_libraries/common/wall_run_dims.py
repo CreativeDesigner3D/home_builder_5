@@ -21,7 +21,8 @@ MOVE slides the cabinet along its wall, WIDTH keeps its far edge where
 it is and changes its width. 0 closes the gap -- snaps it flush.
 
 Appliances on a wall get the same dimensions (iter_wall_appliances()),
-so a dishwasher or refrigerator can be spaced and sized from the model.
+so a dishwasher or refrigerator can be spaced and sized from the model,
+and so do closet runs (the closet overlay's Starters mode).
 
 A gap two products share is labelled once, on whichever the overlay
 reaches first -- the overlays visit selected products first, so the one
@@ -32,6 +33,8 @@ The neighbor scan is the placement system's own
 same gaps placement snaps to. Everything comes back in cabinet-local X /
 Z so each overlay can put it on its own front plane.
 """
+
+import math
 
 from ... import hb_placement, hb_types
 from ...units import inch
@@ -142,6 +145,14 @@ def _visible(cands, z0, z1):
     return out[:MAX_PER_SIDE]
 
 
+def _on_wall_back(obj):
+    """Turned half round onto the back face of its wall. Doors and
+    windows go through the wall, so they count on either face."""
+    if obj.get('IS_DOOR_BP') or obj.get('IS_WINDOW_BP'):
+        return False
+    return abs(math.cos(obj.rotation_euler.z) + 1.0) < 1e-3
+
+
 def _is_base_height(z0, height):
     """Standing on the floor and no taller than BASE_MAX_HEIGHT -- a
     base cabinet, a dishwasher. Read off the size rather than a cabinet
@@ -167,6 +178,9 @@ def _side_edges(cabinet, width, height):
     neighbors = hb_placement.PlacementMixin.get_wall_children_sorted(
         None, wall_obj, exclude_obj=cabinet,
         object_z_start=z0, object_height=height)
+    # A product on the other face of the wall is not a neighbor: it is
+    # turned half round, so its location.x is its far end anyway.
+    neighbors = [n for n in neighbors if not _on_wall_back(n[2])]
     # Doors are always neighbors. Windows are for uppers and talls: a
     # base-height product under one is spaced off its neighbors, not
     # off the window above the counter.

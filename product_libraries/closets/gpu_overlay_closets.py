@@ -6,7 +6,10 @@ handler paints value labels:
 
 - Starters mode: W / H / D on every starter root. Committing writes the
   hb_closet_starter props, so bay propagation and the hanging top-anchor
-  behave exactly like a sidebar edit.
+  behave exactly like a sidebar edit. A run on a wall also gets the
+  cabinet libraries' wall-run dims (common/wall_run_dims): the gap to
+  each neighbor, or to the wall end, editable with the same Move /
+  Width choice.
 - Bays mode: every bay's width (auto-locks on commit, pinned labels carry
   a bullet and right-click / 0-Enter resets to auto) PLUS every opening's
   height, so both are editable without a mode switch.
@@ -39,6 +42,7 @@ from ...hb_types import GeoNodeCutpart
 from ...hb_gpu_draw import get_visible_window_bounds
 from . import types_closets
 from . import const_closets as const
+from ..common import gap_mode_chip, wall_run_dims
 # Stale-matrix-safe cage readers (valid for cages created while hidden).
 from ..face_frame import split_preview
 
@@ -81,7 +85,7 @@ _PILL_GAP = 4
 _FILTERS = [
     ("Dims", 'hb_ov_show_dims',
      ('STARTER_', 'BAY_', 'OPEN_H', 'PART_Z', 'ROD_TOP', 'DRAWER_H',
-      'TOGGLE_LOCK'),
+      'TOGGLE_LOCK', 'CAB_'),
      ('Starters', 'Bays', 'Openings')),
     ("Bottoms", 'hb_ov_show_mount',
      ('TOGGLE_BOTTOM',), ('Bays',)),
@@ -165,7 +169,7 @@ KIND_ITEMS = [
     ('ROD_TOP', "Rod From Top", ""),
     # Drawer stack front height (opening idprop)
     ('DRAWER_H', "Drawer Front Height", ""),
-]
+] + wall_run_dims.enum_items()   # CAB_GAP_* / CAB_END_*: run on its wall
 
 # ---- Module state ----------------------------------------------------------
 
@@ -326,6 +330,27 @@ def _starter_label_targets(starter):
     ]
 
 
+def _starter_run_targets(starter, seen_spans):
+    """Wall-run dims for a starter (see common/wall_run_dims) on its
+    front face, as (kind, anchor, value, prefix, line). Spans already in
+    ``seen_spans`` are skipped and new ones added, so a gap two runs
+    share is labelled once."""
+    dim_x, dim_z = split_preview._cage_dims(starter)
+    if dim_x <= 0.0 or dim_z <= 0.0:
+        return []
+    mw = split_preview._world_matrix(starter)
+    out = []
+    for kind, value, prefix, a, b, key in wall_run_dims.run_dims(
+            starter, dim_x, dim_z):
+        if key in seen_spans:
+            continue
+        seen_spans.add(key)
+        wa = mw @ Vector((a[0], -0.003, a[1]))
+        wb = mw @ Vector((b[0], -0.003, b[1]))
+        out.append((kind, (wa + wb) / 2.0, value, prefix, (wa, wb)))
+    return out
+
+
 def _height_dim_line(opening):
     """World (bottom, top) of an opening's height dimension line."""
     dim_x, _dim_z = split_preview._cage_dims(opening)
@@ -371,11 +396,23 @@ def compute_labels(context, region, rv3d, lines_out=None):
     space = getattr(context, 'space_data', None)
     targets = []   # (obj, kind, editable, locked, anchor, value, prefix)
     dim_lines = {}  # (obj name, kind) -> world (a, b)
-    for starter in _iter_starter_roots(scene):
+    starters = list(_iter_starter_roots(scene))
+    seen_spans = set()
+    if mode == 'Starters':
+        # Selected runs first: a gap two runs share is labelled - and
+        # edited - on the first one reached.
+        _raw, picked = _selection_name_sets(context)
+        starters.sort(key=lambda st: st.name not in picked)
+    for starter in starters:
         if not _starter_shown(starter, space):
             continue
         if mode == 'Starters':
             for kind, anchor, value, prefix in _starter_label_targets(starter):
+                targets.append((starter, kind, True, False,
+                                anchor, value, prefix))
+            for kind, anchor, value, prefix, line in _starter_run_targets(
+                    starter, seen_spans):
+                dim_lines[(starter.name, kind)] = line
                 targets.append((starter, kind, True, False,
                                 anchor, value, prefix))
             continue
@@ -674,6 +711,10 @@ def _draw():
                 blf.color(0, *EDIT_TEXT_COLOR)
                 blf.position(0, rect[0] + PAD_X * s, rect[1] + PAD_Y * s, 0)
                 blf.draw(0, shown)
+                if kind in wall_run_dims.KINDS:
+                    # Move / Width, beside the field only while it's typed.
+                    gap_mode_chip.draw(shader, context.scene, region, rect,
+                                       font_sz, s)
             else:
                 _draw_label_rect(shader, rect,
                                  LABEL_BG if editable else LABEL_BG_DIM)
@@ -766,6 +807,16 @@ def _draw_space_box():
 def _commit(obj, kind, value):
     """Write the typed value through the same property paths the dialogs
     use, so update callbacks / redistribution / regenerators all fire."""
+    if kind in wall_run_dims.KINDS:
+        # Gap / wall-end dim: slide the run along its wall, or (Width)
+        # keep its far end and change its width.
+        dim_x, dim_z = split_preview._cage_dims(obj)
+        set_width = None
+        if wall_run_dims.edit_mode(bpy.context.scene) == 'WIDTH':
+            def set_width(w):
+                obj.hb_closet_starter.width = w
+        return wall_run_dims.commit(obj, kind, value, dim_x, dim_z,
+                                    set_width)
     if kind == 'STARTER_W':
         obj.hb_closet_starter.width = value
         return True
@@ -978,6 +1029,7 @@ class hb_closets_OT_edit_dim_label(bpy.types.Operator):
     def _finish(self, context):
         global _edit
         _edit = None
+        gap_mode_chip.clear()
         try:
             context.window.cursor_set('DEFAULT')
         except Exception:
@@ -1004,11 +1056,15 @@ class hb_closets_OT_edit_dim_label(bpy.types.Operator):
             if not typed:
                 self._finish(context)
                 return {'FINISHED'}
-            if obj is not None and value == 0.0:
+            # A gap / wall-end dim takes 0 as a size (flush); every other
+            # label reads it as "back to auto".
+            is_gap = self.kind in wall_run_dims.KINDS
+            if obj is not None and value == 0.0 and not is_gap:
                 self._finish(context)
                 _reset_to_auto(obj, self.kind)
                 return {'FINISHED'}
-            if obj is None or value is None or value <= 0.0:
+            if obj is None or value is None or value < 0.0 \
+                    or (value == 0.0 and not is_gap):
                 self.report({'WARNING'},
                             f"Could not read '{typed}' as a size")
                 self._finish(context)
@@ -1030,6 +1086,20 @@ class hb_closets_OT_edit_dim_label(bpy.types.Operator):
         if event.type in {'ESC', 'RIGHTMOUSE'}:
             self._finish(context)
             return {'CANCELLED'}
+
+        if self.kind in wall_run_dims.KINDS:
+            # The Move / Width chip beside a gap field: a click on it or
+            # Tab picks what the typed value changes; the edit goes on.
+            part = None
+            if event.type == 'LEFTMOUSE':
+                part = gap_mode_chip.hit(event.mouse_x, event.mouse_y)
+            elif event.type == 'TAB':
+                part = ('MOVE' if wall_run_dims.edit_mode(context.scene)
+                        == 'WIDTH' else 'WIDTH')
+            if part is not None:
+                gap_mode_chip.set_mode(context.scene, part)
+                context.area.tag_redraw()
+                return {'RUNNING_MODAL'}
 
         if event.type == 'LEFTMOUSE':
             self._finish(context)
