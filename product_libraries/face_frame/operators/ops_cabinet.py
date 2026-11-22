@@ -3090,10 +3090,14 @@ class hb_face_frame_OT_drawer_box_prompts(bpy.types.Operator):
             layout.label(text=f"Also applies to {selected} other selected "
                               f"drawer{'s' if selected > 1 else ''}",
                          icon='RESTRICT_SELECT_OFF')
-        self._draw_clearance_warnings(context, layout, opening_obj, op_props)
+        targets = [opening_obj.name] + [
+            o.name for o in self._target_openings(opening_obj)]
+        self._draw_clearance_warnings(context, layout, opening_obj, op_props,
+                                      targets)
 
     @staticmethod
-    def _draw_clearance_warnings(context, layout, opening_obj, op_props):
+    def _draw_clearance_warnings(context, layout, opening_obj, op_props,
+                                 targets=()):
         """Flag typed sizes that break the minimum clearances. The box
         is rebuilt as the user types, so read the limits the build
         stamped on the current box each redraw."""
@@ -3108,6 +3112,7 @@ class hb_face_frame_OT_drawer_box_prompts(bpy.types.Operator):
         blum = types_face_frame.uses_blum_tandem_sizing(scene_props)
         notes = []
         suggestions = []
+        other_slides = []
         if (op_props.drawer_box_override_width
                 and op_props.drawer_box_width > box['HB_BOX_MAX_WIDTH'] + eps):
             notes.append(('ERROR', "Width is under the side clearance"))
@@ -3125,10 +3130,18 @@ class hb_face_frame_OT_drawer_box_prompts(bpy.types.Operator):
             # Auto depth is already the longest runner that fits, so the
             # runner notes only concern a typed depth.
             if blum and op_props.drawer_box_override_depth:
-                if all(abs(depth - inch(n)) > eps for n in
-                       types_face_frame.BLUM_TANDEM_RUNNER_LENGTHS_IN):
-                    suggestions = nearby_runner_lengths(
-                        depth, box['HB_BOX_DEPTH_SPACE'] - rear_min)
+                slide = op_props.drawer_slides or ''
+                lengths = slide_runner_lengths(slide)
+                if all(abs(depth - inch(n)) > eps for n in lengths):
+                    room = box['HB_BOX_DEPTH_SPACE'] - rear_min
+                    suggestions = nearby_runner_lengths(depth, room, lengths)
+                    # Slides that do come in this length: offered as a
+                    # switch, the box still flagged until it is made.
+                    other_slides = [
+                        (code, name) for code, name in drawer_slides_options()
+                        if code != slide and depth <= room + eps
+                        and any(abs(depth - inch(n)) <= eps
+                                for n in slide_runner_lengths(code, None))]
                     if suggestions:
                         notes.append(('ERROR', "Depth is not a runner length. "
                                                "Use a standard size:"))
@@ -3150,6 +3163,18 @@ class hb_face_frame_OT_drawer_box_prompts(bpy.types.Operator):
                         text=f'{length:g}"')
                     op.opening_name = opening_obj.name
                     op.depth_in = length
+            for code, name in other_slides:
+                box_col.separator()
+                box_col.label(text=f'A {meter_to_inch(depth):g}" box runs on '
+                                   f'{name} slides', icon='INFO')
+                entry = accessory_registry.lookup(DRAWER_SLIDES_HOST, code) or {}
+                if entry.get('upgrade_note'):
+                    box_col.label(text=entry['upgrade_note'])
+                op = box_col.operator(
+                    hb_face_frame_OT_switch_drawer_slides.bl_idname,
+                    text=f"Switch to {name}", icon='FILE_REFRESH')
+                op.code = code
+                op.opening_names = "\n".join(targets or [opening_obj.name])
 
     def execute(self, context):
         # The active opening is live-bound via its props' update
@@ -3177,14 +3202,30 @@ class hb_face_frame_OT_drawer_box_prompts(bpy.types.Operator):
         return {'FINISHED'}
 
 
-def nearby_runner_lengths(depth, max_depth):
+def slide_runner_lengths(code, default=types_face_frame.BLUM_TANDEM_RUNNER_LENGTHS_IN):
+    """Runner lengths (inches) a slide option comes in: its product
+    entry's runner_lengths_in, else `default` (the standard runner
+    lengths; None to get () for a slide that lists none)."""
+    entry = (accessory_registry.lookup(DRAWER_SLIDES_HOST, code) or {}
+             if code else {})
+    lengths = entry.get('runner_lengths_in')
+    if lengths:
+        try:
+            return tuple(float(n) for n in lengths)
+        except (TypeError, ValueError):
+            pass
+    return tuple(default or ())
+
+
+def nearby_runner_lengths(depth, max_depth, lengths=None):
     """Standard runner lengths (inches) to offer for a box depth that is
     not one: the nearest length at or under `depth` and the nearest one
     over it, keeping only lengths that fit within `max_depth` (meters).
     Shortest first."""
     eps = inch(0.001)
-    fits = sorted(n for n in types_face_frame.BLUM_TANDEM_RUNNER_LENGTHS_IN
-                  if inch(n) <= max_depth + eps)
+    if lengths is None:
+        lengths = types_face_frame.BLUM_TANDEM_RUNNER_LENGTHS_IN
+    fits = sorted(n for n in lengths if inch(n) <= max_depth + eps)
     under = [n for n in fits if inch(n) <= depth + eps]
     over = [n for n in fits if inch(n) > depth + eps]
     picks = []
@@ -3193,6 +3234,33 @@ def nearby_runner_lengths(depth, max_depth):
     if over:
         picks.append(over[0])
     return picks
+
+
+class hb_face_frame_OT_switch_drawer_slides(bpy.types.Operator):
+    """Run these drawers on slides that come in the box's depth"""
+    bl_idname = "hb_face_frame.switch_drawer_slides"
+    bl_label = "Switch Slides"
+    bl_description = ("Run these drawers on slides that come in this box "
+                      "depth")
+    bl_options = {'INTERNAL'}
+
+    code: bpy.props.StringProperty(
+        default='', options={'HIDDEN', 'SKIP_SAVE'},
+    )  # type: ignore
+    # The dialog's opening plus every drawer its OK applies to, by name.
+    opening_names: bpy.props.StringProperty(
+        default='', options={'HIDDEN', 'SKIP_SAVE'},
+    )  # type: ignore
+
+    def execute(self, context):
+        openings = [bpy.data.objects.get(n)
+                    for n in self.opening_names.split("\n") if n]
+        openings = [o for o in openings if o is not None]
+        if not openings or not self.code:
+            return {'CANCELLED'}
+        for opening in openings:
+            _set_opening_slides(opening, self.code)
+        return {'FINISHED'}
 
 
 class hb_face_frame_OT_set_drawer_box_depth(bpy.types.Operator):
@@ -8823,6 +8891,7 @@ classes = (
     hb_face_frame_OT_finish_bay_prompts,
     hb_face_frame_OT_drawer_box_prompts,
     hb_face_frame_OT_set_drawer_box_depth,
+    hb_face_frame_OT_switch_drawer_slides,
     hb_face_frame_OT_sink_duo_drawer_prompts,
     hb_face_frame_OT_rollout_above_drawer_prompts,
     hb_face_frame_OT_add_rollout_above,
