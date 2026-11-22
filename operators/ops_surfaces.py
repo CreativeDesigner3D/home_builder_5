@@ -1848,6 +1848,12 @@ class HOME_BUILDER_MT_countertop_commands(bpy.types.Menu):
         cut = self._CUT.get(library)
         if cut and _operator_exists(cut):
             layout.operator(cut, text="Cut Hole (Select 2)", icon='MOD_BOOLEAN')
+        if obj and obj.get('ct_laminate'):
+            for idname, text, icon in (
+                    ('hb_frameless.countertop_joints', "Field Joints", 'MOD_EDGESPLIT'),
+                    ('hb_frameless.countertop_parts', "Countertop Parts", 'PRESET')):
+                if _operator_exists(idname):
+                    layout.operator(idname, text=text, icon=icon)
         layout.separator()
         layout.operator("home_builder.delete_countertop",
                         text="Delete Countertop", icon='X')

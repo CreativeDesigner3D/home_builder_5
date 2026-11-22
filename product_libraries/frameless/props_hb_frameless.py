@@ -3015,6 +3015,38 @@ class Frameless_Scene_Props(PropertyGroup):
         default=units.inch(0.25), min=0.0, unit='LENGTH',
         precision=4)  # type: ignore
 
+    countertop_laminate_edge: EnumProperty(
+        name="Laminate Edge",
+        description="How a built-up countertop's front and finished ends "
+                    "are edged. A laminate slab is always banded 3mm",
+        items=[
+            ('SELF', "Laminate Self Edge", "Laminate over the edges, "
+             "trimmed flush"),
+            ('PVC_3MM', "3mm Banding", "3mm edgebanding matching the top"),
+        ],
+        default='SELF')  # type: ignore
+    countertop_max_length: FloatProperty(
+        name="Max Length",
+        description="Longest piece a laminate countertop is made in. "
+                    "Longer tops are cut with field joints, placed on "
+                    "cabinet seams clear of sinks and moved with Field "
+                    "Joints on the countertop's right-click menu",
+        default=units.inch(144.0), min=units.inch(12.0), unit='LENGTH',
+        precision=4)  # type: ignore
+    countertop_corner_radius: FloatProperty(
+        name="Corner Radius",
+        description="Radius on the front corners of a laminate "
+                    "countertop's finished ends. 0 leaves them square; "
+                    "a radius is at least 3\" on a banded edge and 2\" on "
+                    "a self edge",
+        default=0.0, min=0.0, unit='LENGTH', precision=4)  # type: ignore
+    countertop_fridge_overhang: FloatProperty(
+        name="Refrigerator Overhang",
+        description="Overhang a laminate countertop's finished end takes "
+                    "where it stands beside a refrigerator",
+        default=units.inch(0.25), min=0.0, unit='LENGTH',
+        precision=4)  # type: ignore
+
     countertop_trim_scribe: FloatProperty(
         name="Trim Scribe",
         description="Extra length a laminate countertop gets at each end "
@@ -3684,6 +3716,12 @@ class Frameless_Scene_Props(PropertyGroup):
             col.prop(props, 'countertop_buildup_back', text="Back Build-Up")
             col.prop(props, 'countertop_buildup_back_gap',
                      text="Build-Up Clearance")
+            col.prop(props, 'countertop_laminate_edge', text="Laminate Edge")
+        if props.countertop_construction != 'STANDARD':
+            col.prop(props, 'countertop_max_length', text="Max Length")
+            col.prop(props, 'countertop_corner_radius', text="Corner Radius")
+            col.prop(props, 'countertop_fridge_overhang',
+                     text="Refrigerator Overhang")
         col.separator()
         col.prop(props, 'countertop_material', text="Material")
         col.prop(props, 'countertop_edge', text="Edge")

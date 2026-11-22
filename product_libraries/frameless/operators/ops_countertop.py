@@ -336,6 +336,30 @@ def extend_run_ends(wall_obj, cabinets, start_x, end_x, cab_height,
     return start_x, end_x, tall_left, tall_right
 
 
+FRIDGE_TOL = units.inch(1.0)
+
+
+def refrigerator_beside(wall_obj, start_x, end_x):
+    """(left, right): is a refrigerator standing against the run's left
+    or right end on this wall."""
+    left = right = False
+    for child in wall_obj.children:
+        if (not child.get('IS_APPLIANCE')
+                or child.get('APPLIANCE_TYPE') != 'REFRIGERATOR'
+                or abs(child.rotation_euler.z) > 0.1):
+            continue
+        try:
+            width = hb_types.GeoNodeCage(child).get_input('Dim X')
+        except Exception:
+            continue
+        x0 = child.location.x
+        if abs(x0 + width - start_x) < FRIDGE_TOL:
+            left = True
+        if abs(x0 - end_x) < FRIDGE_TOL:
+            right = True
+    return left, right
+
+
 def create_wall_countertop(context, wall_obj, cabinets, has_left_conn, has_right_conn):
     """Create a countertop for cabinets on a single wall.
 
@@ -426,9 +450,18 @@ def create_wall_countertop(context, wall_obj, cabinets, has_left_conn, has_right
         std_front_y = -(std_depth + overhang_front)
         std_back_y = overhang_back
 
-    # Apply side overhang
-    sx = start_x - (overhang_sides if not suppress_left else 0)
-    ex = end_x + (overhang_sides if not suppress_right else 0)
+    # Apply side overhang. A laminate top's finished end standing in a
+    # refrigerator opening takes the smaller refrigerator overhang.
+    side_left = side_right = overhang_sides
+    fridge_left = fridge_right = False
+    if uses_laminate_rules(props) and not is_back_side:
+        fridge_left, fridge_right = refrigerator_beside(wall_obj, start_x, end_x)
+        if fridge_left:
+            side_left = props.countertop_fridge_overhang
+        if fridge_right:
+            side_right = props.countertop_fridge_overhang
+    sx = start_x - (side_left if not suppress_left else 0)
+    ex = end_x + (side_right if not suppress_right else 0)
 
     # Laminate tops: an end that runs into a wall goes to the wall plus
     # the trim scribe, never an overhang into it. Corners and talls keep
@@ -618,14 +651,14 @@ def create_wall_countertop(context, wall_obj, cabinets, has_left_conn, has_right
     countertop_common.finish(obj, 'FRAMELESS')
     if uses_laminate_rules(props) and not is_back_side and not has_l_shape:
         ends = []
-        for at_wall, butted in ((wall_left, suppress_left),
-                                (wall_right, suppress_right)):
+        for at_wall, butted, fridge in ((wall_left, suppress_left, fridge_left),
+                                        (wall_right, suppress_right, fridge_right)):
             if at_wall:
                 ends.append(('WALL', props.countertop_trim_scribe))
             elif butted:
                 ends.append(('BUTT', 0.0))
             else:
-                ends.append(('FINISHED', 0.0))
+                ends.append(('FRIDGE' if fridge else 'FINISHED', 0.0))
         apply_laminate_build(obj, props, ends)
 
     return obj
@@ -638,42 +671,225 @@ BUILDUP_STRIP = {'front': units.inch(4.0), 'middle': units.inch(3.0),
 LAMINATE_SPLASH_THICKNESS = units.inch(0.75)
 
 
-def apply_laminate_build(obj, props, ends):
+# The smallest radius a finished outside corner takes, by edge: banding
+# needs a gentler curve than a laminate self edge.
+MIN_CORNER_RADIUS = {'PVC_3MM': units.inch(3.0), 'SELF': units.inch(2.0)}
+# A top butting the front edge of another can't be slid to fit, so its
+# wall end gets this much scribe instead of the trim scribe.
+BUTTED_WALL_SCRIBE = units.inch(1.0)
+# Length a top butting a 3mm banded front edge is cut over, to reach
+# under the banding.
+BANDED_BUTT_EXTRA = units.inch(0.125)
+# Field joints stay this far clear of a sink or cooktop cutout.
+JOINT_CUTOUT_CLEAR = units.inch(3.0)
+
+
+def laminate_edge(props):
+    """'SELF' (laminate self edge) or 'PVC_3MM' (3mm banding). A slab
+    comes laminated, so it is always banded."""
+    if props.countertop_construction == 'SLAB':
+        return 'PVC_3MM'
+    return props.countertop_laminate_edge
+
+
+def laminate_ends(obj):
+    """The (kind, scribe) of a laminate top's left and right ends."""
+    lam = countertop_common._dict(obj.get(countertop_common.LAMINATE_KEY))
+    return [(lam.get('left', 'FINISHED'), float(lam.get('scribe_left', 0.0))),
+            (lam.get('right', 'FINISHED'), float(lam.get('scribe_right', 0.0)))]
+
+
+def apply_laminate_build(obj, props, ends, extra=(0.0, 0.0)):
     """Give a laminate wall top its build: the deck and strips of a
-    built-up top, and the splash. ``ends`` is (kind, scribe) for the left
-    and right ends: 'WALL' runs into a wall (the scribe is how far the
-    top goes past its face), 'BUTT' meets a tall cabinet or a corner, and
-    'FINISHED' is open. Strips stop the back clearance short of a wall
-    face or a butted end and run on under a finished one."""
+    built-up top, the splash and the corner radius. ``ends`` is (kind,
+    scribe) for the left and right ends:
+
+    - 'WALL' runs into a wall; the scribe is how far past its face;
+    - 'CORNER' runs into the corner wall with another top along it;
+    - 'JOIN' butts the front edge of another top;
+    - 'BUTT' meets a tall cabinet or panel;
+    - 'FINISHED' is open, and 'FRIDGE' is open beside a refrigerator,
+      which takes no corner radius.
+
+    Strips stop the build-up clearance short of a wall or a butted end,
+    run to a joined one and on under a finished one, where the front
+    corner takes the room's corner radius. ``extra`` is length the
+    left / right ends are cut over the model, for the parts list."""
     gap = props.countertop_buildup_back_gap
-    inset = []
-    walls = []
+    edge = laminate_edge(props)
+    radius = props.countertop_corner_radius
+    if radius > 0.0:
+        radius = max(radius, MIN_CORNER_RADIUS.get(edge, 0.0))
+    inset, walls, radii = [], [], []
     for kind, scribe in ends:
-        if kind == 'WALL':
-            inset.append(scribe + gap)
-            walls.append(scribe)
-        elif kind == 'BUTT':
-            inset.append(gap)
-            walls.append(-1.0)
-        else:
-            inset.append(-1.0)
-            walls.append(-1.0)
+        inset.append({'WALL': scribe + gap, 'CORNER': gap, 'BUTT': gap,
+                      'JOIN': 0.0}.get(kind, -1.0))
+        walls.append({'WALL': scribe, 'CORNER': 0.0}.get(kind, -1.0))
+        radii.append(radius if kind == 'FINISHED' else 0.0)
+    obj[countertop_common.LAMINATE_KEY] = {
+        'construction': props.countertop_construction, 'edge': edge,
+        'left': ends[0][0], 'right': ends[1][0],
+        'scribe_left': ends[0][1], 'scribe_right': ends[1][1],
+        'extra_left': extra[0], 'extra_right': extra[1]}
     if props.countertop_construction == 'BUILT_UP':
         spec = dict(BUILDUP_STRIP, deck=BUILDUP_DECK, back_gap=gap,
-                    left=inset[0], right=inset[1])
+                    left=inset[0], right=inset[1],
+                    radius_left=radii[0], radius_right=radii[1])
         spec['front'] = props.countertop_buildup_front
         spec['middle'] = props.countertop_buildup_middle
         spec['back'] = props.countertop_buildup_back
         obj[countertop_common.BUILDUP_KEY] = spec
+    elif countertop_common.BUILDUP_KEY in obj:
+        del obj[countertop_common.BUILDUP_KEY]
     if props.countertop_splash == 'STANDARD':
         obj[countertop_common.SPLASH_KEY] = {
             'height': props.countertop_splash_height,
             'thickness': LAMINATE_SPLASH_THICKNESS,
             'left': walls[0], 'right': walls[1]}
-    if (countertop_common.BUILDUP_KEY in obj
-            or countertop_common.SPLASH_KEY in obj):
-        countertop_common.ensure_outline(obj)
-        countertop_common.rebuild(obj)
+    elif countertop_common.SPLASH_KEY in obj:
+        del obj[countertop_common.SPLASH_KEY]
+    countertop_common.ensure_outline(obj)
+    points = countertop_common.outline_of(obj)
+    rect = countertop_common.design_rect(obj)
+    if rect:
+        corners = countertop_common.corners_of(obj)
+        for i, (x, y) in enumerate(points):
+            if abs(y - rect[2]) > 1e-6:
+                continue
+            r = radii[0] if abs(x - rect[0]) < 1e-6 else radii[1]
+            extras = tuple(corners[i][3:])
+            corners[i] = ((countertop_common.CORNER_RADIUS, r, r) if r > 0.0
+                          else countertop_common.SHARP) + extras
+        countertop_common.set_outline(obj, points, corners)
+    countertop_common.rebuild(obj)
+
+
+def _move_end(obj, side, x):
+    """Move a rectangular top's left (0) or right (1) end to local x."""
+    rect = countertop_common.design_rect(obj)
+    old = rect[side]
+    points = [(x if abs(px - old) < 1e-6 else px, py)
+              for px, py in countertop_common.outline_of(obj)]
+    countertop_common.set_outline(obj, points,
+                                  countertop_common.corners_of(obj))
+
+
+def _front_in(obj, other, use_max):
+    """Where ``other``'s footprint reaches along ``obj``'s x: the far
+    side of it when use_max, else the near side."""
+    to_obj = (countertop_common.world_matrix(obj).inverted()
+              @ countertop_common.world_matrix(other))
+    xs = [(to_obj @ Vector((x, y, 0.0))).x
+          for x, y in countertop_common.outline_of(other)]
+    return max(xs) if use_max else min(xs)
+
+
+def _butt_into(props, obj, side, x, partner):
+    """``obj``'s ``side`` end butts the front edge of ``partner`` at x."""
+    _move_end(obj, side, x)
+    ends = laminate_ends(obj)
+    ends[side] = ('JOIN', 0.0)
+    other = 1 - side
+    kind, scribe = ends[other]
+    if kind == 'WALL':
+        target = max(BUTTED_WALL_SCRIBE, scribe)
+        rect = countertop_common.design_rect(obj)
+        step = target - scribe
+        _move_end(obj, other, rect[other] + (step if other else -step))
+        ends[other] = ('WALL', target)
+    lam = countertop_common._dict(partner.get(countertop_common.LAMINATE_KEY))
+    extra = [0.0, 0.0]
+    if lam.get('edge') == 'PVC_3MM':
+        extra[side] = BANDED_BUTT_EXTRA
+    apply_laminate_build(obj, props, ends, tuple(extra))
+
+
+def _into_corner(props, obj, side):
+    ends = laminate_ends(obj)
+    ends[side] = ('CORNER', 0.0)
+    lam = countertop_common._dict(obj.get(countertop_common.LAMINATE_KEY))
+    apply_laminate_build(obj, props, ends,
+                         (lam.get('extra_left', 0.0), lam.get('extra_right', 0.0)))
+
+
+def join_corner_tops(props, run):
+    """Lay out the laminate tops meeting at each inside corner of a run.
+
+    ``run`` is [(wall, [tops left to right])]. Where one top runs into
+    the corner, the top on the other wall butts its front edge: it is
+    cut to meet that edge (over by the banding when the edge is banded)
+    and its wall end, if any, gets the butted wall scribe. The top
+    running in takes no scribe at the corner."""
+    tol = units.inch(0.5)
+    for (wall_a, tops_a), (_wall_b, tops_b) in zip(run, run[1:]):
+        if not tops_a or not tops_b:
+            continue
+        a, b = tops_a[-1], tops_b[0]
+        if not (a.get(countertop_common.LAMINATE_KEY)
+                and b.get(countertop_common.LAMINATE_KEY)):
+            continue
+        rect_a = countertop_common.design_rect(a)
+        rect_b = countertop_common.design_rect(b)
+        if not rect_a or not rect_b:
+            continue
+        length_a = hb_types.GeoNodeWall(wall_a).get_input('Length')
+        a_in = rect_a[1] >= length_a - tol
+        b_in = rect_b[0] <= tol
+        if a_in:
+            _butt_into(props, b, 0, _front_in(b, a, True), a)
+            _into_corner(props, a, 1)
+        elif b_in:
+            _butt_into(props, a, 1, _front_in(a, b, False), b)
+            _into_corner(props, b, 0)
+
+
+def cutout_ranges(obj):
+    """(x0, x1) in the top's own space of every sink or cooktop cutout
+    under it."""
+    from ...common import appliance_geo
+    to_local = countertop_common.world_matrix(obj).inverted()
+    rect = countertop_common.design_rect(obj)
+    out = []
+    for sink in bpy.context.scene.objects:
+        if (not sink.get('IS_APPLIANCE')
+                or appliance_geo.appliance_type(sink) not in ('SINK', 'COOKTOP')):
+            continue
+        for x0, x1, y0, y1, z0, z1 in appliance_geo.sink_cutout_boxes(sink):
+            pts = [to_local @ (sink.matrix_world @ Vector((x, y, z0)))
+                   for x in (x0, x1) for y in (y0, y1)]
+            ys = [p.y for p in pts]
+            if rect and (max(ys) <= rect[2] or min(ys) >= rect[3]):
+                continue
+            out.append((min(p.x for p in pts), max(p.x for p in pts)))
+    return out
+
+
+def cabinet_seams(wall_obj):
+    """The x of every base cabinet edge along the front of a wall."""
+    seams = set()
+    for child in wall_obj.children:
+        if (not child.get('IS_FRAMELESS_CABINET_CAGE')
+                or abs(child.rotation_euler.z) > 0.1):
+            continue
+        width = hb_types.GeoNodeCage(child).get_input('Dim X')
+        seams.add(round(child.location.x, 6))
+        seams.add(round(child.location.x + width, 6))
+    return sorted(seams)
+
+
+def place_field_joints(obj, props):
+    """Joint a laminate top wherever it runs past the max length: on
+    cabinet seams near an even split, clear of sink cutouts."""
+    points = countertop_common.outline_of(obj)
+    if len(points) < 3:
+        return
+    xs = [x for x, _y in points]
+    seams = cabinet_seams(obj.parent) if obj.parent else []
+    joints = countertop_common.auto_joints(
+        min(xs), max(xs), props.countertop_max_length, seams,
+        cutout_ranges(obj), JOINT_CUTOUT_CLEAR)
+    countertop_common.set_joints(obj, joints)
+    countertop_common.rebuild(obj)
 
 
 def create_group_countertop(context, group_obj, cabinets):
@@ -892,12 +1108,15 @@ class hb_frameless_OT_add_countertops(bpy.types.Operator):
         runs = build_wall_runs(wall_cabinets)
         ct_count = 0
 
+        props = hb_project.get_main_scene().hb_frameless
         for run in runs:
+            run_tops = []
             for i, (wall_obj, cabinets) in enumerate(run):
                 has_left = i > 0
                 has_right = i < len(run) - 1
                 # Split cabinets at ranges so countertops don't span over them
                 sub_groups = split_cabinets_at_ranges(wall_obj, cabinets)
+                wall_tops = []
                 for gi, group in enumerate(sub_groups):
                     # Suppress overhang on sides adjacent to a range
                     left_conn = has_left if gi == 0 else True
@@ -905,6 +1124,14 @@ class hb_frameless_OT_add_countertops(bpy.types.Operator):
                     ct = create_wall_countertop(context, wall_obj, group, left_conn, right_conn)
                     if ct:
                         ct_count += 1
+                        wall_tops.append(ct)
+                run_tops.append((wall_obj, wall_tops))
+            if uses_laminate_rules(props):
+                join_corner_tops(props, run_tops)
+                for _wall, tops in run_tops:
+                    for ct in tops:
+                        if ct.get(countertop_common.LAMINATE_KEY):
+                            place_field_joints(ct, props)
 
         # Cage group countertops
         for group_obj, cabinets in cage_groups:
@@ -992,10 +1219,146 @@ class hb_frameless_OT_countertop_boolean_cut(bpy.types.Operator):
         return {'FINISHED'}
 
 
+MAX_JOINTS = 8
+
+
+def _laminate_top(context):
+    obj = context.active_object
+    if obj and obj.get('IS_COUNTERTOP') and obj.get(countertop_common.LAMINATE_KEY):
+        return obj
+    return None
+
+
+def _top_span(obj):
+    xs = [x for x, _y in countertop_common.outline_of(obj)]
+    return min(xs), max(xs)
+
+
+def _spread_joints(self, context):
+    """New joint rows start evenly spaced; rows already set are kept."""
+    count = self.count
+    pos = list(self.positions)
+    good = all(0.0 < pos[i] < self.length and (i == 0 or pos[i] > pos[i - 1])
+               for i in range(count))
+    if not good:
+        for i in range(count):
+            pos[i] = self.length * (i + 1) / (count + 1)
+        self.positions = pos
+
+
+class hb_frameless_OT_countertop_joints(bpy.types.Operator):
+    bl_idname = "hb_frameless.countertop_joints"
+    bl_label = "Field Joints"
+    bl_description = ("Move, add or remove the field joints across this "
+                      "laminate countertop")
+    bl_options = {'REGISTER', 'UNDO'}
+
+    count: bpy.props.IntProperty(name="Joints", min=0, max=MAX_JOINTS,
+                                 update=_spread_joints)  # type: ignore
+    positions: bpy.props.FloatVectorProperty(
+        name="From Left", size=MAX_JOINTS, unit='LENGTH',
+        precision=4)  # type: ignore
+    length: bpy.props.FloatProperty(options={'HIDDEN'})  # type: ignore
+    auto: bpy.props.BoolProperty(
+        name="Place Automatically",
+        description="Put the joints back where Add Countertops places them: "
+                    "on cabinet seams, clear of sinks, no piece over the "
+                    "max length")  # type: ignore
+
+    @classmethod
+    def poll(cls, context):
+        return _laminate_top(context) is not None
+
+    def invoke(self, context, event):
+        obj = _laminate_top(context)
+        x0, x1 = _top_span(obj)
+        self.length = x1 - x0
+        joints = [j - x0 for j in countertop_common.joints_of(obj)][:MAX_JOINTS]
+        pos = [0.0] * MAX_JOINTS
+        pos[:len(joints)] = joints
+        self.positions = pos
+        self.count = len(joints)
+        self.auto = False
+        return context.window_manager.invoke_props_dialog(self, width=320)
+
+    def draw(self, context):
+        props = hb_project.get_main_scene().hb_frameless
+        layout = self.layout
+        layout.label(text="Top length: " + units.unit_to_string(
+            context.scene.unit_settings, self.length))
+        layout.prop(self, 'auto')
+        col = layout.column(align=True)
+        col.enabled = not self.auto
+        col.prop(self, 'count')
+        for i in range(self.count):
+            col.prop(self, 'positions', index=i, text=f"Joint {i + 1} from Left")
+        edges = [0.0] + sorted(self.positions[:self.count]) + [self.length]
+        longest = max(b - a for a, b in zip(edges, edges[1:]))
+        if not self.auto and longest > props.countertop_max_length + 1e-6:
+            layout.label(text="A piece is longer than the max length ("
+                         + units.unit_to_string(context.scene.unit_settings,
+                                                props.countertop_max_length)
+                         + ")", icon='ERROR')
+
+    def execute(self, context):
+        obj = _laminate_top(context)
+        props = hb_project.get_main_scene().hb_frameless
+        if self.auto:
+            place_field_joints(obj, props)
+            return {'FINISHED'}
+        x0, _x1 = _top_span(obj)
+        joints = [x0 + p for p in self.positions[:self.count]
+                  if 0.0 < p < self.length]
+        countertop_common.set_joints(obj, joints)
+        countertop_common.rebuild(obj)
+        return {'FINISHED'}
+
+
+class hb_frameless_OT_countertop_parts(bpy.types.Operator):
+    bl_idname = "hb_frameless.countertop_parts"
+    bl_label = "Countertop Parts"
+    bl_description = ("List the parts this laminate countertop is made "
+                      "from, with the laminate pieces cut over for trimming")
+    bl_options = {'REGISTER'}
+
+    @classmethod
+    def poll(cls, context):
+        return _laminate_top(context) is not None
+
+    def invoke(self, context, event):
+        return context.window_manager.invoke_props_dialog(self, width=760)
+
+    def draw(self, context):
+        from .. import countertop_parts
+        obj = _laminate_top(context)
+        layout = self.layout
+        rows = countertop_parts.laminate_parts(obj)
+        grid = layout.grid_flow(row_major=True, columns=6, even_columns=False,
+                                align=True)
+        for text in ("Qty", "Part", "Length", "Width", "Thick", "Material / Edges"):
+            grid.label(text=text)
+        for part in rows:
+            grid.label(text=str(part['qty']))
+            grid.label(text=part['name'])
+            grid.label(text=countertop_parts.inches(part['length']))
+            grid.label(text=countertop_parts.inches(part['width']))
+            grid.label(text=countertop_parts.inches(part['thickness'])
+                       if part['thickness'] else "-")
+            grid.label(text=part['material'] + (" | " + part['edges']
+                                                if part['edges'] else ""))
+        for line in countertop_parts.notes(obj):
+            layout.label(text=line, icon='INFO')
+
+    def execute(self, context):
+        return {'FINISHED'}
+
+
 classes = (
     hb_frameless_OT_add_countertops,
     hb_frameless_OT_remove_countertops,
     hb_frameless_OT_countertop_boolean_cut,
+    hb_frameless_OT_countertop_joints,
+    hb_frameless_OT_countertop_parts,
 )
 
 

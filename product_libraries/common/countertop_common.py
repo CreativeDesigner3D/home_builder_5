@@ -103,6 +103,12 @@ SPLASH_KEY = 'ct_splash'
 # stays its own closed solid: faces lying on each other would leave the
 # sink cut's boolean nothing clean to work with.
 PIECE_GAP = 1e-4
+# Field joints across a top (local x), the drawbolts that pull each
+# joint together (local x, y pairs, refreshed on every rebuild), and how
+# a laminate top was laid out (its construction, edge and ends).
+JOINTS_KEY = 'ct_joints'
+DRAWBOLTS_KEY = 'ct_drawbolts'
+LAMINATE_KEY = 'ct_laminate'
 
 # Degrees of arc per segment of a rounded corner.
 ARC_STEP_DEG = 7.5
@@ -814,17 +820,40 @@ def rebuild(obj):
         return False
 
     bm = bmesh.new()
-    rect = _square_rect(points)
+    # Strips and splash stand on the design rectangle, so a radius cut
+    # into a corner keeps them.
+    rect = _square_rect(outline_of(obj))
     buildup = _dict(obj.get(BUILDUP_KEY))
+    splash = _dict(obj.get(SPLASH_KEY)) if rect else {}
     deck = float(buildup.get('deck', 0.0)) if buildup and rect else 0.0
-    if 0.0 < deck < thickness:
-        _add_slab(bm, points, top + thickness - deck, top + thickness)
-        _add_buildup(bm, rect, top, thickness - deck, buildup)
-    else:
-        _add_slab(bm, points, top, top + thickness)
-    splash = _dict(obj.get(SPLASH_KEY))
-    if splash and rect:
-        _add_splash(bm, rect, top + thickness, splash)
+    xs = [x for x, _y in points]
+    ranges = piece_ranges(obj, min(xs), max(xs))
+    last = len(ranges) - 1
+    half = PIECE_GAP / 2.0
+    for i, (a, b) in enumerate(ranges):
+        lo = a + (half if i > 0 else 0.0)
+        hi = b - (half if i < last else 0.0)
+        poly = clip_x(points, lo, hi) if last else points
+        if len(poly) < 3:
+            continue
+        piece = ((max(rect[0], lo), min(rect[1], hi), rect[2], rect[3])
+                 if rect else None)
+        if 0.0 < deck < thickness:
+            _add_slab(bm, poly, top + thickness - deck, top + thickness)
+            _add_buildup(bm, piece, top, thickness - deck,
+                         piece_spec(buildup, i, last, 0.0))
+        else:
+            _add_slab(bm, poly, top, top + thickness)
+        if splash:
+            _add_splash(bm, piece, top + thickness,
+                        piece_spec(splash, i, last, -1.0))
+    flat = []
+    for x, y in drawbolts(obj):
+        flat.extend((x, y))
+    if flat:
+        obj[DRAWBOLTS_KEY] = flat
+    elif DRAWBOLTS_KEY in obj:
+        del obj[DRAWBOLTS_KEY]
     bm.normal_update()
     bmesh.ops.recalc_face_normals(bm, faces=bm.faces[:])
     bm.to_mesh(obj.data)
@@ -856,6 +885,150 @@ def _square_rect(points):
     return xs[0], xs[1], ys[0], ys[1]
 
 
+def design_rect(obj):
+    """The top's outline as (x0, x1, y0, y1) when it is a square
+    rectangle, else None."""
+    return _square_rect(outline_of(obj))
+
+
+def joints_of(obj):
+    """The field joints across the top, as local x, left to right."""
+    return sorted(float(x) for x in (obj.get(JOINTS_KEY) or []))
+
+
+def set_joints(obj, joints):
+    if joints:
+        obj[JOINTS_KEY] = [float(x) for x in sorted(joints)]
+    elif JOINTS_KEY in obj:
+        del obj[JOINTS_KEY]
+
+
+def piece_ranges(obj, x0, x1):
+    """The (x0, x1) span of each piece the field joints cut the top in."""
+    cuts = [x for x in joints_of(obj) if x0 + 1e-3 < x < x1 - 1e-3]
+    edges = [x0] + cuts + [x1]
+    return list(zip(edges[:-1], edges[1:]))
+
+
+def piece_spec(spec, index, last, joint):
+    """A build spec for one piece: a side that is a field joint gets
+    ``joint`` in place of the top's own end, and no corner radius."""
+    out = dict(spec)
+    if index > 0:
+        out['left'] = joint
+        out['radius_left'] = 0.0
+    if index < last:
+        out['right'] = joint
+        out['radius_right'] = 0.0
+    return out
+
+
+def clip_x(points, lo, hi):
+    """The part of a polygon between x = lo and x = hi."""
+    def clip(pts, keep, cross):
+        out = []
+        for i, cur in enumerate(pts):
+            prev = pts[i - 1]
+            if keep(cur):
+                if not keep(prev):
+                    out.append(cross(prev, cur))
+                out.append(cur)
+            elif keep(prev):
+                out.append(cross(prev, cur))
+        return out
+
+    def at(xv):
+        def cross(p, q):
+            t = (xv - p[0]) / (q[0] - p[0])
+            return (xv, p[1] + (q[1] - p[1]) * t)
+        return cross
+    pts = clip(list(points), lambda p: p[0] >= lo - 1e-9, at(lo))
+    if pts:
+        pts = clip(pts, lambda p: p[0] <= hi + 1e-9, at(hi))
+    return dedupe_shape(pts)[0]
+
+
+def y_span_at(points, x):
+    """(y_min, y_max) where the line x crosses the outline, or None."""
+    ys = []
+    count = len(points)
+    for i in range(count):
+        p, q = points[i], points[(i + 1) % count]
+        if (p[0] - x) * (q[0] - x) > 0.0 or abs(q[0] - p[0]) < 1e-9:
+            continue
+        t = (x - p[0]) / (q[0] - p[0])
+        ys.append(p[1] + (q[1] - p[1]) * t)
+    return (min(ys), max(ys)) if ys else None
+
+
+DRAWBOLT_INSET = 3.5 * 0.0254
+DRAWBOLT_MAX_SPACING = 6.5 * 0.0254
+
+
+def drawbolt_offsets(depth):
+    """Where the drawbolts go across a joint ``depth`` deep, measured
+    from its front: 3-1/2" in from front and back, the rest evenly
+    between, never more than 6-1/2" apart."""
+    usable = depth - 2.0 * DRAWBOLT_INSET
+    if usable <= 1e-6:
+        return [depth / 2.0]
+    count = int(math.ceil(usable / DRAWBOLT_MAX_SPACING - 1e-9)) + 1
+    step = usable / (count - 1)
+    return [DRAWBOLT_INSET + step * i for i in range(count)]
+
+
+def drawbolts(obj):
+    """(x, y) of every drawbolt across the top's field joints, local."""
+    points = built_outline(obj)
+    out = []
+    for x in joints_of(obj):
+        span = y_span_at(points, x)
+        if span is None:
+            continue
+        out.extend((x, span[0] + off)
+                   for off in drawbolt_offsets(span[1] - span[0]))
+    return out
+
+
+def auto_joints(x0, x1, max_length, seams=(), keepouts=(), clear=0.0,
+                min_piece=12 * 0.0254):
+    """Field joints that keep every piece of a top running x0 to x1 no
+    longer than ``max_length``: as few pieces as that allows, each joint
+    on the seam nearest an even split, clear of every keepout (x0, x1)
+    by ``clear``. Off a seam when none fits, stepped out of the way of
+    a keepout where it can be."""
+    length = x1 - x0
+    if max_length <= 0.0 or length <= max_length + 1e-6:
+        return []
+    count = int(math.ceil(length / max_length - 1e-9))
+
+    def blocked(x):
+        return any(k0 - clear < x < k1 + clear for k0, k1 in keepouts)
+
+    joints = []
+    prev = x0
+    for k in range(1, count):
+        target = x0 + length * k / count
+        left = count - k
+        lo = max(prev + min_piece, x1 - left * max_length)
+        hi = min(prev + max_length, x1 - min_piece)
+        ok = [x for x in seams
+              if lo - 1e-6 <= x <= hi + 1e-6 and not blocked(x)]
+        if ok:
+            joint = min(ok, key=lambda x: abs(x - target))
+        else:
+            joint = min(max(target, lo), hi)
+            for k0, k1 in sorted(keepouts):
+                if blocked(joint):
+                    for cand in (k0 - clear, k1 + clear):
+                        if lo - 1e-6 <= cand <= hi + 1e-6:
+                            joint = cand
+                            break
+        joints.append(joint)
+        prev = joint
+    return joints
+
+
 def _add_slab(bm, points, z0, z1):
     lower = [bm.verts.new((x, y, z0)) for x, y in points]
     upper = [bm.verts.new((x, y, z1)) for x, y in points]
@@ -873,14 +1046,15 @@ def _add_box(bm, x0, x1, y0, y1, z0, z1):
     _add_slab(bm, ((x0, y0), (x1, y0), (x1, y1), (x0, y1)), z0, z1)
 
 
-def _add_buildup(bm, rect, z0, height, spec):
-    """The strips under a built-up top's deck, z0 up by ``height``.
+def buildup_boxes(rect, spec):
+    """(role, x0, x1, y0, y1) of each strip under a built-up deck.
 
     The front strip runs under the front edge, the back strip stands
     'back_gap' in from the back, and a middle strip is centred between
     them. Along the top each strip stops 'left' / 'right' in from that
-    end; an end given -1 is finished and gets a strip across under it.
-    The front is the top's -Y side.
+    end; an end given -1 is finished and gets a strip across under it,
+    and the front strip there stops short of a corner radius. The front
+    is the top's -Y side.
     """
     x0, x1, y0, y1 = rect
     front_w = float(spec.get('front', 0.0))
@@ -891,47 +1065,63 @@ def _add_buildup(bm, rect, z0, height, spec):
     left = float(spec.get('left', -1.0))
     right = float(spec.get('right', -1.0))
     g = PIECE_GAP
-    z1 = z0 + height - g
     sx0 = x0 + max(left, 0.0)
     sx1 = x1 - max(right, 0.0)
+    fx0 = sx0 + (float(spec.get('radius_left', 0.0)) if left < 0.0 else 0.0)
+    fx1 = sx1 - (float(spec.get('radius_right', 0.0)) if right < 0.0 else 0.0)
     front_back = y0 + front_w
     back_front = y1 - back_gap - back_w
-    _add_box(bm, sx0, sx1, y0, front_back, z0, z1)
-    _add_box(bm, sx0, sx1, back_front, y1 - back_gap, z0, z1)
+    boxes = [('FRONT', fx0, fx1, y0, front_back),
+             ('BACK', sx0, sx1, back_front, y1 - back_gap)]
     # Across under a finished end, between the front and back strips.
     ix0, ix1 = sx0, sx1
     if left < 0.0:
-        _add_box(bm, x0, x0 + end_w, front_back + g, back_front - g, z0, z1)
+        boxes.append(('END', x0, x0 + end_w, front_back + g, back_front - g))
         ix0 = x0 + end_w + g
     if right < 0.0:
-        _add_box(bm, x1 - end_w, x1, front_back + g, back_front - g, z0, z1)
+        boxes.append(('END', x1 - end_w, x1, front_back + g, back_front - g))
         ix1 = x1 - end_w - g
     if mid_w > 0.0 and back_front - front_back > mid_w + 1e-6:
         mid = (front_back + back_front) / 2.0
-        _add_box(bm, ix0, ix1, mid - mid_w / 2.0, mid + mid_w / 2.0, z0, z1)
+        boxes.append(('MIDDLE', ix0, ix1, mid - mid_w / 2.0,
+                      mid + mid_w / 2.0))
+    return [b for b in boxes if b[2] - b[1] > 1e-6 and b[4] - b[3] > 1e-6]
 
 
-def _add_splash(bm, rect, z0, spec):
-    """A splash 'height' tall and 'thickness' thick standing on the top
-    along its back (+Y) edge, and across each end that runs into a wall:
-    'left' / 'right' are how far in from that end the wall face is, -1
-    for an end with no wall. The back splash runs wall face to wall
-    face; an end splash runs from the front edge to the back splash."""
+def _add_buildup(bm, rect, z0, height, spec):
+    """The strips under a built-up top's deck, z0 up by ``height``."""
+    z1 = z0 + height - PIECE_GAP
+    for _role, x0, x1, y0, y1 in buildup_boxes(rect, spec):
+        _add_box(bm, x0, x1, y0, y1, z0, z1)
+
+
+def splash_boxes(rect, spec):
+    """(role, x0, x1, y0, y1) of each splash on a top: one along its back
+    (+Y) edge, and one across each end that runs into a wall. 'left' /
+    'right' are how far in from that end the wall face is, -1 for an end
+    with no wall. The back splash runs wall face to wall face; an end
+    splash runs from the front edge to the back splash."""
     x0, x1, y0, y1 = rect
-    height = float(spec.get('height', 0.0))
     th = float(spec.get('thickness', 0.0))
     left = float(spec.get('left', -1.0))
     right = float(spec.get('right', -1.0))
     g = PIECE_GAP
-    z0 += g
-    z1 = z0 + height
     bx0 = x0 + max(left, 0.0)
     bx1 = x1 - max(right, 0.0)
-    _add_box(bm, bx0, bx1, y1 - th, y1, z0, z1)
+    boxes = [('BACK', bx0, bx1, y1 - th, y1)]
     if left >= 0.0:
-        _add_box(bm, bx0, bx0 + th, y0, y1 - th - g, z0, z1)
+        boxes.append(('END', bx0, bx0 + th, y0, y1 - th - g))
     if right >= 0.0:
-        _add_box(bm, bx1 - th, bx1, y0, y1 - th - g, z0, z1)
+        boxes.append(('END', bx1 - th, bx1, y0, y1 - th - g))
+    return boxes
+
+
+def _add_splash(bm, rect, z0, spec):
+    """The splash standing on the top at z0, 'height' tall."""
+    z0 += PIECE_GAP
+    z1 = z0 + float(spec.get('height', 0.0))
+    for _role, x0, x1, y0, y1 in splash_boxes(rect, spec):
+        _add_box(bm, x0, x1, y0, y1, z0, z1)
 
 
 def cut_for_sinks(obj):
