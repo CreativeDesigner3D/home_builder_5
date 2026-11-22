@@ -15593,6 +15593,7 @@ class FaceFrameCabinet(GeoNodeCage):
         fill_w = self._drawer_insert_fill_width(inner, items)
         cursor = inner.x0
         placed = []
+        halves = self._drawer_halves(inner)
         for index, item in indexed:
             # Stamped on every part this item builds (DRAWER_ITEM_INDEX).
             self._drawer_item_index = index
@@ -15610,6 +15611,25 @@ class FaceFrameCabinet(GeoNodeCage):
                 if moved is not None:
                     cursor = moved
                 continue
+            half = halves.get(getattr(item, 'insert_half', 'AUTO'))
+            if half is not None:
+                # Packs inside its own half, clear of the center divider;
+                # the rest of the drawer packs on as if it weren't there.
+                at = half.x0
+                off = getattr(item, 'insert_offset', 0.0)
+                if off > 0.0001:
+                    at = half.x0 + off
+                for _i in range(max(getattr(item, 'accessory_qty', 1), 1)):
+                    rect = self._drawer_insert_rect(half, item, params,
+                                                    spec[1], at)
+                    if rect is None:
+                        break
+                    builder(box_obj, rect, item, params)
+                    placed.append((index, rect))
+                    at = rect.x1
+                if item.insert_half == 'LEFT':
+                    cursor = max(cursor, at)
+                continue
             off = getattr(item, 'insert_offset', 0.0)
             if off > 0.0001:
                 cursor = inner.x0 + off
@@ -15625,6 +15645,19 @@ class FaceFrameCabinet(GeoNodeCage):
         self._drawer_item_index = -1
         self._flag_short_inserts(box_obj, inner, placed)
 
+    def _drawer_halves(self, inner):
+        """{'LEFT' / 'RIGHT': the inside of that half of the box}, each
+        stopping at the face of a removable divider down the middle."""
+        mid = (inner.x0 + inner.x1) / 2.0
+        gap = self.DRAWER_DIVIDER_TH / 2.0
+        out = {}
+        for key, x0, x1 in (('LEFT', inner.x0, mid - gap),
+                            ('RIGHT', mid + gap, inner.x1)):
+            half = SimpleNamespace(**vars(inner))
+            half.x0, half.x1 = x0, x1
+            out[key] = half
+        return out
+
     def _flag_short_inserts(self, box_obj, inner, placed):
         """Record on the box every insert that stops well short of the
         box back with no side-to-side divider closing off the space
@@ -15635,9 +15668,14 @@ class FaceFrameCabinet(GeoNodeCage):
         for index, rect in placed:
             if inner.y1 - rect.y1 <= self.DRAWER_SHORT_INSERT_GAP:
                 continue
+            # Only a divider that runs behind this insert counts, not
+            # one stopped at a center divider in the other half.
             closed = any(
-                not run.lengthwise and any(
-                    rect.y1 - run.th <= c <= inner.y1 for c in run.centers)
+                not run.lengthwise
+                and getattr(run, 'a0', inner.x0) < rect.x1 - 1e-4
+                and getattr(run, 'a1', inner.x1) > rect.x0 + 1e-4
+                and any(rect.y1 - run.th <= c <= inner.y1
+                        for c in run.centers)
                 for run in inner.divider_runs)
             if closed:
                 continue
@@ -15665,6 +15703,9 @@ class FaceFrameCabinet(GeoNodeCage):
             w = getattr(item, 'insert_width', 0.0)
             if w < 1e-6:
                 w = inch(params.get('W', 0.0))
+            if getattr(item, 'insert_half', 'AUTO') != 'AUTO':
+                # Sized by its half, which the rest of the pack ignores.
+                continue
             widths.extend([w] * max(getattr(item, 'accessory_qty', 1), 1))
         fillers = sum(1 for w in widths if w < 1e-6)
         if fillers < 2:
@@ -15869,6 +15910,7 @@ class FaceFrameCabinet(GeoNodeCage):
             a0 = bounds[first - 1] + th / 2.0
         if last < n_spaces:
             a1 = bounds[last] - th / 2.0
+        run.a0, run.a1 = a0, a1
         if a1 - a0 < th:
             return
         for c in run.centers:

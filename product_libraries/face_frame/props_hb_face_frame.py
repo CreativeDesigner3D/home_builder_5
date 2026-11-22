@@ -12041,6 +12041,18 @@ class Face_Frame_Interior_Item(bpy.types.PropertyGroup):
     # override: left at 0 the insert takes the size on its product
     # spec, or fills what is left of the drawer when the spec is silent,
     # and packs in after the insert before it in the list.
+    insert_half: EnumProperty(
+        name="Place In",
+        description="Keep this insert in one half of the drawer, beside a "
+                    "removable divider down the middle (Make 2 Equal "
+                    "Compartments)",
+        items=[('AUTO', "Whole Drawer",
+                "Pack in after the insert above it in the list"),
+               ('LEFT', "Left Half", "Sit in the left half of the drawer"),
+               ('RIGHT', "Right Half",
+                "Sit in the right half of the drawer")],
+        default='AUTO', update=_update_cabinet_dim,
+    )  # type: ignore
     insert_offset: FloatProperty(
         name="From Left",
         description="Distance from the left inside face of the drawer box "

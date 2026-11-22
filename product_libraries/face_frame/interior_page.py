@@ -819,6 +819,7 @@ def _item_fields(it, index=0, owner_name=""):
         ]
         placed = lambda o: _render_kind(o) not in ('', 'DIVIDER')
         f += [
+            ('enum', 'insert_half', "Place In", {'when': placed}),
             ('distance', 'insert_offset', "From Left (0 = Auto)",
              {'when': placed}),
             ('distance', 'insert_from_front', "From Front", {'when': placed}),

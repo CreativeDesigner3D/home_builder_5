@@ -1872,7 +1872,71 @@ class hb_face_frame_OT_drawer_add_divider_behind(bpy.types.Operator):
         item.accessory_qty = 1
         item.divider_lengthwise = False
         item.divider_offset = info[0] + th / 2.0
+        # An insert kept to one half gets a divider across that half
+        # only, stopping at the center divider.
+        half = getattr(props.interior_items[self.item_index],
+                       'insert_half', 'AUTO')
+        if half != 'AUTO' and _drawer_center_divider(props) is not None:
+            item.divider_span_from = item.divider_span_to = (
+                1 if half == 'LEFT' else 2)
         props.interior_items_index = len(props.interior_items) - 1
+        root = types_face_frame.find_cabinet_root(opening)
+        if root is not None:
+            types_face_frame.recalculate_face_frame_cabinet(root)
+        return {'FINISHED'}
+
+
+def _drawer_center_divider(props):
+    """The single front-to-back divider that splits a drawer into two
+    equal compartments, or None."""
+    for item in props.interior_items:
+        if (item.kind == 'ACCESSORY'
+                and types_face_frame.render_hint_kind(
+                    item.accessory_render) == 'DIVIDER'
+                and item.divider_lengthwise and item.accessory_qty == 1
+                and item.divider_offset < 0.0001
+                and not any(item.divider_space_unlock)):
+            return item
+    return None
+
+
+class hb_face_frame_OT_drawer_make_compartments(bpy.types.Operator):
+    """Split the drawer into two equal compartments with a removable
+    divider down the middle, front to back."""
+    bl_idname = "hb_face_frame.drawer_make_compartments"
+    bl_label = "Make 2 Equal Compartments"
+    bl_description = ("Add a removable divider down the middle of the "
+                      "drawer, front to back. Place inserts in the left or "
+                      "right half beside it")
+    bl_options = {'UNDO', 'INTERNAL'}
+
+    opening_name: bpy.props.StringProperty(default="", options={'HIDDEN'})  # type: ignore
+
+    def execute(self, context):
+        opening = bpy.data.objects.get(self.opening_name)
+        if opening is None:
+            return {'CANCELLED'}
+        props = opening.face_frame_opening
+        if _drawer_center_divider(props) is not None:
+            self.report({'INFO'}, "This drawer already has a center divider")
+            return {'CANCELLED'}
+        code = _drawer_divider_code()
+        if not code:
+            self.report({'WARNING'}, "No removable divider to add")
+            return {'CANCELLED'}
+        entry = accessory_registry.find(code) or {}
+        item = props.interior_items.add()
+        item.kind = 'ACCESSORY'
+        item.accessory_label = entry.get('name', code)
+        item.accessory_code = code
+        item.accessory_render = (entry.get('render') or '').upper()
+        item.accessory_qty = 1
+        item.divider_lengthwise = True
+        item.divider_offset = 0.0
+        # First in the list, so nothing packs it against an insert:
+        # with nothing before it, a single divider centers itself.
+        props.interior_items.move(len(props.interior_items) - 1, 0)
+        props.interior_items_index = 0
         root = types_face_frame.find_cabinet_root(opening)
         if root is not None:
             types_face_frame.recalculate_face_frame_cabinet(root)
@@ -2055,6 +2119,11 @@ class hb_face_frame_OT_drawer_interior(bpy.types.Operator):
         rem = side.operator("hb_face_frame.drawer_remove_accessory",
                             text="", icon='REMOVE')
         rem.opening_name = self.opening_name
+        if (_drawer_divider_code()
+                and _drawer_center_divider(props) is None):
+            op = layout.operator("hb_face_frame.drawer_make_compartments",
+                                 icon='SNAP_MIDPOINT')
+            op.opening_name = self.opening_name
 
         idx = props.interior_items_index
         if not (0 <= idx < len(props.interior_items)):
@@ -2074,6 +2143,9 @@ class hb_face_frame_OT_drawer_interior(bpy.types.Operator):
                        icon='ERROR')
             warn.label(text="It can slide back: add a removable divider "
                             "behind it")
+            if item.insert_half == 'AUTO':
+                warn.label(text="Or make 2 equal compartments and place it "
+                                "in the left or right half")
             if _drawer_divider_code():
                 op = warn.operator("hb_face_frame.drawer_add_divider_behind",
                                    icon='ADD')
@@ -8735,6 +8807,7 @@ classes = (
     hb_face_frame_OT_drawer_add_accessory,
     hb_face_frame_OT_drawer_remove_accessory,
     hb_face_frame_OT_drawer_add_divider_behind,
+    hb_face_frame_OT_drawer_make_compartments,
     hb_face_frame_OT_set_drawer_box_construction,
     hb_face_frame_OT_set_drawer_slides,
     hb_face_frame_OT_drawer_interior,

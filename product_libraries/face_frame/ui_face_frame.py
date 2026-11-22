@@ -1839,6 +1839,7 @@ def draw_drawer_insert_settings(layout, item, show_hint=True):
         return
     if kind in ('CUTLERY', 'TRAY', 'KNIFE_BLOCK'):
         layout.prop(item, 'insert_slots', text="Compartments (0 = Auto)")
+    layout.prop(item, 'insert_half')
     col = layout.column(align=True)
     col.prop(item, 'insert_offset', text="From Left (0 = Auto)")
     col.prop(item, 'insert_from_front', text="From Front")
