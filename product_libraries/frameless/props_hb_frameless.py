@@ -999,6 +999,8 @@ def push_cabinet_thickness(style, cabinet_obj):
     interior = style_thickness(style, 'interior')
     exterior = style_thickness(style, 'exterior')
     front = style_thickness(style, 'front')
+    old_mt = float(cabinet_obj.get('Material Thickness', interior))
+    was = (old_mt, float(cabinet_obj.get(EXTERIOR_THICKNESS_KEY, old_mt)))
     changed = _put(cabinet_obj, 'Material Thickness', interior)
     # Older cabinets carry no exterior thickness and build every part at
     # Material Thickness; they gain one only once it differs.
@@ -1014,6 +1016,23 @@ def push_cabinet_thickness(style, cabinet_obj):
         for key in ('Left Thickness', 'Right Thickness', 'Top Thickness',
                     'Bottom Thickness'):
             changed |= _put(child, key, interior)
+    # A slab end panel is cut from the exterior, so it follows that
+    # material's thickness, unless it was given one of its own (it
+    # isn't at either thickness the cabinet had).
+    for child in cabinet_obj.children:
+        if (not any(child.get('IS_APPLIED_END_' + s)
+                    for s in ('LEFT', 'RIGHT', 'BACK'))
+                or child.get('IS_APPLIED_PANEL_5PIECE')):
+            continue
+        try:
+            part = hb_types.GeoNodeCutpart(child)
+            current = float(part.get_input('Thickness'))
+            following = any(abs(current - t) <= 1e-6 for t in was)
+            if following and abs(current - exterior) > 1e-7:
+                part.set_input('Thickness', exterior)
+                changed = True
+        except Exception:
+            pass
     if changed:
         hb_utils.run_calc_fix(bpy.context, cabinet_obj)
     return changed

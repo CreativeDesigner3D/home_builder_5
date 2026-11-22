@@ -619,9 +619,12 @@ class hb_frameless_OT_add_applied_end(bpy.types.Operator):
             panel.set_input("Mirror Y", False)
             panel.set_input("Mirror Z", True)
         
-        # Set thickness
+        # Set thickness: typed, or the exterior material's (the panel is
+        # cut from it)
+        mt = cabinet_obj.get('Material Thickness',
+                             props.default_carcass_part_thickness)
         panel.set_input("Thickness", self.thickness
-                        or props.default_carcass_part_thickness)
+                        or cabinet_obj.get(solver_frameless.EXTERIOR_THICKNESS_KEY, mt))
         # The panel is sized and placed by the solver.
         solver_frameless.recalculate_cabinet(cabinet_obj)
         

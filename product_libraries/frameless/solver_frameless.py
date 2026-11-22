@@ -583,6 +583,37 @@ class _Prompts:
 # A cabinet's exterior-material thickness (props_hb_frameless writes it
 # from the cabinet style); missing = every board at Material Thickness.
 EXTERIOR_THICKNESS_KEY = 'Exterior Thickness'
+# (left, right) side board thicknesses, kept on the cabinet while either
+# differs from Material Thickness.
+SIDE_BOARDS_KEY = 'hb_side_boards'
+
+
+def side_board_thickness(insert_obj):
+    """(left, right) thickness of the cabinet side an opening stands
+    against, None for a side of the opening that meets something else
+    (a partition, another opening) or when both sides are Material
+    Thickness."""
+    x = 0.0
+    obj = insert_obj
+    while obj is not None and not obj.get('IS_FRAMELESS_BAY_CAGE'):
+        if obj.get('IS_FRAMELESS_CABINET_CAGE'):
+            return None, None
+        x += obj.location.x
+        obj = obj.parent
+    if obj is None or obj.parent is None:
+        return None, None
+    boards = obj.parent.get(SIDE_BOARDS_KEY)
+    if not boards:
+        return None, None
+    try:
+        width = float(GeoNodeCage(insert_obj).get_input('Dim X'))
+        bay_width = float(GeoNodeCage(obj).get_input('Dim X'))
+    except Exception:
+        return None, None
+    tol = inch(1.0 / 32.0)
+    left = float(boards[0]) if abs(x) <= tol else None
+    right = float(boards[1]) if abs(x + width - bay_width) <= tol else None
+    return left, right
 
 
 def _style_two_sided(root):
@@ -877,7 +908,18 @@ def finished_bottom_thickness(root):
         number = int(prompt(root, FINISHED_BOTTOM_KEY, 0) or 0)
     except (TypeError, ValueError):
         return 0.0
-    return FINISHED_BOTTOM_THICKNESS.get(number, 0.0)
+    return _finished_bottom_t(root, number) or 0.0
+
+
+def _finished_bottom_t(root, number):
+    """Thickness of finished bottom ``number``, or None for none. The
+    3/4 in panel is a board of the exterior material, so it is that
+    material's thickness; the 1/4 in skin keeps its own."""
+    t = FINISHED_BOTTOM_THICKNESS.get(number)
+    if t is not None and number == 2:
+        mt = float(prompt(root, 'Material Thickness', inch(0.75)))
+        t = float(prompt(root, EXTERIOR_THICKNESS_KEY, mt))
+    return t
 
 
 # Light valance on an upper: a strip of finished stock under the front
@@ -1129,7 +1171,7 @@ def _solve_finished_bottom(root, parts, p, dim_x, dim_y, dim_z):
 
 
 def _solve_own_finished_bottom(root, parts, p, dim_x, dim_y, dim_z):
-    t = FINISHED_BOTTOM_THICKNESS.get(int(prompt(root, FINISHED_BOTTOM_KEY, 0)))
+    t = _finished_bottom_t(root, int(prompt(root, FINISHED_BOTTOM_KEY, 0)))
     panel = parts.get('FINISHED_BOTTOM')
     if t is None:
         if panel is not None:
@@ -2002,6 +2044,11 @@ def recalculate_cabinet(obj):
     dims = (cage.get_input('Dim X'), cage.get_input('Dim Y'),
             cage.get_input('Dim Z'))
     prompts.board_thicknesses(root, parts, kind, dims[1])
+    # The fronts next to a side overlay that side's own board.
+    if abs(prompts.lt - prompts.mt) > 1e-9 or abs(prompts.rt - prompts.mt) > 1e-9:
+        root[SIDE_BOARDS_KEY] = (prompts.lt, prompts.rt)
+    elif SIDE_BOARDS_KEY in root:
+        del root[SIDE_BOARDS_KEY]
     # Applied ends stand inside the cabinet's width: the box is solved
     # at what is left between them, from its own left face, and then
     # moved over by the left panel. Whatever the last solve moved goes
@@ -2661,6 +2708,8 @@ def front_overlays(insert_obj):
     inset = bool(insert_obj.get('Inset Front', False))
     inset_reveal = float(prompt(insert_obj, 'Inset Reveal', inch(0.125)))
     gap = float(prompt(insert_obj, 'Vertical Gap', inch(0.125)))
+    left_board, right_board = side_board_thickness(insert_obj)
+    boards = {'Left Thickness': left_board, 'Right Thickness': right_board}
 
     def overlay(half_key, thickness_key, reveal_key, reveal_default):
         if inset:
@@ -2668,7 +2717,9 @@ def front_overlays(insert_obj):
         typed = insert_obj.get(half_key.replace('Half', 'Typed'))
         if typed is not None:
             return float(typed)
-        thickness = float(prompt(insert_obj, thickness_key, inch(0.75)))
+        thickness = boards.get(thickness_key)
+        if thickness is None:
+            thickness = float(prompt(insert_obj, thickness_key, inch(0.75)))
         if insert_obj.get(half_key, False):
             return (thickness - gap) / 2.0
         return thickness - float(prompt(insert_obj, reveal_key, reveal_default))
