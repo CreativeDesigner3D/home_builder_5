@@ -34,6 +34,7 @@ def get_molding_categories():
 
 def get_molding_items(category):
     """Get list of molding items in a category across all library paths."""
+    from ....molding import packages
     items = []
     seen_names = set()
     for moldings_path in get_all_molding_paths():
@@ -42,7 +43,8 @@ def get_molding_items(category):
             for f in sorted(os.listdir(category_path)):
                 if f.endswith('.blend'):
                     name = os.path.splitext(f)[0]
-                    if name not in seen_names:
+                    if (name not in seen_names
+                            and not packages.is_retired(category, name)):
                         seen_names.add(name)
                         filepath = os.path.join(category_path, f)
                         thumb_path = os.path.join(category_path, name + '.png')

@@ -811,7 +811,8 @@ def _mantle_molding_profile_items(self, context):
     for name in ('Mini Mantle', 'Mantle', 'Kelli'):
         if name in other:
             items.append(("Other/" + name, name, ""))
-    for ident, label, desc in packages.profile_enum_items('Crown Molding')[1:]:
+    for ident, label, desc in (i[:3] for i in
+                               packages.profile_enum_items('Crown Molding')[1:]):
         items.append(("Crown Molding/" + ident, label, desc))
     _molding_profile_items_cache = items
     return _molding_profile_items_cache

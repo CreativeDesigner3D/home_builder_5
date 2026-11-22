@@ -14,12 +14,19 @@ Modules:
     ops       - apply/refresh operators and sweep object creation
 """
 
+import bpy
+
 from . import ops
+from . import packages
 
 
 def register():
     ops.register()
+    if packages.remap_retired_picks not in bpy.app.handlers.load_post:
+        bpy.app.handlers.load_post.append(packages.remap_retired_picks)
 
 
 def unregister():
+    if packages.remap_retired_picks in bpy.app.handlers.load_post:
+        bpy.app.handlers.load_post.remove(packages.remap_retired_picks)
     ops.unregister()

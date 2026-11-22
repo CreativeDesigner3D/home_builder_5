@@ -15312,9 +15312,10 @@ def _mantle_crown_profile_items(self, context):
     for n in ('Mantle', 'Mini Mantle'):
         if n in other_idents:
             items.append(("Other/" + n, n + " Moulding", ""))
-    for ident, label, desc in packages.profile_enum_items('Crown Molding')[1:]:
+    for ident, label, desc in (i[:3] for i in
+                               packages.profile_enum_items('Crown Molding')[1:]):
         items.append(("Crown Molding/" + ident, label, desc))
-    for ident, label, desc in other:
+    for ident, label, desc in (i[:3] for i in other):
         if ident in ('Mantle', 'Mini Mantle'):
             continue
         items.append(("Other/" + ident, label, desc))
@@ -15331,11 +15332,13 @@ def _mantle_base_profile_items(self, context):
     from ...molding import packages
     global _mantle_base_items_cache
     items = [('DEFAULT', "Default (by Style)",
-              "The style's standard base moulding")]
-    for ident, label, desc in packages.profile_enum_items('Base Molding'):
+              "The style's standard base moulding", 'NONE', 0)]
+    # The pack list's numbers carry over (DEFAULT is 0 in both), so a
+    # retired profile leaves a gap rather than shifting saved picks.
+    for ident, label, desc, icon, num in packages.profile_enum_items('Base Molding'):
         if ident == 'DEFAULT':
             continue
-        items.append(("Base Molding/" + ident, label, desc))
+        items.append(("Base Molding/" + ident, label, desc, icon, num))
     _mantle_base_items_cache = items
     return _mantle_base_items_cache
 

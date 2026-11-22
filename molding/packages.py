@@ -17,6 +17,7 @@ cross-section (fallback_key) keeps the package functional.
 import os
 
 import bpy
+from bpy.app.handlers import persistent
 
 from .. import hb_utils
 from .. import units
@@ -40,6 +41,76 @@ def register_profile_path(path):
         _PROFILE_PATHS.append(path)
         _category_enum_cache.clear()
         _profile_height_cache.clear()
+
+
+# Profiles an asset pack has taken out of its library. The pack keeps
+# the file on disk -- a dynamic enum stores a pick by its place in the
+# list, so deleting a file would shift every later profile -- but it
+# drops out of the pickers and a saved reference loads the replacement.
+# {(category, name): replacement name in the same category}
+_RETIRED_PROFILES = {}
+
+
+def retire_profile(category, name, replacement):
+    """Take `category/name` out of the pickers; refs to it load
+    `category/replacement`. Called by the asset pack that owns it."""
+    _RETIRED_PROFILES[(category, name)] = replacement
+    _category_enum_cache.clear()
+    _profile_height_cache.clear()
+
+
+def is_retired(category, name):
+    return (category, name) in _RETIRED_PROFILES
+
+
+def _unretired(parts):
+    """Ref parts with a retired profile swapped for its replacement."""
+    if len(parts) >= 2:
+        rep = _RETIRED_PROFILES.get((parts[-2], parts[-1]))
+        if rep:
+            return parts[:-1] + [rep]
+    return parts
+
+
+# Room profile-override props and the pack category each lists.
+_ROOM_PROFILE_PROPS = (
+    ('molding_crown_profile', 'Crown Molding'),
+    ('molding_spacer_profile', 'Spacer'),
+    ('molding_cap_profile', 'Furniture Caps'),
+    ('molding_base_profile', 'Base Molding'),
+    ('molding_light_rail_profile', 'Light Rail'),
+)
+_show_retired = False
+
+
+@persistent
+def remap_retired_picks(*_args):
+    """On file load, move each room override that picked a retired
+    profile onto its replacement. The retired item is listed again just
+    long enough to read the old pick (a pick with no item reads empty)."""
+    global _show_retired
+    if not _RETIRED_PROFILES:
+        return
+    _show_retired = True
+    _category_enum_cache.clear()
+    found = []
+    try:
+        for scene in bpy.data.scenes:
+            hb = getattr(scene, 'home_builder', None)
+            if hb is None:
+                continue
+            for prop, category in _ROOM_PROFILE_PROPS:
+                rep = _RETIRED_PROFILES.get((category, getattr(hb, prop, '')))
+                if rep:
+                    found.append((hb, prop, rep))
+    finally:
+        _show_retired = False
+        _category_enum_cache.clear()
+    for hb, prop, rep in found:
+        try:
+            setattr(hb, prop, rep)
+        except Exception:
+            pass
 
 
 def unregister_profile_path(path):
@@ -77,9 +148,12 @@ def profile_enum_items(category):
                 if stem not in seen:
                     seen.add(stem)
                     names.append(stem)
+    # Numbered by place in the full list, so a retired profile leaves
+    # its gap and every other pick keeps the number a file saved.
     items = tuple(
-        [('DEFAULT', "Default", "Use the package's standard profile")]
-        + [(n, n, "") for n in names])
+        [('DEFAULT', "Default", "Use the package's standard profile", 'NONE', 0)]
+        + [(n, n, "", 'NONE', i) for i, n in enumerate(names, 1)
+           if _show_retired or (category, n) not in _RETIRED_PROFILES])
     _category_enum_cache[category] = items
     return items
 
@@ -235,7 +309,7 @@ def _load_library_profile(profile_ref, collection):
     """Append `Category/Profile Name` from the first registered asset
     pack that provides it. The .blend contains an object named like the
     file stem (the molding-library convention)."""
-    parts = profile_ref.replace("\\", "/").split("/")
+    parts = _unretired(profile_ref.replace("\\", "/").split("/"))
     alias = _PROFILE_NAME_ALIASES.get(parts[-1])
     tries = [parts] if alias is None else [parts, parts[:-1] + [alias]]
     for parts in tries:
@@ -283,7 +357,7 @@ def _profile_metrics(profile_ref, fallback_key):
     if profile_ref in _profile_height_cache:
         return _profile_height_cache[profile_ref]
     metrics = None
-    parts = profile_ref.replace("\\", "/").split("/")
+    parts = _unretired(profile_ref.replace("\\", "/").split("/"))
     alias = _PROFILE_NAME_ALIASES.get(parts[-1])
     if alias is not None and not any(
             os.path.isfile(os.path.join(base, *parts) + ".blend")
