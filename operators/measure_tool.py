@@ -22,12 +22,12 @@ Three modes, cycled with Tab:
 
 ``LINEAR``   two points, straight-line distance.
 ``ANGULAR``  a corner then two arms, in degrees.
-``QUICK``    two points, read as their X, Y and Z distances at once.
-             The reading holds on screen until the next click or Esc, so
-             there is nothing to clear afterwards -- unless you press
-             Enter, which keeps it with the other measurements (Delete
-             takes it out again). Q switches to it from inside the tool,
-             and Alt+M starts the tool in it.
+``QUICK``    two points, read as their X, Y and Z distances at once,
+             kept like any other measurement. Q switches to it and back
+             from inside the tool, and Alt+M starts the tool in it.
+
+Switching modes (Tab, Q) keeps a point already placed, so you can click
+the first point and then decide how to read it.
 
 Snapping comes from `hb_snap_engine`, so it follows the same magnet
 menu as everything else, and Ctrl inverts it exactly as it does in
@@ -482,8 +482,6 @@ class home_builder_OT_measure(bpy.types.Operator):
         self.scene_name = context.scene.name
         self.mode = 'QUICK' if self.quick else context.window_manager.hb_measure_mode
         self.prev_mode = 'LINEAR'
-        # The last quick reading, (a, b): shown until the next click.
-        self.held = None
         self.points = []
         self.hit = None
         self.cursor = None
@@ -528,12 +526,9 @@ class home_builder_OT_measure(bpy.types.Operator):
             bits.append(f"[{self.hover.label}: Delete removes it]")
         elif self.last_label:
             bits.append(f"= {self.last_label}")
-            if self.mode == 'QUICK' and self.held is not None:
-                bits.append("[Enter: keep it]")
         if exact_values(context):
             bits.append("[Exact]")
-        bits.append("Tab: mode | Q: quick XYZ | Enter: keep reading | "
-                    "X/Y/Z: axis | E: exact | "
+        bits.append("Tab: mode | Q: quick XYZ | X/Y/Z: axis | E: exact | "
                     "Ctrl: snap | Backspace: undo | Del: remove hovered | "
                     "Esc: done")
         context.area.header_text_set("  ".join(b for b in bits if b))
@@ -623,26 +618,16 @@ class home_builder_OT_measure(bpy.types.Operator):
         return label
 
     def _commit_quick(self, context):
-        """Hold the reading on screen; nothing goes in the store, so there
-        is nothing to clear when you are done (Enter keeps it)."""
         a, b = self.points[0], self.points[1]
-        self.held = (a.copy(), b.copy())
-        return quick_label(context, a, b)
-
-    def _keep_quick(self, context):
-        """The held quick reading becomes a measurement like any other: it
-        stays after the tool ends, and Delete or Backspace removes it."""
-        a, b = self.held
+        label = quick_label(context, a, b)
         add_measurement(Measurement('XYZ', [a, b], self.scene_name,
-                                    (b - a).length, quick_label(context, a, b)))
-        self.held = None
+                                    (b - a).length, label))
+        return label
 
     def _place(self, context, event):
         if self.cursor is None:
             return
         self.points.append(self.cursor.copy())
-        if self.mode == 'QUICK' and len(self.points) == 1:
-            self.held = None
         if len(self.points) < self._needed():
             return
         if self.mode == 'ANGULAR':
@@ -654,10 +639,12 @@ class home_builder_OT_measure(bpy.types.Operator):
         self._reset_pending(label)
 
     def _set_mode(self, context, mode):
+        """Switch how the points are read. A point already placed stays,
+        so a first click can be read either way; only what the new mode
+        could not use yet is dropped (it always needs one more click)."""
         self.mode = mode
-        self.held = None
         self.last_label = ""
-        self._reset_pending(None)
+        del self.points[max(0, MODE_POINTS[mode] - 1):]
         self._update_header(context)
         tag_redraw()
 
@@ -679,13 +666,6 @@ class home_builder_OT_measure(bpy.types.Operator):
             if self.points and self.cursor is not None:
                 _draw_xyz(shader, font_id, region, rv3d,
                           self.points[0], self.cursor, s)
-            elif self.held is not None:
-                _draw_xyz(shader, font_id, region, rv3d,
-                          self.held[0], self.held[1], s)
-                for p in self.held:
-                    q = _project(region, rv3d, p)
-                    if q is not None:
-                        _draw_snap_marker(shader, 'VERTEX', q.x, q.y, s)
             for p in placed:
                 if p is not None:
                     _draw_snap_marker(shader, 'VERTEX', p.x, p.y, s)
@@ -777,14 +757,6 @@ class home_builder_OT_measure(bpy.types.Operator):
                 tag_redraw()
                 return {'RUNNING_MODAL'}
 
-            if event.type in {'RET', 'NUMPAD_ENTER'}:
-                if self.mode == 'QUICK' and self.held is not None and not self.points:
-                    self._keep_quick(context)
-                    self.report({'INFO'}, "Reading kept. Hover it and press Delete to remove it")
-                self._update_header(context)
-                tag_redraw()
-                return {'RUNNING_MODAL'}
-
             if event.type == 'C' and event.ctrl:
                 if self.last_label:
                     context.window_manager.clipboard = self.last_label
@@ -804,9 +776,6 @@ class home_builder_OT_measure(bpy.types.Operator):
                 # Whatever is half-placed first, then the last finished one.
                 if self.points:
                     self._reset_pending(None)
-                elif self.mode == 'QUICK' and self.held is not None:
-                    self.held = None
-                    self.last_label = ""
                 else:
                     pop_measurement(context.scene)
                 self._update_header(context)
@@ -821,7 +790,6 @@ class home_builder_OT_measure(bpy.types.Operator):
     def _finish(self, context):
         global _active
         _active = None
-        self.held = None
         if context.area is not None:
             context.area.header_text_set(None)
         tag_redraw()
@@ -873,8 +841,8 @@ def draw_measure_options(layout, context):
     box = col.box()
     box.label(text="Snapping follows the magnet menu", icon='SNAP_ON')
     box.label(text="Hold Ctrl to invert it while measuring")
-    box.label(text="Alt+M or Q: Quick XYZ, nothing left behind")
-    box.label(text="Enter keeps a Quick XYZ reading on screen")
+    box.label(text="Alt+M or Q: Quick XYZ (X, Y and Z at once)")
+    box.label(text="Q or Tab keeps a point already placed")
 
 
 # ---- Registration -----------------------------------------------------------
