@@ -551,20 +551,19 @@ class _Prompts:
         # one cut from an exterior material of another thickness.
         self.ext = float(prompt(root, EXTERIOR_THICKNESS_KEY, self.mt))
         self.lt = self.rt = self.bt = self.tt = self.bk = self.mt
+        # A corner's two backs, left wing and right wing.
+        self.lbk = self.rbk = self.mt
 
     def board_thicknesses(self, root, parts, kind, dim_y):
         """A carcass board cut from the exterior material is that
         material's thickness (Exterior Thickness), every other board the
         interior's (Material Thickness). The cabinet keeps its outside
         size; the parts between the boards take up the difference.
-        Square-fronted straight cabinets only: corners and angled fronts
-        and backs build every board at Material Thickness."""
-        if abs(self.ext - self.mt) <= 1e-9 or kind not in STRAIGHT_KINDS:
+        Straight cabinets (angled fronts and backs included) and
+        corners."""
+        if abs(self.ext - self.mt) <= 1e-9:
             return
-        if int(prompt(root, ANGLED_BACK_KEY, 0) or 0):
-            return
-        depths = angled_front_depths(root, dim_y, self.mt)
-        if depths is not None and any(abs(d - dim_y) > 1e-6 for d in depths):
+        if kind not in STRAIGHT_KINDS and kind not in CORNER_KINDS:
             return
         two_sided = _style_two_sided(root)
 
@@ -578,11 +577,15 @@ class _Prompts:
         self.bt = board('BOTTOM')
         self.tt = board('TOP')
         self.bk = board('BACK')
+        self.lbk = board('LEFT_BACK')
+        self.rbk = board('RIGHT_BACK')
+        self.angled_back = board('ANGLED_BACK')
 
 
 # A cabinet's exterior-material thickness (props_hb_frameless writes it
 # from the cabinet style); missing = every board at Material Thickness.
 EXTERIOR_THICKNESS_KEY = 'Exterior Thickness'
+CORNER_KINDS = ('CORNER_BASE', 'CORNER_UPPER')
 # (left, right) side board thicknesses, kept on the cabinet while either
 # differs from Material Thickness.
 SIDE_BOARDS_KEY = 'hb_side_boards'
@@ -1249,8 +1252,8 @@ def _solve_corner_shape(root, parts, p, dim_x, dim_y, dim_z):
             continue
         for mod_name in CORNER_SHAPE_MODS:
             set_modifier(part, mod_name,
-                         (('X', dim_x - ld - p.mt), ('Y', dim_y - rd - p.mt),
-                          ('Route Depth', p.mt + 0.01)))
+                         (('X', dim_x - ld - p.rt), ('Y', dim_y - rd - p.lt),
+                          ('Route Depth', max(p.tt, p.bt) + 0.01)))
     # A pie-cut cage carries the same notch so its wireframe reads as an L.
     # The cage keeps whatever else is on it; only the notch's own drivers
     # go, so they cannot overwrite the written values.
@@ -1276,16 +1279,19 @@ def _solve_corner_doors(root, parts, p, dim_x, dim_y, dim_z):
     inset_reveal = float(prompt(root, 'Inset Reveal', inch(0.125)))
     vg = float(prompt(root, 'Vertical Gap', inch(0.125)))
 
-    def overlay(half_key, reveal_key, reveal_default):
+    # Each edge overlays its own board: the top, the bottom, and the
+    # side at the door's outer end.
+    def overlay(half_key, reveal_key, reveal_default, board):
         if inset:
             return -inset_reveal
         if root.get(half_key, False):
-            return (mt - vg) / 2.0
-        return mt - float(prompt(root, reveal_key, reveal_default))
+            return (board - vg) / 2.0
+        return board - float(prompt(root, reveal_key, reveal_default))
 
-    top = overlay('Half Overlay Top', 'Top Reveal', inch(0.0625))
-    bottom = overlay('Half Overlay Bottom', 'Bottom Reveal', 0.0)
-    outer = overlay('Half Overlay Outer', 'Outer Reveal', inch(0.0625))
+    top = overlay('Half Overlay Top', 'Top Reveal', inch(0.0625), p.tt)
+    bottom = overlay('Half Overlay Bottom', 'Bottom Reveal', 0.0, p.bt)
+    outer = overlay('Half Overlay Outer', 'Outer Reveal', inch(0.0625), p.lt)
+    outer_r = overlay('Half Overlay Outer', 'Outer Reveal', inch(0.0625), p.rt)
 
     calc = parts.get('CORNER_OVERLAY')
     if calc is not None:
@@ -1293,15 +1299,16 @@ def _solve_corner_doors(root, parts, p, dim_x, dim_y, dim_z):
         calc['Overlay Bottom'] = bottom
         calc['Overlay Outer'] = outer
 
-    bottom_t = 0.0 if p.rb else mt
+    bottom_t = 0.0 if p.rb else p.bt
     y = -rd + ft if inset else -rd - gap
     z = tkh + bottom_t - bottom
-    length = dim_z - tkh - bottom_t - mt + top + bottom
+    length = dim_z - tkh - bottom_t - p.tt + top + bottom
     swing = int(prompt(root, 'Door Swing', 0))
 
     if left is not None:
         x = ld - ft if inset else ld + gap
-        width = dim_y - rd + outer if inset else dim_y - rd - mt + outer - gap
+        width = (dim_y - rd + outer if inset
+                 else dim_y - rd - p.lt + outer - gap)
         set_part(left, (x, y, z), length=length, width=width, thickness=ft,
                  visible=not left.hide_viewport)
         for pull in left.children:
@@ -1309,9 +1316,9 @@ def _solve_corner_doors(root, parts, p, dim_x, dim_y, dim_z):
                 _solve_pull(left, pull, length, width, ft, swing == 0)
 
     if right is not None:
-        x = ld + mt - ft - outer if inset else ld + gap * 2.0 + mt
-        width = (dim_x - ld - mt + outer * 2.0 if inset
-                 else dim_x - ld - mt + outer - gap * 2.0 - mt)
+        x = ld + mt - ft - outer_r if inset else ld + gap * 2.0 + mt
+        width = (dim_x - ld - mt + outer_r * 2.0 if inset
+                 else dim_x - ld - mt + outer_r - gap * 2.0 - p.rt)
         set_part(right, (x, y, z), length=length, width=width, thickness=ft,
                  visible=not right.hide_viewport)
         for pull in right.children:
@@ -1429,11 +1436,11 @@ def _solve_diagonal_door(root, parts, p, dim_x, dim_y, dim_z):
     ft = float(prompt(root, 'Front Thickness', inch(0.75)))
     gap = float(prompt(root, 'Door to Cabinet Gap', inch(0.125)))
     reveal = float(prompt(root, 'Outer Reveal', inch(0.0625)))
-    top = mt - float(prompt(root, 'Top Reveal', inch(0.0625)))
-    bottom = mt - float(prompt(root, 'Bottom Reveal', 0.0))
-    bottom_t = 0.0 if p.rb else mt
+    top = p.tt - float(prompt(root, 'Top Reveal', inch(0.0625)))
+    bottom = p.bt - float(prompt(root, 'Bottom Reveal', 0.0))
+    bottom_t = 0.0 if p.rb else p.bt
     z = tkh + bottom_t - bottom
-    length = dim_z - tkh - bottom_t - mt + top + bottom
+    length = dim_z - tkh - bottom_t - p.tt + top + bottom
     width = max(face - 2.0 * reveal, 0.0)
     ox = ax + n[0] * gap + u[0] * reveal
     oy = ay + n[1] * gap + u[1] * reveal
@@ -1468,8 +1475,8 @@ def _solve_diagonal_toe_kick(root, parts, p, dim_x, dim_y):
     mt, tks = p.mt, p.tks
     # The kick's face line, and where it meets the two sides' inside faces.
     fx, fy = ax - n[0] * tks, ay - n[1] * tks
-    t0 = ((-dim_y + mt) - fy) / u[1] if abs(u[1]) > 1e-6 else 0.0
-    t1 = ((dim_x - mt) - fx) / u[0] if abs(u[0]) > 1e-6 else 0.0
+    t0 = ((-dim_y + p.lt) - fy) / u[1] if abs(u[1]) > 1e-6 else 0.0
+    t1 = ((dim_x - p.rt) - fx) / u[0] if abs(u[0]) > 1e-6 else 0.0
     length = max(t1 - t0, 0.0)
     sx, sy = fx + u[0] * t0 - n[0] * mt, fy + u[1] * t0 - n[1] * mt
     # Length along u, height up, thickness out along n to the face.
@@ -1697,8 +1704,9 @@ def _solve_angled_back(root, parts, p, dim_x, dim_y, dim_z):
         if hand == 1:
             back.location.x = cx
         # Still captured in the groove of the side it keeps.
+        kept = p.rt if hand == 1 else p.lt
         GeoNodeCutpart(back).set_input(
-            'Width', max(dim_x - mt - cx + p.tongue, 0.0))
+            'Width', max(dim_x - kept - cx + p.tongue, 0.0))
     panel = parts.get('ANGLED_BACK')
     if panel is None:
         from . import types_frameless
@@ -1710,7 +1718,8 @@ def _solve_angled_back(root, parts, p, dim_x, dim_y, dim_z):
     # Outer face on the angle, thickness in towards the cabinet.
     euler, loc = _diagonal_matrix(u, n, (ax, ay, back_z))
     panel.rotation_euler = euler
-    set_part(panel, loc, length=back_len, width=face, thickness=mt)
+    set_part(panel, loc, length=back_len, width=face,
+             thickness=getattr(p, 'angled_back', mt))
     targets = [parts[r] for r in ('TOP', 'BOTTOM', 'FRONT_STRETCHER',
                                   'BACK_STRETCHER', 'SINK_APRON',
                                   'FINISHED_BOTTOM')
@@ -1729,57 +1738,61 @@ def _solve_corner_base(root, parts, p, dim_x, dim_y, dim_z):
     # How far each wing's kick stands back from its carcass front; a
     # flush kick stands forward, in the plane of the doors.
     tks = kick_front_setback(root)
-    # A flush kick runs out over the side panel at each wing's outer end.
+    lt, rt, bt, tt = p.lt, p.rt, p.bt, p.tt
+    # A flush kick runs out over the side panel at each wing's outer end,
+    # and the left one across the inside corner.
     end = mt if p.flush else 0.0
+    end_l = lt if p.flush else 0.0
+    end_r = rt if p.flush else 0.0
 
     # Sides: the left wing runs back along -Y, the right wing along +X.
-    for role, loc, width in (('LEFT_SIDE', (0.0, -dim_y), ld),
-                             ('RIGHT_SIDE', (dim_x, 0.0), rd)):
+    for role, loc, width, t in (('LEFT_SIDE', (0.0, -dim_y), ld, lt),
+                                ('RIGHT_SIDE', (dim_x, 0.0), rd, rt)):
         part = parts.get(role)
         if part is None:
             continue
         if part.modifiers.get(NOTCH_MOD_NAME) is not None:
             set_part(part, (loc[0], loc[1], 0.0), length=dim_z, width=width,
-                     thickness=mt)
+                     thickness=t)
             set_modifier(part, NOTCH_MOD_NAME,
                          (('X', tkh), ('Y', 0.0 if p.flush else p.tks),
-                          ('Route Depth', mt)))
+                          ('Route Depth', t)))
         else:
             set_part(part, (loc[0], loc[1], tkh), length=dim_z - tkh,
-                     width=width, thickness=mt)
+                     width=width, thickness=t)
 
     part = parts.get('LEFT_BACK')
     if part is not None:
-        set_part(part, (0.0, 0.0, tkh + mt), length=dim_z - tkh - mt * 2.0,
-                 width=dim_y - mt, thickness=mt)
+        set_part(part, (0.0, 0.0, tkh + bt), length=dim_z - tkh - bt - tt,
+                 width=dim_y - lt, thickness=p.lbk)
 
     part = parts.get('RIGHT_BACK')
     if part is not None:
-        set_part(part, (mt, 0.0, tkh + mt), length=dim_x - mt * 2.0,
-                 width=dim_z - tkh - mt * 2.0, thickness=mt)
+        set_part(part, (p.lbk, 0.0, tkh + bt), length=dim_x - p.lbk - rt,
+                 width=dim_z - tkh - bt - tt, thickness=p.rbk)
 
     part = parts.get('BOTTOM')
     if part is not None:
-        set_part(part, (0.0, 0.0, tkh), length=dim_x - mt, width=dim_y - mt,
-                 thickness=mt)
+        set_part(part, (0.0, 0.0, tkh), length=dim_x - rt, width=dim_y - lt,
+                 thickness=bt)
 
     part = parts.get('TOP')
     if part is not None:
-        set_part(part, (0.0, 0.0, dim_z), length=dim_x - mt, width=dim_y - mt,
-                 thickness=mt)
+        set_part(part, (0.0, 0.0, dim_z), length=dim_x - rt, width=dim_y - lt,
+                 thickness=tt)
 
     part = parts.get('LEFT_TOE_KICK')
     if part is not None:
         # Flush, the left kick also runs on across the inside corner,
         # the way the left door does, so the two kicks close the corner.
-        set_part(part, (ld - tks, -dim_y + mt - end, 0.0),
-                 length=dim_y - rd - mt + tks + end * 2.0, width=tkh,
+        set_part(part, (ld - tks, -dim_y + lt - end_l, 0.0),
+                 length=dim_y - rd - lt + tks + end_l + end, width=tkh,
                  thickness=mt)
 
     part = parts.get('RIGHT_TOE_KICK')
     if part is not None:
-        set_part(part, (dim_x - mt + end, -rd + tks, 0.0),
-                 length=dim_x - ld - mt + tks + end, width=tkh, thickness=mt)
+        set_part(part, (dim_x - rt + end_r, -rd + tks, 0.0),
+                 length=dim_x - ld - rt + tks + end_r, width=tkh, thickness=mt)
 
     part = parts.get('LADDER_BASE')
     if part is not None:
@@ -1808,33 +1821,35 @@ def _solve_corner_upper(root, parts, p, dim_x, dim_y, dim_z):
     ld = float(prompt(root, 'Left Depth', dim_y))
     rd = float(prompt(root, 'Right Depth', dim_y))
 
+    lt, rt, bt, tt = p.lt, p.rt, p.bt, p.tt
+
     part = parts.get('LEFT_SIDE')
     if part is not None:
-        set_part(part, (0.0, -dim_y, 0.0), length=dim_z, width=ld, thickness=mt)
+        set_part(part, (0.0, -dim_y, 0.0), length=dim_z, width=ld, thickness=lt)
 
     part = parts.get('RIGHT_SIDE')
     if part is not None:
-        set_part(part, (dim_x, 0.0, 0.0), length=dim_z, width=rd, thickness=mt)
+        set_part(part, (dim_x, 0.0, 0.0), length=dim_z, width=rd, thickness=rt)
 
     part = parts.get('LEFT_BACK')
     if part is not None:
-        set_part(part, (0.0, 0.0, mt), length=dim_z - mt * 2.0,
-                 width=dim_y - mt, thickness=mt)
+        set_part(part, (0.0, 0.0, bt), length=dim_z - bt - tt,
+                 width=dim_y - lt, thickness=p.lbk)
 
     part = parts.get('RIGHT_BACK')
     if part is not None:
-        set_part(part, (mt, 0.0, mt), length=dim_x - mt * 2.0,
-                 width=dim_z - mt * 2.0, thickness=mt)
+        set_part(part, (p.lbk, 0.0, bt), length=dim_x - p.lbk - rt,
+                 width=dim_z - bt - tt, thickness=p.rbk)
 
     part = parts.get('BOTTOM')
     if part is not None:
-        set_part(part, (0.0, 0.0, 0.0), length=dim_x - mt, width=dim_y - mt,
-                 thickness=mt)
+        set_part(part, (0.0, 0.0, 0.0), length=dim_x - rt, width=dim_y - lt,
+                 thickness=bt)
 
     part = parts.get('TOP')
     if part is not None:
-        set_part(part, (0.0, 0.0, dim_z), length=dim_x - mt, width=dim_y - mt,
-                 thickness=mt)
+        set_part(part, (0.0, 0.0, dim_z), length=dim_x - rt, width=dim_y - lt,
+                 thickness=tt)
 
     _solve_corner_shape(root, parts, p, dim_x, dim_y, dim_z)
     _solve_corner_doors(root, parts, p, dim_x, dim_y, dim_z)
