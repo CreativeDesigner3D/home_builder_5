@@ -794,8 +794,17 @@ def _emit_raised_panel(verts, faces, slots, part, thickness, panel_section,
         for k in range(n - 1):
             faces.append((a + k, a + k + 1, b + k + 1, b + k))
             slots.append(2)
-    # Field plate between the rings' field points.
-    faces.append(tuple(base + c * n for c in range(m)))
+    # Field plate between the rings' field points. Where a shaped edge
+    # meets a side, the first curve stations' field points can land a
+    # hair past the side's own field line (the offset of a short curve
+    # segment folds back at the corner); the plate leaves those out so
+    # its outline stays simple instead of crossing itself.
+    lo, hi = x0 + fu - 1e-6, x1 - fu + 1e-6
+    field = [base + c * n for c, (pos, dv, _s) in enumerate(stations)
+             if lo <= pos[0] + dv[0] * sec[0][0] <= hi]
+    if len(field) < 3:
+        field = [base + c * n for c in range(m)]
+    faces.append(tuple(field))
     slots.append(2)
     # Back plate between the rings' back points.
     faces.append(tuple(base + (m - 1 - c) * n + n - 1 for c in range(m)))
@@ -829,14 +838,18 @@ def _groove_section(style):
     return pts
 
 
-def _emit_grooved_panel(verts, faces, slots, part, thickness, grooves):
+def _emit_grooved_panel(verts, faces, slots, part, thickness, grooves,
+                        top_pts=None, bottom_pts=None):
     """Flat recessed panel as a full-height prism with groove
     cross-sections cut into its front face (beadboard / kerf-grooved
     panel choices). Grooves run vertically at ``grooves['spacing']``,
     the pattern centered so the middle plank straddles the panel
     centerline; grooves that would land within a margin of the panel
-    edge are dropped. Returns False -- the caller keeps the plain
-    box -- when no groove fits."""
+    edge are dropped. top_pts / bottom_pts (shaped polylines in
+    absolute coords) carry the prism's ends up into an arched edge, so
+    the boards and their grooves run to the curve like real boards
+    cut to it. Returns False -- the caller keeps the plain box -- when
+    no groove fits."""
     x0, x1 = part['x0'], part['x1']
     z0, z1 = part['z0'], part['z1']
     th = thickness if part['thickness'] is None else part['thickness']
@@ -860,18 +873,35 @@ def _emit_grooved_panel(verts, faces, slots, part, thickness, grooves):
     if not centers:
         return False
     centers.sort()
+    # A shaped end is sampled at its curve stations along both faces
+    # (the flat stretches between grooves), so each board's end follows
+    # the curve instead of cutting a chord under it.
+    stations = sorted({x for pts in (top_pts, bottom_pts) if pts
+                       for x, _z in pts if x0 + 1e-6 < x < x1 - 1e-6})
+    gaps = [(x0 + c - hw - 1e-6, x0 + c + hw + 1e-6) for c in centers]
+    front = [(x0 + c, [(x0 + c + du, zf - dv) for du, dv in reversed(sec)])
+             for c in centers]
+    front += [(x, [(x, zf)]) for x in stations
+              if not any(a <= x <= b for a, b in gaps)]
+    front.sort(key=lambda g: -g[0])
     # Closed cross-section loop in (layout x, depth): back face, up the
     # right edge, then the front face right to left with the grooves
     # dropped in, closing down the left edge.
-    loop = [(x0, zb), (x1, zb), (x1, zf)]
-    for c in reversed(centers):
-        for du, dv in reversed(sec):
-            loop.append((x0 + c + du, zf - dv))
+    loop = [(x0, zb)] + [(x, zb) for x in stations] + [(x1, zb), (x1, zf)]
+    for _x, pts in front:
+        loop.extend(pts)
     loop.append((x0, zf))
     n = len(loop)
     base = len(verts)
-    for xm in (z0, z1):
+
+    def end_z(pts, x, flat):
+        z = _interp_pts(pts, x) if pts else None
+        return flat if z is None else z
+
+    for end in ('bottom', 'top'):
         for (lx, dz) in loop:
+            xm = (end_z(bottom_pts, lx, z0) if end == 'bottom'
+                  else end_z(top_pts, lx, z1))
             verts.append((xm, -lx, dz))
     for i in range(n):
         j = (i + 1) % n
@@ -1158,6 +1188,52 @@ def _curve_clip_planes(pts, x_off, z_off, below):
     return planes
 
 
+def _clip_to_curves(poly, top_pts, bottom_pts, x_off, z_off):
+    """Convex polygon (cell-local) clipped under a shaped top edge and
+    above a shaped bottom edge: a list of convex pieces. A curve that
+    bulges one way only (an arch) clips with its chord half-planes in
+    one piece. One with reverse curves (a crown's ogee) would lose
+    whatever an extended chord cuts off, so it is cut in vertical
+    strips, one per chord, each clipped by its own chord only."""
+    pieces = [poly]
+    for pts, below in ((top_pts, True), (bottom_pts, False)):
+        if not pts:
+            continue
+        planes = _curve_clip_planes(pts, x_off, z_off, below)
+        turns = []
+        for i in range(len(pts) - 2):
+            (ax, az), (bx, bz), (cx, cz) = pts[i], pts[i + 1], pts[i + 2]
+            cr = (bx - ax) * (cz - bz) - (bz - az) * (cx - bx)
+            if abs(cr) > 1e-12:
+                turns.append(cr > 0.0)
+        one_way = all(t == turns[0] for t in turns) if turns else True
+        out = []
+        for piece in pieces:
+            if one_way:
+                for (a, b, c) in planes:
+                    piece = _clip_half(piece, a, b, c)
+                    if len(piece) < 3:
+                        break
+                if len(piece) >= 3:
+                    out.append(piece)
+                continue
+            n = len(planes)
+            for i, (a, b, c) in enumerate(planes):
+                strip = piece
+                if i > 0:
+                    strip = _clip_half(strip, -1.0, 0.0,
+                                       -(pts[i][0] - x_off))
+                if len(strip) >= 3 and i < n - 1:
+                    strip = _clip_half(strip, 1.0, 0.0,
+                                       pts[i + 1][0] - x_off)
+                if len(strip) >= 3:
+                    strip = _clip_half(strip, a, b, c)
+                if len(strip) >= 3:
+                    out.append(strip)
+        pieces = out
+    return pieces
+
+
 def _emit_shaped_panel(verts, faces, slots, part, thickness, top_pts,
                        bottom_pts):
     """Flat panel for a shaped cell: the front-face outline with its
@@ -1373,26 +1449,17 @@ def _emit_mullion_bars(verts, faces, slots, part, thickness, spec,
                                   cols=int(spec.get('cols', 0) or 0)))
     if not polys:
         return False
-    planes = []
-    if top_pts:
-        planes += _curve_clip_planes(top_pts, x_off, z_off, True)
-    if bottom_pts:
-        planes += _curve_clip_planes(bottom_pts, x_off, z_off, False)
     z_front = thickness
     z_back = thickness - depth
     for i, poly in enumerate(polys):
-        for (a, b, c) in planes:
-            poly = _clip_half(poly, a, b, c)
-            if len(poly) < 3:
-                break
-        if len(poly) < 3:
-            continue
         # Curved segments tuck under their partner at crossings; a
         # hair of depth stagger keeps those coplanar faces from
         # fighting.
         off = (i + 1) * 0.0002 if curved else 0.0
-        _emit_prism(verts, faces, slots, poly, x_off, z_off,
-                    z_front - off, z_back - off, 0)
+        for piece in _clip_to_curves(poly, top_pts, bottom_pts,
+                                     x_off, z_off):
+            _emit_prism(verts, faces, slots, piece, x_off, z_off,
+                        z_front - off, z_back - off, 0)
     return True
 
 
@@ -1455,24 +1522,15 @@ def _emit_lattice(verts, faces, slots, part, thickness, spec,
     if z_lo:
         rising = [[(x, z + z_lo) for (x, z) in p] for p in rising]
         falling = [[(x, z + z_lo) for (x, z) in p] for p in falling]
-    planes = []
-    if top_pts:
-        planes += _curve_clip_planes(top_pts, x_off, z_off, True)
-    if bottom_pts:
-        planes += _curve_clip_planes(bottom_pts, x_off, z_off, False)
     zf = thickness - part['y_inset']
     slot = _PART_MAT_SLOT['panel']
     for layer, polys in enumerate((rising, falling)):
         z_front = zf - layer * st
         for poly in polys:
-            for (a, b, c) in planes:
-                poly = _clip_half(poly, a, b, c)
-                if len(poly) < 3:
-                    break
-            if len(poly) < 3:
-                continue
-            _emit_prism(verts, faces, slots, poly, x_off, z_off,
-                        z_front, z_front - st, slot)
+            for piece in _clip_to_curves(poly, top_pts, bottom_pts,
+                                         x_off, z_off):
+                _emit_prism(verts, faces, slots, piece, x_off, z_off,
+                            z_front, z_front - st, slot)
     return True
 
 
@@ -2160,21 +2218,12 @@ def build_door_geometry(info, width, height, thickness,
                                        thickness, panel_section,
                                        t_pts, b_pts)):
             continue
+        # Shaped cells: the boards run up into the arch and end on it.
         if (part['key'] == 'panel' and panel_section is None
                 and panel_grooves is not None
                 and _emit_grooved_panel(verts, faces, face_slots, part,
-                                        thickness, panel_grooves)):
-            # Shaped cells: the grooves run to the shoulder line; the
-            # arch band above (below) fills with a flat shaped cap
-            # butted on the grooved prism.
-            if t_pts:
-                _emit_shaped_panel(verts, faces, face_slots,
-                                   dict(part, z0=part['z1']),
-                                   thickness, t_pts, None)
-            if b_pts:
-                _emit_shaped_panel(verts, faces, face_slots,
-                                   dict(part, z1=part['z0']),
-                                   thickness, None, b_pts)
+                                        thickness, panel_grooves,
+                                        t_pts, b_pts)):
             continue
         # Shaped flat cell (a glass lite in a shaped row too).
         if (part['key'] in ('panel', 'glass') and (t_pts or b_pts)
@@ -2230,7 +2279,9 @@ def build_door_geometry(info, width, height, thickness,
         for part in cells:
             _emit_strip_rings(verts, faces, face_slots, part, thickness,
                               applied_section, applied_section,
-                              scope=applied_scope)
+                              scope=applied_scope,
+                              top_pts=shaped_top.get(id(part)),
+                              bottom_pts=shaped_bottom.get(id(part)))
     # Mullion bars over glass openings (dict(pattern=..., bar_width=,
     # depth=) -- see _mullion_layout / _emit_mullion_bars). Independent
     # of the frame construction, so mitered doors get them too.
