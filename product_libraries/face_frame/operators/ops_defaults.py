@@ -3,6 +3,10 @@ import bpy
 from .. import types_face_frame
 from .... import hb_project
 
+# An upper whose bottom is further than this from the wall cabinet
+# location was hung by hand.
+_HUNG_BY_HAND_TOL = 0.0254 / 16.0
+
 
 class hb_face_frame_OT_update_cabinet_sizes(bpy.types.Operator):
     """Push this room's tall_cabinet_height and upper_cabinet_height
@@ -33,6 +37,8 @@ class hb_face_frame_OT_update_cabinet_sizes(bpy.types.Operator):
         ff_props = settings_scene.hb_face_frame
 
         updated = 0
+        kept = 0
+        wall_location = ff_props.default_wall_cabinet_location
         for obj in context.scene.objects:
             if not obj.get(types_face_frame.TAG_CABINET_CAGE):
                 continue
@@ -40,12 +46,25 @@ class hb_face_frame_OT_update_cabinet_sizes(bpy.types.Operator):
             if cabinet_type == 'TALL':
                 obj.face_frame_cabinet.height = ff_props.tall_cabinet_height
             elif cabinet_type == 'UPPER':
+                # Height is pushed from the cabinet's bottom, which stays
+                # put. An upper hung anywhere but the wall cabinet
+                # location was sized by hand (stretched down to a
+                # counter, stacked, set over an appliance): the derived
+                # height is meant for the standard hang, so giving it to
+                # this cabinet would pull its top down. Leave it alone.
+                if abs(obj.location.z - wall_location) > _HUNG_BY_HAND_TOL:
+                    kept += 1
+                    continue
                 obj.face_frame_cabinet.height = ff_props.upper_cabinet_height
             else:
                 continue
             updated += 1
 
-        self.report({'INFO'}, f"Updated {updated} cabinet(s)")
+        msg = f"Updated {updated} cabinet(s)"
+        if kept:
+            msg += (f"; kept {kept} upper(s) hung by hand at their own "
+                    "size")
+        self.report({'INFO'}, msg)
         return {'FINISHED'}
 
 
