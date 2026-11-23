@@ -16,7 +16,14 @@ The widened overlay is an ordinary per-opening overlay (the opening's
 own value, unlocked), so it shows and edits where overlays always have
 and survives every recalc.
 
-Inset fronts sit inside their openings and cannot cover anything.
+Inset fronts sit inside their openings and cannot cover anything, and
+full overlay fronts already lap so far onto their stiles that the
+standard details offer no cover there: a full overlay break is always a
+plain break.
+
+A French dovetail box cannot sit behind a front lapping more than
+FRENCH_MAX_OVERLAY, so a covering drawer that goes past it is switched
+to an English dovetail box.
 """
 
 from ...units import inch
@@ -46,6 +53,82 @@ DETAILS = {
 }
 # A style's reveal matches a detail's within this.
 REVEAL_TOL = inch(1.0 / 16.0)
+
+# Overlays the standard concealed hinges are made for. A covering door
+# whose overlay is not one of these has no hinge to hang it on.
+HINGE_OVERLAYS = (0.25, 0.5, 0.625, 1.0, 1.25)
+# The most a French dovetail drawer front may lap past its opening, and
+# the box construction a wider covering drawer is switched to.
+FRENCH_MAX_OVERLAY = inch(1.0)
+FRENCH_BOX = 'French'
+ENGLISH_BOX = 'English'
+# Style overlay type that never covers a break.
+NO_COVER_OVERLAY_TYPES = ('FULL',)
+# Without a style to read, a side overlay this wide is full overlay.
+FULL_OVERLAY_MIN = inch(1.0) - inch(1.0 / 32.0)
+
+
+def overlay_type(root):
+    """door_overlay_type of the style the cabinet is built to, or None
+    when it has no style to resolve."""
+    style_name = root.get('STYLE_NAME') if root is not None else None
+    if not style_name:
+        return None
+    try:
+        from .props_hb_face_frame import get_style_props
+        for cs in get_style_props().cabinet_styles:
+            if cs.name == style_name:
+                return cs.door_overlay_type
+    except Exception:
+        return None
+    return None
+
+
+def cover_blocked(root):
+    """Why the cabinet's fronts cannot cover a break, or '' when they
+    can."""
+    props = root.face_frame_cabinet
+    if not can_cover(props):
+        return "Inset fronts cannot cover a break"
+    kind = overlay_type(root)
+    if kind in NO_COVER_OVERLAY_TYPES or (
+            kind is None
+            and min(props.default_left_overlay,
+                    props.default_right_overlay) >= FULL_OVERLAY_MIN):
+        return "Full overlay breaks are not covered"
+    return ''
+
+
+def hinge_fits(amount):
+    """True when a standard hinge is made for this door overlay."""
+    return any(abs(amount - inch(h)) <= inch(1.0 / 64.0)
+               for h in HINGE_OVERLAYS)
+
+
+def _box_code(name):
+    """Registry code of the box construction printed as ``name``."""
+    from ... import accessory_registry
+    for it in accessory_registry.get_items('drawer_box_construction'):
+        if it.get('name') == name and it.get('code'):
+            return it['code'], it['name']
+    return None, None
+
+
+def limit_french_box(opening, amount):
+    """Switch a drawer lapping more than FRENCH_MAX_OVERLAY off a French
+    dovetail box onto an English one. Returns True when switched."""
+    if amount <= FRENCH_MAX_OVERLAY + inch(1.0 / 64.0):
+        return False
+    from .types_face_frame import opening_box_construction_name
+    if opening_box_construction_name(opening) != FRENCH_BOX:
+        return False
+    code, name = _box_code(ENGLISH_BOX)
+    if code is None:
+        return False
+    op = opening.face_frame_opening
+    op.drawer_box_construction_label = name
+    op.drawer_box_construction = code
+    return True
 
 
 def can_cover(cab_props):
@@ -153,7 +236,7 @@ def apply(cover_root, side, other_root, fronts='BOTH', hinge='KEEP',
     reveal; 'STYLE' keeps the style's butt stiles and gap.
     Returns the openings changed."""
     cover_props = cover_root.face_frame_cabinet
-    if not can_cover(cover_props):
+    if cover_blocked(cover_root) or cover_blocked(other_root):
         return []
     reveal = None
     if set_detail_stiles(cover_root, side, other_root, detail):
@@ -177,5 +260,7 @@ def apply(cover_root, side, other_root, fronts='BOTH', hinge='KEEP',
                 and op.hinge_side in ('LEFT', 'RIGHT')
                 and op.hinge_side != hinge):
             op.hinge_side = hinge
+        if op.front_type == 'DRAWER_FRONT':
+            limit_french_box(opening, amount)
         changed.append(opening)
     return changed

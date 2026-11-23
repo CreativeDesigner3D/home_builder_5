@@ -309,12 +309,12 @@ class _BreakOptions:
         name="Fronts",
         description="Which fronts of the covering bay reach across",
         items=[
-            ('BOTH', "Doors and Drawers", "Every front along the break"),
-            ('DOORS', "Doors", "Doors and pullouts only"),
             ('DRAWERS', "Drawers",
              "Drawer fronts, false fronts and tilt-outs only"),
+            ('BOTH', "Doors and Drawers", "Every front along the break"),
+            ('DOORS', "Doors", "Doors and pullouts only"),
         ],
-        default='BOTH')  # type: ignore
+        default='DRAWERS')  # type: ignore
     cover_hinge: bpy.props.EnumProperty(
         name="Hinge",
         description="The side a covering single door is hinged on",
@@ -347,9 +347,9 @@ class _BreakOptions:
         layout.prop(self, 'keep_width')
         _bay, root = _find_active_bay_and_root(context)
         props = root.face_frame_cabinet if root is not None else None
-        if props is not None and not break_cover.can_cover(props):
-            layout.label(text="Inset fronts cannot cover a break",
-                         icon='INFO')
+        blocked = break_cover.cover_blocked(root) if props is not None else ''
+        if blocked:
+            layout.label(text=blocked, icon='INFO')
             return
         layout.prop(self, 'cover')
         if self.cover == 'OFF':
@@ -375,6 +375,19 @@ class _BreakOptions:
                 planned = break_cover.planned_amount(props, butt)
             col.label(text="Automatic: %s" % unit_to_string(
                 context.scene.unit_settings, planned))
+        else:
+            planned = self.cover_amount
+        if props is not None and self.cover_fronts != 'DRAWERS':
+            from ....units import unit_to_string
+            if not break_cover.hinge_fits(planned):
+                col.label(text="No standard hinge for a %s door overlay"
+                          % unit_to_string(context.scene.unit_settings,
+                                           planned), icon='ERROR')
+        if (props is not None and self.cover_fronts != 'DOORS'
+                and planned > break_cover.FRENCH_MAX_OVERLAY
+                + units.inch(1.0 / 64.0)):
+            col.label(text="French dovetail drawers become English",
+                      icon='INFO')
 
     def _cover_joints(self, joints):
         """joints: (picked cabinet, its break side, the neighbor) for
