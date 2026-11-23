@@ -442,6 +442,7 @@ def gothic_fields(side):
         ('enum', 'gothic_stile_type', "Gothic Type", {'when': shown}),
         ('number', 'gothic_ball_cuts', "Ball Cuts", {'when': shown}),
         ('distance', 'gothic_route_stop', "Route Stop", {'when': shown}),
+        ('distance', 'gothic_center_cut_top', "Center Cut From Top", {'when': shown}),
     )
 
 

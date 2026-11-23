@@ -832,6 +832,7 @@ def _cabinet_fields(root, cab):
                 ('enum', 'gothic_stile_type', "Gothic Type", {'when': _gothic_stile}),
                 ('number', 'gothic_ball_cuts', "Ball Cuts", {'when': _gothic_stile}),
                 ('distance', 'gothic_route_stop', "Route Stop", {'when': _gothic_stile}),
+                ('distance', 'gothic_center_cut_top', "Center Cut From Top", {'when': _gothic_stile}),
                 ('distance', 'left_scribe', "Left Scribe", {'when': _scribes}),
                 ('distance', 'right_scribe', "Right Scribe", {'when': _scribes}),
                 ('distance', 'top_scribe', "Top Scribe", {'when': _scribes}),

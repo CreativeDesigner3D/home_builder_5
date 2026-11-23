@@ -540,6 +540,7 @@ def draw_construction(layout, cab_props):
             col.prop(cab_props, 'gothic_stile_type', text="Type")
             col.prop(cab_props, 'gothic_ball_cuts', text="Ball Cuts")
             col.prop(cab_props, 'gothic_route_stop', text="Route Stop")
+            col.prop(cab_props, 'gothic_center_cut_top', text="Center Cut From Top")
 
     # Furniture wood top sits at the bottom - a finishing option layered
     # on after the carcass, ends, and any extensions are set.

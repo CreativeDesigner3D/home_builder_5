@@ -10470,6 +10470,16 @@ class Face_Frame_Cabinet_Props(PropertyGroup):
                     "cuts stop",
         update=_update_cabinet_dim,
     )  # type: ignore
+    gothic_center_cut_top: FloatProperty(
+        name="Center Cut From Top", default=0.0,
+        unit='LENGTH', precision=4, min=0.0,
+        description="Stepped ball cuts: the center cut stops this far "
+                    "below the top of the stile (often the next "
+                    "cabinet's rail height) and each cut beside it is 1\" "
+                    "shorter at both ends. 0 = every cut stops at the "
+                    "Route Stop",
+        update=_update_cabinet_dim,
+    )  # type: ignore
     decorative_corner_top_detail: BoolProperty(
         name="Top Transition Detail", default=True,
         description="Finish the top of the post with a transition "

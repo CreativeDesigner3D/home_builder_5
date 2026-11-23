@@ -39,6 +39,9 @@ BALL_CUT_DIAMETER = inch(0.375)
 BALL_CUT_LAND = inch(0.3125)
 DEFAULT_BALL_CUTS = 3
 DEFAULT_ROUTE_STOP = inch(1.0)
+# Stepped ball cuts: each cut out from the centre one stops this much
+# shorter at both ends.
+STEP_SHORTER = inch(1.0)
 # Stile width a Gothic stile is set to when switched on, and the most
 # the catalog makes one.
 DEFAULT_WIDTH = inch(3.0)
@@ -126,12 +129,31 @@ def _capsule(bm, ml, y, x0, x1, ys, zs, r, v0=0.0):
             bm.faces.new((last, a[k], a[(k + 1) % _SEGMENTS]))
 
 
-def build_cutter(cutter, part, ml, count, route_stop, v0=0.0):
+def cut_spans(length, count_centers, route_stop, center_top=0.0):
+    """(x0, x1) along the stile for each cut, bottom to top. Every cut
+    stops ``route_stop`` short of both ends, unless ``center_top`` > 0:
+    then the centre cut (the middle two on an even count) runs from
+    ``route_stop`` above the bottom to ``center_top`` below the top, and
+    each cut further out is STEP_SHORTER shorter at both ends."""
+    n = len(count_centers)
+    stop = max(0.0, route_stop)
+    if center_top <= 0.0:
+        return [(stop, length - stop)] * n
+    mid = (n - 1) / 2.0
+    spans = []
+    for k in range(n):
+        step = math.floor(abs(k - mid) + 1e-9) * STEP_SHORTER
+        spans.append((stop + step, length - center_top - step))
+    return spans
+
+
+def build_cutter(cutter, part, ml, count, route_stop, v0=0.0,
+                 center_top=0.0):
     """Rebuild ``cutter`` as the ball-cut grooves of one stile, in the
     cabinet's frame (``ml`` = stile local -> cabinet), routed into the
     face at thickness coordinate ``v0`` (negative = proud of the stile,
-    an applied board's face). Returns the number of cuts built (0
-    clears it)."""
+    an applied board's face). ``center_top`` > 0 steps the cuts (see
+    cut_spans). Returns the number of cuts built (0 clears it)."""
     try:
         length = part.get_input('Length')
         width = part.get_input('Width')
@@ -141,23 +163,25 @@ def build_cutter(cutter, part, ml, count, route_stop, v0=0.0):
         cutter.data.clear_geometry()
         return 0
     r = BALL_CUT_DIAMETER / 2.0
-    stop = max(0.0, route_stop)
-    x0, x1 = stop, length - stop
     centers = cut_centers(width, count)
-    if not centers or x1 - x0 < 2.0 * r + inch(0.5):
+    spans = cut_spans(length, centers, route_stop, center_top)
+    # A cut too short to route is left out; none left clears the cutter.
+    cuts = [(y, x0, x1) for y, (x0, x1) in zip(centers, spans)
+            if x1 - x0 >= 2.0 * r + inch(0.5)]
+    if not cuts:
         cutter.data.clear_geometry()
         return 0
     ys = -1.0 if mirror_y else 1.0
     zs = -1.0 if mirror_z else 1.0
     bm = bmesh.new()
-    for y in centers:
+    for y, x0, x1 in cuts:
         _capsule(bm, ml, y, x0, x1, ys, zs, r, v0)
     bmesh.ops.recalc_face_normals(bm, faces=bm.faces[:])
     bm.to_mesh(cutter.data)
     bm.free()
     cutter.location = (0.0, 0.0, 0.0)
     cutter.rotation_euler = (0.0, 0.0, 0.0)
-    return len(centers)
+    return len(cuts)
 
 
 def build_piece(piece, part, ml):
@@ -241,6 +265,7 @@ def apply(cabinet_obj, cab_props, stiles, matrix_to_root, cutpart_cls):
     sides switched off are removed."""
     count = getattr(cab_props, 'gothic_ball_cuts', DEFAULT_BALL_CUTS)
     stop = getattr(cab_props, 'gothic_route_stop', DEFAULT_ROUTE_STOP)
+    center_top = max(0.0, getattr(cab_props, 'gothic_center_cut_top', 0.0))
     kind = getattr(cab_props, 'gothic_stile_type', 'INTEGRAL')
     applied = kind in ('APPLIED', 'LOOSE')
     live = {}
@@ -254,7 +279,8 @@ def apply(cabinet_obj, cab_props, stiles, matrix_to_root, cutpart_cls):
         ml = matrix_to_root(stile, cabinet_obj)
         cutter = ensure_cutter(cabinet_obj, side)
         n = build_cutter(cutter, part, ml, count, stop,
-                         -APPLIED_THICKNESS if applied else 0.0)
+                         -APPLIED_THICKNESS if applied else 0.0,
+                         center_top=center_top)
         if not n:
             continue
         target = stile
