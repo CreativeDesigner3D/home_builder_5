@@ -1159,6 +1159,15 @@ def draw_leg_product(layout, root):
         cbox.label(text="Width = panel thickness (3/4\" or 1-1/2\")",
                    icon='INFO')
 
+    gbox = box.box()
+    gbox.prop(cab, 'gothic_stile_left', text="Gothic Stile", toggle=True)
+    if cab.gothic_stile_left:
+        gcol = gbox.column(align=True)
+        gcol.prop(cab, 'gothic_stile_type', text="Type")
+        gcol.prop(cab, 'gothic_ball_cuts', text="Ball Cuts")
+        gcol.prop(cab, 'gothic_route_stop', text="Route Stop")
+        gcol.prop(cab, 'gothic_center_cut_top', text="Center Cut From Top")
+
     # Material Thickness / Face Frame Thickness are intentionally not
     # exposed here - users never change them (recalc still reads the
     # propgroup defaults).

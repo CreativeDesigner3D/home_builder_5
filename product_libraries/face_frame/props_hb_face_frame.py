@@ -8855,6 +8855,9 @@ def _sync_gothic_stile(cab_props, side):
         on = cab_props.gothic_stile_right
         attr, lock_attr = 'right_stile_width', 'unlock_right_stile'
     root = cab_props.id_data
+    # A leg's Gothic stile is the leg itself: its width is the leg's.
+    if root.get('IS_LEG_PRODUCT'):
+        return
     stamp = 'HB_GOTHIC_STILE_%s' % side
     wkey = stamp + '_WIDTH'
     width = gothic_stile.auto_width(cab_props, side)

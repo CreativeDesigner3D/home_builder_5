@@ -18861,6 +18861,9 @@ class LegProductFaceFrameCabinet(FaceFrameCabinet):
                     child.hide_viewport = True
                     child.hide_render = True
             self._build_curved_leg_panel(width, height, depth, leg)
+            # No stile to route: clear any Gothic cuts / board.
+            gothic_stile.apply(self.obj, cab, {}, matrix_to_root,
+                               GeoNodeCutpart, fronts_clearance=False)
             return
         # Toggled back off: hide the curved panel if one was built, and
         # restore the stile (the only standard part whose visibility the
@@ -19250,6 +19253,11 @@ class LegProductFaceFrameCabinet(FaceFrameCabinet):
         self._reconcile_leg_textured_panels(
             cab, width, height, depth - fft,
             notch=(notch_on, tkh, tks - fft))
+        # Gothic leg: ball cuts down the leg's stile (or an applied /
+        # loose board on it), across its full width. The leg's one
+        # Gothic toggle is gothic_stile_left (no right stile is passed).
+        gothic_stile.apply(self.obj, cab, {'LEFT': STILE}, matrix_to_root,
+                           GeoNodeCutpart, fronts_clearance=False)
 
     def _reconcile_leg_textured_panels(self, cab, width, height, panel_depth,
                                        notch=(False, 0.0, 0.0)):

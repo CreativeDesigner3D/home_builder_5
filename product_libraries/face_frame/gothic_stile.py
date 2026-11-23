@@ -286,10 +286,13 @@ def wanted_sides(cab_props):
             if getattr(cab_props, 'gothic_stile_%s' % s.lower(), False)]
 
 
-def apply(cabinet_obj, cab_props, stiles, matrix_to_root, cutpart_cls):
+def apply(cabinet_obj, cab_props, stiles, matrix_to_root, cutpart_cls,
+          fronts_clearance=True):
     """Cut (or clear) the ball cuts on the cabinet's Gothic end stiles.
 
     ``stiles`` maps 'LEFT' / 'RIGHT' to that end stile object (or None).
+    ``fronts_clearance`` False routes the whole stile width: a leg's
+    stile carries no fronts of its own (its toggle is gothic_stile_left).
     Safe every recalc: cutters, booleans and the published props for
     sides switched off are removed."""
     count = getattr(cab_props, 'gothic_ball_cuts', DEFAULT_BALL_CUTS)
@@ -306,7 +309,7 @@ def apply(cabinet_obj, cab_props, stiles, matrix_to_root, cutpart_cls):
             continue
         part = cutpart_cls(stile)
         ml = matrix_to_root(stile, cabinet_obj)
-        clear = clearance(cab_props, side)
+        clear = clearance(cab_props, side) if fronts_clearance else 0.0
         # A stile switched on before the clearance existed keeps building
         # as it was (no recorded width) until its Gothic options change.
         if (cabinet_obj.get('HB_GOTHIC_STILE_%s' % side)

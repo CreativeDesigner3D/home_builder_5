@@ -177,6 +177,26 @@ def _leg(root):
     return "Leg", 'cab_parts', size, root.leg_product, options
 
 
+def _leg_gothic_fields():
+    """The leg's Gothic options, on its face_frame_cabinet: the leg's
+    stile routed (or faced with an applied / loose board) like a
+    cabinet's Gothic end stile."""
+    def on(cab):
+        return cab.gothic_stile_left
+    return (
+        ('group', 'ff_leg_gothic', "Gothic", {
+            'summary': lambda cab: (_enum_label(cab, 'gothic_stile_type')
+                                    if cab.gothic_stile_left else "Off"),
+            'fields': (
+                ('bool', 'gothic_stile_left', "Gothic Stile"),
+                ('enum', 'gothic_stile_type', "Gothic Type", {'when': on}),
+                ('number', 'gothic_ball_cuts', "Ball Cuts", {'when': on}),
+                ('distance', 'gothic_route_stop', "Route Stop", {'when': on}),
+                ('distance', 'gothic_center_cut_top', "Center Cut From Top", {'when': on}),
+            )}),
+    )
+
+
 def _shelf_height_owner(root):
     from ...operators import prop_proxy
     return prop_proxy.owner(root, 'FF_SHELF_HEIGHT')
@@ -653,6 +673,8 @@ def blocks(context, item):
     out.extend(options_panel.field_blocks(context, (
         ('group', options_key, label, {'icon': icon, 'fields': options}),
     ), owner))
+    if tag == LEG_TAG:
+        out.extend(options_panel.field_blocks(context, _leg_gothic_fields(), cab))
     out.append(('gap', None))
     out.extend(generic_page.command_blocks(context, generic_page.menu_id(root)))
     return out
