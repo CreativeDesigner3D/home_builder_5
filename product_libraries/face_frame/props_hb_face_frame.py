@@ -10485,7 +10485,8 @@ class Face_Frame_Cabinet_Props(PropertyGroup):
         update=_update_cabinet_dim,
     )  # type: ignore
     gothic_center_cut_top: FloatProperty(
-        name="Center Cut From Top", default=0.0,
+        name="Center Cut From Top",
+        default=gothic_stile.DEFAULT_CENTER_CUT_TOP,
         unit='LENGTH', precision=4, min=0.0,
         description="Stepped ball cuts: the center cut stops this far "
                     "below the top of the stile (often the next "

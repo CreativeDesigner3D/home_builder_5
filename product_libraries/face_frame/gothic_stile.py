@@ -48,6 +48,8 @@ DEFAULT_ROUTE_STOP = inch(1.0)
 # Stepped ball cuts: each cut out from the centre one stops this much
 # shorter at both ends.
 STEP_SHORTER = inch(1.0)
+# Where the centre cut stops below the top of the stile by default.
+DEFAULT_CENTER_CUT_TOP = inch(1.0)
 # Stile width a Gothic stile is set to when switched on, and the most
 # the catalog makes one.
 DEFAULT_WIDTH = inch(3.0)
@@ -297,7 +299,8 @@ def apply(cabinet_obj, cab_props, stiles, matrix_to_root, cutpart_cls,
     sides switched off are removed."""
     count = getattr(cab_props, 'gothic_ball_cuts', DEFAULT_BALL_CUTS)
     stop = getattr(cab_props, 'gothic_route_stop', DEFAULT_ROUTE_STOP)
-    center_top = max(0.0, getattr(cab_props, 'gothic_center_cut_top', 0.0))
+    center_top = max(0.0, getattr(cab_props, 'gothic_center_cut_top',
+                                          DEFAULT_CENTER_CUT_TOP))
     kind = getattr(cab_props, 'gothic_stile_type', 'INTEGRAL')
     applied = kind in ('APPLIED', 'LOOSE')
     live = {}
