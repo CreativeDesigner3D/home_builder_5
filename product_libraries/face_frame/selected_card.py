@@ -636,6 +636,9 @@ def _construction_summary(cab):
     parts = []
     if _has_kick(cab):
         parts.append(f"{_dist(cab.toe_kick_height)} kick")
+    if _valance_on(cab):
+        parts.append("Loose valance" if cab.toe_kick_valance_loose
+                     else "Valance")
     if cab.existing_cabinet:
         parts.append("Existing")
     return " · ".join(parts)
@@ -736,6 +739,9 @@ def _cabinet_fields(root, cab):
                 ('bool', 'include_finish_toe_kick', "Finish Toe Kick", {'when': _kick_closed}),
                 ('enum', 'finish_toe_kick_type', "Finish Kick Type",
                  {'when': lambda c: _kick_closed(c) and c.include_finish_toe_kick}),
+                ('bool', 'toe_kick_valance', "Toe Kick Valance", {'when': _valance_ok}),
+                ('enum', 'toe_kick_valance_profile', "Valance Profile", {'when': _valance_on}),
+                ('bool', 'toe_kick_valance_loose', "Valance Sent Loose", {'when': _valance_on}),
                 ('bool', 'existing_cabinet', "Existing (on site)"),
             )}),
         ('group', 'ff_cab_ends', "Finished Ends & Back", {
@@ -844,6 +850,17 @@ def _cabinet_fields(root, cab):
                  {'when': _is_type('BASE', 'TALL', 'UPPER')}),
             )}),
     )
+
+
+def _valance_ok(cab):
+    # Same gate as the valance builder: a base or tall with a kick that
+    # is not left open for a separate base.
+    return (_cab_type(cab) in ('BASE', 'TALL')
+            and cab.toe_kick_type != 'FLOATING')
+
+
+def _valance_on(cab):
+    return _valance_ok(cab) and cab.toe_kick_valance
 
 
 def _bun_feet(cab):
