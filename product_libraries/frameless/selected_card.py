@@ -2204,6 +2204,17 @@ def _part_name_block(part_obj):
     return ('value', ("Part Name", name)) if name else None
 
 
+# Optional unit number a downstream numbering pass stamps on a cabinet or
+# product ("1.09"), shown under the title so the inspector reads the
+# same number as the drawings.
+UNIT_NUMBER_PROP = 'UNIT_NUMBER'
+
+
+def _unit_number_block(root):
+    number = str(root.get(UNIT_NUMBER_PROP, "") or "") if root else ""
+    return ('value', ("Number", number)) if number else None
+
+
 def _several(kind):
     """How many of the pick's kind are picked, when it is more than one."""
     n = _count({'cabinet': 'cabinet', 'opening': 'opening',
@@ -2221,6 +2232,9 @@ def blocks(context, item):
                 ('label', f"Changes apply to all {n}")] if n
                else [('head', (root.name, False, None))])
         if not n:
+            numbered = _unit_number_block(root)
+            if numbered:
+                out.append(numbered)
             named = _part_name_block(context.active_object)
             if named:
                 out.append(named)
@@ -2240,6 +2254,9 @@ def blocks(context, item):
                ('label', f"Changes apply to all {n}")]
     else:
         out = [('head', (" › ".join(trail), False, None))]
+        numbered = _unit_number_block(root)
+        if numbered:
+            out.append(numbered)
 
     out.extend(style_blocks(context, root))
     if not n:
