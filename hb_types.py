@@ -1318,6 +1318,94 @@ def ensure_dimension_additional_lines(ng):
 _S2C_LINE_HEIGHT = 1.0
 
 
+DIMENSION_TEXT_FONT_SWITCH = 'Text Style Font'
+DIMENSION_TEXT_STYLE_INPUTS = ('Bold Text', 'Italic Text')
+
+
+def dimension_node_group(obj):
+    """The geometry node group a dimension object draws with, or None."""
+    if obj is None:
+        return None
+    mod_name = getattr(getattr(obj, 'home_builder', None), 'mod_name', '')
+    mod = obj.modifiers.get(mod_name) if mod_name else None
+    if mod is None:
+        mod = next((m for m in obj.modifiers if m.type == 'NODES'), None)
+    return mod.node_group if mod is not None else None
+
+
+def ensure_dimension_text_styles(ng, scene=None):
+    """Let a dimension's text be set bold and/or italic.
+
+    Adds the inputs 'Bold Text' and 'Italic Text' and one Index Switch
+    of fonts (regular, bold, italic, bold italic) feeding every String
+    to Curves in the group, so the measured value and the additional
+    text both follow the two toggles. The regular slot keeps the font
+    the group already draws with; the styled slots take the annotation
+    font's own cuts (Calibri's as the fallback) and stay on the regular
+    font when a cut is not installed. Idempotent versioning fixup: run
+    again it only refreshes the styled fonts. Returns True when the
+    group has the inputs afterwards.
+    """
+    if ng is None:
+        return False
+    s2cs = [n for n in ng.nodes if n.bl_idname == 'GeometryNodeStringToCurves']
+    if not s2cs or any(n.inputs['Font'].links
+                       and n.inputs['Font'].links[0].from_node.name
+                       != DIMENSION_TEXT_FONT_SWITCH for n in s2cs):
+        return False
+    gi = next((n for n in ng.nodes if n.type == 'GROUP_INPUT'), None)
+    if gi is None:
+        return False
+    names = {it.name for it in ng.interface.items_tree
+             if getattr(it, 'in_out', '') == 'INPUT'}
+    for name in DIMENSION_TEXT_STYLE_INPUTS:
+        if name not in names:
+            sock = ng.interface.new_socket(name, in_out='INPUT',
+                                           socket_type='NodeSocketBool')
+            sock.default_value = False
+
+    switch = ng.nodes.get(DIMENSION_TEXT_FONT_SWITCH)
+    if switch is None:
+        regular = s2cs[0].inputs['Font'].default_value
+        x0 = min(n.location.x for n in s2cs) - 500
+        y0 = max(n.location.y for n in s2cs) + 400
+        switch = ng.nodes.new('GeometryNodeIndexSwitch')
+        switch.name = switch.label = DIMENSION_TEXT_FONT_SWITCH
+        switch.data_type = 'FONT'
+        while len(switch.index_switch_items) < 4:
+            switch.index_switch_items.new()
+        switch.location = (x0, y0)
+        # Index = bold + 2 * italic.
+        twice = ng.nodes.new('ShaderNodeMath')
+        twice.operation = 'MULTIPLY'
+        twice.location = (x0 - 400, y0 - 120)
+        twice.inputs[1].default_value = 2.0
+        ng.links.new(gi.outputs['Italic Text'], twice.inputs[0])
+        index = ng.nodes.new('ShaderNodeMath')
+        index.operation = 'ADD'
+        index.location = (x0 - 200, y0)
+        ng.links.new(gi.outputs['Bold Text'], index.inputs[0])
+        ng.links.new(twice.outputs[0], index.inputs[1])
+        ng.links.new(index.outputs[0], switch.inputs['Index'])
+        for item in range(4):
+            switch.inputs[item + 1].default_value = regular
+        for n in s2cs:
+            ng.links.new(switch.outputs[0], n.inputs['Font'])
+
+    regular = switch.inputs[1].default_value
+    from . import hb_details
+    if scene is None:
+        scene = bpy.context.scene
+    for item, style in ((2, 'BOLD'), (3, 'ITALIC'), (4, 'BOLD_ITALIC')):
+        font = None
+        try:
+            font = hb_details.get_label_style_font(scene, style)
+        except Exception:
+            font = None
+        switch.inputs[item].default_value = font or regular
+    return True
+
+
 def set_dimension_additional_lines(dim, text, spacing):
     """Write multi-line additional text (lines joined by newlines) and
     its line spacing to a GeoNodeDimension."""

@@ -552,6 +552,10 @@ class HOME_BUILDER_OT_show_dimension_properties(bpy.types.Operator):
     additional_text_offset_x_amount: bpy.props.FloatProperty(name="Additional Text Offset X Amount", default=0, subtype='DISTANCE')  # type: ignore
     additional_text_size: bpy.props.FloatProperty(name="Additional Text Size", default=units.inch(2), subtype='DISTANCE')  # type: ignore
     replace_text: bpy.props.StringProperty(name="Replace Text")  # type: ignore
+    text_bold: bpy.props.BoolProperty(
+        name="Bold", description="Draw this dimension's text bold")  # type: ignore
+    text_italic: bpy.props.BoolProperty(
+        name="Italic", description="Draw this dimension's text italic")  # type: ignore
 
     # The active dimension being live-previewed; set in invoke().
     dimension = None
@@ -632,6 +636,9 @@ class HOME_BUILDER_OT_show_dimension_properties(bpy.types.Operator):
         d.set_input('Additional Text Size', self.additional_text_size)
         d.set_input('Replace Text', self.replace_text)
         d.set_input('Offset Text X Amount', self.text_x_offset_amount)
+        if d.has_input('Bold Text'):
+            d.set_input('Bold Text', self.text_bold)
+            d.set_input('Italic Text', self.text_italic)
         if context.area:
             context.area.tag_redraw()
         return True
@@ -652,8 +659,13 @@ class HOME_BUILDER_OT_show_dimension_properties(bpy.types.Operator):
         ng = bpy.data.node_groups.get('GeoNodeDimension')
         hb_types.ensure_dimension_leader_extras(ng)
         hb_types.ensure_dimension_additional_lines(ng)
+        hb_types.ensure_dimension_text_styles(
+            hb_types.dimension_node_group(context.object), context.scene)
         self.dimension = hb_types.GeoNodeDimension(context.object)
         d = self.dimension
+        if d.has_input('Bold Text'):
+            self.text_bold = bool(d.get_input('Bold Text'))
+            self.text_italic = bool(d.get_input('Italic Text'))
         if d.has_input("Leader Extra Start"):
             self.leader_extra_start = d.get_input("Leader Extra Start") or 0.0
             self.leader_extra_end = d.get_input("Leader Extra End") or 0.0
@@ -744,6 +756,11 @@ class HOME_BUILDER_OT_show_dimension_properties(bpy.types.Operator):
         row = box.row()
         row.label(text="Text Size")
         row.prop(self, 'text_size', text="")
+        if self.dimension is not None and self.dimension.has_input('Bold Text'):
+            row = box.row(align=True)
+            row.label(text="Text Style")
+            row.prop(self, 'text_bold', toggle=True, icon='BOLD')
+            row.prop(self, 'text_italic', toggle=True, icon='ITALIC')
         row = box.row()
         row.label(text="Tick Length")
         row.prop(self, 'tick_length', text="")
