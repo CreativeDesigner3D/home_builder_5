@@ -118,7 +118,8 @@ def _panel(hood_obj, name):
     return p
 
 
-def _mantle_parts(hood_obj, band, depth, full_left=False, full_right=False):
+def _mantle_parts(hood_obj, band, depth, full_left=False, full_right=False,
+                  include_front=True):
     """Mantle assembly at the hood bottom -- real parts rather than one
     solid slab: a full-width front board at the mantle's front plane, side
     pieces, and (when the depth projects past the applied front) a top
@@ -130,7 +131,10 @@ def _mantle_parts(hood_obj, band, depth, full_left=False, full_right=False):
     the front board (split horizontally at the mantle, grain carrying
     around it, and the mantle free to take its own finish). Otherwise the
     side runs full height and the mantle side only fills the projection
-    in front of it."""
+    in front of it.
+
+    ``include_front`` False leaves the front board out, for a face-frame
+    front whose bottom rail runs down over the mantle zone instead."""
     w = _HoodWrap(hood_obj)
     dim_x = w.var_input('Dim X', 'dim_x')
     dim_y = w.var_input('Dim Y', 'dim_y')
@@ -138,13 +142,14 @@ def _mantle_parts(hood_obj, band, depth, full_left=False, full_right=False):
     depth = max(depth, mt)
 
     # Front board, full width, its face at the mantle's front plane.
-    mf = _panel(hood_obj, "Hood Mantle Front")
-    mf.obj.rotation_euler.x = math.radians(90)
-    mf.driver_location('y', '-dim_y + %f' % (2.0 * mt - depth), [dim_y])
-    mf.driver_input("Length", 'dim_x', [dim_x])
-    mf.set_input("Width", band)
-    mf.set_input("Thickness", mt)
-    mf.set_input("Mirror Z", False)
+    if include_front:
+        mf = _panel(hood_obj, "Hood Mantle Front")
+        mf.obj.rotation_euler.x = math.radians(90)
+        mf.driver_location('y', '-dim_y + %f' % (2.0 * mt - depth), [dim_y])
+        mf.driver_input("Length", 'dim_x', [dim_x])
+        mf.set_input("Width", band)
+        mf.set_input("Thickness", mt)
+        mf.set_input("Mirror Z", False)
 
     # Side pieces back to the wall (full) or back to the hood sides'
     # front edges (projection filler), ending at the front board.
@@ -183,7 +188,8 @@ def _mantle_parts(hood_obj, band, depth, full_left=False, full_right=False):
 
 def _build_hood_box(hood_obj, bottom_band=0.0, top_crown=0.0, band_proj=0.0,
                     include_front=True, include_left_side=True,
-                    include_right_side=True, top_scribe=0.0, back=0.0):
+                    include_right_side=True, top_scribe=0.0, back=0.0,
+                    mantle_front=True):
     """Core box carcass: full left/right sides, a top cap inset between
     them, and an applied front -- full width, in front of the sides and
     top, which stop 3/4" short of the face. Optional projecting bands at
@@ -265,7 +271,8 @@ def _build_hood_box(hood_obj, bottom_band=0.0, top_crown=0.0, band_proj=0.0,
     if bottom_band > 0.0:
         _mantle_parts(hood_obj, bottom_band, mt + band_proj,
                       full_left=include_left_side,
-                      full_right=include_right_side)
+                      full_right=include_right_side,
+                      include_front=mantle_front)
 
     # Top crown band, full width, back against the sides like the mantle.
     if top_crown > 0.0:
@@ -1189,7 +1196,7 @@ def _bottom_molding(hood_obj, opts, W, y_face):
                   W, y_face, 0.0, m_w, m_th, y_back=y_back)
 
 
-def _front_face_frame(hood_obj, opts, band):
+def _front_face_frame(hood_obj, opts, band, rail_over_band=False):
     """Face frame forming the straight hood front, treated like a
     cabinet face frame: full-height stiles, top / bottom rails, and mid
     stiles splitting the front into ``panel_count`` bays. The frame
@@ -1199,7 +1206,12 @@ def _front_face_frame(hood_obj, opts, band):
     inset panel closing the opening. Frame members and inset panels are
     driven so they track the cage; bay DOORS are static python-built
     meshes (_static_hood_door) rebuilt with the hood so they carry the
-    door style's full construction."""
+    door style's full construction.
+
+    ``rail_over_band``: a flush mantle band under the frame is not built
+    as its own board; the stiles run to the hood bottom and the bottom
+    rail grows by the band height, so the front has one bottom rail and
+    the openings stay where they were."""
     w = _HoodWrap(hood_obj)
     dim_x = w.var_input('Dim X', 'dim_x')
     dim_y = w.var_input('Dim Y', 'dim_y')
@@ -1207,6 +1219,9 @@ def _front_face_frame(hood_obj, opts, band):
     sw = max(opts['panel_stile_width'], inch(0.5))
     trw = max(opts['panel_top_rail_width'], inch(0.5))
     brw = max(opts['panel_bottom_rail_width'], inch(0.5))
+    if rail_over_band and band > 0.0:
+        brw += band
+        band = 0.0
     n = max(int(opts['panel_count']), 1)
     mt = HOOD_MATERIAL
 
@@ -2103,6 +2118,10 @@ def _build_custom(hood_obj):
         _build_custom_angled(hood_obj, opts)
         return
     band = opts['mantle_height'] if opts['include_mantle'] else 0.0
+    # A face frame over a flush mantle (no projection) takes the mantle
+    # zone into its bottom rail instead of stacking a rail on the board.
+    rail_over_band = (bool(opts['include_front_panel']) and band > 0.0
+                      and opts['mantle_depth'] <= HOOD_MATERIAL)
     # Paneled ends replace the plain sides; build them first so an
     # end too small for its frame can fall back to the plain side.
     left_pe = bool(opts['left_end_panel']) and _paneled_end(hood_obj, opts, False)
@@ -2117,7 +2136,8 @@ def _build_custom(hood_obj):
                     include_left_side=not left_pe,
                     include_right_side=not right_pe,
                     top_scribe=opts.get('top_scribe', 0.0),
-                    back=_back_thickness(opts))
+                    back=_back_thickness(opts),
+                    mantle_front=not rail_over_band)
     if band > 0.0 and opts['include_mantle_molding']:
         w2 = _HoodWrap(hood_obj)
         W = w2.get_input('Dim X')
@@ -2139,7 +2159,7 @@ def _build_custom(hood_obj):
         _add_wrap_shiplap(hood_obj, fz=band,
                           board=opts['shiplap_board_width'])
     if opts['include_front_panel']:
-        _front_face_frame(hood_obj, opts, band)
+        _front_face_frame(hood_obj, opts, band, rail_over_band=rail_over_band)
     # Shelf extends forward under a projecting mantle to close its
     # bottom (only while it sits at the bottom).
     _liner_shelf(hood_obj, opts['fan_cutout_width'], opts['fan_cutout_depth'],
