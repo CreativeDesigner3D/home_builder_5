@@ -13,16 +13,22 @@ stile's Length (x = 0 at its bottom), y across its Width (sign per
 'Mirror Y', u = 0 on the outer edge), the front face on z = 0 with the
 thickness running in per 'Mirror Z'.
 
+On an overlay style the doors / drawers lap onto the end stile, so the
+Gothic part is kept clear of them: the stile is widened by the front's
+overlay plus DOOR_GAP (see clearance), and the ball cuts (integral) or
+the applied board take only the outer part of the stile, its Gothic
+width. Inset styles need no clearance.
+
 An applied Gothic stile is a separate board (APPLIED_THICKNESS) laid on
 the face of the end stile, flush with the cabinet's end, with the ball
-cuts routed into its face instead; the stile under it is widened to
-match so the doors clear it. A loose one is the same board shipped
+cuts routed into its face instead. A loose one is the same board shipped
 loose for fitting on site: it is modelled where it goes and flagged
 'hb_ship_loose'.
 
 The root publishes what was built (GOTHIC_STILES = "SIDE:length:width"
-entries in metres, GOTHIC_BALL_CUTS, GOTHIC_STILE_TYPE) so drawings and
-pricing read the built stile rather than recomputing it.
+entries in metres, the width being the Gothic width, GOTHIC_BALL_CUTS,
+GOTHIC_STILE_TYPE) so drawings and pricing read the built stile rather
+than recomputing it.
 """
 
 import math
@@ -46,6 +52,8 @@ STEP_SHORTER = inch(1.0)
 # the catalog makes one.
 DEFAULT_WIDTH = inch(3.0)
 MAX_WIDTH = inch(6.0)
+# Gap between an overlay door / drawer edge and the Gothic part.
+DOOR_GAP = inch(0.125)
 
 PART_ROLE_CUTTER = 'GOTHIC_STILE_CUTTER'
 # The applied / loose board.
@@ -64,6 +72,25 @@ SIDES = ('LEFT', 'RIGHT')
 
 _SEGMENTS = 24
 _CAP_RINGS = 6
+
+
+def clearance(cab_props, side):
+    """Room left on the inner side of a Gothic end stile for the fronts
+    lapping onto it: the front's overlay on that side plus DOOR_GAP, or
+    0 on an inset style."""
+    if getattr(cab_props, 'default_door_inset_amount', 0.0) > 1e-7:
+        return 0.0
+    attr = 'default_left_overlay' if side == 'LEFT' else 'default_right_overlay'
+    overlay = getattr(cab_props, attr, 0.0)
+    if overlay <= 1e-7:
+        return 0.0
+    return overlay + DOOR_GAP
+
+
+def auto_width(cab_props, side):
+    """End stile width a Gothic stile is set to: the typical Gothic
+    width plus the clearance for the fronts."""
+    return DEFAULT_WIDTH + clearance(cab_props, side)
 
 
 def cut_centers(width, count):
@@ -148,12 +175,14 @@ def cut_spans(length, count_centers, route_stop, center_top=0.0):
 
 
 def build_cutter(cutter, part, ml, count, route_stop, v0=0.0,
-                 center_top=0.0):
+                 center_top=0.0, clear=0.0):
     """Rebuild ``cutter`` as the ball-cut grooves of one stile, in the
     cabinet's frame (``ml`` = stile local -> cabinet), routed into the
     face at thickness coordinate ``v0`` (negative = proud of the stile,
     an applied board's face). ``center_top`` > 0 steps the cuts (see
-    cut_spans). Returns the number of cuts built (0 clears it)."""
+    cut_spans). ``clear`` is kept free of cuts along the stile's inner
+    edge (see clearance). Returns the number of cuts built (0 clears
+    it)."""
     try:
         length = part.get_input('Length')
         width = part.get_input('Width')
@@ -163,7 +192,7 @@ def build_cutter(cutter, part, ml, count, route_stop, v0=0.0,
         cutter.data.clear_geometry()
         return 0
     r = BALL_CUT_DIAMETER / 2.0
-    centers = cut_centers(width, count)
+    centers = cut_centers(width - max(0.0, clear), count)
     spans = cut_spans(length, centers, route_stop, center_top)
     # A cut too short to route is left out; none left clears the cutter.
     cuts = [(y, x0, x1) for y, (x0, x1) in zip(centers, spans)
@@ -184,12 +213,12 @@ def build_cutter(cutter, part, ml, count, route_stop, v0=0.0,
     return len(cuts)
 
 
-def build_piece(piece, part, ml):
+def build_piece(piece, part, ml, clear=0.0):
     """Rebuild ``piece`` as the applied board over one stile: the
-    stile's length and width, APPLIED_THICKNESS proud of its face, in
-    the cabinet's frame."""
+    stile's length, its width less ``clear`` (kept from the outer edge),
+    APPLIED_THICKNESS proud of its face, in the cabinet's frame."""
     length = part.get_input('Length')
-    width = part.get_input('Width')
+    width = part.get_input('Width') - max(0.0, clear)
     ys = -1.0 if part.get_input('Mirror Y') else 1.0
     zs = -1.0 if part.get_input('Mirror Z') else 1.0
     t = APPLIED_THICKNESS
@@ -277,16 +306,28 @@ def apply(cabinet_obj, cab_props, stiles, matrix_to_root, cutpart_cls):
             continue
         part = cutpart_cls(stile)
         ml = matrix_to_root(stile, cabinet_obj)
+        clear = clearance(cab_props, side)
+        # A stile switched on before the clearance existed keeps building
+        # as it was (no recorded width) until its Gothic options change.
+        if (cabinet_obj.get('HB_GOTHIC_STILE_%s' % side)
+                and 'HB_GOTHIC_STILE_%s_WIDTH' % side not in cabinet_obj):
+            clear = 0.0
+        try:
+            gothic_w = part.get_input('Width') - clear
+        except Exception:
+            gothic_w = 0.0
+        if gothic_w <= BALL_CUT_DIAMETER:
+            continue
         cutter = ensure_cutter(cabinet_obj, side)
         n = build_cutter(cutter, part, ml, count, stop,
                          -APPLIED_THICKNESS if applied else 0.0,
-                         center_top=center_top)
+                         center_top=center_top, clear=clear)
         if not n:
             continue
         target = stile
         if applied:
             target = ensure_piece(cabinet_obj, side)
-            build_piece(target, part, ml)
+            build_piece(target, part, ml, clear)
             target['hb_ship_loose'] = kind == 'LOOSE'
             live_pieces.add(target)
         live[target.name] = cutter
@@ -300,7 +341,7 @@ def apply(cabinet_obj, cab_props, stiles, matrix_to_root, cutpart_cls):
             mod.object = cutter
         try:
             built.append('%s:%.5f:%.5f' % (side, part.get_input('Length'),
-                                           part.get_input('Width')))
+                                           gothic_w))
         except Exception:
             built.append('%s:0:0' % side)
         cabinet_obj['GOTHIC_BALL_CUTS'] = n

@@ -8840,10 +8840,12 @@ def _update_decorative_corners(self, context):
 def _sync_gothic_stile(cab_props, side):
     """Widen an end stile when it becomes a Gothic stile.
 
-    Switching one on sets the stile to the typical Gothic width and
-    unlocks it, so the width can then be changed by hand (up to the
-    widest the design is made) and a style re-apply leaves it alone.
-    Switching it off re-locks a stile this unlocked, provided it still
+    Switching one on sets the stile to the typical Gothic width plus the
+    room the overlay fronts need (gothic_stile.auto_width) and unlocks
+    it, so the width can then be changed by hand (up to the widest the
+    design is made) and a style re-apply leaves it alone. While it is
+    on, an overlay or type change moves a stile still at the width set
+    here to the new one. Switching it off re-locks a stile this unlocked, provided it still
     holds the width set here; a width changed by hand since is kept.
     """
     if side == 'LEFT':
@@ -8854,15 +8856,22 @@ def _sync_gothic_stile(cab_props, side):
         attr, lock_attr = 'right_stile_width', 'unlock_right_stile'
     root = cab_props.id_data
     stamp = 'HB_GOTHIC_STILE_%s' % side
-    width = gothic_stile.DEFAULT_WIDTH
+    wkey = stamp + '_WIDTH'
+    width = gothic_stile.auto_width(cab_props, side)
+    set_w = root.get(wkey, gothic_stile.DEFAULT_WIDTH)
     if on:
         if root.get(stamp):
+            if (abs(set_w - width) > 1e-7
+                    and abs(getattr(cab_props, attr) - set_w) < 1e-7):
+                root[wkey] = width
+                setattr(cab_props, attr, width)
             return
         if getattr(cab_props, lock_attr):
             root[stamp] = 'USER_UNLOCKED'
         else:
             root[stamp] = 'UNLOCKED_BY_GOTHIC'
             setattr(cab_props, lock_attr, True)
+        root[wkey] = width
         if getattr(cab_props, attr) < width - 1e-7:
             setattr(cab_props, attr, width)
         return
@@ -8870,7 +8879,9 @@ def _sync_gothic_stile(cab_props, side):
     if not was:
         return
     del root[stamp]
-    if abs(getattr(cab_props, attr) - width) > 1e-7:
+    if wkey in root:
+        del root[wkey]
+    if abs(getattr(cab_props, attr) - set_w) > 1e-7:
         return
     if was == 'UNLOCKED_BY_GOTHIC':
         setattr(cab_props, lock_attr, False)
@@ -9914,11 +9925,11 @@ class Face_Frame_Cabinet_Props(PropertyGroup):
     )  # type: ignore
     default_left_overlay: FloatProperty(
         name="Default Left Overlay", default=units.inch(0.5), unit='LENGTH', precision=4,
-        update=_update_cabinet_dim,
+        update=_update_gothic_stiles,
     )  # type: ignore
     default_right_overlay: FloatProperty(
         name="Default Right Overlay", default=units.inch(0.5), unit='LENGTH', precision=4,
-        update=_update_cabinet_dim,
+        update=_update_gothic_stiles,
     )  # type: ignore
 
     # Distance the door is recessed into the face frame thickness. Zero for
@@ -10454,7 +10465,7 @@ class Face_Frame_Cabinet_Props(PropertyGroup):
         default='INTEGRAL',
         description="Route the end stile itself, or a board applied over "
                     "it (fitted, or shipped loose)",
-        update=_update_cabinet_dim,
+        update=_update_gothic_stiles,
     )  # type: ignore
     gothic_ball_cuts: IntProperty(
         name="Ball Cuts", default=gothic_stile.DEFAULT_BALL_CUTS,
