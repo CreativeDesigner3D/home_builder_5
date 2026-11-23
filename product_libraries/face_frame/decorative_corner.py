@@ -93,6 +93,11 @@ REED_LAND_RATIO = 0.383
 BALL_CUT_DIAMETER = inch(0.375)
 DEFAULT_BALL_CUTS = 3
 DEFAULT_ROUTE_STOP = inch(1.0)
+# Stepped ball cuts (as on a Gothic stile): the centre cut stops this far
+# below the top of the post, and each cut out from it is STEP_SHORTER
+# shorter at both ends. 0 = every cut stops at the route stop.
+DEFAULT_CENTER_CUT_TOP = inch(1.0)
+STEP_SHORTER = inch(1.0)
 
 # Shortest shaft worth building. Below this the post drops its end
 # details rather than emitting slivers.
@@ -312,8 +317,10 @@ def _clip_radius(size, deg):
     return size / (math.cos(rad) + math.sin(rad))
 
 
-def _style_radius(style, size, deg, ball_cuts=DEFAULT_BALL_CUTS):
-    """Shaft radius at one section angle."""
+def _style_radius(style, size, deg, ball_cuts=DEFAULT_BALL_CUTS,
+                  active=None):
+    """Shaft radius at one section angle. ``active`` limits a Gothic
+    clip to the ball cuts of those indices (None = all of them)."""
     if style == 'CLIPPED':
         return _clip_radius(size, deg)
     if style == 'GOTHIC':
@@ -323,7 +330,9 @@ def _style_radius(style, size, deg, ball_cuts=DEFAULT_BALL_CUTS):
         # Where this ray meets the clip, along the clip from its centre.
         s = r0 * (math.cos(rad) - math.sin(rad)) / math.sqrt(2.0)
         rg = BALL_CUT_DIAMETER / 2.0
-        for c in _ball_cut_centers(size, ball_cuts):
+        for k, c in enumerate(_ball_cut_centers(size, ball_cuts)):
+            if active is not None and k not in active:
+                continue
             if abs(s - c) < rg:
                 depth = math.sqrt(max(0.0, rg * rg - (s - c) ** 2))
                 # Back along the ray far enough to sit ``depth`` under
@@ -356,6 +365,10 @@ def _band_radii(kind, style, size, deg, bulge, ball_cuts=DEFAULT_BALL_CUTS):
         return _square_radius(size, deg)
     if kind == _CLIP:
         return _clip_radius(size, deg)
+    if isinstance(kind, tuple):
+        # (_SHAFT, cut indices): a stepped Gothic band where only some of
+        # the ball cuts run.
+        return _style_radius(style, size, deg, ball_cuts, kind[1])
     if style in CLIPPED_STYLES:
         return _style_radius(style, size, deg, ball_cuts)
     # The bead ring is its own shell (see _ring_shell); the main loft
@@ -471,12 +484,30 @@ def band_stack(height, kick_height, bottom_option, top_detail, block_run,
     return lower + [(shaft_z0, shaft_z1, _SHAFT)] + upper
 
 
+def _stepped_cut_spans(z_bot, z_top, count, stop, center_top):
+    """{cut index: (z0, z1)} for stepped ball cuts: the centre cut (the
+    middle two on an even count) runs from ``stop`` above the bottom to
+    ``center_top`` below the top, each cut further out STEP_SHORTER
+    shorter at both ends. Cuts too short to route are left out."""
+    mid = (count - 1) / 2.0
+    spans = {}
+    for k in range(count):
+        step = math.floor(abs(k - mid) + 1e-9) * STEP_SHORTER
+        z0, z1 = z_bot + stop + step, z_top - center_top - step
+        if z1 - z0 >= MIN_SHAFT_RUN:
+            spans[k] = (z0, z1)
+    return spans
+
+
 def clipped_band_stack(height, kick_height, bottom_option, style,
-                       route_stop=DEFAULT_ROUTE_STOP):
+                       route_stop=DEFAULT_ROUTE_STOP, center_top=0.0,
+                       size=DEFAULT_SIZE, ball_cuts=DEFAULT_BALL_CUTS):
     """[(z0, z1, kind)] for a clipped corner, or None when there is no
     room. The clip runs the whole post; a Gothic corner's ball cuts stop
     ``route_stop`` short of each end, and a post too short to route
-    stays a plain clip."""
+    stays a plain clip. ``center_top`` > 0 steps the cuts (see
+    _stepped_cut_spans): bands where only some cuts run carry the kind
+    (_SHAFT, frozenset of cut indices)."""
     z_bot = post_bottom_z(bottom_option, kick_height)
     z_top = height
     if z_top - z_bot <= 0.0:
@@ -484,6 +515,30 @@ def clipped_band_stack(height, kick_height, bottom_option, style,
     if style != 'GOTHIC':
         return [(z_bot, z_top, _CLIP)]
     stop = max(0.0, route_stop)
+    if center_top > 0.0:
+        count = len(_ball_cut_centers(size, ball_cuts))
+        spans = _stepped_cut_spans(z_bot, z_top, count, stop, center_top)
+        if not spans:
+            return [(z_bot, z_top, _CLIP)]
+        cuts = sorted({z_bot, z_top} | {z for s in spans.values() for z in s})
+        bands = []
+        for a, b in zip(cuts, cuts[1:]):
+            if b - a <= 1e-9:
+                continue
+            mid_z = (a + b) / 2.0
+            on = frozenset(k for k, (z0, z1) in spans.items()
+                           if z0 <= mid_z <= z1)
+            if not on:
+                kind = _CLIP
+            elif len(on) == count:
+                kind = _SHAFT
+            else:
+                kind = (_SHAFT, on)
+            if bands and bands[-1][2] == kind:
+                bands[-1] = (bands[-1][0], b, kind)
+            else:
+                bands.append((a, b, kind))
+        return bands
     if z_top - z_bot - 2.0 * stop < MIN_SHAFT_RUN:
         return [(z_bot, z_top, _CLIP)]
     if stop <= 0.0:
@@ -940,6 +995,9 @@ def spec_from_props(cab_props, has_toe_kick):
         'route_stop': max(0.0, getattr(cab_props,
                                        'decorative_corner_route_stop',
                                        DEFAULT_ROUTE_STOP)),
+        'center_top': max(0.0, getattr(cab_props,
+                                       'decorative_corner_center_cut_top',
+                                       DEFAULT_CENTER_CUT_TOP)),
         'kick_height': kick,
     }
 
@@ -961,7 +1019,9 @@ def apply_corners(cabinet_obj, width, depth, height, spec):
         bands = clipped_band_stack(
             height, spec.get('kick_height', 0.0),
             spec.get('bottom', 'STANDARD'), style,
-            spec.get('route_stop', DEFAULT_ROUTE_STOP))
+            spec.get('route_stop', DEFAULT_ROUTE_STOP),
+            center_top=spec.get('center_top', 0.0), size=size,
+            ball_cuts=spec.get('ball_cuts', DEFAULT_BALL_CUTS))
     elif style != 'NONE' and corners and size > 0.0:
         bands = band_stack(height, spec.get('kick_height', 0.0),
                            spec.get('bottom', 'STANDARD'),

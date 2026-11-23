@@ -10449,6 +10449,16 @@ class Face_Frame_Cabinet_Props(PropertyGroup):
                     "cuts stop",
         update=_update_cabinet_dim,
     )  # type: ignore
+    decorative_corner_center_cut_top: FloatProperty(
+        name="Center Cut From Top",
+        default=decorative_corner.DEFAULT_CENTER_CUT_TOP,
+        unit='LENGTH', precision=4, min=0.0,
+        description="Stepped ball cuts: the center cut stops this far "
+                    "below the top of the corner and each cut beside it "
+                    "is 1\" shorter at both ends. 0 = every cut stops at "
+                    "the Route Stop",
+        update=_update_cabinet_dim,
+    )  # type: ignore
     # ---- Gothic stiles: ball cuts routed down a widened end stile
     # (gothic_stile.py and types_face_frame._apply_gothic_stiles). ----
     gothic_stile_left: BoolProperty(

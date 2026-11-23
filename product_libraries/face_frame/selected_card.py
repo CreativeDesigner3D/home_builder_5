@@ -792,6 +792,8 @@ def _cabinet_fields(root, cab):
                 ('number', 'decorative_corner_ball_cuts', "Ball Cuts", {'when': _gothic}),
                 ('distance', 'decorative_corner_route_stop', "Route Stop",
                  {'when': _gothic}),
+                ('distance', 'decorative_corner_center_cut_top', "Center Cut From Top",
+                 {'when': _gothic}),
                 ('enum', 'decorative_corner_bottom', "Bottom", {'when': _deco}),
                 ('bool', 'decorative_corner_top_detail', "Top Transition", {'when': _turned}),
                 ('distance', 'decorative_corner_detail_height', "Transition Height",

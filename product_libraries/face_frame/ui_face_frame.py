@@ -521,6 +521,8 @@ def draw_construction(layout, cab_props):
                          text="Ball Cuts")
                 col.prop(cab_props, 'decorative_corner_route_stop',
                          text="Route Stop")
+                col.prop(cab_props, 'decorative_corner_center_cut_top',
+                         text="Center Cut From Top")
             col.prop(cab_props, 'decorative_corner_bottom', text="Bottom")
             if not clipped:
                 col.prop(cab_props, 'decorative_corner_top_detail',
