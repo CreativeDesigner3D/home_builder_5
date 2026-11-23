@@ -984,6 +984,21 @@ def drawer_short_inserts(opening_obj):
     return {}
 
 
+def drawer_unplaced_inserts(opening_obj):
+    """Item indexes of the inserts in an opening's drawer box that had
+    no room to be built where they are placed, or an empty set."""
+    if opening_obj is None:
+        return set()
+    for obj in opening_obj.children_recursive:
+        if obj.get('hb_part_role') != PART_ROLE_DRAWER_BOX:
+            continue
+        try:
+            return {int(i) for i in (obj.get('HB_UNPLACED_INSERTS') or ())}
+        except (TypeError, ValueError):
+            return set()
+    return set()
+
+
 def render_hint_kind(hint):
     """The insert kind a render hint resolves to, or '' when the hint
     is empty or names something this build can't model. UI uses this to
@@ -15609,6 +15624,7 @@ class FaceFrameCabinet(GeoNodeCage):
         fill_w = self._drawer_insert_fill_width(inner, items)
         cursor = inner.x0
         placed = []
+        missed = []
         halves = self._drawer_halves(inner)
         for index, item in indexed:
             # Stamped on every part this item builds (DRAWER_ITEM_INDEX).
@@ -15631,14 +15647,18 @@ class FaceFrameCabinet(GeoNodeCage):
             if half is not None:
                 # Packs inside its own half, clear of the center divider;
                 # the rest of the drawer packs on as if it weren't there.
+                # From Left is still measured from the box's left inside
+                # face (as dragging saves it), never from the half's start.
                 at = half.x0
                 off = getattr(item, 'insert_offset', 0.0)
                 if off > 0.0001:
-                    at = half.x0 + off
+                    at = max(half.x0, min(inner.x0 + off, half.x1))
                 for _i in range(max(getattr(item, 'accessory_qty', 1), 1)):
                     rect = self._drawer_insert_rect(half, item, params,
                                                     spec[1], at)
                     if rect is None:
+                        if _i == 0:
+                            missed.append(index)
                         break
                     builder(box_obj, rect, item, params)
                     placed.append((index, rect))
@@ -15653,6 +15673,8 @@ class FaceFrameCabinet(GeoNodeCage):
                 rect = self._drawer_insert_rect(inner, item, params,
                                                 spec[1], cursor, fill_w)
                 if rect is None:
+                    if _i == 0:
+                        missed.append(index)
                     break
                 builder(box_obj, rect, item, params)
                 placed.append((index, rect))
@@ -15660,6 +15682,11 @@ class FaceFrameCabinet(GeoNodeCage):
         self._emit_drawer_dividers(box_obj, inner)
         self._drawer_item_index = -1
         self._flag_short_inserts(box_obj, inner, placed)
+        # The drawer editor warns on an insert that had no room.
+        if missed:
+            box_obj['HB_UNPLACED_INSERTS'] = missed
+        elif 'HB_UNPLACED_INSERTS' in box_obj:
+            del box_obj['HB_UNPLACED_INSERTS']
 
     def _drawer_halves(self, inner):
         """{'LEFT' / 'RIGHT': the inside of that half of the box}, each

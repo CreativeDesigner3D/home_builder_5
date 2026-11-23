@@ -1666,9 +1666,12 @@ class HB_UL_face_frame_drawer_items(bpy.types.UIList):
                   active_propname):
         split = layout.split(factor=0.75)
         short = types_face_frame.drawer_short_inserts(data.id_data)
-        index = list(getattr(data, propname)).index(item) if short else -1
+        missed = types_face_frame.drawer_unplaced_inserts(data.id_data)
+        index = (list(getattr(data, propname)).index(item)
+                 if short or missed else -1)
         split.label(text=item.accessory_label or item.accessory_code,
-                    icon='ERROR' if index in short else 'SNAP_VERTEX')
+                    icon='ERROR' if index in short or index in missed
+                    else 'SNAP_VERTEX')
         qty = getattr(item, 'accessory_qty', 1)
         split.label(text=("x%d" % qty) if qty > 1 else "")
 
@@ -2215,6 +2218,12 @@ class hb_face_frame_OT_drawer_interior(bpy.types.Operator):
         from .. import ui_face_frame
         box = layout.box()
         box.label(text=item.accessory_label or item.accessory_code)
+        if idx in types_face_frame.drawer_unplaced_inserts(opening):
+            warn = box.box()
+            warn.label(text="No room to build this insert where it is placed",
+                       icon='ERROR')
+            warn.label(text="Lower From Left (measured from the box's left "
+                            "inside face) or its width")
         info = types_face_frame.drawer_short_inserts(opening).get(idx)
         if info is not None:
             warn = box.box()
