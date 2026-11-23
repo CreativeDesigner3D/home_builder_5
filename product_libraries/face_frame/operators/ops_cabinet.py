@@ -282,6 +282,35 @@ def _break_detail_items(self, context):
     return _BREAK_DETAIL_ITEMS
 
 
+_BREAK_CARD_ITEMS = []
+
+
+def _break_card_items(self, context):
+    from .. import break_cover
+    _bay, root = _find_active_bay_and_root(context)
+    found = break_cover.cards(root) if root is not None else [
+        (break_cover.CARD_REGULAR, "Regular Break", [])]
+    _BREAK_CARD_ITEMS[:] = [(key, title, "; ".join(lines))
+                            for key, title, lines in found]
+    return _BREAK_CARD_ITEMS
+
+
+def _break_card_update(self, context):
+    """A card sets the cover and the detail it stands for."""
+    from .. import break_cover
+    card = self.break_card
+    if card == break_cover.CARD_REGULAR:
+        self.cover = 'OFF'
+        return
+    if self.cover == 'OFF':
+        self.cover = 'PICKED'
+    detail = 'STYLE' if card == break_cover.CARD_CUSTOM else card
+    try:
+        self.cover_detail = detail
+    except TypeError:
+        pass
+
+
 class _BreakOptions:
     """What the three break commands ask before they cut: whether the
     picked bay keeps its width, and whether fronts cover the joint."""
@@ -329,6 +358,12 @@ class _BreakOptions:
         description="Standard stile widths for the joint, offered by the "
                     "reveal the style holds between fronts",
         items=_break_detail_items)  # type: ignore
+    break_card: bpy.props.EnumProperty(
+        name="Break",
+        description="How the break is made, from the standard break "
+                    "details that fit the cabinet's overlay",
+        items=_break_card_items, update=_break_card_update,
+        options={'SKIP_SAVE'})  # type: ignore
     cover_amount: bpy.props.FloatProperty(
         name="Overlay",
         description="How far the covering fronts lap past their opening "
@@ -337,7 +372,25 @@ class _BreakOptions:
         default=0.0, min=0.0, unit='LENGTH', precision=4)  # type: ignore
 
     def invoke(self, context, event):
-        return context.window_manager.invoke_props_dialog(self, width=320)
+        self._sync_card(context)
+        return context.window_manager.invoke_props_dialog(self, width=480)
+
+    def _sync_card(self, context):
+        """Start the cards on the cover and detail last used, when the
+        cabinet still offers them."""
+        from .. import break_cover
+        _bay, root = _find_active_bay_and_root(context)
+        if root is None:
+            return
+        keys = [key for key, _t, _l in break_cover.cards(root)]
+        if self.cover == 'OFF' or keys == [break_cover.CARD_REGULAR]:
+            card = break_cover.CARD_REGULAR
+        elif self.cover_detail in keys:
+            card = self.cover_detail
+        else:
+            card = break_cover.CARD_CUSTOM
+        if card in keys:
+            self.break_card = card
 
     def draw(self, context):
         from .. import break_cover
@@ -347,17 +400,31 @@ class _BreakOptions:
         layout.prop(self, 'keep_width')
         _bay, root = _find_active_bay_and_root(context)
         props = root.face_frame_cabinet if root is not None else None
-        blocked = break_cover.cover_blocked(root) if props is not None else ''
+        if props is None:
+            return
+        grid = layout.grid_flow(row_major=True, columns=2,
+                                even_columns=True, even_rows=True)
+        for key, title, lines in break_cover.cards(root):
+            box = grid.box()
+            card = box.column(align=True)
+            card.use_property_split = False
+            card.prop_enum(self, 'break_card', key, text=title)
+            for line in lines:
+                card.label(text=line)
+        blocked = break_cover.cover_blocked(root)
         if blocked:
             layout.label(text=blocked, icon='INFO')
             return
-        layout.prop(self, 'cover')
         if self.cover == 'OFF':
             return
         col = layout.column()
+        row = col.row(align=True)
+        row.use_property_split = False
+        row.label(text="Covering Bay")
+        row.prop_enum(self, 'cover', 'PICKED')
+        row.prop_enum(self, 'cover', 'NEIGHBOR')
         col.prop(self, 'cover_fronts')
         col.prop(self, 'cover_hinge')
-        col.prop(self, 'cover_detail')
         col.prop(self, 'cover_amount')
         if self.cover_amount <= 0.0 and props is not None:
             from ....units import unit_to_string

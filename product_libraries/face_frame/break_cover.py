@@ -264,3 +264,67 @@ def apply(cover_root, side, other_root, fronts='BOTH', hinge='KEEP',
             limit_french_box(opening, amount)
         changed.append(opening)
     return changed
+
+
+def fraction(meters):
+    """Inches to the nearest 1/16 as a shop fraction: 1-3/4"."""
+    sixteenths = int(round(meters / inch(1.0) * 16.0))
+    whole, rest = divmod(sixteenths, 16)
+    if rest:
+        num, den = rest, 16
+        while num % 2 == 0:
+            num //= 2
+            den //= 2
+        part = "%d/%d" % (num, den)
+        text = "%d-%s" % (whole, part) if whole else part
+    else:
+        text = "%d" % whole
+    return text + '"'
+
+
+def butt_width(root):
+    """The style's butt stile width for the cabinet."""
+    from . import types_face_frame
+    props = root.face_frame_cabinet
+    return (types_face_frame._resolve_style_stile_width(
+        root, props, 'butt_stile') or props.bay_mid_stile_width)
+
+
+# Card ids that are not DETAILS keys.
+CARD_REGULAR = 'REGULAR'
+CARD_CUSTOM = 'CUSTOM'
+
+
+def cards(root):
+    """The break options for the cabinet, one card each:
+    [(id, title, [lines])]. A regular break always; the covered
+    details that hold the style's reveal unless the fronts cannot
+    cover; then a cover on the style's own butt stiles."""
+    props = root.face_frame_cabinet
+    butt = butt_width(root)
+    ol = props.default_left_overlay
+    out = [(CARD_REGULAR, "Regular Break", [
+        "Stiles %s + %s" % (fraction(butt), fraction(butt)),
+        "Overlay %s each side" % fraction(max(ol, 0.0)),
+        "Reveal %s" % fraction(max(2.0 * butt - 2.0 * ol, 0.0)),
+    ])]
+    if cover_blocked(root):
+        return out
+    for key in details_for(props):
+        _label, reveal, cover_w, other_w = DETAILS[key]
+        amount = max(inch(cover_w + other_w - reveal) - ol, ol)
+        out.append((key, "Drawers Cover, %s + %s"
+                    % (fraction(inch(cover_w)), fraction(inch(other_w))), [
+            "Stiles %s covering + %s" % (fraction(inch(cover_w)),
+                                         fraction(inch(other_w))),
+            "Covering %s, other side %s" % (fraction(amount),
+                                            fraction(ol)),
+            "Reveal %s held" % fraction(inch(reveal)),
+        ]))
+    amount = planned_amount(props, butt)
+    out.append((CARD_CUSTOM, "Cover, Style Stiles", [
+        "Stiles %s + %s" % (fraction(butt), fraction(butt)),
+        "Covering %s, or type it" % fraction(amount),
+        "Reveal %s held" % fraction(door_gap(props)),
+    ]))
+    return out
