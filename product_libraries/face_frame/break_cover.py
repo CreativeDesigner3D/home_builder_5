@@ -62,6 +62,13 @@ HINGE_OVERLAYS = (0.25, 0.5, 0.625, 1.0, 1.25)
 FRENCH_MAX_OVERLAY = inch(1.0)
 FRENCH_BOX = 'French'
 ENGLISH_BOX = 'English'
+# Stamped on each covering opening so drawings can say what the cover
+# changed: the side, the overlay before and after, and the box
+# construction a drawer was switched to ('' when none).
+STAMP_SIDE = 'BREAK_COVER_SIDE'
+STAMP_FROM = 'BREAK_COVER_FROM'
+STAMP_TO = 'BREAK_COVER_TO'
+STAMP_BOX = 'BREAK_COVER_BOX'
 # Style overlay type that never covers a break.
 NO_COVER_OVERLAY_TYPES = ('FULL',)
 # Without a style to read, a side overlay this wide is full overlay.
@@ -250,20 +257,50 @@ def apply(cover_root, side, other_root, fronts='BOTH', hinge='KEEP',
     if fronts in ('DRAWERS', 'BOTH'):
         wanted += DRAWER_FRONTS
     changed = []
+    before = getattr(cover_props, f'default_{side}_overlay')
     for opening in edge_openings(cover_root, side):
         op = getattr(opening, 'face_frame_opening', None)
         if op is None or op.front_type not in wanted:
             continue
+        box = ''
+        if opening.get(STAMP_SIDE) == side:
+            box = opening.get(STAMP_BOX, '')
         setattr(op, f'{side}_overlay', amount)
         setattr(op, f'unlock_{side}_overlay', True)
         if (hinge in ('LEFT', 'RIGHT') and op.front_type == 'DOOR'
                 and op.hinge_side in ('LEFT', 'RIGHT')
                 and op.hinge_side != hinge):
             op.hinge_side = hinge
-        if op.front_type == 'DRAWER_FRONT':
-            limit_french_box(opening, amount)
+        if op.front_type == 'DRAWER_FRONT' and limit_french_box(
+                opening, amount):
+            box = ENGLISH_BOX
+        opening[STAMP_SIDE] = side
+        opening[STAMP_FROM] = before
+        opening[STAMP_TO] = amount
+        opening[STAMP_BOX] = box
         changed.append(opening)
     return changed
+
+
+def stamp(opening):
+    """What a break cover changed on ``opening``, while it still holds:
+    (side, overlay before, overlay now, box switched to or ''), else
+    None. A cover undone or overlay edited since drops out."""
+    side = opening.get(STAMP_SIDE)
+    op = getattr(opening, 'face_frame_opening', None)
+    if side not in _OTHER or op is None:
+        return None
+    to = opening.get(STAMP_TO, 0.0)
+    if not getattr(op, f'unlock_{side}_overlay', False):
+        return None
+    if abs(getattr(op, f'{side}_overlay') - to) > inch(1.0 / 64.0):
+        return None
+    box = opening.get(STAMP_BOX, '') or ''
+    if box:
+        from .types_face_frame import opening_box_construction_name
+        if opening_box_construction_name(opening) != box:
+            box = ''
+    return side, opening.get(STAMP_FROM, 0.0), to, box
 
 
 def fraction(meters):
