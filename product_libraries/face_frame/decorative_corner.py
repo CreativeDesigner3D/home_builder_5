@@ -787,7 +787,9 @@ def _apply_cuts(cabinet_obj, cutters):
 # the notch, so the shelves are notched around the pocket and its
 # blocking rather than running through the corner.
 POCKET_BLOCKING = inch(0.75)
-SHELF_NOTCH_ROLES = frozenset({'ADJUSTABLE_SHELF', 'INTERIOR_FIXED_SHELF'})
+SHELF_NOTCH_ROLES = frozenset({'ADJUSTABLE_SHELF', 'INTERIOR_FIXED_SHELF',
+                               # Fixed shelf behind a mid rail.
+                               'BAY_SHELF'})
 SHELF_NOTCH_MOD_PREFIX = 'Corner Pocket '
 # Overlaps thinner than this are float noise, not a notch.
 _NOTCH_EPS = inch(1.0 / 64.0)
