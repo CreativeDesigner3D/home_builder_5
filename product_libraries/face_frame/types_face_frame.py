@@ -1889,10 +1889,15 @@ PART_ROLE_BOTTOM_RAIL_PROFILE_CUTTER = 'BOTTOM_RAIL_PROFILE_CUTTER'
 # Valance across a cabinet's toe space: a board in the face frame's plane
 # from the floor to the bottom rail, between any end stiles that run to
 # the floor. Takes the same profiles as a bottom rail. SENT_LOOSE marks
-# one that ships loose to be fit on site instead of being attached.
+# one that ships loose to be fit on site instead of being attached: that
+# one is an applied molding across the full width in front of the frame,
+# lapping a bottom rail that drops to leave a 3-1/2" toe space.
 PART_ROLE_TOE_KICK_VALANCE = 'TOE_KICK_VALANCE'
 TOE_KICK_VALANCE_SEG = 'TOE_KICK_VALANCE'
 TOE_KICK_VALANCE_LOOSE_KEY = 'SENT_LOOSE'
+# Extra length cut on each end of a loose valance for mitering on site.
+TOE_KICK_VALANCE_OVERSIZE_KEY = 'LOOSE_OVERSIZE_EACH_END'
+TOE_KICK_VALANCE_OVERSIZE = 2.0 * 0.0254
 BOTTOM_RAIL_PROFILE_CUT_MOD_NAME = 'Bottom Rail Profile Cut'
 BOTTOM_RAIL_PROFILE_END_MARGIN = inch(2.0)  # flat, uncut rail left at each end
 _BOTTOM_RAIL_PROFILE_ARCH = 'ARCH'          # procedural smooth-arch option (no blend)
@@ -8018,10 +8023,17 @@ class FaceFrameCabinet(GeoNodeCage):
                 or height <= 0.0):
             self._cleanup_toe_kick_valance()
             return
-        left = self._end_stile_floor_width(
-            PART_ROLE_LEFT_STILE, solver.left_stile_to_floor(layout))
-        right = self._end_stile_floor_width(
-            PART_ROLE_RIGHT_STILE, solver.right_stile_to_floor(layout))
+        loose = bool(getattr(cab, 'toe_kick_valance_loose', False))
+        if loose:
+            # Sent loose it is an applied molding: it runs the full width
+            # in front of the face frame and laps the bottom rail, which
+            # drops (solver.loose_valance_drop) to give it nailing.
+            left = right = 0.0
+        else:
+            left = self._end_stile_floor_width(
+                PART_ROLE_LEFT_STILE, solver.left_stile_to_floor(layout))
+            right = self._end_stile_floor_width(
+                PART_ROLE_RIGHT_STILE, solver.right_stile_to_floor(layout))
         length = cab.width - left - right
         if length <= 0.0:
             self._cleanup_toe_kick_valance()
@@ -8036,11 +8048,15 @@ class FaceFrameCabinet(GeoNodeCage):
             board['CABINET_PART'] = True
             board['MENU_ID'] = 'HOME_BUILDER_MT_face_frame_part_commands'
         board['IS_FINISHED'] = True
-        loose = bool(getattr(cab, 'toe_kick_valance_loose', False))
         if loose:
             board[TOE_KICK_VALANCE_LOOSE_KEY] = True
-        elif TOE_KICK_VALANCE_LOOSE_KEY in board:
-            del board[TOE_KICK_VALANCE_LOOSE_KEY]
+            # Cut long for mitering on site; the model shows it as fit.
+            board[TOE_KICK_VALANCE_OVERSIZE_KEY] = TOE_KICK_VALANCE_OVERSIZE
+        else:
+            for key in (TOE_KICK_VALANCE_LOOSE_KEY,
+                        TOE_KICK_VALANCE_OVERSIZE_KEY):
+                if key in board:
+                    del board[key]
         if board.get('IS_MANUAL_PART'):
             return
         # Same transform convention as a bottom rail (+90 X, Mirror Z),
@@ -8051,7 +8067,7 @@ class FaceFrameCabinet(GeoNodeCage):
         gn.set_input('Thickness', layout.fft)
         gn.set_input('Mirror Y', False)
         gn.set_input('Mirror Z', True)
-        loc = (left, -cab.depth, 0.0)
+        loc = (left, -cab.depth - (layout.fft if loose else 0.0), 0.0)
         rot = (math.radians(90), 0.0, 0.0)
         if (tuple(board.location) != loc
                 or tuple(board.rotation_euler) != rot):

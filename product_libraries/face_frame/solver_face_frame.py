@@ -1263,6 +1263,28 @@ def right_stile_to_floor(layout):
     return layout.extend_right_stile_to_floor
 
 
+# A toe kick valance sent loose is an applied molding nailed to the face
+# frame on site. The bottom rail and the end stiles that stop at the kick
+# extend down to leave this much open toe space, so the molding has frame
+# to nail to.
+LOOSE_VALANCE_TOE_SPACE = 3.5 * 0.0254
+
+
+def loose_valance_drop(layout):
+    """How far the bottom rail (and end stiles not already on the floor)
+    extend below the kick height for a loose toe kick valance. Zero when
+    the cabinet has no such valance or its kick is already that short."""
+    cab = getattr(layout, '_cab_props', None)
+    if (cab is None
+            or layout.cabinet_type not in ('BASE', 'TALL')
+            or not layout.has_toe_kick
+            or layout.toe_kick_type not in ('NOTCH', 'LOOSE')
+            or not getattr(cab, 'toe_kick_valance', False)
+            or not getattr(cab, 'toe_kick_valance_loose', False)):
+        return 0.0
+    return max(0.0, layout.tkh - LOOSE_VALANCE_TOE_SPACE)
+
+
 # ---------------------------------------------------------------------------
 # Toe kick subfront - the visible front face of the recess
 # ---------------------------------------------------------------------------
@@ -2607,8 +2629,9 @@ def bottom_rail_segments(layout):
             z = 0.0
             width = first_bay['kick_height'] + first_bay['bottom_rail_width']
         else:
-            z = bay_bottom_z(layout, start)
-            width = first_bay['bottom_rail_width']
+            drop = loose_valance_drop(layout)
+            z = bay_bottom_z(layout, start) - drop
+            width = first_bay['bottom_rail_width'] + drop
         if layout.angled_multi:
             # Same bend-point splitting as top_rail_segments.
             for s, e, a, b, theta in _split_ff_x_spans(
@@ -2654,7 +2677,8 @@ def left_end_stile_position(layout):
     elif left_stile_to_floor(layout):
         bottom_z = 0.0
     else:
-        bottom_z = bay_bottom_z(layout, 0) - ends_down_drop(layout, 'LEFT')
+        bottom_z = (bay_bottom_z(layout, 0) - ends_down_drop(layout, 'LEFT')
+                    - loose_valance_drop(layout))
     # An extension grows the stile out past the cabinet's left edge.
     return ff_outer_world_pos(layout, -layout.l_ext, bottom_z)
 
@@ -2665,7 +2689,8 @@ def left_end_stile_dims(layout):
     elif left_stile_to_floor(layout):
         bottom_z = 0.0
     else:
-        bottom_z = bay_bottom_z(layout, 0) - ends_down_drop(layout, 'LEFT')
+        bottom_z = (bay_bottom_z(layout, 0) - ends_down_drop(layout, 'LEFT')
+                    - loose_valance_drop(layout))
     top_z = bay_top_z(layout, 0) + layout.t_ext
     return (top_z - bottom_z, layout.lsw + layout.l_ext, layout.fft)
 
@@ -2682,7 +2707,8 @@ def right_end_stile_position(layout):
     elif right_stile_to_floor(layout):
         bottom_z = 0.0
     else:
-        bottom_z = bay_bottom_z(layout, last) - ends_down_drop(layout, 'RIGHT')
+        bottom_z = (bay_bottom_z(layout, last) - ends_down_drop(layout, 'RIGHT')
+                    - loose_valance_drop(layout))
     # The stile grows back from its anchor, so the anchor moves out.
     return ff_outer_world_pos(layout, face_frame_length(layout) + layout.r_ext,
                               bottom_z)
@@ -2695,7 +2721,8 @@ def right_end_stile_dims(layout):
     elif right_stile_to_floor(layout):
         bottom_z = 0.0
     else:
-        bottom_z = bay_bottom_z(layout, last) - ends_down_drop(layout, 'RIGHT')
+        bottom_z = (bay_bottom_z(layout, last) - ends_down_drop(layout, 'RIGHT')
+                    - loose_valance_drop(layout))
     top_z = bay_top_z(layout, last) + layout.t_ext
     return (top_z - bottom_z, layout.rsw + layout.r_ext, layout.fft)
 

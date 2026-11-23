@@ -10736,7 +10736,9 @@ class Face_Frame_Cabinet_Props(PropertyGroup):
     toe_kick_valance_loose: BoolProperty(
         name="Sent Loose",
         description="The valance is sent loose and fit on site rather "
-                    "than attached to the cabinet",
+                    "than attached to the cabinet. It is applied over the "
+                    "face frame, and the bottom rail drops to leave a "
+                    "3-1/2\" toe space for nailing it",
         default=False,
         update=_update_cabinet_dim,
     )  # type: ignore
