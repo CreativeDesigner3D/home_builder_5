@@ -5432,6 +5432,8 @@ def _clear_static_door(front_obj):
 
 
 INSET_PANEL_STYLED_TAG = 'HB_STYLED_INSET_PANEL'
+# How far a styled inset panel's look stands off the frame around it.
+INSET_PANEL_EDGE_GAP = units.inch(1.0 / 64.0)
 _FRAME_ROLES = ('LEFT_STILE', 'RIGHT_STILE', 'MID_STILE', 'TOP_RAIL',
                 'BOTTOM_RAIL', 'MID_RAIL')
 
@@ -5524,7 +5526,13 @@ def style_inset_panel(panel_obj, door_style):
     if lr is None and panel_sec is None and grooves is None:
         _clear_styled_inset_panel(panel_obj)
         return False
-    cell = dict(key='panel', x0=0.0, x1=width, z0=0.0, z1=length,
+    # The look stands INSET_PANEL_EDGE_GAP off the frame all round:
+    # drawn flush to the opening, its edge faces lay on the stiles' and
+    # rails' inside faces and z-fought along every reveal. (Run into
+    # the frame instead, its back overlapped the frame's back faces.)
+    # The cutpart keeps the opening size.
+    g = INSET_PANEL_EDGE_GAP
+    cell = dict(key='panel', x0=g, x1=width - g, z0=g, z1=length - g,
                 thickness=p_th, y_inset=setback)
     verts, faces, slots = [], [], []
     built = False
@@ -5535,7 +5543,7 @@ def style_inset_panel(panel_obj, door_style):
         built = door_builder._emit_grooved_panel(verts, faces, slots,
                                                  cell, frame_th, grooves)
     if not built:
-        x0, x1, y0, y1, z0, z1 = 0.0, length, -width, 0.0, 0.0, p_th
+        x0, x1, y0, y1, z0, z1 = g, length - g, -width + g, -g, 0.0, p_th
         verts.extend([(x0, y0, z0), (x1, y0, z0), (x1, y1, z0),
                       (x0, y1, z0), (x0, y0, z1), (x1, y0, z1),
                       (x1, y1, z1), (x0, y1, z1)])
