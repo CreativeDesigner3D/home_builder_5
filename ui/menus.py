@@ -900,6 +900,56 @@ def is_text_bold(obj):
     return len(body_format) > 0 and all(c.use_bold for c in body_format)
 
 
+def is_text_italic(obj):
+    """True when every character of an annotation text is set italic."""
+    if not is_annotation_text(obj):
+        return False
+    body_format = obj.data.body_format
+    return len(body_format) > 0 and all(c.use_italic for c in body_format)
+
+
+_STYLE_MISSING_MESSAGE = {
+    'BOLD': "No bold version of the annotation font is installed on "
+            "this machine",
+    'ITALIC': "No italic version of the annotation font is installed on "
+              "this machine",
+}
+
+
+def _style_fonts_ready(op, context, text_data, want_bold, want_italic):
+    """Load the annotation font's styled cuts into the text's slots.
+
+    Blender takes the glyphs for a bold or italic character from
+    font_bold / font_italic / font_bold_italic; leaving a slot on the
+    built-in font would draw those characters in a different typeface
+    instead of styling them. Reports and returns False when a cut the
+    change needs is not installed."""
+    missing = hb_details.load_text_style_fonts(text_data, context.scene)
+    for style, wanted in (('BOLD', want_bold), ('ITALIC', want_italic)):
+        if wanted and style in missing:
+            op.report({'WARNING'}, _STYLE_MISSING_MESSAGE[style])
+            return False
+    return True
+
+
+def _toggle_text_style(op, context, attr, is_set):
+    objs = get_annotation_text_objects(context)
+    # One state for the whole selection - on unless every text already
+    # has it - so the menu entry reads as a single toggle no matter how
+    # mixed the selection is.
+    turn_on = not all(is_set(obj) for obj in objs)
+    for obj in objs:
+        text_data = obj.data
+        if turn_on and not _style_fonts_ready(
+                op, context, text_data, attr == 'use_bold',
+                attr == 'use_italic'):
+            return {'CANCELLED'}
+        for char in text_data.body_format:
+            setattr(char, attr, turn_on)
+        text_data.update_tag()
+    return {'FINISHED'}
+
+
 class HOME_BUILDER_OT_toggle_text_bold(bpy.types.Operator):
     bl_idname = "home_builder.toggle_text_bold"
     bl_label = "Bold Text"
@@ -911,29 +961,120 @@ class HOME_BUILDER_OT_toggle_text_bold(bpy.types.Operator):
         return len(get_annotation_text_objects(context)) > 0
 
     def execute(self, context):
-        objs = get_annotation_text_objects(context)
-        # One state for the whole selection - bold unless every text is
-        # already bold - so the menu entry reads as a single toggle no
-        # matter how mixed the selection is.
-        make_bold = not all(is_text_bold(obj) for obj in objs)
-        bold_font = None
-        if make_bold:
-            bold_font = hb_details.get_label_bold_font(context.scene)
-            if bold_font is None:
-                self.report({'WARNING'},
-                            "No bold version of the annotation font is "
-                            "installed on this machine")
+        return _toggle_text_style(self, context, 'use_bold', is_text_bold)
+
+
+class HOME_BUILDER_OT_toggle_text_italic(bpy.types.Operator):
+    bl_idname = "home_builder.toggle_text_italic"
+    bl_label = "Italic Text"
+    bl_description = "Toggle italic on the selected annotation text"
+    bl_options = {'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        return len(get_annotation_text_objects(context)) > 0
+
+    def execute(self, context):
+        return _toggle_text_style(self, context, 'use_italic',
+                                  is_text_italic)
+
+
+def style_text_part(text_data, part, bold, italic, every=True,
+                    match_case=True):
+    """Set bold / italic on the characters of ``text_data`` that spell
+    ``part`` (every occurrence, or only the first). The rest of the text
+    keeps its own style. Returns how many occurrences were styled."""
+    body = text_data.body
+    if not part:
+        return 0
+    hay = body if match_case else body.lower()
+    needle = part if match_case else part.lower()
+    count = 0
+    start = 0
+    body_format = text_data.body_format
+    while True:
+        at = hay.find(needle, start)
+        if at < 0:
+            break
+        for i in range(at, min(at + len(needle), len(body_format))):
+            body_format[i].use_bold = bold
+            body_format[i].use_italic = italic
+        count += 1
+        if not every:
+            break
+        start = at + len(needle)
+    if count:
+        text_data.update_tag()
+    return count
+
+
+class HOME_BUILDER_OT_style_text_part(bpy.types.Operator):
+    """Make part of an annotation text bold and/or italic"""
+    bl_idname = "home_builder.style_text_part"
+    bl_label = "Bold / Italic Part of Text"
+    bl_description = ("Make a word or phrase in the selected annotation "
+                      "text bold and/or italic, leaving the rest as it is")
+    bl_options = {'UNDO'}
+
+    part: bpy.props.StringProperty(
+        name="Text",
+        description="The word or phrase to style, typed as it appears in "
+                    "the text (e.g. DETAIL:)")
+    bold: bpy.props.BoolProperty(name="Bold", default=True)
+    italic: bpy.props.BoolProperty(name="Italic", default=False)
+    every: bpy.props.BoolProperty(
+        name="Every Occurrence",
+        description="Style every place the phrase appears, not just the "
+                    "first",
+        default=True)
+    match_case: bpy.props.BoolProperty(name="Match Case", default=True)
+
+    @classmethod
+    def poll(cls, context):
+        return len(get_annotation_text_objects(context)) > 0
+
+    def invoke(self, context, event):
+        if not self.part:
+            # Offer the first line up to and including its first colon
+            # (a title like "DETAIL: ..."), else the first word.
+            obj = get_annotation_text_objects(context)[0]
+            first = obj.data.body.split("\n", 1)[0]
+            if ":" in first:
+                self.part = first[:first.index(":") + 1]
+            else:
+                self.part = first.split(" ", 1)[0]
+        return context.window_manager.invoke_props_dialog(self, width=320)
+
+    def draw(self, context):
+        layout = self.layout
+        layout.prop(self, 'part')
+        row = layout.row(align=True)
+        row.prop(self, 'bold', toggle=True, icon='BOLD')
+        row.prop(self, 'italic', toggle=True, icon='ITALIC')
+        layout.prop(self, 'every')
+        layout.prop(self, 'match_case')
+        col = layout.column(align=True)
+        col.label(text="Turn both off to make the phrase plain again.",
+                  icon='INFO')
+        col.label(text="Retyping the text clears part styling.",
+                  icon='BLANK1')
+
+    def execute(self, context):
+        if not self.part:
+            self.report({'WARNING'}, "Type the word or phrase to style")
+            return {'CANCELLED'}
+        styled = 0
+        for obj in get_annotation_text_objects(context):
+            if (self.bold or self.italic) and not _style_fonts_ready(
+                    self, context, obj.data, self.bold, self.italic):
                 return {'CANCELLED'}
-        for obj in objs:
-            text_data = obj.data
-            # Blender takes the glyphs for a bold character from
-            # font_bold; leaving it on the built-in font would draw the
-            # note in a different typeface instead of bolding it.
-            if make_bold:
-                text_data.font_bold = bold_font
-            for char in text_data.body_format:
-                char.use_bold = make_bold
-            text_data.update_tag()
+            styled += style_text_part(obj.data, self.part, self.bold,
+                                      self.italic, self.every,
+                                      self.match_case)
+        if not styled:
+            self.report({'WARNING'},
+                        f'"{self.part}" is not in the selected text')
+            return {'CANCELLED'}
         return {'FINISHED'}
 
 
@@ -1048,6 +1189,11 @@ class HOME_BUILDER_MT_text_commands(bpy.types.Menu):
             props.alignment = value
         layout.operator("home_builder.toggle_text_bold", text="Bold",
                         icon='BOLD', depress=is_text_bold(obj))
+        layout.operator("home_builder.toggle_text_italic", text="Italic",
+                        icon='ITALIC', depress=is_text_italic(obj))
+        layout.operator("home_builder.style_text_part",
+                        text="Bold / Italic Part of Text...",
+                        icon='SMALL_CAPS')
         layout.operator("home_builder.set_text_line_spacing",
                         text="Line Spacing...", icon='LINENUMBERS_ON')
         layout.separator()
@@ -1128,6 +1274,8 @@ classes = (
     HOME_BUILDER_MT_dimension_commands,
     HOME_BUILDER_OT_set_text_alignment,
     HOME_BUILDER_OT_toggle_text_bold,
+    HOME_BUILDER_OT_toggle_text_italic,
+    HOME_BUILDER_OT_style_text_part,
     HOME_BUILDER_OT_set_text_line_spacing,
     HOME_BUILDER_MT_text_commands,
     HOME_BUILDER_OT_show_reference_image_properties,

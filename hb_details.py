@@ -352,24 +352,42 @@ def get_label_font(scene):
     return None
 
 
-# How font files name their bold cut. Checked against the regular font's
-# own folder, so a bold annotation stays in the same typeface the rest of
-# the drawing is set in.
+# How font files name their bold, italic and bold-italic cuts. Checked
+# against the regular font's own folder, so styled annotation text stays
+# in the same typeface the rest of the drawing is set in.
 _BOLD_FILE_PATTERNS = ('{stem}b{ext}', '{stem}bd{ext}', '{stem}-Bold{ext}',
                        '{stem}Bold{ext}', '{stem}_Bold{ext}', '{stem}-bd{ext}')
+_ITALIC_FILE_PATTERNS = ('{stem}i{ext}', '{stem}-Italic{ext}',
+                         '{stem}Italic{ext}', '{stem}_Italic{ext}',
+                         '{stem}-It{ext}')
+_BOLD_ITALIC_FILE_PATTERNS = ('{stem}z{ext}', '{stem}bi{ext}',
+                              '{stem}-BoldItalic{ext}',
+                              '{stem}BoldItalic{ext}',
+                              '{stem}_BoldItalic{ext}', '{stem}-BdIt{ext}')
+_STYLE_FILE_PATTERNS = {
+    'BOLD': _BOLD_FILE_PATTERNS,
+    'ITALIC': _ITALIC_FILE_PATTERNS,
+    'BOLD_ITALIC': _BOLD_ITALIC_FILE_PATTERNS,
+}
 
 
-def _find_bold_sibling(path):
-    """Locate the bold cut of a font file next to the regular one."""
+def _find_style_sibling(path, style):
+    """Locate the given cut ('BOLD', 'ITALIC', 'BOLD_ITALIC') of a font
+    file next to the regular one."""
     if not path:
         return None
     folder, filename = os.path.split(path)
     stem, ext = os.path.splitext(filename)
-    for pattern in _BOLD_FILE_PATTERNS:
+    for pattern in _STYLE_FILE_PATTERNS[style]:
         candidate = os.path.join(folder, pattern.format(stem=stem, ext=ext))
         if os.path.exists(candidate):
             return candidate
     return None
+
+
+def _find_bold_sibling(path):
+    """Locate the bold cut of a font file next to the regular one."""
+    return _find_style_sibling(path, 'BOLD')
 
 
 def _find_calibri_bold():
@@ -378,30 +396,64 @@ def _find_calibri_bold():
     return _find_bold_sibling(calibri) if calibri else None
 
 
-def get_label_bold_font(scene):
-    """Resolve the bold companion of the annotation font.
+def get_label_style_font(scene, style):
+    """Resolve the bold / italic / bold-italic companion of the
+    annotation font.
 
-    Blender draws a bold character from the text data's font_bold slot,
-    which starts out holding the built-in Bfont - so bold only reads as
-    bold once a real bold face is loaded into it. The annotation font's
-    own bold file is preferred; Calibri Bold is the fallback, which is
-    what the default (Calibri) annotation text wants anyway. Returns
-    None when the machine has no bold face at all, and the caller leaves
-    the text unbolded rather than swapping in the built-in font.
+    Blender draws a styled character from the text data's font_bold,
+    font_italic or font_bold_italic slot, which start out holding the
+    built-in Bfont - so a style only reads once a real face is loaded
+    into its slot. The annotation font's own cut is preferred; Calibri's
+    is the fallback, which is what the default (Calibri) annotation text
+    wants anyway. Returns None when the machine has no such face, and
+    the caller leaves the text unstyled rather than swapping in the
+    built-in font.
     """
     regular = get_label_font(scene)
     path = None
     if regular is not None and regular.filepath:
-        path = _find_bold_sibling(
-            os.path.abspath(bpy.path.abspath(regular.filepath)))
+        path = _find_style_sibling(
+            os.path.abspath(bpy.path.abspath(regular.filepath)), style)
     if path is None:
-        path = _find_calibri_bold()
+        calibri = _find_calibri()
+        path = _find_style_sibling(calibri, style) if calibri else None
     if path is None:
         return None
     try:
         return bpy.data.fonts.load(path, check_existing=True)
     except RuntimeError:
         return None
+
+
+def get_label_bold_font(scene):
+    """Bold companion of the annotation font (see get_label_style_font)."""
+    return get_label_style_font(scene, 'BOLD')
+
+
+def get_label_italic_font(scene):
+    """Italic companion of the annotation font."""
+    return get_label_style_font(scene, 'ITALIC')
+
+
+def get_label_bold_italic_font(scene):
+    """Bold-italic companion of the annotation font."""
+    return get_label_style_font(scene, 'BOLD_ITALIC')
+
+
+def load_text_style_fonts(text_data, scene):
+    """Fill a FONT curve's bold, italic and bold-italic slots with the
+    annotation font's own cuts, so any character set bold and/or italic
+    draws in the same typeface. Slots with no cut on this machine keep
+    what they hold. Returns the set of styles that could not be found."""
+    missing = set()
+    for style, attr in (('BOLD', 'font_bold'), ('ITALIC', 'font_italic'),
+                        ('BOLD_ITALIC', 'font_bold_italic')):
+        font = get_label_style_font(scene, style)
+        if font is None:
+            missing.add(style)
+        elif getattr(text_data, attr) is not font:
+            setattr(text_data, attr, font)
+    return missing
 
 
 def apply_label_style(text_obj, scene):
