@@ -926,6 +926,182 @@ def notch_shelves(cabinet_obj, width, depth, size, corners):
             del shelf['CORNER_POCKET_NOTCH']
 
 
+PART_ROLE_BLOCKING = 'CORNER_POCKET_BLOCKING'
+# Carcass parts the blocking runs between (top face of the bottom up to
+# the underside of the top / stretchers).
+_BLOCKING_FLOOR_ROLES = frozenset({'BOTTOM'})
+_BLOCKING_CEILING_ROLES = frozenset({'TOP', 'FRONT_STRETCHER',
+                                     'REAR_STRETCHER'})
+_BLOCKING_SIDE_ROLES = frozenset({'LEFT_SIDE', 'RIGHT_SIDE'})
+
+
+def _side_x_range(obj, cabinet_obj):
+    """(x0, x1) of an upright carcass side (rotated -90 about Y, so its
+    Thickness runs along -x, or +x with Mirror Z)."""
+    from ...hb_types import GeoNodeCutpart
+    m = _local_to_cabinet(obj, cabinet_obj)
+    if m is None:
+        return None
+    try:
+        g = GeoNodeCutpart(obj)
+        thick = g.get_input('Thickness')
+        mz = bool(g.get_input('Mirror Z'))
+    except Exception:
+        return None
+    x = m.translation.x
+    return (x, x + thick) if mz else (x - thick, x)
+
+
+def _part_box(obj, cabinet_obj):
+    """(x0, x1, y0, y1, z0, z1) of an unrotated carcass cutpart in
+    cabinet space, from its inputs: Length along x, Width along y (back
+    toward -y with Mirror Y), Thickness up z (down with Mirror Z)."""
+    from ...hb_types import GeoNodeCutpart
+    m = _local_to_cabinet(obj, cabinet_obj)
+    if m is None:
+        return None
+    try:
+        g = GeoNodeCutpart(obj)
+        length = g.get_input('Length')
+        width = g.get_input('Width')
+        thick = g.get_input('Thickness')
+        my = bool(g.get_input('Mirror Y'))
+        mz = bool(g.get_input('Mirror Z'))
+    except Exception:
+        return None
+    x, y, z = m.translation
+    y0, y1 = (y - width, y) if my else (y, y + width)
+    z0, z1 = (z - thick, z) if mz else (z, z + thick)
+    return x, x + length, y0, y1, z0, z1
+
+
+def _carcass_interior(cabinet_obj):
+    """(x0, x1, y0, y1, z0, z1) of the cabinet's carcass interior: the
+    bottom's footprint (between the sides' inner faces), from its top
+    face up to the underside of the top (or the stretchers). None when
+    the cabinet has no bottom."""
+    floor = ceiling = None
+    sides = {}
+    stack = list(cabinet_obj.children)
+    while stack:
+        obj = stack.pop()
+        if obj.get('IS_FACE_FRAME_CABINET_CAGE') and obj is not cabinet_obj:
+            continue
+        stack.extend(obj.children)
+        role = obj.get('hb_part_role')
+        if obj.hide_viewport or role not in (_BLOCKING_FLOOR_ROLES
+                                             | _BLOCKING_CEILING_ROLES
+                                             | _BLOCKING_SIDE_ROLES):
+            continue
+        if role in _BLOCKING_SIDE_ROLES:
+            rng = _side_x_range(obj, cabinet_obj)
+            if rng is not None:
+                sides[role] = rng
+            continue
+        box = _part_box(obj, cabinet_obj)
+        if box is None:
+            continue
+        if role in _BLOCKING_FLOOR_ROLES:
+            if floor is None or box[5] > floor[5]:
+                floor = box
+        elif ceiling is None or box[4] < ceiling:
+            ceiling = box[4]
+    if floor is None:
+        return None
+    # The bottom can run into a dado in a side; the blocking stops at the
+    # side's inner face.
+    x0 = sides['LEFT_SIDE'][1] if 'LEFT_SIDE' in sides else floor[0]
+    x1 = sides['RIGHT_SIDE'][0] if 'RIGHT_SIDE' in sides else floor[1]
+    return x0, x1, floor[2], floor[3], floor[5], ceiling
+
+
+def _blocking_boards(corner, width, depth, size, interior):
+    """[(tag, x0, x1, y0, y1)] of the two 3/4" boards that block out a
+    clipped corner's pocket inside the carcass: one across the cabinet
+    behind (or in front of) the post, one along the side beside it,
+    meeting in an L at the pocket's inner corner."""
+    ix0, ix1, iy0, iy1 = interior
+    b = POCKET_BLOCKING
+    left = corner in ('FRONT_LEFT', 'BACK_LEFT')
+    front = corner in ('FRONT_LEFT', 'FRONT_RIGHT')
+    # Work in u (in from the cabinet's end) / v (in from its face).
+    u_wall = (ix0 if left else width - ix1)
+    v_wall = (iy0 + depth) if front else -iy1
+    boards = []
+    across = (u_wall, size + b, size, size + b)
+    along = (size, size + b, v_wall, size)
+    for tag, (u0, u1, v0, v1) in (('A', across), ('B', along)):
+        if u1 - u0 <= _NOTCH_EPS or v1 - v0 <= _NOTCH_EPS:
+            continue
+        xs = (u0, u1) if left else (width - u1, width - u0)
+        ys = (-depth + v0, -depth + v1) if front else (-v1, -v0)
+        boards.append((tag, xs[0], xs[1], ys[0], ys[1]))
+    return boards
+
+
+def pocket_blocking(cabinet_obj, width, depth, size, corners):
+    """Keep the 3/4" blocking boards around each clipped corner's
+    pocket as cabinet parts (cut list lines), sized to the carcass
+    interior; remove the boards of corners that are gone. Idempotent."""
+    from ..frameless.types_frameless import CabinetPart
+    from ...hb_types import GeoNodeCutpart
+    interior = _carcass_interior(cabinet_obj) if corners else None
+    wanted = {}
+    if interior is not None and interior[5] is not None:
+        z0, z1 = interior[4], interior[5]
+        if z1 - z0 > _NOTCH_EPS:
+            for corner in corners:
+                for tag, x0, x1, y0, y1 in _blocking_boards(
+                        corner, width, depth, size, interior[:4]):
+                    wanted[(corner, tag)] = (x0, x1, y0, y1, z0, z1)
+    have = {}
+    for child in list(cabinet_obj.children):
+        if child.get('hb_part_role') != PART_ROLE_BLOCKING:
+            continue
+        key = (child.get('hb_corner'), child.get('hb_block'))
+        if key in wanted and key not in have:
+            have[key] = child
+            continue
+        mesh = child.data
+        bpy.data.objects.remove(child, do_unlink=True)
+        if mesh is not None and mesh.users == 0:
+            bpy.data.meshes.remove(mesh)
+    labels = dict(CORNERS)
+    for (corner, tag), (x0, x1, y0, y1, z0, z1) in wanted.items():
+        obj = have.get((corner, tag))
+        if obj is None:
+            part = CabinetPart()
+            part.create('Corner Blocking %s %s'
+                        % (labels.get(corner, corner.title()), tag))
+            obj = part.obj
+            obj.parent = cabinet_obj
+            obj['hb_part_role'] = PART_ROLE_BLOCKING
+            obj['CABINET_PART'] = True
+            obj['hb_corner'] = corner
+            obj['hb_block'] = tag
+        g = GeoNodeCutpart(obj)
+        dx, dy = x1 - x0, y1 - y0
+        # Upright board, Length up the cabinet, 3/4" Thickness across
+        # its thin direction. Both orientations build into +x/+y/+z from
+        # the origin (see the Mirror flags).
+        if dx <= dy:
+            obj.rotation_euler = (0.0, math.radians(-90.0), 0.0)
+            g.set_input('Width', dy)
+            g.set_input('Thickness', dx)
+            g.set_input('Mirror Y', False)
+            g.set_input('Mirror Z', True)
+        else:
+            obj.rotation_euler = (0.0, math.radians(-90.0), math.radians(90.0))
+            g.set_input('Width', dx)
+            g.set_input('Thickness', dy)
+            g.set_input('Mirror Y', True)
+            g.set_input('Mirror Z', True)
+        g.set_input('Length', z1 - z0)
+        obj.location = (x0, y0, z0)
+        obj.hide_viewport = False
+        obj.hide_render = False
+
+
 def cleanup(cabinet_obj, keep_corners=()):
     """Remove posts, cutters and boolean modifiers for every corner not
     in keep_corners. Called with no keep set this reverses the feature."""
@@ -1032,6 +1208,7 @@ def apply_corners(cabinet_obj, width, depth, height, spec):
         cleanup(cabinet_obj)
         _apply_cuts(cabinet_obj, {})
         notch_shelves(cabinet_obj, width, depth, 0.0, ())
+        pocket_blocking(cabinet_obj, width, depth, 0.0, ())
         for key in ('DECORATIVE_CORNER_STYLE', 'DECORATIVE_CORNERS',
                     'DECORATIVE_CORNER_SIZE'):
             if key in cabinet_obj:
@@ -1068,6 +1245,9 @@ def apply_corners(cabinet_obj, width, depth, height, spec):
     # their current shelves.
     notch_shelves(cabinet_obj, width, depth, size,
                   corners if is_clipped(style) else ())
+    # ...and the pocket is blocked out with 3/4" boards, as parts.
+    pocket_blocking(cabinet_obj, width, depth, size,
+                    corners if is_clipped(style) else ())
     # Publish the applied spec on the root so downstream consumers
     # (drawings, reports) can read it without recomputing. Cleared above
     # when the corners are removed.

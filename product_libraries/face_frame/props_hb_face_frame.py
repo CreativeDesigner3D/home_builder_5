@@ -3469,6 +3469,8 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
         'APRON',
         # Pipe chase cover panels closing the chase from the interior
         'PIPE_CHASE_PANEL',
+        # Blocking boards closing a clipped corner post's pocket
+        'CORNER_POCKET_BLOCKING',
         # Interior items (DRAWER_BOX / ROLLOUT_BOX are GeoNodeDrawerBox
         # assets with a single Material input, handled by their own
         # branch in _apply_materials_to_cabinet)
