@@ -27,7 +27,14 @@ _NEVER_FINISHED_ROLES = ('BASE_FRONT', 'BASE_BACK', 'BASE_LEFT_END',
                          'BASE_RIGHT_END', 'BASE_SUPPORT',
                          'BASE_SLEEPER_CLEAT', 'BASE_SLEEPER_CLEAT_LEFT',
                          'BASE_SLEEPER_CLEAT_RIGHT', 'BASE_FLOOR_CLEAT_FRONT',
-                         'BASE_FLOOR_CLEAT_BACK')
+                         'BASE_FLOOR_CLEAT_BACK',
+                         # The boards a splitter puts between openings
+                         # (drawer stretchers, fixed shelves, dividers)
+                         # sit inside the box behind the fronts. They are
+                         # made as plain cabinet parts, which face out on
+                         # the bottom, so the role is what keeps them in
+                         # the interior material.
+                         'SPLITTER')
 
 
 def is_two_sided(material_name):
