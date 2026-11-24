@@ -870,6 +870,13 @@ def _solve_upper(root, parts, p, dim_x, dim_y, dim_z):
     # its height: the box stands on them.
     fb = under_box_height(root)
     _solve_sides(parts, p, dim_x, dim_y, dim_z, fb)
+    # Finished sides come down past the box to capture the valance.
+    drops = light_valance_end_drops(root, parts)
+    for role, x, drop in (('LEFT_SIDE', 0.0, drops[0]),
+                          ('RIGHT_SIDE', dim_x, drops[1])):
+        if drop > 0.0:
+            set_part(parts[role], (x, 0.0, 0.0), length=dim_z, width=dim_y,
+                     thickness=drop)
 
     part = parts.get('BOTTOM')
     if part is not None:
@@ -950,6 +957,34 @@ def under_box_height(root):
     """How far an upper's box stands above the bottom of the cabinet:
     the applied bottom panel and the light valance under it."""
     return finished_bottom_thickness(root) + light_valance_thickness(root)
+
+
+def light_valance_end_drops(root, parts):
+    """(left, right) thickness of the finished sides that run down past
+    the box to the bottom of the cabinet, capturing the ends of the
+    light valance (and of an applied bottom panel above it). 0 for a
+    side that is unfinished or covered by an applied end -- an applied
+    end already runs the full height -- or with no valance."""
+    if light_valance_thickness(root) <= 0.0:
+        return 0.0, 0.0
+    drops = []
+    for role, applied in (('LEFT_SIDE', 'APPLIED_END_LEFT'),
+                          ('RIGHT_SIDE', 'APPLIED_END_RIGHT')):
+        side = parts.get(role)
+        end = parts.get(applied)
+        t = 0.0
+        if (side is not None and not side.hide_viewport
+                and side.modifiers.get(NOTCH_MOD_NAME) is None
+                and (end is None or end.hide_viewport)
+                # A side's outside face counts as finished unless it
+                # has been marked otherwise.
+                and bool(side.get('Finish Bottom', True))):
+            try:
+                t = max(float(GeoNodeCutpart(side).get_input('Thickness')), 0.0)
+            except Exception:
+                t = 0.0
+        drops.append(t)
+    return drops[0], drops[1]
 FB_LED_KEY = 'Finished Bottom LED Route'
 FB_LED_WIDTH_KEY = 'LED Route Width'
 FB_LED_DEPTH_KEY = 'LED Route Depth'
@@ -1007,6 +1042,9 @@ def _finished_bottom_entry(root):
     if depths is not None and min(depths) < dim_y - _FB_TOL:
         return None
     left_in, right_in = applied_end_insets(root, parts, 'UPPER', dim_x, dim_y)
+    left_drop, right_drop = light_valance_end_drops(root, parts)
+    left_in += left_drop
+    right_in += right_drop
     world = _live_world(root)
     rot = world.to_3x3()
     led = None
@@ -1157,8 +1195,10 @@ def _solve_light_valance(root, parts, dim_x, dim_y):
         _paint_like_cabinet(root, part)
     depth = float(prompt(root, LV_DEPTH_KEY, LV_DEPTH_DEFAULT))
     depth = min(max(depth, inch(0.25)), dim_y)
-    set_part(part, (0.0, -dim_y, 0.0), length=dim_x, width=depth,
-             thickness=t)
+    # Between the finished sides that come down to capture it.
+    left, right = light_valance_end_drops(root, parts)
+    set_part(part, (left, -dim_y, 0.0), length=max(dim_x - left - right, 0.0),
+             width=depth, thickness=t)
 
 
 def _solve_finished_bottom(root, parts, p, dim_x, dim_y, dim_z):
@@ -1190,9 +1230,12 @@ def _solve_own_finished_bottom(root, parts, p, dim_x, dim_y, dim_z):
             'Finished Bottom', 'FINISHED_BOTTOM', finish=(False, True)).obj
         parts['FINISHED_BOTTOM'] = panel
         _paint_like_cabinet(root, panel)
-    # A light valance goes under the panel.
-    set_part(panel, (0.0, -dim_y, light_valance_thickness(root)),
-             length=dim_x, width=dim_y, thickness=t)
+    # A light valance goes under the panel, and finished sides that come
+    # down to capture the valance capture the panel too.
+    left, right = light_valance_end_drops(root, parts)
+    length = max(dim_x - left - right, 0.0)
+    set_part(panel, (left, -dim_y, light_valance_thickness(root)),
+             length=length, width=dim_y, thickness=t)
 
     led = bool(prompt(root, FB_LED_KEY, False))
     mod = panel.modifiers.get(FB_LED_MOD_NAME)
@@ -1206,7 +1249,7 @@ def _solve_own_finished_bottom(root, parts, p, dim_x, dim_y, dim_z):
         depth = min(float(prompt(root, FB_LED_DEPTH_KEY, inch(0.375))),
                     t - inch(0.0625))
         set_modifier(panel, FB_LED_MOD_NAME,
-                     (('X', -0.01), ('Y', inset), ('End X', dim_x + 0.01),
+                     (('X', -0.01), ('Y', inset), ('End X', length + 0.01),
                       ('End Y', inset + width), ('Route Depth', max(depth, 0.0))),
                      visible=led)
 

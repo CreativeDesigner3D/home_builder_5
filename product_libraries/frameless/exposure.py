@@ -426,6 +426,10 @@ def recalc_scene(scene=None, context=None):
         for cab_obj in changed:
             try:
                 ops_finished_ends._paint(cab_obj)
+                # A finished side runs down past the box to capture a
+                # light valance, so the cabinet is built again.
+                if solver_frameless.light_valance_thickness(cab_obj) > 0.0:
+                    hb_utils.run_calc_fix(context, cab_obj)
             except Exception:
                 traceback.print_exc()
     finally:
