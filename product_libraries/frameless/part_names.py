@@ -19,7 +19,8 @@ finished:
 Fillers carry the product type too, without "Face": "Base Filler",
 "Upper Filler Kick".
 
-A "Vertical Splitter N" built as the narrow front stretcher under a
+The board across the top front of a sink base is its "Sub Front"
+("Sink Sub Front"). A "Vertical Splitter N" built as the narrow front stretcher under a
 drawer is a "Drawer Stretcher N" ("Base Drawer Stretcher 1"); any other
 splitter keeps its name. The object keeps its own name, which the solver
 matches on - this is the displayed name only.
@@ -30,6 +31,12 @@ The Selected card shows this name for a picked part.
 import re
 
 PRODUCT_TYPES = {'UPPER': "Upper", 'BASE': "Base", 'TALL': "Tall"}
+
+# Parts whose name is set by what they are, whatever the object was
+# called when it was made: the board across the top front of a sink base
+# is its sub front ("Sink Sub Front"), in cabinets made before it was
+# named that too.
+ROLE_NAMES = {'SINK_APRON': "Sub Front"}
 
 # Carcass parts that take "Finished" / "Open", and the side each one is.
 CARCASS_SIDES = {
@@ -131,7 +138,8 @@ def part_name(obj):
     if cab is None:
         base = _filler_part_name(base)
     else:
-        base = _drawer_stretcher_name(obj, base) or base
+        base = (ROLE_NAMES.get(obj.get('hb_part_role'))
+                or _drawer_stretcher_name(obj, base) or base)
     words = base.split()
     if words and words[0].lower() == ptype.lower():
         words = words[1:]

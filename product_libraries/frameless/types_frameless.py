@@ -176,7 +176,7 @@ class Cabinet(GeoNodeCage):
                                mirror='Z', finish=(False, False))
         self._add_carcass_part('Back Stretcher', 'BACK_STRETCHER',
                                mirror='Z', finish=(False, False))
-        self._add_carcass_part('Sink Apron', 'SINK_APRON', rotation=(-90, 0, 0))
+        self._add_carcass_part('Sink Sub Front', 'SINK_APRON', rotation=(-90, 0, 0))
 
     def _add_toe_kick_extras(self, toe_kick_type):
         if toe_kick_type == 1:  # Ladder Style
