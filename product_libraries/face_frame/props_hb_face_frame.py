@@ -4580,7 +4580,15 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
                 return None
 
         for child in cabinet_obj.children_recursive:
-            if 'CABINET_PART' not in child:
+            # Styling a front on an applied end panel (false / working
+            # face frame) runs that panel's own recalc, which rebuilds
+            # its fronts; entries for those removed objects are still in
+            # this list. The panel's recalc styled its new fronts, so
+            # skip the dead ones rather than abort the whole recalc.
+            try:
+                if 'CABINET_PART' not in child:
+                    continue
+            except ReferenceError:
                 continue
             # Manual (applied / hand-edited) fronts have no Door Style modifier
             # to drive - re-styling would add geometry onto the baked mesh.
