@@ -55,6 +55,7 @@ CARCASS_LEGACY_NAMES = {
     'Front Stretcher': ('FRONT_STRETCHER', 'CABINET_PART'),
     'Back Stretcher': ('BACK_STRETCHER', 'CABINET_PART'),
     'Sink Apron': ('SINK_APRON', 'CABINET_PART'),
+    'Sink Sub Front': ('SINK_APRON', 'CABINET_PART'),
     'Bay': ('BAY', 'IS_FRAMELESS_BAY_CAGE'),
     'Ladder Base': ('LADDER_BASE', 'IS_FRAMELESS_LADDER_CAGE'),
     'Leg Leveler FL': ('LEG_LEVELER_FL', 'IS_LEG_LEVELER'),
@@ -2330,6 +2331,45 @@ def _sink_split_board(splitter_obj, opening_above):
                    for o in opening_above.children_recursive)
 
 
+def _local_z_in(obj, ancestor, z):
+    """Height ``z`` in ``obj``'s frame, measured in ``ancestor``'s frame.
+    Built from the location / parent links the solve just wrote, so it
+    does not wait for Blender to update matrix_world."""
+    from mathutils import Vector
+    point = Vector((0.0, 0.0, z))
+    while obj is not None and obj is not ancestor:
+        point = obj.matrix_parent_inverse @ obj.matrix_basis @ point
+        obj = obj.parent
+    return point.z if obj is ancestor else None
+
+
+def _fit_sink_sub_front(splitter_obj, opening_above, board_z):
+    """Under a sink's false front the sub front stands where the split
+    board would be: from the top of the cabinet down to that board's
+    bottom face. The doors below then half overlay the sub front just as
+    they would the board (top reveal + false front + reveal + half
+    overlay: 6 9/16 with a 6 false front). Only for a false front; a sink
+    with full-height doors keeps its Sink Apron Width. True when the sub
+    front was sized here."""
+    if not any(o.get('False Front', False)
+               for o in opening_above.children_recursive):
+        return False
+    root = cabinet_root(splitter_obj)
+    if root is None or int(prompt(root, 'Base Top Construction', TOP_FULL)) != TOP_SINK:
+        return False
+    sub_front = carcass_parts(root).get('SINK_APRON')
+    if sub_front is None:
+        return False
+    z = _local_z_in(splitter_obj, root, board_z)
+    if z is None:
+        return False
+    height = GeoNodeCage(root).get_input('Dim Z') - z
+    if height <= 0.0:
+        return False
+    GeoNodeCutpart(sub_front).set_input('Width', height)
+    return True
+
+
 def _holds_drawer(opening):
     """The opening holds a working drawer (not a false front)."""
     return opening is not None and any(
@@ -2376,6 +2416,7 @@ def _solve_splitter(splitter_obj, vertical):
         # Openings run top to bottom; the last one sits on the floor of
         # the splitter whatever the sizes above it add up to.
         top = dim_z
+        sub_front_fitted = False
         for i in range(1, count + 1):
             size = sizes[i - 1]
             opening = parts.get(('OPENING', i))
@@ -2394,9 +2435,12 @@ def _solve_splitter(splitter_obj, vertical):
                 width = dim_y
                 if _drawer_stretcher_board(splitter_obj, opening):
                     width = min(_stretcher_width(splitter_obj), dim_y)
+                sink_split = _sink_split_board(splitter_obj, opening)
                 set_part(board, (0.0, 0.0, top - size - mt), length=dim_x,
-                         width=width, thickness=mt,
-                         visible=not _sink_split_board(splitter_obj, opening))
+                         width=width, thickness=mt, visible=not sink_split)
+                if sink_split and not sub_front_fitted:
+                    sub_front_fitted = _fit_sink_sub_front(
+                        splitter_obj, opening, top - size - mt)
             top -= size + mt
     else:
         x = 0.0

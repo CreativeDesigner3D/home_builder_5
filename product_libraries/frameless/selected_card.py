@@ -506,8 +506,14 @@ def _stretchers(owner):
 
 
 def _sink_top(owner):
-    return 'Sink Apron Width' in owner.id_data and int(
-        owner.id_data.get('Base Top Construction', 0) or 0) == 2
+    """A sink top whose sub front height is the user's to set. Under a
+    false front the solver sizes the sub front from the front itself."""
+    root = owner.id_data
+    if 'Sink Apron Width' not in root or int(
+            root.get('Base Top Construction', 0) or 0) != 2:
+        return False
+    return not any(o.get('False Front', False)
+                   for o in root.children_recursive)
 
 
 # ---- Finished ends ------------------------------------------------------------
@@ -1077,7 +1083,7 @@ def _cabinet_fields(root):
                  {'when': _has('Base Top Construction')}),
                 ('distance', 'stretcher_width', "Stretcher Width",
                  {'when': _stretchers}),
-                ('distance', 'sink_apron_width', "Sink Apron Width",
+                ('distance', 'sink_apron_width', "Sub Front Height",
                  {'when': _sink_top}),
                 ('distance', 'material_thickness', "Carcass Thickness",
                  {'when': _has('Material Thickness')}),
