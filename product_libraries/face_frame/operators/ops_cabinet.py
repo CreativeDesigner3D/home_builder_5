@@ -1983,6 +1983,60 @@ def _drawer_center_divider(props):
     return None
 
 
+AUTO_CENTER_KEY = 'hb_auto_center_divider'
+
+
+def _add_drawer_center_divider(props, code):
+    """Add the removable divider down the middle, first in the list so
+    nothing packs it against an insert: with nothing before it, a
+    single divider centers itself."""
+    entry = accessory_registry.find(code) or {}
+    item = props.interior_items.add()
+    item.kind = 'ACCESSORY'
+    item.accessory_label = entry.get('name', code)
+    item.accessory_code = code
+    item.accessory_render = (entry.get('render') or '').upper()
+    item.accessory_qty = 1
+    item.divider_lengthwise = True
+    item.divider_offset = 0.0
+    props.interior_items.move(len(props.interior_items) - 1, 0)
+    return props.interior_items[0]
+
+
+def sync_drawer_center_divider(opening):
+    """Keep the center divider in step with inserts placed in a half.
+
+    Any insert in the left or right half and no center divider yet:
+    add one (only one, however many inserts share it). No insert in a
+    half any more: take out a center divider that was added this way.
+    One made with Make 2 Equal Compartments is left alone."""
+    props = getattr(opening, 'face_frame_opening', None)
+    if props is None:
+        return
+    halves = any(
+        getattr(it, 'insert_half', 'AUTO') != 'AUTO'
+        and types_face_frame.render_hint_kind(it.accessory_render)
+        != 'DIVIDER'
+        for it in props.interior_items)
+    center = _drawer_center_divider(props)
+    if halves and center is None:
+        code = _drawer_divider_code()
+        if code:
+            item = _add_drawer_center_divider(props, code)
+            item[AUTO_CENTER_KEY] = True
+            props.interior_items_index = min(
+                props.interior_items_index + 1,
+                len(props.interior_items) - 1)
+    elif not halves and center is not None and center.get(AUTO_CENTER_KEY):
+        for i, it in enumerate(props.interior_items):
+            if it == center:
+                props.interior_items.remove(i)
+                if props.interior_items_index >= i:
+                    props.interior_items_index = max(
+                        0, props.interior_items_index - 1)
+                break
+
+
 class hb_face_frame_OT_drawer_make_compartments(bpy.types.Operator):
     """Split the drawer into two equal compartments with a removable
     divider down the middle, front to back."""
@@ -2007,18 +2061,7 @@ class hb_face_frame_OT_drawer_make_compartments(bpy.types.Operator):
         if not code:
             self.report({'WARNING'}, "No removable divider to add")
             return {'CANCELLED'}
-        entry = accessory_registry.find(code) or {}
-        item = props.interior_items.add()
-        item.kind = 'ACCESSORY'
-        item.accessory_label = entry.get('name', code)
-        item.accessory_code = code
-        item.accessory_render = (entry.get('render') or '').upper()
-        item.accessory_qty = 1
-        item.divider_lengthwise = True
-        item.divider_offset = 0.0
-        # First in the list, so nothing packs it against an insert:
-        # with nothing before it, a single divider centers itself.
-        props.interior_items.move(len(props.interior_items) - 1, 0)
+        _add_drawer_center_divider(props, code)
         props.interior_items_index = 0
         root = types_face_frame.find_cabinet_root(opening)
         if root is not None:
@@ -2043,9 +2086,16 @@ class hb_face_frame_OT_drawer_remove_accessory(bpy.types.Operator):
         idx = props.interior_items_index
         if not (0 <= idx < len(props.interior_items)):
             return {'CANCELLED'}
+        removing_center = props.interior_items[idx] == _drawer_center_divider(
+            props)
         props.interior_items.remove(idx)
         props.interior_items_index = min(idx,
                                          len(props.interior_items) - 1)
+        # The last insert kept to a half gone: a center divider that
+        # came in with it goes too. Taking the divider itself out is
+        # left as asked.
+        if not removing_center:
+            sync_drawer_center_divider(opening)
         root = types_face_frame.find_cabinet_root(opening)
         if root is not None:
             types_face_frame.recalculate_face_frame_cabinet(root)

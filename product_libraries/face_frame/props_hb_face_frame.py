@@ -7125,6 +7125,26 @@ def _update_cabinet_dim(self, context):
     types_face_frame.recalculate_face_frame_cabinet(obj)
 
 
+def _update_insert_half(self, context):
+    """Place In changed on a drawer insert. An insert kept to one half
+    needs the removable divider down the middle to hold it there, so
+    the drawer gets one when it has none; back to Whole Drawer, a center
+    divider added that way comes out again once no insert uses a half.
+    The collection may be reallocated here, so self is not used after."""
+    obj = self.id_data
+    try:
+        on_opening = self.path_from_id().startswith('face_frame_opening.')
+    except Exception:
+        on_opening = False
+    if on_opening and isinstance(obj, bpy.types.Object):
+        from .operators import ops_cabinet
+        ops_cabinet.sync_drawer_center_divider(obj)
+        from . import types_face_frame
+        types_face_frame.recalculate_face_frame_cabinet(obj)
+        return
+    _update_cabinet_dim(self, context)
+
+
 def _update_bottom_rail(self, context):
     """Bottom rail width / lock change. On an applied panel the opening
     above the bottom rail is sized off the host cabinet's mid rail, but
@@ -12110,7 +12130,7 @@ class Face_Frame_Interior_Item(bpy.types.PropertyGroup):
                ('LEFT', "Left Half", "Sit in the left half of the drawer"),
                ('RIGHT', "Right Half",
                 "Sit in the right half of the drawer")],
-        default='AUTO', update=_update_cabinet_dim,
+        default='AUTO', update=_update_insert_half,
     )  # type: ignore
     insert_offset: FloatProperty(
         name="From Left",
