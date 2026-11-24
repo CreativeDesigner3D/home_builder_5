@@ -6835,7 +6835,8 @@ class hb_face_frame_OT_place_corner_cabinet(bpy.types.Operator,
 
 def _apply_blind_corner_state(blind_obj, placed_obj, blind_side, *,
                               match_depth, void_amount,
-                              blind_stile_width, placed_stile_width):
+                              blind_stile_width, placed_stile_width,
+                              cover_floor=None, cover_ceiling=None):
     """Configure (or RE-configure) a square blind corner pair.
 
     Width handling is DELTA-based against the HB_BLIND_VOID_* marker on
@@ -6954,6 +6955,35 @@ def _apply_blind_corner_state(blind_obj, placed_obj, blind_side, *,
         blind_obj['HB_BLIND_PAIR'] = placed_obj.name
         placed_obj['HB_BLIND_PAIR'] = blind_obj.name
 
+        _set_void_cover(blind_obj, blind_side, cover_floor, cover_ceiling)
+
+
+# Blind-cabinet flags: its bottom / top runs across the corner void (the
+# Extend Bottom / Top on the blind side follows the void amount).
+_VOID_COVER_TAGS = (('HB_BLIND_COVER_FLOOR', 'extend_bottom_{}'),
+                    ('HB_BLIND_COVER_CEILING', 'extend_top_{}'))
+
+
+def _set_void_cover(blind_obj, blind_side, cover_floor, cover_ceiling):
+    """Run the blind cabinet's bottom / top across the corner void on its
+    blind side (Extend Bottom / Top = the void taken so far), or take it
+    back to square when turned off. None keeps the current choice, so a
+    re-applied corner keeps its cover in step with a new void."""
+    props = blind_obj.face_frame_cabinet
+    key = blind_side.lower()
+    marker = f'HB_BLIND_VOID_{blind_side}'
+    void = float(blind_obj.get(marker, 0.0))
+    for (tag, attr), want in zip(_VOID_COVER_TAGS,
+                                 (cover_floor, cover_ceiling)):
+        if want is None:
+            want = bool(blind_obj.get(tag, False))
+        if want:
+            setattr(props, attr.format(key), void)
+            blind_obj[tag] = True
+        elif tag in blind_obj:
+            setattr(props, attr.format(key), 0.0)
+            del blind_obj[tag]
+
 
 def _find_placed_for_blind(blind_obj, blind_side):
     """Legacy pair recovery: find the cabinet whose placement-time
@@ -7012,7 +7042,8 @@ def _blind_corner_pair_for(root):
 
 def _swap_blind_corner_roles(blind_obj, placed_obj, blind_side, *,
                              match_depth, void_amount,
-                             blind_stile_width, placed_stile_width):
+                             blind_stile_width, placed_stile_width,
+                             cover_floor=None, cover_ceiling=None):
     """Reverse which cabinet of a configured square blind corner is the
     blind one: the placed cabinet becomes the blind cabinet (its corner
     end grows to the wall corner and takes the void), and the blind
@@ -7070,8 +7101,15 @@ def _swap_blind_corner_roles(blind_obj, placed_obj, blind_side, *,
     p_basis = placed_obj.matrix_basis.to_3x3()
     n_pull = p_props.depth   # new placed cabinet butts the new blind's front
 
+    # The cover choice moves with the blind role.
+    if cover_floor is None:
+        cover_floor = bool(blind_obj.get('HB_BLIND_COVER_FLOOR', False))
+    if cover_ceiling is None:
+        cover_ceiling = bool(blind_obj.get('HB_BLIND_COVER_CEILING', False))
+
     with types_face_frame.suspend_recalc():
         # 1. Undo the current corner.
+        _set_void_cover(blind_obj, blind_side, False, False)
         if blind_side == 'LEFT':
             blind_obj.location += n_basis @ Vector((-reduction, 0.0, 0.0))
             n_props.width += reduction
@@ -7111,6 +7149,8 @@ def _swap_blind_corner_roles(blind_obj, placed_obj, blind_side, *,
             void_amount=void_amount,
             blind_stile_width=blind_stile_width,
             placed_stile_width=placed_stile_width,
+            cover_floor=cover_floor,
+            cover_ceiling=cover_ceiling,
         )
 
     for obj in (blind_obj, placed_obj):
@@ -7188,6 +7228,24 @@ class _BlindCornerDialogMixin:
         default=units.inch(3.0),
         min=0.0, unit='LENGTH', precision=4,
     )  # type: ignore
+    cover_floor: bpy.props.BoolProperty(
+        name="Floor to Cover Void",
+        description=(
+            "Run the blind cabinet's floor across the corner void on its "
+            "blind side (follows the void amount)"
+        ),
+        default=False,
+        options={'SKIP_SAVE'},
+    )  # type: ignore
+    cover_ceiling: bpy.props.BoolProperty(
+        name="Ceiling to Cover Void",
+        description=(
+            "Run the blind cabinet's ceiling (top) across the corner void "
+            "on its blind side (follows the void amount)"
+        ),
+        default=False,
+        options={'SKIP_SAVE'},
+    )  # type: ignore
     swap_roles: bpy.props.BoolProperty(
         name="Swap Blind Cabinet",
         description=(
@@ -7245,6 +7303,14 @@ class _BlindCornerDialogMixin:
         row.label(text="Placed Cabinet Stile Width:")
         row.prop(self, 'placed_stile_width', text="")
 
+        row = layout.row(align=True)
+        row.label(text="Floor to Cover Void:")
+        row.prop(self, 'cover_floor', text="")
+
+        row = layout.row(align=True)
+        row.label(text="Ceiling to Cover Void:")
+        row.prop(self, 'cover_ceiling', text="")
+
     def execute(self, context):
         blind_obj = bpy.data.objects.get(self.blind_cabinet_name)
         placed_obj = bpy.data.objects.get(self.current_cabinet_name)
@@ -7256,6 +7322,8 @@ class _BlindCornerDialogMixin:
             void_amount=self.void_amount,
             blind_stile_width=self.blind_stile_width,
             placed_stile_width=self.placed_stile_width,
+            cover_floor=self.cover_floor,
+            cover_ceiling=self.cover_ceiling,
         )
         _apply_blind_corner_state(blind_obj, placed_obj, self.blind_side,
                                   **settings)
@@ -7377,6 +7445,8 @@ def _blind_corner_current_settings(blind_obj, placed_obj, side):
         blind_stile_width=max(stile_w - units.inch(0.75), 0.0),
         placed_stile_width=(pp.right_stile_width if side == 'LEFT'
                             else pp.left_stile_width),
+        cover_floor=bool(blind_obj.get('HB_BLIND_COVER_FLOOR', False)),
+        cover_ceiling=bool(blind_obj.get('HB_BLIND_COVER_CEILING', False)),
     )
 
 
@@ -7501,6 +7571,8 @@ class hb_face_frame_OT_edit_blind_corner(_BlindCornerDialogMixin,
         self.void_amount = cur['void_amount']
         self.blind_stile_width = cur['blind_stile_width']
         self.placed_stile_width = cur['placed_stile_width']
+        self.cover_floor = cur['cover_floor']
+        self.cover_ceiling = cur['cover_ceiling']
         return context.window_manager.invoke_props_dialog(self, width=420)
 
 
