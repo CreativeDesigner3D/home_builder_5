@@ -3,9 +3,8 @@
 Each end of a straight cabinet is one of three things: open to the room
 (EXPOSED), partly covered (PARTIAL: a shallower or shorter neighbour
 leaves some of it showing) or covered (UNEXPOSED: a wall, an appliance
-or other cabinets hide all of it). An open end takes the room's default
-finished end, a partly covered one a finished side, a covered one goes
-back to unfinished.
+or other cabinets hide all of it). An open or partly covered end takes
+the room's default finished end, a covered one goes back to unfinished.
 
 Everything is measured in world space, as boxes: an end is covered by
 whatever box has a face lying on it, over the part of the end that face
@@ -312,9 +311,9 @@ def _settings(scene):
 def target_condition(state, default):
     if state == 'UNEXPOSED' or default == 'UNFINISHED':
         return 'UNFINISHED'
-    if state == 'PARTIAL':
-        # A panel would run into the neighbour that covers part of it.
-        return 'FINISHED'
+    # A partly covered end takes the default too: an applied panel is
+    # built inside the cabinet's width, so it stays clear of the
+    # neighbour that covers part of the end.
     return default
 
 
