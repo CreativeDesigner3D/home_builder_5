@@ -7535,6 +7535,27 @@ class hb_face_frame_OT_swap_blind_corner(bpy.types.Operator):
         return {'FINISHED'}
 
 
+def _resize_to_corner(obj, props, corner_end, void):
+    """Move obj's corner_end edge to (wall end - void) along its wall,
+    keeping the far edge where it is; a negative void runs the edge past
+    the wall end. False when nothing was changed (no void, or the wall
+    length can't be read)."""
+    if abs(void) < 1e-6:
+        return False
+    wall_len = _parent_wall_length(obj.parent)
+    if wall_len is None:
+        return False
+    min_w = units.inch(1.0)
+    x = obj.location.x
+    if corner_end == 'RIGHT':
+        props.width = max((wall_len - void) - x, min_w)
+    else:  # 'LEFT'
+        far_right = x + props.width
+        props.width = max(far_right - void, min_w)
+        obj.location.x = far_right - props.width
+    return True
+
+
 class hb_face_frame_OT_set_angled_corner_void_amount(bpy.types.Operator):
     """Configure how two cabinets meet at an angled (non-square) inside
     wall corner. The placed cabinet and its neighbor on the adjacent
@@ -7598,7 +7619,7 @@ class hb_face_frame_OT_set_angled_corner_void_amount(bpy.types.Operator):
         d_angled = angled.face_frame_cabinet.depth if angled else 0.0
         return d_current, d_angled
 
-    def _compute_voids(self):
+    def _compute_voids(self, clamp=True):
         """Symmetric V-notch voids (in meters) so both fronts meet along
         the corner bisector. Derived from the two cabinet depths and the
         interior corner angle theta:
@@ -7615,6 +7636,8 @@ class hb_face_frame_OT_set_angled_corner_void_amount(bpy.types.Operator):
             return 0.0, 0.0
         void_current = (d_current * cos_t + d_angled) / sin_t
         void_angled = (d_current + d_angled * cos_t) / sin_t
+        if not clamp:
+            return void_current, void_angled
         return max(void_current, 0.0), max(void_angled, 0.0)
 
     def invoke(self, context, event):
@@ -7643,11 +7666,13 @@ class hb_face_frame_OT_set_angled_corner_void_amount(bpy.types.Operator):
             col.label(text=f"  {angled.name}: {va * 39.37008:.4f} in")
             col.label(text="Their fronts will meet at the angle bisector.")
         elif self.action == 'FILL':
+            vc, va = self._compute_voids(clamp=False)
             box = layout.box()
             col = box.column(align=True)
-            col.label(text="Each cabinet's back will angle into the corner")
-            col.label(text="for access. Fronts and depths stay square.")
-            col.label(text="Fine-tune via Extend Back X on each cabinet.")
+            col.label(text="Fronts meet at the corner; each back runs on")
+            col.label(text="into the wall corner, open to the other cabinet:")
+            col.label(text=f"  {placed.name}: {vc * 39.37008:.4f} in")
+            col.label(text=f"  {angled.name}: {va * 39.37008:.4f} in")
         else:
             layout.label(text="No changes will be made to the cabinets.")
 
@@ -7661,31 +7686,35 @@ class hb_face_frame_OT_set_angled_corner_void_amount(bpy.types.Operator):
             self.report({'WARNING'}, "Cabinet missing; aborting angled setup")
             return {'CANCELLED'}
 
+        placed_props = placed.face_frame_cabinet
+        angled_props = angled.face_frame_cabinet
+
         if self.action == 'FILL':
-            # Angle each cabinet's back into the corner (access into the
-            # corner instead of a void). Extend the corner-side back
-            # corner outward in X so its angled side reaches the adjacent
-            # wall; the front + depth stay square. The geometric extend
-            # for a back that just reaches the wall is depth / tan(theta-90)
-            # (theta = interior corner angle). The placed cabinet's corner
-            # end is placed_corner_end; the neighbor's is meeting_side.
-            placed_props = placed.face_frame_cabinet
-            angled_props = angled.face_frame_cabinet
-            theta = math.radians(self.corner_angle_deg)
-            tan_dev = math.tan(theta - math.radians(90.0))
-            if abs(tan_dev) < 1e-6:
-                return {'FINISHED'}
-            ext_placed = max(placed_props.depth / tan_dev, 0.0)
-            ext_angled = max(angled_props.depth / tan_dev, 0.0)
+            # Unclamped: with very different depths one front meets the
+            # other past its wall end, so that cabinet grows and its back
+            # angles in (negative Extend Back).
+            void_current, void_angled = self._compute_voids(clamp=False)
+            # Access into an angled corner: the same trim as Create Void
+            # brings the fronts together, then each trimmed end's back
+            # runs on by that amount so it reaches the wall corner. The
+            # two angled sides then lie on one line from the front meet
+            # to the wall corner, and (as for a square access corner)
+            # the corner ends are left open and unfinished.
             with types_face_frame.suspend_recalc():
-                if self.placed_corner_end == 'LEFT':
-                    placed_props.extend_back_left = ext_placed
-                else:
-                    placed_props.extend_back_right = ext_placed
-                if self.meeting_side == 'LEFT':
-                    angled_props.extend_back_left = ext_angled
-                else:
-                    angled_props.extend_back_right = ext_angled
+                for obj, props, end, void in (
+                        (placed, placed_props, self.placed_corner_end,
+                         void_current),
+                        (angled, angled_props, self.meeting_side,
+                         void_angled)):
+                    if not _resize_to_corner(obj, props, end, void):
+                        continue
+                    key = end.lower()
+                    setattr(props, f'extend_back_{key}', void)
+                    setattr(props, f'wing_attached_{key}', False)
+                    setattr(props, f'open_{key}_end', True)
+                    setattr(props, f'{key}_finished_end_condition',
+                            'UNFINISHED')
+                    setattr(props, f'{key}_scribe', 0.0)
             types_face_frame.recalculate_face_frame_cabinet(placed)
             types_face_frame.recalculate_face_frame_cabinet(angled)
             return {'FINISHED'}
@@ -7693,9 +7722,6 @@ class hb_face_frame_OT_set_angled_corner_void_amount(bpy.types.Operator):
         void_current, void_angled = self._compute_voids()
         if void_current <= 0.0 and void_angled <= 0.0:
             return {'FINISHED'}
-
-        placed_props = placed.face_frame_cabinet
-        angled_props = angled.face_frame_cabinet
 
         # Anchor-then-size, position-independent: move the corner-side
         # edge to (corner_vertex - void) measured along the wall, and
@@ -7715,25 +7741,6 @@ class hb_face_frame_OT_set_angled_corner_void_amount(bpy.types.Operator):
         #   corner at LOW-x (left) end: far edge = right, fixed at x + w.
         #     New left edge -> void  =>  new_w = (x + w) - void;
         #     location.x = (x + w) - new_w.
-        MIN_W = units.inch(1.0)
-
-        def _resize_to_corner(obj, props, corner_end, void):
-            if void <= 0.0:
-                return
-            wall_len = _parent_wall_length(obj.parent)
-            if wall_len is None:
-                return
-            x = obj.location.x
-            w = props.width
-            if corner_end == 'RIGHT':
-                new_w = max((wall_len - void) - x, MIN_W)
-                props.width = new_w
-            else:  # 'LEFT'
-                far_right = x + w
-                new_w = max(far_right - void, MIN_W)
-                props.width = new_w
-                obj.location.x = far_right - new_w
-
         # The neighbor's corner end is meeting_side; the placed cabinet's
         # is placed_corner_end (from the detector's wall-connection
         # direction).
