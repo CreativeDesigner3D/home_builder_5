@@ -3385,7 +3385,9 @@ def _box_size_names(tag):
 class hb_closets_OT_drawer_accessory(bpy.types.Operator):
     """Drawer Options for the selected drawer front: the current box
     system and its size names, a per-drawer box-system and size override,
-    and a fitted jewelry tray."""
+    and a fitted jewelry tray. The tray choice also goes to every other
+    selected drawer front, so a stack of drawers gets trays in one go;
+    the overrides stay the active drawer's own."""
     bl_idname = "hb_closets.drawer_accessory"
     bl_label = "Drawer Options"
     bl_options = {'UNDO'}
@@ -3434,6 +3436,31 @@ class hb_closets_OT_drawer_accessory(bpy.types.Operator):
                 == types_closets.PART_ROLE_DRAWER_FRONT):
             return obj
         return None
+
+    def _other_fronts(self, context, front):
+        """The other selected drawer fronts, which take the tray too."""
+        return [o for o in (getattr(context, 'selected_objects', None) or ())
+                if o is not front and o.get('hb_part_role')
+                == types_closets.PART_ROLE_DRAWER_FRONT]
+
+    def _write_tray(self, front):
+        if self.jewelry_tray and self.jewelry_tray != 'NONE':
+            front[types_closets.PROP_JEWELRY_TRAY] = self.jewelry_tray
+        elif types_closets.PROP_JEWELRY_TRAY in front:
+            del front[types_closets.PROP_JEWELRY_TRAY]
+
+    def _write_all(self, context, front):
+        """Write the dialog onto the active front and its tray onto the
+        other selected fronts; returns every closet root touched."""
+        self._write_front(front)
+        roots = []
+        for obj in [front] + self._other_fronts(context, front):
+            if obj is not front:
+                self._write_tray(obj)
+            root = types_closets.find_starter_root(obj)
+            if root is not None and root not in roots:
+                roots.append(root)
+        return roots
 
     def invoke(self, context, event):
         front = self._front(context)
@@ -3515,6 +3542,11 @@ class hb_closets_OT_drawer_accessory(bpy.types.Operator):
         row = box.row()
         row.label(text="Jewelry Tray:")
         row.prop(self, 'jewelry_tray', text="")
+        others = len(self._other_fronts(context, front))
+        if others:
+            box.label(text="Also sets the tray on %d other selected "
+                           "drawer%s" % (others, "" if others == 1 else "s"),
+                      icon='INFO')
         if front is not None and self.jewelry_tray != 'NONE':
             inside = float(front.get('hb_inside_w', 0.0))
             depth = float(front.get('hb_open_depth', 0.0))
@@ -3558,10 +3590,7 @@ class hb_closets_OT_drawer_accessory(bpy.types.Operator):
         elif types_closets.PROP_FRONT_GRAIN in front:
             del front[types_closets.PROP_FRONT_GRAIN]
         # Jewelry tray.
-        if self.jewelry_tray and self.jewelry_tray != 'NONE':
-            front[types_closets.PROP_JEWELRY_TRAY] = self.jewelry_tray
-        elif types_closets.PROP_JEWELRY_TRAY in front:
-            del front[types_closets.PROP_JEWELRY_TRAY]
+        self._write_tray(front)
 
     def check(self, context):
         """Live re-solve: apply the current choices and rebuild so the
@@ -3569,9 +3598,7 @@ class hb_closets_OT_drawer_accessory(bpy.types.Operator):
         front = self._front(context)
         if front is None:
             return False
-        self._write_front(front)
-        root = types_closets.find_starter_root(front)
-        if root is not None:
+        for root in self._write_all(context, front):
             types_closets.recalculate_closet_starter(root)
             # Grain is a material choice, so the run has to be
             # re-finished for the change to show while the dialog is
@@ -3583,12 +3610,12 @@ class hb_closets_OT_drawer_accessory(bpy.types.Operator):
         front = self._front(context)
         if front is None:
             return {'CANCELLED'}
-        self._write_front(front)
-        root = types_closets.find_starter_root(front)
-        if root is not None:
+        own = types_closets.find_starter_root(front)
+        for root in self._write_all(context, front):
             types_closets.recalculate_closet_starter(root)
-            # A drawer too small/large for the tray can size itself to fit.
-            if self.resize_to_fit:
+            # A drawer too small/large for the tray can size itself to
+            # fit (the active one, which the dialog's readout is about).
+            if self.resize_to_fit and root is own:
                 types_closets.resize_for_jewelry_tray(front)
             _apply_finish(root)
             _apply_selection_shading(context, root)
