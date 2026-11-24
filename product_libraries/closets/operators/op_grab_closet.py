@@ -153,6 +153,8 @@ def _corner_boundaries(root, mw, mode):
     same wing clamps, the same shelf heights - so a handle always sits
     on geometry that is really there.
     """
+    if mode in ('Bays', 'Openings'):
+        return _corner_shelf_boundaries(root, mw)
     if mode != 'Starters':
         return []
     sp = root.hb_closet_starter
@@ -237,6 +239,36 @@ def _corner_boundaries(root, mw, mode):
     out.append(dict(kind='L_BOTTOM', root=root.name, side='L',
                     p0=mw @ Vector((LD, -RD, 0.0)),
                     p1=mw @ Vector((LD, y_out, 0.0)), axis=ax_z))
+    return out
+
+
+def _corner_shelf_boundaries(root, mw):
+    """The fixed L shelves set across an inside corner, grabbed by
+    their front edges along both wings (Bays and Openings modes), the
+    way a fixed shelf in a run is: dragging one slides it between its
+    neighbours from hole to hole, and the openings either side trade
+    height."""
+    sp = root.hb_closet_starter
+    pt = types_closets.run_sizes(root).panel_thickness
+    W, D = sp.width, sp.depth
+    if W <= 0.0 or D <= 0.0:
+        return []
+    LD = min(sp.l_left_depth, W - pt)
+    RD = min(sp.l_right_depth, D - pt)
+    x_out = W - pt
+    y_out = -(D - pt)
+    ax_z = (mw.to_3x3() @ Vector((0.0, 0.0, 1.0))).normalized()
+    out = []
+    for sh in types_closets.corner_dividers(root):
+        z = float(sh.location.z)
+        out.append(dict(kind='L_SHELF', root=root.name, shelf=sh.name,
+                        side='R',
+                        p0=mw @ Vector((LD, -RD, z)),
+                        p1=mw @ Vector((x_out, -RD, z)), axis=ax_z))
+        out.append(dict(kind='L_SHELF', root=root.name, shelf=sh.name,
+                        side='L',
+                        p0=mw @ Vector((LD, -RD, z)),
+                        p1=mw @ Vector((LD, y_out, z)), axis=ax_z))
     return out
 
 
@@ -675,6 +707,9 @@ class hb_closets_OT_grab_drag(bpy.types.Operator):
         elif b['kind'] == 'SHELF':
             sh = bpy.data.objects.get(b['shelf'])
             snap['z'] = sh.get('hb_z_offset', 0.0)
+        elif b['kind'] == 'L_SHELF':
+            sh = bpy.data.objects.get(b['shelf'])
+            snap['z'] = float(sh.get(types_closets.PROP_L_DIVIDER_Z, 0.0))
         elif b['kind'] == 'DIVISION':
             dv = bpy.data.objects.get(b['div'])
             snap['x'] = dv.get('hb_x_offset', 0.0)
@@ -881,6 +916,32 @@ class hb_closets_OT_grab_drag(bpy.types.Operator):
             bay, root, scene_props))
         return kick + 2.0 * st + interior_min
 
+    def _move_l_shelf(self, sh, z, event):
+        """Slide a fixed L shelf to z (its underside above the corner's
+        bottom): on the nearest system hole, or free with Shift / snap
+        off, held between its neighbours."""
+        free = event.shift or self._snap_mode == 'OFF'
+        if not free and self._snap_mode == 'FINE':
+            z = round(z / inch(0.125)) * inch(0.125)
+            free = True
+        types_closets.set_l_divider_z(sh, z, snap=not free)
+
+    @staticmethod
+    def _l_shelf_text(root, sh, us):
+        """Clear height of the openings under and over a fixed L shelf."""
+        st = types_closets.run_sizes(root).shelf_thickness
+        divs = types_closets.corner_dividers(root)
+        j = divs.index(sh) if sh in divs else -1
+        sp = root.hb_closet_starter
+        z = float(sh.get(types_closets.PROP_L_DIVIDER_Z, 0.0))
+        floor = (float(divs[j - 1].get(types_closets.PROP_L_DIVIDER_Z, 0.0))
+                 + st if j > 0 else types_closets.l_interior_bottom(root))
+        ceil = (float(divs[j + 1].get(types_closets.PROP_L_DIVIDER_Z, 0.0))
+                if 0 <= j < len(divs) - 1 else float(sp.height) - st)
+        return "%s below | %s above" % (
+            units.unit_to_string(us, max(0.0, z - floor)),
+            units.unit_to_string(us, max(0.0, ceil - (z + st))))
+
     def _snap_value(self, value, event):
         if event.shift or self._snap_mode == 'OFF':
             return value
@@ -1011,6 +1072,12 @@ class hb_closets_OT_grab_drag(bpy.types.Operator):
             self._drag_text = "%s below | %s above" % (
                 units.unit_to_string(us, below),
                 units.unit_to_string(us, above))
+        elif b['kind'] == 'L_SHELF':
+            sh = bpy.data.objects.get(b['shelf'])
+            if sh is None:
+                return
+            self._move_l_shelf(sh, snap['z'] + delta, event)
+            self._drag_text = self._l_shelf_text(root, sh, us)
         elif b['kind'] == 'DIVISION':
             dv = bpy.data.objects.get(b['div'])
             bay = bpy.data.objects.get(b['bay'])
@@ -1259,6 +1326,11 @@ class hb_closets_OT_grab_drag(bpy.types.Operator):
                     if sh is not None:
                         sh['hb_z_offset'] = float(snap['z'])
                         types_closets.recalculate_closet_starter(root)
+                elif b['kind'] == 'L_SHELF':
+                    sh = bpy.data.objects.get(b['shelf'])
+                    if sh is not None:
+                        sh[types_closets.PROP_L_DIVIDER_Z] = float(snap['z'])
+                        types_closets.recalculate_closet_starter(root)
                 elif b['kind'] == 'DIVISION':
                     dv = bpy.data.objects.get(b['div'])
                     if dv is not None:
@@ -1347,6 +1419,19 @@ class hb_closets_OT_grab_drag(bpy.types.Operator):
             if sh is not None and bay is not None:
                 sh['hb_z_offset'] = float(self._clamp_shelf(bay, sh, value))
                 types_closets.recalculate_closet_starter(root)
+        elif b['kind'] == 'L_SHELF':
+            # A typed number is the height of the opening under the
+            # shelf, as the label over a run's shelf reads; the shelf
+            # still lands on a hole.
+            sh = bpy.data.objects.get(b['shelf'])
+            if sh is not None:
+                divs = types_closets.corner_dividers(root)
+                j = divs.index(sh) if sh in divs else -1
+                st = types_closets.run_sizes(root).shelf_thickness
+                floor = (float(divs[j - 1].get(
+                    types_closets.PROP_L_DIVIDER_Z, 0.0)) + st if j > 0
+                    else types_closets.l_interior_bottom(root))
+                types_closets.set_l_divider_z(sh, floor + value, snap=True)
         elif b['kind'] == 'DIVISION':
             dv = bpy.data.objects.get(b['div'])
             bay = bpy.data.objects.get(b['bay'])

@@ -8963,12 +8963,36 @@ def remove_l_divider(shelf):
     recalculate_closet_starter(root)
 
 
-def set_l_divider_z(shelf, z):
-    """Move a fixed L shelf in a corner unit, held between the shelves
-    either side of it."""
+def l_interior_bottom(root):
+    """Top of a corner unit's bottom shelf, above the unit's bottom:
+    where its system holes are counted from, as a bay's are from its
+    interior bottom."""
+    sp = root.hb_closet_starter
+    kick = sp.toe_kick_height if sp.closet_type != 'HANGING' else 0.0
+    return kick + run_sizes(root).shelf_thickness
+
+
+def snap_l_divider_z(root, z, lo=None, hi=None):
+    """The system hole nearest z for a fixed L shelf's underside
+    (measured above the unit's bottom), kept inside lo..hi by stepping
+    whole holes inward, so the shelf always lands on a hole."""
+    from . import const_closets as const
+    base = l_interior_bottom(root)
+    z = base + const.snap_system_hole(z - base)
+    pitch = const.SYSTEM_PITCH
+    if lo is not None:
+        while z < lo - 1e-6:
+            z += pitch
+    if hi is not None:
+        while z > hi + 1e-6 and z - pitch >= base:
+            z -= pitch
+    return z
+
+
+def l_divider_bounds(shelf):
+    """How low and high a fixed L shelf can go: a shelf clear of the
+    shelves either side of it."""
     root = find_starter_root(shelf)
-    if root is None:
-        return
     st = run_sizes(root).shelf_thickness
     divs = corner_dividers(root)
     j = divs.index(shelf) if shelf in divs else -1
@@ -8978,7 +9002,21 @@ def set_l_divider_z(shelf, z):
           else kick) + 2.0 * st
     hi = (float(divs[j + 1].get(PROP_L_DIVIDER_Z, 0.0))
           if 0 <= j < len(divs) - 1 else float(sp.height) - st) - 2.0 * st
-    shelf[PROP_L_DIVIDER_Z] = float(max(lo, min(z, hi)))
+    return lo, hi
+
+
+def set_l_divider_z(shelf, z, snap=False):
+    """Move a fixed L shelf in a corner unit, held between the shelves
+    either side of it. snap puts it on the nearest system hole that
+    fits there."""
+    root = find_starter_root(shelf)
+    if root is None:
+        return
+    lo, hi = l_divider_bounds(shelf)
+    z = max(lo, min(z, hi))
+    if snap:
+        z = snap_l_divider_z(root, z, lo, hi)
+    shelf[PROP_L_DIVIDER_Z] = float(z)
     recalculate_closet_starter(root)
 
 

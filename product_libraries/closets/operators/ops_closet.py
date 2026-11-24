@@ -2597,15 +2597,16 @@ class hb_closets_OT_add_part(bpy.types.Operator,
         z = max(0.0, min(z, interior_h))
         corner = bool(opening.get(types_closets.TAG_CORNER_OPENING_CAGE))
         if corner:
-            # An L shelf is not hung on system holes: it goes on the
-            # scene's grid, a shelf clear of the shelves above and below.
+            # An L shelf lands on a system hole like any fixed shelf,
+            # a shelf clear of the shelves above and below.
             st = types_closets.run_sizes(opening).shelf_thickness
-            w0 = opening.matrix_world.translation.z
-            z = hb_snap.snap_value_to_grid(
-                w0 + local_z, context.scene.unit_settings) - w0
-            z = max(st, min(z, interior_h - 2.0 * st))
-            self._preview[types_closets.PROP_L_DIVIDER_Z] = float(
-                opening.location.z + z)
+            root = types_closets.find_starter_root(opening)
+            z = max(st, min(local_z, interior_h - 2.0 * st))
+            z_root = types_closets.snap_l_divider_z(
+                root, opening.location.z + z,
+                opening.location.z + st,
+                opening.location.z + interior_h - 2.0 * st)
+            self._preview[types_closets.PROP_L_DIVIDER_Z] = float(z_root)
         elif self.part_type == 'ROD':
             # As the reference dropped a rod: the cursor height on the scene's
             # 1" grid rather than the hole lattice (a rod hangs from
@@ -9571,8 +9572,12 @@ class hb_closets_OT_l_divider_prompts(bpy.types.Operator):
             return
         st = types_closets.run_sizes(root).shelf_thickness
         z = self.height - _l_divider_world_offset(root, st)
+        lo, hi = types_closets.l_divider_bounds(shelf)
+        z = types_closets.snap_l_divider_z(root, max(lo, min(z, hi)), lo, hi)
         if abs(float(shelf.get(types_closets.PROP_L_DIVIDER_Z, 0.0)) - z) > 1e-6:
-            types_closets.set_l_divider_z(shelf, z)
+            types_closets.set_l_divider_z(shelf, z, snap=True)
+        # The field shows the hole the shelf went to.
+        self.height = z + _l_divider_world_offset(root, st)
 
     def check(self, context):
         self._apply()
