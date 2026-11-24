@@ -1552,6 +1552,9 @@ def _index_label(obj, tag, word):
 
 
 def _type_label(root):
+    if root.get('PART_TYPE') == 'CORNER_FILLER':
+        # The type key keeps its old name; the product is a wall filler.
+        return "Wall Filler"
     kind = (root.get('CABINET_TYPE') or root.get('PART_TYPE') or "")
     return str(kind).replace('_', ' ').title()
 
