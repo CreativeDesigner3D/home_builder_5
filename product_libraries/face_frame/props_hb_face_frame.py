@@ -1792,6 +1792,18 @@ def _is_styled_bare_part(obj):
     return True
 
 
+def _paint_annotation(obj, note_colour):
+    """Give drawing annotation its print colour.
+
+    Glass fills behind an elevation's glass hatch are tagged as
+    annotation so they print, but their colour is the cabinet interior
+    the drawing shows through the glass; they keep it.
+    """
+    if obj.get('IS_ELEVATION_GLASS_FILL'):
+        return
+    obj.color = note_colour
+
+
 def _annotation_color(context):
     """The colour drawing text is meant to wear, from preferences.
 
@@ -1835,7 +1847,7 @@ def apply_style_colors(context):
         _paint_cage(cage, tint, context)
         for child in cage.children_recursive:
             if child.get('IS_2D_ANNOTATION'):
-                child.color = note_colour
+                _paint_annotation(child, note_colour)
             elif _is_cage(child):
                 _paint_cage(child, tint, context)
             else:
@@ -1859,7 +1871,7 @@ def apply_style_colors(context):
         _paint_cage(cage, tint, context)
         for child in cage.children_recursive:
             if child.get('IS_2D_ANNOTATION'):
-                child.color = note_colour
+                _paint_annotation(child, note_colour)
             elif _is_cage(child):
                 _paint_cage(child, tint, context)
             else:
@@ -1894,7 +1906,7 @@ def apply_style_colors(context):
         part.color = part_colour
         for child in part.children_recursive:
             if child.get('IS_2D_ANNOTATION'):
-                child.color = note_colour
+                _paint_annotation(child, note_colour)
             else:
                 child.color = part_colour
 
