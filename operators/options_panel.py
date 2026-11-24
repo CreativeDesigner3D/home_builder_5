@@ -1114,6 +1114,8 @@ def _block_h(block, s):
         return len(_choice_rows(*block[1])) * (ROW_H + ROW_GAP) * s
     if kind == 'gap':
         return GROUP_GAP * s
+    if kind == 'list_row' and block[1].get('height'):
+        return (block[1]['height'] + ROW_GAP) * s
     return (ROW_H + ROW_GAP) * s
 
 
@@ -1373,9 +1375,13 @@ def build_page(rect, context, blocks_fn, lst):
             # 'rename' (callable(new name), on a double click, from
             # 'name' or the text), 'icons' ((tip, op, kwargs, icon), ...;
             # an icon is a name or (name, folder)), 'remove' ((op,
-            # kwargs): the small X; 'confirm' False removes on one click).
+            # kwargs): the small X; 'confirm' False removes on one click),
+            # 'height' (unscaled px, taller than a row) and 'thumb' (a
+            # PNG path drawn square at the left, already decoded through
+            # thumb_picker.texture in the build step).
             spec = payload
-            rect = (x, block_top - row_h, row_w, row_h)
+            lr_h = spec.get('height', ROW_H) * s
+            rect = (x, block_top - lr_h, row_w, lr_h)
             right = x + row_w - 2 * s
             remove_rect = None
             if spec.get('remove'):
@@ -1384,14 +1390,15 @@ def build_page(rect, context, blocks_fn, lst):
                 if _armed_delete == ('list', spec.get('key')):
                     chip_w = text_width(0, FONT * s, CONFIRM_TEXT) + 12 * s
                 remove_rect = (right - chip_w,
-                               block_top - row_h + (row_h - chip) / 2.0,
+                               block_top - lr_h + (lr_h - chip) / 2.0,
                                chip_w, chip)
                 right = remove_rect[0] - ARROW_GAP * s
             icons = []
             ib = row_h - 2 * s
             for tip, op_id, kwargs, icon in reversed(
                     tuple(spec.get('icons') or ())):
-                irect = (right - ib, block_top - row_h + s, ib, ib)
+                irect = (right - ib, block_top - lr_h + (lr_h - ib) / 2.0,
+                         ib, ib)
                 right = irect[0] - ARROW_GAP * s
                 icons.append((irect, tip, op_id, dict(kwargs or {}), icon,
                               _can_run(op_id, polled)))
@@ -2192,6 +2199,20 @@ def _paint_list_row(shader, font_id, s, mx, my, entry):
         draw_rects(shader, [(rx, ry + 2 * s, ACCENT_W * s, rh - 4 * s)],
                    Theme.ACCENT_BG)
     text_x = rx + (ACCENT_W + 8) * s
+    if spec.get('height'):
+        # A picture square takes the left of the row, the text after it;
+        # the row is reserved for it whether or not it has arrived yet.
+        side = rh - 4 * s
+        if spec.get('thumb'):
+            import gpu
+            from . import thumb_picker
+            tex = thumb_picker.texture(spec['thumb'])
+            if tex is not None:
+                gpu.state.blend_set('ALPHA')
+                thumb_picker.draw_texture(
+                    tex, (text_x - 4 * s, ry + 2 * s, side, side))
+                shader.bind()
+        text_x += side + 4 * s
     limit = right - 6 * s
     if renaming:
         box = (text_x - 3 * s, ry + 3 * s,

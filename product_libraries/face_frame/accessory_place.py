@@ -221,19 +221,31 @@ def _clear_search():
     bpy.context.window_manager.hb_accessory_search = ""
 
 
-def _item_row(key, it, targets, names):
+THUMB_ROW_H = 44     # unscaled px: a row with its picture
+
+
+def _item_row(key, it, targets, names, pictures=False):
     code = it.get('code')
     mw = it.get('min_opening_w')
     summary = code if not mw else '%s  %g"' % (code, mw)
     dim = bool(targets) and not any(check_fit(t, it)[0] for t in targets)
-    return ('list_row', {
+    spec = {
         'key': '%s:item:%s' % (key, code),
         'text': it.get('name', code),
         'summary': summary,
         'dim': dim,
         'click': ('hb_face_frame.apply_accessory',
                   {'code': code, 'target_names': names}),
-    })
+    }
+    if pictures:
+        from . import accessory_thumbs
+        from ...operators import thumb_picker
+        spec['height'] = THUMB_ROW_H
+        png = accessory_thumbs.picture(it)
+        # Decoded here, in the build step; paint only reads the cache.
+        if png and thumb_picker.texture(png) is not None:
+            spec['thumb'] = png
+    return ('list_row', spec)
 
 
 def browse_blocks(context, key, targets=None):
@@ -257,7 +269,9 @@ def browse_blocks(context, key, targets=None):
     else:
         out.append(('hint', "Click one, then click where it goes."))
     out.extend(options_panel.field_blocks(
-        context, (('text', 'hb_accessory_search', "Search"),), wm))
+        context, (('text', 'hb_accessory_search', "Search"),
+                  ('bool', 'hb_accessory_pictures', "Show Pictures")), wm))
+    pictures = wm.hb_accessory_pictures
     tokens = wm.hb_accessory_search.lower().split()
     if tokens:
         found = [it for it in items if all(
@@ -269,7 +283,7 @@ def browse_blocks(context, key, targets=None):
                                  'summary': "%d found" % len(found),
                                  'click': _clear_search}))
         for it in found[:60]:
-            out.append(_item_row(key, it, targets, names))
+            out.append(_item_row(key, it, targets, names, pictures))
         if len(found) > 60:
             out.append(('note', "Showing 60: narrow the search."))
         if not found:
@@ -294,7 +308,8 @@ def browse_blocks(context, key, targets=None):
         for group, members in groups.items():
             if group and len(groups) > 1:
                 out.append(('label', group))
-            out.extend(_item_row(key, it, targets, names) for it in members)
+            out.extend(_item_row(key, it, targets, names, pictures)
+                       for it in members)
         return out
     for sec in sections:
         count = sum(1 for it in items if it.get('section') == sec)
@@ -727,11 +742,19 @@ def register():
         "group or code")
     wm.hb_accessory_section = bpy.props.StringProperty(
         name="Section", description="The catalog section being browsed")
+    wm.hb_accessory_pictures = bpy.props.BoolProperty(
+        name="Show Pictures", default=False,
+        description="Show a picture of each accessory in the list. "
+        "Pictures are made from the accessory's model the first time "
+        "they are shown and kept for later sessions")
 
 
 def unregister():
     _remove_handles()
-    for name in ('hb_accessory_search', 'hb_accessory_section'):
+    from . import accessory_thumbs
+    accessory_thumbs.clear_queue()
+    for name in ('hb_accessory_search', 'hb_accessory_section',
+                 'hb_accessory_pictures'):
         if hasattr(bpy.types.WindowManager, name):
             delattr(bpy.types.WindowManager, name)
     drawer_page.unregister()
