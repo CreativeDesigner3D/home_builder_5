@@ -139,8 +139,13 @@ def _peers(owner):
     """The other picked parts of the owner's kind -- none unless the
     owner is itself one of the picked."""
     try:
-        path = owner.path_from_id()
         obj = owner.id_data
+        # path_from_id is slow on scene-level structs and this runs for
+        # every field on every redraw: settle the common no-peers case
+        # on the cheap membership test first.
+        if not any(obj in objs for objs in _picked.values()):
+            return ()
+        path = owner.path_from_id()
     except Exception:
         return ()
     from ...operators import prop_proxy

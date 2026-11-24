@@ -191,8 +191,12 @@ def _peers(owner):
     same schema -- none unless the owner is itself one of the picked."""
     from ...operators import prop_proxy
     try:
-        path = owner.path_from_id()
         obj = owner.id_data
+        # Cheap membership test before the slow path_from_id, which
+        # otherwise runs for every field on every redraw.
+        if not any(obj in objs for objs in _picked.values()):
+            return ()
+        path = owner.path_from_id()
     except Exception:
         return ()
     if not path.startswith(prop_proxy.PATH_PREFIX):

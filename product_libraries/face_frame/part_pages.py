@@ -101,6 +101,10 @@ def proxy_peers(owner):
     from ...operators import prop_proxy
     from . import door_vents
     try:
+        # Not one of the picked parts (and no pending write-all to clear):
+        # no peers, without paying for path_from_id on every redraw.
+        if not _wrote_all[0] and owner.id_data not in _part_peers:
+            return ()
         path = owner.path_from_id()
         if path == prop_proxy.PATH_PREFIX + door_vents.VENT_SCHEMA:
             obj = owner.id_data
