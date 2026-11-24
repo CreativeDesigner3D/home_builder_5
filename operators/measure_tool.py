@@ -530,7 +530,7 @@ class home_builder_OT_measure(bpy.types.Operator):
             bits.append("[Exact]")
         bits.append("Tab: mode | Q: quick XYZ | X/Y/Z: axis | E: exact | "
                     "Ctrl: snap | Backspace: undo | Del: remove hovered | "
-                    "Esc: done")
+                    "Right-click: drop reading | Esc: done")
         context.area.header_text_set("  ".join(b for b in bits if b))
 
     # -- points ------------------------------------------------------------
@@ -778,6 +778,19 @@ class home_builder_OT_measure(bpy.types.Operator):
                     self._reset_pending(None)
                 else:
                     pop_measurement(context.scene)
+                self._update_header(context)
+                tag_redraw()
+                return {'RUNNING_MODAL'}
+
+            if event.type == 'RIGHTMOUSE' and self.points:
+                # Drop the half-placed reading and stay in the tool, so
+                # the next pair of clicks reads again. A quick reading
+                # stays in the header until the next one starts.
+                label = None
+                if self.mode == 'QUICK' and self.cursor is not None:
+                    label = quick_label(context, self.points[0], self.cursor)
+                self._reset_pending(label)
+                self._sample(context, event)
                 self._update_header(context)
                 tag_redraw()
                 return {'RUNNING_MODAL'}
