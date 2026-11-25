@@ -4558,10 +4558,20 @@ class ClosetStarter(GeoNodeCage):
         existing.sort(key=lambda o: o.get('hb_adj_index', 0))
         while len(existing) > qty:
             bpy.data.objects.remove(existing.pop(), do_unlink=True)
+        # A shelf left without a finish (dealt by a path that never
+        # painted it) has no board to cut or price from: give it the
+        # room's finish now. Shelves just dealt are painted when this
+        # recalc finishes.
+        bare = [o for o in existing
+                if o not in _NEW_PARTS
+                and GeoNodeCutpart(o).get_input('Top Surface') is None]
         while len(existing) < qty:
             obj = add_fixed_shelf(opening, 0.0, role=PART_ROLE_ADJ_SHELF)
             obj['hb_adj_index'] = len(existing)
             existing.append(obj)
+        if bare:
+            from . import materials_closets
+            materials_closets.finish_parts(bare)
 
     def _reconcile_slanted_shelves(self, opening):
         """Slanted shoe shelves: create/remove tilted shelves to match the
