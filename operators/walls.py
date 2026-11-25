@@ -689,6 +689,64 @@ def is_closed_loop(points, tolerance=0.01):
     if len(points) < 3:
         return False
     return (points[0] - points[-1]).length < tolerance
+
+
+# A run of walls that does not close (one wall, an L, a U) still faces a
+# room. Its floor, ceiling and lights are laid over that room: in front of
+# every wall at least this deep, or as deep as the run's own returns reach.
+OPEN_ROOM_MIN_DEPTH = 3.6576   # 12'
+
+
+def _open_chain_room_side(chain, segs):
+    """+1 when the room is on the walls' right (their reference face, where
+    cabinets are placed), -1 when what is hung on the walls sits on their
+    left instead."""
+    votes = 0.0
+    for wall, (s, e) in zip(chain, segs):
+        d = (e - s).normalized()
+        n = Vector((d.y, -d.x))
+        for child in wall.children:
+            if child.name.lower().startswith('obj_'):
+                continue
+            for ob in [child] + list(child.children_recursive)[:40]:
+                if ob.type != 'MESH':
+                    continue
+                c = ob.matrix_world @ (sum((Vector(v) for v in ob.bound_box),
+                                           Vector()) / 8.0)
+                votes += (c.to_2d() - s).dot(n)
+    return -1 if votes < 0.0 else 1
+
+
+def open_chain_boundary(chain):
+    """Plan outline of the room an open run of walls faces, as a closed
+    list of points (last repeats first): the box in front of each wall,
+    OPEN_ROOM_MIN_DEPTH deep or as deep as the run's returns, hulled into
+    one outline. An L of a long wall and a short return gets a full room
+    in front of the cabinets, not a strip the depth of the return. Empty
+    when the run has no length."""
+    from mathutils.geometry import convex_hull_2d
+    segs = []
+    walls = []
+    for w in chain:
+        s, e = get_wall_endpoints(w)
+        if (e - s).length > 0.01:
+            segs.append((s, e))
+            walls.append(w)
+    if not segs:
+        return []
+    side = _open_chain_room_side(walls, segs)
+    pts = [p for seg in segs for p in seg]
+    corners = []
+    for s, e in segs:
+        d = (e - s).normalized()
+        n = Vector((d.y, -d.x)) * side
+        reach = max((p - s).dot(n) for p in pts)
+        depth = max(OPEN_ROOM_MIN_DEPTH, reach)
+        corners += [s, e, e + n * depth, s + n * depth]
+    hull = [corners[i] for i in convex_hull_2d(corners)]
+    out = [Vector((p.x, p.y, 0.0)) for p in hull]
+    out.append(out[0].copy())
+    return out
     
 
 
@@ -4981,34 +5039,10 @@ class home_builder_walls_OT_add_floor(bpy.types.Operator):
         else:
             # No closed loops — create bounding box floors from open chains
             for chain in open_chains:
-                all_points = []
-                for wall in chain:
-                    start, end = get_wall_endpoints(wall)
-                    all_points.append(Vector((start.x, start.y, 0)))
-                    all_points.append(Vector((end.x, end.y, 0)))
-                
-                if len(all_points) < 2:
+                points = open_chain_boundary(chain)
+                if len(points) < 4:
                     continue
-                
-                min_x = min(p.x for p in all_points)
-                max_x = max(p.x for p in all_points)
-                min_y = min(p.y for p in all_points)
-                max_y = max(p.y for p in all_points)
-                
-                # Ensure valid rectangle (not a line)
-                if abs(max_x - min_x) < 0.01:
-                    max_x = min_x + 3.0
-                if abs(max_y - min_y) < 0.01:
-                    max_y = min_y + 3.0
-                
-                points = [
-                    Vector((min_x, min_y, 0)),
-                    Vector((max_x, min_y, 0)),
-                    Vector((max_x, max_y, 0)),
-                    Vector((min_x, max_y, 0)),
-                    Vector((min_x, min_y, 0)),
-                ]
-                
+
                 name = "Floor" if floors_created == 0 else f"Floor.{floors_created:03d}"
                 floor_obj = self.create_floor_mesh(name, points)
                 floor_obj['IS_FLOOR_BP'] = True
@@ -5106,32 +5140,9 @@ class home_builder_walls_OT_add_ceiling(bpy.types.Operator):
                 ceilings_created += 1
         else:
             for chain in open_chains:
-                all_points = []
-                for w in chain:
-                    start, end = get_wall_endpoints(w)
-                    all_points.append(Vector((start.x, start.y, 0)))
-                    all_points.append(Vector((end.x, end.y, 0)))
-                
-                if len(all_points) < 2:
+                points = open_chain_boundary(chain)
+                if len(points) < 4:
                     continue
-                
-                min_x = min(p.x for p in all_points)
-                max_x = max(p.x for p in all_points)
-                min_y = min(p.y for p in all_points)
-                max_y = max(p.y for p in all_points)
-                
-                if abs(max_x - min_x) < 0.01:
-                    max_x = min_x + 3.0
-                if abs(max_y - min_y) < 0.01:
-                    max_y = min_y + 3.0
-                
-                points = [
-                    Vector((min_x, min_y, 0)),
-                    Vector((max_x, min_y, 0)),
-                    Vector((max_x, max_y, 0)),
-                    Vector((min_x, max_y, 0)),
-                    Vector((min_x, min_y, 0)),
-                ]
 
                 wall = hb_types.GeoNodeWall(chain[0])
                 chain_height = wall.get_input('Height')
@@ -5488,28 +5499,9 @@ class home_builder_walls_OT_add_room_lights(bpy.types.Operator):
             return closed_chains
         use_chains = []
         for chain in open_chains:
-            all_points = []
-            for w in chain:
-                start, end = get_wall_endpoints(w)
-                all_points.append(Vector((start.x, start.y, 0)))
-                all_points.append(Vector((end.x, end.y, 0)))
-            if len(all_points) < 2:
+            points = open_chain_boundary(chain)
+            if len(points) < 4:
                 continue
-            min_x = min(p.x for p in all_points)
-            max_x = max(p.x for p in all_points)
-            min_y = min(p.y for p in all_points)
-            max_y = max(p.y for p in all_points)
-            if abs(max_x - min_x) < 0.01:
-                max_x = min_x + 3.0
-            if abs(max_y - min_y) < 0.01:
-                max_y = min_y + 3.0
-            points = [
-                Vector((min_x, min_y, 0)),
-                Vector((max_x, min_y, 0)),
-                Vector((max_x, max_y, 0)),
-                Vector((min_x, max_y, 0)),
-                Vector((min_x, min_y, 0)),
-            ]
             use_chains.append((chain, points))
         return use_chains
 
