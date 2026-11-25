@@ -1195,6 +1195,8 @@ OPTION_PAGES = {
             ('notes', lambda context: (
                 "LED strip in every recessed toe kick.",), None,
              {'when': lambda p: p.room_toe_kick_lights}),
+            ('gap', None, None),
+            ('bool', 'show_viewport_lights', "Show Lights"),
         ),
     },
     # The pull picked here is inert until one of the Assign commands

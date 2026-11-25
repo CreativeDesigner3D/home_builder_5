@@ -7124,6 +7124,27 @@ def _update_finish_toe_kick_type(self, context):
         self.finish_toe_kick_thickness = thickness
 
 
+def _view3d_spaces():
+    wm = getattr(bpy.context, 'window_manager', None)
+    for window in (wm.windows if wm is not None else ()):
+        for area in window.screen.areas:
+            if area.type == 'VIEW_3D':
+                yield area.spaces.active
+
+
+def _get_show_lights(self):
+    # The viewport's Light object-type visibility (Blender keeps it per
+    # 3D view); reads the first view, True when there is none.
+    for space in _view3d_spaces():
+        return bool(space.show_object_viewport_light)
+    return True
+
+
+def _set_show_lights(self, value):
+    for space in _view3d_spaces():
+        space.show_object_viewport_light = bool(value)
+
+
 def _update_room_under_cabinet_lights(self, context):
     from . import room_lighting
     room_lighting.update_under_cabinet_lights(self, context)
@@ -13722,6 +13743,14 @@ class Face_Frame_Scene_Props(PropertyGroup):
         default='QUARTER',
         update=_update_room_under_cabinet_light_bottom,
     )  # type: ignore
+    # Not stored: reads and writes the 3D views' Light visibility.
+    show_viewport_lights: BoolProperty(
+        name="Show Lights",
+        description="Show light objects in the 3D viewport (the Light "
+                    "toggle of the viewport's object type visibility)",
+        get=_get_show_lights,
+        set=_set_show_lights,
+    )  # type: ignore
     room_toe_kick_lights: BoolProperty(
         name="Toe Kick Lights",
         description="LED strip in the recessed toe kick of every base and "
@@ -14670,6 +14699,8 @@ class Face_Frame_Scene_Props(PropertyGroup):
         sub.prop(self, 'room_under_cabinet_light_bottom')
         col.separator()
         col.prop(self, 'room_toe_kick_lights')
+        col.separator()
+        col.prop(self, 'show_viewport_lights')
 
     def draw_finished_ends_ui(self, layout, context):
         # default_scribe and default_panel_frame_auto (with its top/bottom
