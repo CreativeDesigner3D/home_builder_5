@@ -107,6 +107,11 @@ def restyle(obj):
     style = eb._style(root)
     if style is not None:
         style.apply_materials_to_cabinet(root)
+    if root.get('IS_FRAMELESS_MISC_PART'):
+        if style is not None:
+            from . import props_hb_frameless
+            props_hb_frameless.push_misc_part_thickness(style, root)
+        return
     if not root.get('IS_FRAMELESS_CABINET_CAGE'):
         return
     mt = float(root.get('Material Thickness', 0.0) or 0.0)

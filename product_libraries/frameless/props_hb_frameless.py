@@ -994,6 +994,8 @@ def push_cabinet_thickness(style, cabinet_obj):
     thickness the solver builds finished parts at, and Front Thickness on
     its doors and drawer fronts. Re-solves the cabinet when anything
     changed, and says whether it did."""
+    if cabinet_obj.get('IS_FRAMELESS_MISC_PART'):
+        return push_misc_part_thickness(style, cabinet_obj)
     if not cabinet_obj.get('IS_FRAMELESS_CABINET_CAGE'):
         return False
     interior = style_thickness(style, 'interior')
@@ -1036,6 +1038,48 @@ def push_cabinet_thickness(style, cabinet_obj):
     if changed:
         hb_utils.run_calc_fix(bpy.context, cabinet_obj)
     return changed
+
+
+# The thickness a misc part was last given from its material. While the
+# part is still at it, the part follows its material; a thickness typed
+# in by hand is the part's own and is kept.
+MISC_THICKNESS_KEY = 'hb_material_thickness'
+
+
+def misc_part_thickness(style, obj):
+    """The thickness of the material a loose misc part is cut from: the
+    fronts' for one given the door material on its page, the exterior's
+    for one with a finished face or given the finish material, else the
+    interior's."""
+    from . import part_material
+    from . import solver_frameless
+    picked = part_material.choice(obj)
+    if picked == 'FRONT':
+        return style_thickness(style, 'front')
+    if solver_frameless.cut_from_exterior(obj, obj, style.exterior_two_sided()):
+        return style_thickness(style, 'exterior')
+    return style_thickness(style, 'interior')
+
+
+def push_misc_part_thickness(style, obj):
+    """Give a misc part the thickness of its material, unless it was
+    given one of its own. Says whether it changed."""
+    try:
+        part = hb_types.GeoNodeCutpart(obj)
+        current = float(part.get_input('Thickness'))
+    except Exception:
+        return False
+    given = obj.get(MISC_THICKNESS_KEY)
+    following = (abs(current - float(given)) <= 1e-6 if given is not None
+                 else abs(current - _room_thickness()) <= 1e-6)
+    if not following:
+        return False
+    value = misc_part_thickness(style, obj)
+    obj[MISC_THICKNESS_KEY] = value
+    if abs(current - value) <= 1e-7:
+        return False
+    part.set_input('Thickness', value)
+    return True
 
 
 def push_style_thickness(style):
