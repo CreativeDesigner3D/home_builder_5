@@ -5264,6 +5264,9 @@ def set_front_door_hw(front_obj, values, store=None):
 # glass leaf -- so it is stamped per leaf on the opening store as a
 # small dict: glass type id and whether the glass is included.
 GLASS_DOOR_KEY = 'HB_GLASS_DOOR'
+# An open-frame front: the style's frame with empty openings (no panel,
+# no glass), stamped on the front by whatever builds it.
+FRONT_OPEN_FRAME_STAMP = 'HB_OPEN_FRAME'
 # Stamp the build copies onto the front itself, so readers that walk
 # fronts (drawings, pricing) need no leaf / store lookup.
 GLASS_DOOR_FRONT_STAMP = 'HB_GLASS_DOOR'
@@ -6729,9 +6732,14 @@ class Face_Frame_Door_Style(PropertyGroup):
         # Set on every style assignment so it tracks the current panel choice.
         # Covers every GLASS panel kind (Prep for Glass + the mullion
         # choices, which render as plain glass until the bars land).
+        # An open-frame front (FRONT_OPEN_FRAME_STAMP, set by its
+        # builder) is the frame alone with nothing in the openings, so it
+        # is neither glass nor prepped for glass.
+        open_frame = bool(front_obj.get(FRONT_OPEN_FRAME_STAMP))
         glass_spec = (front_glass_door(front_obj)
-                      if role not in self._DRAWER_FRONT_ROLES else None)
-        front_obj['IS_PREP_FOR_GLASS'] = (
+                      if role not in self._DRAWER_FRONT_ROLES
+                      and not open_frame else None)
+        front_obj['IS_PREP_FOR_GLASS'] = not open_frame and (
             glass_spec is not None
             or style_options.panel_kind(self.front_panel)['kind'] == 'GLASS')
         if glass_spec is not None:
@@ -6815,9 +6823,14 @@ class Face_Frame_Door_Style(PropertyGroup):
                     front_obj.modifiers.remove(mod)
             info = plan['info']
             glass_rows = plan['glass_rows']
+            build = plan['build']
+            if open_frame:
+                build = dict(build, open_center=True, mullion=None,
+                             glass_rows=None)
+                glass_rows = None
             door_builder.build_door_mesh(front_obj.data, info,
                                          front_width, front_length,
-                                         front_thickness, **plan['build'])
+                                         front_thickness, **build)
             # Per-row glass lite rects are stamped for the drawings'
             # hatch pass.
             if glass_rows:

@@ -193,6 +193,13 @@ SECTION_PULL_LOCATION_ITEMS = [
     ('BOTTOM', "Bottom of Door", "Measured up from the bottom of the door"),
     ('TALL', "Tall Reach Height", "The tall vertical offset up from the door bottom"),
 ]
+# What fills a door / panel face's frame: the door style's panel, or
+# nothing (the frame alone, so a glass appliance door shows through).
+SECTION_CENTER_ITEMS = [
+    ('PANEL', "Panel", "The door style's center panel"),
+    ('OPEN', "Open Frame", "Stiles and rails only, no center panel and no "
+     "backer: the appliance shows through"),
+]
 INSTALL_TYPE_ITEMS = [
     ('OVERLAY', "Overlay", "Panels overlay the appliance frame"),
     ('FLUSH_INSET', "Flush Inset", "Panels flush with the surrounding cabinetry"),
@@ -299,6 +306,10 @@ class Appliance_Panel_Section(PropertyGroup):
     # so stacked rails can differ without every one needing a size.
     rail_above_width: FloatProperty(name="Rail Above", unit='LENGTH', default=-1.0,
                                     min=-1.0, update=_on_change)  # type: ignore
+    face_center: EnumProperty(name="Center", items=SECTION_CENTER_ITEMS,
+                              default='PANEL',
+                              description="What fills this face's frame",
+                              update=_on_change)  # type: ignore
     spec_note: StringProperty(name="Note", default="")  # type: ignore
 
 
@@ -1219,8 +1230,11 @@ def solve(props, dim_x, dim_z):
         rails.extend((x0, x1, za, zb) for za, zb in rl)
 
     backers = {}
+    owner = getattr(props, 'id_data', None)
     for i, rect in faces.items():
         s = secs[i]
+        if section_open_frame(owner, s):
+            continue
         btype = props.panel_type if s.backer == 'DEFAULT' else s.backer
         t = BACKER_THICKNESS.get(btype)
         if not t:
@@ -1558,11 +1572,27 @@ def _frameless_pull_settings():
     return settings, resolve
 
 
+def section_open_frame(appliance_obj, section):
+    """True when this face builds as an open frame: a door or panel face
+    set to Open Frame on a face frame appliance (frameless fronts have
+    no open-frame build)."""
+    if getattr(section, 'face_center', 'PANEL') != 'OPEN':
+        return False
+    if section.kind == 'DRAWER':
+        return False
+    if isinstance(appliance_obj, bpy.types.Object) and _is_frameless(appliance_obj):
+        return False
+    return True
+
+
 def _structure_key(props, backers):
     # Kinds are in it so a face changed between door and drawer is built
-    # fresh with the other role and style, rather than keeping the old one.
+    # fresh with the other role and style, rather than keeping the old one;
+    # centers so a face switched to or from Open Frame is restyled.
     return json.dumps({'config': props.config, 'n': len(props.sections),
                        'kinds': [s.kind for s in props.sections],
+                       'centers': [getattr(s, 'face_center', 'PANEL')
+                                   for s in props.sections],
                        'backers': sorted(int(i) for i in backers)})
 
 
@@ -1854,6 +1884,8 @@ def rebuild(appliance_obj):
         obj['AP_SECTION_INDEX'] = i
         obj['AP_SECTION_LABEL'] = sec.label
         obj['AP_SECTION_KIND'] = sec.kind
+        from . import props_hb_face_frame as _ffp
+        obj[_ffp.FRONT_OPEN_FRAME_STAMP] = section_open_frame(appliance_obj, sec)
         _place(obj, x0, x1, z0, z1, y, sec.face_thickness)
         if 'HB_DOOR_FRAME' in obj and not _is_frameless(appliance_obj):
             from .operators import ops_part_commands

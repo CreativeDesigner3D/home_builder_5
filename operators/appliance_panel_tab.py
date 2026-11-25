@@ -270,7 +270,10 @@ def _blocks(context, bp):
     out.append(('kind', index))
     out.append(('field', (('sec', index, 'label'), "Name", 'TEXT')))
     out.append(('field', (('sec', index, 'height'), "Height", 'SIZE')))
-    out.append(('field', (('sec', index, 'backer'), "Backer", 'MENU')))
+    if sec.kind != 'DRAWER' and not ap._is_frameless(bp):
+        out.append(('field', (('sec', index, 'face_center'), "Center", 'MENU')))
+    if not ap.section_open_frame(bp, sec):
+        out.append(('field', (('sec', index, 'backer'), "Backer", 'MENU')))
     if sec.kind == 'DOOR':
         out.append(('field', (('sec', index, 'hinge'), "Hinge", 'MENU')))
     out.append(('face_cmds', index))

@@ -451,6 +451,8 @@ class hb_face_frame_OT_add_appliance_panels(bpy.types.Operator):
             elif rect is not None:
                 r2.label(text="@ " + _fmt(rect[2]))
             r2.prop(s, 'z_hold', text="", icon='LOCKED' if s.z_hold else 'UNLOCKED')
+            if s.kind != 'DRAWER':
+                r2.prop(s, 'face_center', text="")
             r2.prop(s, 'backer', text="")
             b = backers.get(i)
             if b is not None:

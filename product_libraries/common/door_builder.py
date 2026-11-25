@@ -1933,7 +1933,7 @@ def build_door_mesh(mesh, info, width, height, thickness, materials=None,
                     inner_stile_section=None, member_section=None,
                     applied_section=None, applied_scope='ALL',
                     panel_grooves=None, mullion=None, shape=None,
-                    glass_rows=None, round_top=None):
+                    glass_rows=None, round_top=None, open_center=False):
     """Replace ``mesh``'s geometry with the door built as static boxes
     in front-cutpart local space: the door height runs along +X from
     the bottom edge at x=0, the width along -Y (a front cutpart with
@@ -1986,6 +1986,10 @@ def build_door_mesh(mesh, info, width, height, thickness, materials=None,
     door with a glass top and a wood bottom. Sticking strips and
     mullions still sweep those cells; raises and grooves do not.
 
+    ``open_center`` leaves every opening empty: the frame (stiles,
+    rails, sticking) is built and the panels / glass are not, for a
+    front the appliance behind it shows through.
+
     ``materials`` is an optional (stile, rail, panel[, glass]) tuple
     assigned as the mesh's material slots; face material indices are
     set either way (mid stiles index as stiles, mid rails as rails).
@@ -1999,7 +2003,7 @@ def build_door_mesh(mesh, info, width, height, thickness, materials=None,
         member_section=member_section, applied_section=applied_section,
         applied_scope=applied_scope, panel_grooves=panel_grooves,
         mullion=mullion, shape=shape, glass_rows=glass_rows,
-        round_top=round_top)
+        round_top=round_top, open_center=open_center)
     mesh.clear_geometry()
     mesh.from_pydata(verts, [], faces)
     # Slots first: clearing materials drops the material_index layer.
@@ -2112,7 +2116,7 @@ def build_door_geometry(info, width, height, thickness,
                         inner_stile_section=None, member_section=None,
                         applied_section=None, applied_scope='ALL',
                         panel_grooves=None, mullion=None, shape=None,
-                        glass_rows=None, round_top=None):
+                        glass_rows=None, round_top=None, open_center=False):
     """The door build_door_mesh makes, as plain (verts, faces, slots)
     lists in the same space -- for a mesh, or a picture of the door
     (door_picture)."""
@@ -2309,7 +2313,25 @@ def build_door_geometry(info, width, height, thickness,
                                mullion,
                                top_pts=shaped_top.get(id(part)),
                                bottom_pts=shaped_bottom.get(id(part)))
+    if open_center and info.get('door_type') != 'SLAB':
+        verts, faces, face_slots = _drop_open_cells(verts, faces, face_slots)
     return verts, faces, face_slots
+
+
+_OPEN_CENTER_SLOTS = frozenset({_PART_MAT_SLOT['panel'],
+                                _PART_MAT_SLOT['glass']})
+
+
+def _drop_open_cells(verts, faces, face_slots):
+    """(verts, faces, slots) without the panel and glass faces, and
+    without the vertices only those faces used."""
+    keep = [(f, sl) for f, sl in zip(faces, face_slots)
+            if sl not in _OPEN_CENTER_SLOTS]
+    used = sorted({i for f, _sl in keep for i in f})
+    remap = {old: new for new, old in enumerate(used)}
+    return ([verts[i] for i in used],
+            [tuple(remap[i] for i in f) for f, _sl in keep],
+            [sl for _f, sl in keep])
 
 
 # ---- Door pictures ---------------------------------------------------
