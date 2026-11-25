@@ -155,7 +155,7 @@ _CATALOGS = {}
 # (tab, what the picker segment says, what the panel is called).
 # The segment names the KIND of library, which is what you pick by; the
 # title names the library itself, which is what you are looking at.
-LIBRARY_TABS = (('FRAMELESS', "Frameless", "Sample"),
+LIBRARY_TABS = (('FRAMELESS', "Frameless", "Pulito"),
                 ('FACE FRAME', "Face Frame", "Custom Wood Products"),
                 ('CLOSET', "Closets", "Pulito"))
 
