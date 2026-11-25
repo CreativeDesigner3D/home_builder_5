@@ -17755,12 +17755,14 @@ def _sync_removable_floor_name(bottom_obj, seg):
 
 
 def _sync_drop_floor_name(stretcher_obj, seg):
-    """Name a front stretcher for what it is: 'Cooktop Floor N' when its
-    segment is built as a full-depth drop floor, 'Front Stretcher N'
-    when not, so the part reads right in the parts list."""
+    """Name a front stretcher for what it is: 'Cooktop Floor N' / 'Sink
+    Floor N' when its segment is built as a full-depth drop floor,
+    'Front Stretcher N' when not, so the part reads right in the parts
+    list."""
     n = seg['start_bay'] + 1
     floor = bool(seg.get('drop_floor'))
-    want = ('Cooktop Floor %d' if floor else 'Front Stretcher %d') % n
+    want = '%s %d' % (seg.get('drop_floor_name', 'Cooktop Floor')
+                      if floor else 'Front Stretcher', n)
     if (stretcher_obj.name != want
             and not stretcher_obj.name.startswith(want + '.')):
         stretcher_obj.name = want

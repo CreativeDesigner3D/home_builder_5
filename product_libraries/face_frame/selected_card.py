@@ -1018,6 +1018,8 @@ def _bay_appliance_fields(bay_obj):
          {'when': lambda bp: _drop_fillers(bp) and not bp.front_drop_set_appliance_width}),
         ('bool', 'sink_removable_floor', "Removable Floor",
          {'when': lambda bp: _base_held(bp) and _bay_appliance(bp) == 'SINK'}),
+        ('bool', 'sink_full_depth_floor', "Full Depth Floor",
+         {'when': lambda bp: _dropped(bp) and _bay_appliance(bp) == 'SINK'}),
         ('bool', 'farm_sink_custom_fit', "Custom Fit by Shop",
          {'when': lambda bp: _base_held(bp) and _bay_appliance_kind(bp) == 'FARM_SINK'}),
         ('actions', (edit, _act("Remove", 'hb_face_frame.remove_appliance_from_bay',

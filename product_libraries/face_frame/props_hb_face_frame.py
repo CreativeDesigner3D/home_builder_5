@@ -11287,6 +11287,20 @@ def _set_bay_toe_kick_type(self, value):
     types_face_frame.recalculate_face_frame_cabinet(root)
 
 
+def _update_sink_removable_floor(self, context):
+    # A removable floor and a full-depth floor behind the dropped rail
+    # are alternatives: turning one on turns the other off.
+    if self.sink_removable_floor and self.sink_full_depth_floor:
+        self.sink_full_depth_floor = False
+    _update_cabinet_dim(self, context)
+
+
+def _update_sink_full_depth_floor(self, context):
+    if self.sink_full_depth_floor and self.sink_removable_floor:
+        self.sink_removable_floor = False
+    _update_cabinet_dim(self, context)
+
+
 class Face_Frame_Bay_Props(PropertyGroup):
     """Per-bay state for face frame cabinets. Attached to each bay's cage
     object as bpy.types.Object.face_frame_bay.
@@ -11395,7 +11409,17 @@ class Face_Frame_Bay_Props(PropertyGroup):
         name="Removable Floor",
         description="Build the floor under the sink as a loose 3/4\" "
                     "panel resting on cleats, so it can be lifted out",
-        default=False, update=_update_cabinet_dim,
+        default=False, update=_update_sink_removable_floor,
+    )  # type: ignore
+    # Dropped sink bays: build the dropped front stretcher as a
+    # full-depth floor (behind the rail to the back, side to side), the
+    # way a dropped cooktop bay always is. Off by default.
+    sink_full_depth_floor: BoolProperty(
+        name="Full Depth Floor",
+        description="Build a full-depth 3/4\" floor behind the dropped rail, "
+                    "running to the cabinet back, in place of the front "
+                    "stretcher. Turns off Removable Floor",
+        default=False, update=_update_sink_full_depth_floor,
     )  # type: ignore
 
     top_rail_width: FloatProperty(

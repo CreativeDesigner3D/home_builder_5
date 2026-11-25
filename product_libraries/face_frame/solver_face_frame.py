@@ -439,6 +439,9 @@ class FaceFrameLayout:
             'remove_carcass':     bp.remove_carcass,
             'removable_floor':    bay_has_removable_floor(bay_obj),
             'cooktop_bay':        bay_obj.get('APPLIANCE_BAY') == 'COOKTOP',
+            'sink_full_depth_floor': (
+                bay_obj.get('APPLIANCE_BAY') == 'SINK'
+                and getattr(bp, 'sink_full_depth_floor', False)),
             'floating_bay':       bp.floating_bay,
             'finish_bay':         bp.finish_bay,
             'finish_bay_flush':   bp.finish_bay_flush,
@@ -974,11 +977,12 @@ def front_drop(layout, bay_index):
 
 def front_drop_floor(layout, bay_index):
     """True when this bay's dropped front stretcher is built as a
-    full-depth floor instead: a cooktop bay with a front drop. The
-    cooktop's box sits on it, so it runs from behind the face frame to
-    the back panel, side to side, at the dropped height."""
+    full-depth floor instead: a cooktop bay with a front drop, or a
+    dropped sink bay with Full Depth Floor on. It runs from behind the
+    face frame to the back panel, side to side, at the dropped height."""
     bay = layout.bays[bay_index]
-    return front_drop(layout, bay_index) > 0.0 and bool(bay.get('cooktop_bay'))
+    return front_drop(layout, bay_index) > 0.0 and bool(
+        bay.get('cooktop_bay') or bay.get('sink_full_depth_floor'))
 
 
 def front_drop_filler_widths(layout, bay_index):
@@ -4056,6 +4060,9 @@ def front_stretcher_segments(layout):
             'width':      width,
             'thickness':  layout.stretcher_t,
             'drop_floor': drop_floor,
+            'drop_floor_name': ('Cooktop Floor'
+                                if layout.bays[start].get('cooktop_bay')
+                                else 'Sink Floor'),
         })
     return segments
 
