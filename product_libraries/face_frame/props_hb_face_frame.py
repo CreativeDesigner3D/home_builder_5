@@ -12176,13 +12176,16 @@ class Face_Frame_Interior_Item(bpy.types.PropertyGroup):
     insert_half: EnumProperty(
         name="Place In",
         description="Keep this insert in one half of the drawer, beside a "
-                    "removable divider down the middle (Make 2 Equal "
-                    "Compartments)",
+                    "removable divider down the middle (added automatically "
+                    "when the first insert goes in a half)",
         items=[('AUTO', "Whole Drawer",
                 "Pack in after the insert above it in the list"),
-               ('LEFT', "Left Half", "Sit in the left half of the drawer"),
-               ('RIGHT', "Right Half",
-                "Sit in the right half of the drawer")],
+               ('LEFT', "Left Half (Places removable divider @ drawer center)",
+                "Sit in the left half of the drawer; a removable divider "
+                "is placed at the drawer center"),
+               ('RIGHT', "Right Half (Places removable divider @ drawer center)",
+                "Sit in the right half of the drawer; a removable divider "
+                "is placed at the drawer center")],
         default='AUTO', update=_update_insert_half,
     )  # type: ignore
     insert_offset: FloatProperty(
