@@ -996,6 +996,8 @@ def push_cabinet_thickness(style, cabinet_obj):
     changed, and says whether it did."""
     if cabinet_obj.get('IS_FRAMELESS_MISC_PART'):
         return push_misc_part_thickness(style, cabinet_obj)
+    if cabinet_obj.get('IS_FRAMELESS_PRODUCT_CAGE'):
+        return push_product_thickness(style, cabinet_obj)
     if not cabinet_obj.get('IS_FRAMELESS_CABINET_CAGE'):
         return False
     interior = style_thickness(style, 'interior')
@@ -1079,6 +1081,46 @@ def push_misc_part_thickness(style, obj):
     if abs(current - value) <= 1e-7:
         return False
     part.set_input('Thickness', value)
+    return True
+
+
+def product_thickness(style, obj):
+    """The thickness of the material a product (panel, filler, valance,
+    floating shelf, ...) is cut from. Its parts are built at one
+    Material Thickness, so the product takes the exterior's when any of
+    its parts is cut from the exterior (a finished face, or the finish /
+    door material on its page), else the interior's."""
+    from . import solver_frameless
+    from . import types_products
+    two_sided = style.exterior_two_sided()
+    for part in types_products.product_parts(obj).values():
+        if solver_frameless.cut_from_exterior(obj, part, two_sided):
+            return style_thickness(style, 'exterior')
+    return style_thickness(style, 'interior')
+
+
+def push_product_thickness(style, obj):
+    """Give a product the thickness of its material, unless it was given
+    one of its own (the same rule as a misc part), and re-solve it.
+    Says whether it changed."""
+    if 'Material Thickness' not in obj:
+        return False
+    try:
+        current = float(obj['Material Thickness'])
+    except Exception:
+        return False
+    given = obj.get(MISC_THICKNESS_KEY)
+    following = (abs(current - float(given)) <= 1e-6 if given is not None
+                 else abs(current - _room_thickness()) <= 1e-6)
+    if not following:
+        return False
+    value = product_thickness(style, obj)
+    obj[MISC_THICKNESS_KEY] = value
+    if abs(current - value) <= 1e-7:
+        return False
+    obj['Material Thickness'] = value
+    from . import types_products
+    types_products.recalculate_product(obj)
     return True
 
 
