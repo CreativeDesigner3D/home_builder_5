@@ -3734,6 +3734,7 @@ class FaceFrameCabinet(GeoNodeCage):
                 part.set_input('Length', seg['length'])
                 part.set_input('Width', seg['width'])
                 part.set_input('Thickness', seg['thickness'])
+                _sync_drop_floor_name(child, seg)
 
             elif role == PART_ROLE_REAR_STRETCHER:
                 seg = rear_str_by_start.get(child.get('hb_segment_start_bay'))
@@ -17751,6 +17752,19 @@ def _sync_removable_floor_name(bottom_obj, seg):
         bottom_obj[TAG_LOOSE_PART] = True
     elif TAG_LOOSE_PART in bottom_obj:
         del bottom_obj[TAG_LOOSE_PART]
+
+
+def _sync_drop_floor_name(stretcher_obj, seg):
+    """Name a front stretcher for what it is: 'Cooktop Floor N' when its
+    segment is built as a full-depth drop floor, 'Front Stretcher N'
+    when not, so the part reads right in the parts list."""
+    n = seg['start_bay'] + 1
+    floor = bool(seg.get('drop_floor'))
+    want = ('Cooktop Floor %d' if floor else 'Front Stretcher %d') % n
+    if (stretcher_obj.name != want
+            and not stretcher_obj.name.startswith(want + '.')):
+        stretcher_obj.name = want
+    stretcher_obj['hb_drop_floor'] = floor
 
 
 def sync_floor_cleats(root_obj, descriptors, key_tag):

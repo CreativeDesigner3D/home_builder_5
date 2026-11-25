@@ -438,6 +438,7 @@ class FaceFrameLayout:
             'remove_bottom':      bp.remove_bottom,
             'remove_carcass':     bp.remove_carcass,
             'removable_floor':    bay_has_removable_floor(bay_obj),
+            'cooktop_bay':        bay_obj.get('APPLIANCE_BAY') == 'COOKTOP',
             'floating_bay':       bp.floating_bay,
             'finish_bay':         bp.finish_bay,
             'finish_bay_flush':   bp.finish_bay_flush,
@@ -566,6 +567,7 @@ class FaceFrameLayout:
             'bottom_rail_width':  self.default_bottom_rail_width,
             'remove_bottom':      False,
             'remove_carcass':     False,
+            'cooktop_bay':        False,
             'floating_bay':       False,
             'finish_bay':         False,
             'finish_bay_flush':   False,
@@ -968,6 +970,15 @@ def front_drop(layout, bay_index):
     end / mid stiles all stay at the bay's full height (the countertop
     hides the open band above the dropped rail)."""
     return max(0.0, layout.bays[bay_index].get('front_drop', 0.0))
+
+
+def front_drop_floor(layout, bay_index):
+    """True when this bay's dropped front stretcher is built as a
+    full-depth floor instead: a cooktop bay with a front drop. The
+    cooktop's box sits on it, so it runs from behind the face frame to
+    the back panel, side to side, at the dropped height."""
+    bay = layout.bays[bay_index]
+    return front_drop(layout, bay_index) > 0.0 and bool(bay.get('cooktop_bay'))
 
 
 def front_drop_filler_widths(layout, bay_index):
@@ -4025,6 +4036,16 @@ def front_stretcher_segments(layout):
         if layout.bays[start].get('remove_carcass'):
             continue
         left_x, right_x = _stretcher_x_bounds(layout, start, end)
+        # A dropped cooktop bay gets a full-depth floor in place of the
+        # stretcher: same front edge and height, back edge at the back
+        # panel's front face (where the rear stretcher's back edge sits).
+        # Drop bays are always their own segment, so `start` speaks for it.
+        drop_floor = front_drop_floor(layout, start)
+        if drop_floor:
+            width = (layout.bays[start]['depth'] - back_thickness(layout)
+                     - layout.fft)
+        else:
+            width = layout.stretcher_w
         segments.append({
             'start_bay':  start,
             'end_bay':    end,
@@ -4032,8 +4053,9 @@ def front_stretcher_segments(layout):
             'y':          -layout.dim_y + layout.fft,
             'z':          carcass_top_z(layout, start) - front_drop(layout, start),
             'length':     right_x - left_x,
-            'width':      layout.stretcher_w,
+            'width':      width,
             'thickness':  layout.stretcher_t,
+            'drop_floor': drop_floor,
         })
     return segments
 
