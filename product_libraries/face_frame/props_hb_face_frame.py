@@ -7133,16 +7133,18 @@ def _view3d_spaces():
 
 
 def _get_show_lights(self):
-    # The viewport's Light object-type visibility (Blender keeps it per
-    # 3D view); reads the first view, True when there is none.
+    # The viewport overlay's Extras (Blender keeps it per 3D view): it
+    # hides the drawn light objects while they keep lighting a Rendered
+    # view (the Light object-type toggle would switch them off). Reads
+    # the first view, True when there is none.
     for space in _view3d_spaces():
-        return bool(space.show_object_viewport_light)
+        return bool(space.overlay.show_extras)
     return True
 
 
 def _set_show_lights(self, value):
     for space in _view3d_spaces():
-        space.show_object_viewport_light = bool(value)
+        space.overlay.show_extras = bool(value)
 
 
 def _update_room_under_cabinet_lights(self, context):
@@ -13743,11 +13745,13 @@ class Face_Frame_Scene_Props(PropertyGroup):
         default='QUARTER',
         update=_update_room_under_cabinet_light_bottom,
     )  # type: ignore
-    # Not stored: reads and writes the 3D views' Light visibility.
+    # Not stored: reads and writes the 3D views' Extras overlay.
     show_viewport_lights: BoolProperty(
         name="Show Lights",
-        description="Show light objects in the 3D viewport (the Light "
-                    "toggle of the viewport's object type visibility)",
+        description="Show the light objects in the 3D viewport. Hidden "
+                    "lights still light a Rendered view (this is the "
+                    "viewport overlay's Extras, so empties and cameras "
+                    "hide with them)",
         get=_get_show_lights,
         set=_set_show_lights,
     )  # type: ignore
