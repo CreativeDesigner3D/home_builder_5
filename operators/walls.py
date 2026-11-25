@@ -718,36 +718,63 @@ def _open_chain_room_side(chain, segs):
 
 
 def open_chain_boundary(chain):
-    """Plan outline of the room an open run of walls faces, as a closed
-    list of points (last repeats first): the box in front of each wall,
-    OPEN_ROOM_MIN_DEPTH deep or as deep as the run's returns, hulled into
-    one outline. An L of a long wall and a short return gets a full room
+    """open_walls_boundary for one run of walls."""
+    return open_walls_boundary([chain])
+
+
+def open_walls_boundary(chains):
+    """Plan outline of the one room the open wall runs `chains` face, as
+    a closed list of points (last repeats first). In front of each wall
+    the room reaches to the nearest wall facing it (a galley's far side,
+    the wall across from a U); where nothing faces it, OPEN_ROOM_MIN_DEPTH
+    or as deep as the run's own returns. The boxes are hulled into one
+    outline, so an L of a long wall and a short return gets a full room
     in front of the cabinets, not a strip the depth of the return. Empty
-    when the run has no length."""
+    when there are no walls with length."""
     from mathutils.geometry import convex_hull_2d
-    segs = []
-    walls = []
-    for w in chain:
-        s, e = get_wall_endpoints(w)
-        if (e - s).length > 0.01:
-            segs.append((s, e))
-            walls.append(w)
-    if not segs:
+    runs = []    # [(segs, side)]
+    for chain in chains:
+        segs, walls = [], []
+        for w in chain:
+            s, e = get_wall_endpoints(w)
+            if (e - s).length > 0.01:
+                segs.append((s, e))
+                walls.append(w)
+        if segs:
+            runs.append((segs, _open_chain_room_side(walls, segs)))
+    if not runs:
         return []
-    side = _open_chain_room_side(walls, segs)
-    pts = [p for seg in segs for p in seg]
+    every = [(s, e) for segs, _side in runs for s, e in segs]
     corners = []
-    for s, e in segs:
-        d = (e - s).normalized()
-        n = Vector((d.y, -d.x)) * side
-        reach = max((p - s).dot(n) for p in pts)
-        depth = max(OPEN_ROOM_MIN_DEPTH, reach)
-        corners += [s, e, e + n * depth, s + n * depth]
+    for segs, side in runs:
+        own = [p for seg in segs for p in seg]
+        for s, e in segs:
+            d = (e - s).normalized()
+            n = Vector((d.y, -d.x)) * side
+            length = (e - s).length
+            facing = []
+            for s2, e2 in every:
+                d2 = (e2 - s2).normalized()
+                if d.dot(d2) > -0.7:
+                    continue        # not turned back toward this wall
+                v = min((s2 - s).dot(n), (e2 - s).dot(n))
+                if v <= 0.3:
+                    continue        # beside or behind it
+                u0 = min((s2 - s).dot(d), (e2 - s).dot(d))
+                u1 = max((s2 - s).dot(d), (e2 - s).dot(d))
+                if u1 < 0.0 or u0 > length:
+                    continue        # not across from it
+                facing.append(v)
+            if facing:
+                depth = min(facing)
+            else:
+                reach = max((p - s).dot(n) for p in own)
+                depth = max(OPEN_ROOM_MIN_DEPTH, reach)
+            corners += [s, e, e + n * depth, s + n * depth]
     hull = [corners[i] for i in convex_hull_2d(corners)]
     out = [Vector((p.x, p.y, 0.0)) for p in hull]
     out.append(out[0].copy())
     return out
-    
 
 
 
@@ -5038,8 +5065,9 @@ class home_builder_walls_OT_add_floor(bpy.types.Operator):
                 floors_created += 1
         else:
             # No closed loops — create bounding box floors from open chains
-            for chain in open_chains:
-                points = open_chain_boundary(chain)
+            # The open runs face one room together.
+            for chain in ([w for c in open_chains for w in c],):
+                points = open_walls_boundary(open_chains)
                 if len(points) < 4:
                     continue
 
@@ -5139,8 +5167,9 @@ class home_builder_walls_OT_add_ceiling(bpy.types.Operator):
                 ceiling_obj['IS_CEILING_BP'] = True
                 ceilings_created += 1
         else:
-            for chain in open_chains:
-                points = open_chain_boundary(chain)
+            # The open runs face one room together.
+            for chain in ([w for c in open_chains for w in c],):
+                points = open_walls_boundary(open_chains)
                 if len(points) < 4:
                     continue
 
@@ -5211,6 +5240,84 @@ def _apply_ambient_fill(scene):
     bg.inputs['Color'].default_value = AMBIENT_FILL_COLOR
     bg.inputs['Strength'].default_value = AMBIENT_FILL_STRENGTH
     return True
+
+
+# A can directly over a tall or upper cabinet reads as a light sitting on
+# the cabinet. Cans whose spot falls on (or just beside) a cabinet that
+# reaches within LIGHT_HIGH_CABINET of the ceiling slide out into the room
+# to LIGHT_CABINET_CLEAR in front of its face. Base cabinets keep theirs:
+# a can over the counter is where it belongs.
+LIGHT_HIGH_CABINET = 0.6096    # 24" below the ceiling
+LIGHT_CABINET_CLEAR = 0.2032   # 8" in front of the face
+LIGHT_CABINET_SIDE = 0.0762    # 3" past either end
+LIGHT_MIN_APART = 0.3048       # merge cans pushed within 12" of another
+
+
+def _high_cabinet_boxes(walls, ceiling_height):
+    """[(start, along, into_room, u0, u1, v1)] for every cabinet hung on
+    `walls` whose top is near the ceiling: its span along the wall and how
+    far it comes out, measured from its built parts."""
+    dg = bpy.context.evaluated_depsgraph_get()
+    out = []
+    for wall in walls:
+        s, e = get_wall_endpoints(wall)
+        if (e - s).length < 0.01:
+            continue
+        d = (e - s).normalized()
+        n = Vector((d.y, -d.x))
+        for cab in wall.children:
+            if cab.name.lower().startswith('obj_'):
+                continue
+            us, vs, top = [], [], None
+            for ob in [cab] + list(cab.children_recursive):
+                if ob.type != 'MESH' or ob.hide_viewport:
+                    continue
+                ev = ob.evaluated_get(dg)
+                for c in ev.bound_box:
+                    w = ev.matrix_world @ Vector(c)
+                    q = w.to_2d() - s
+                    us.append(q.dot(d))
+                    vs.append(q.dot(n))
+                    top = w.z if top is None else max(top, w.z)
+            if not us or top is None:
+                continue
+            if top < ceiling_height - LIGHT_HIGH_CABINET:
+                continue
+            if max(vs) - min(vs) < 0.05:
+                continue
+            side = n if sum(vs) >= 0.0 else -n
+            reach = max(vs) if sum(vs) >= 0.0 else -min(vs)
+            out.append((s, d, side, min(us), max(us), reach))
+    return out
+
+
+def clear_lights_of_cabinets(positions, walls, ceiling_height, boundary):
+    """`positions` with any can over a tall / upper cabinet moved out in
+    front of it; ones that end up outside `boundary` or on top of another
+    are dropped."""
+    boxes = _high_cabinet_boxes(walls, ceiling_height)
+    if not boxes:
+        return positions
+    moved = []
+    for pos in positions:
+        p = Vector((pos.x, pos.y))
+        for _pass in range(3):
+            hit = False
+            for s, d, side, u0, u1, reach in boxes:
+                q = p - s
+                u, v = q.dot(d), q.dot(side)
+                if (u0 - LIGHT_CABINET_SIDE <= u <= u1 + LIGHT_CABINET_SIDE
+                        and -0.05 <= v < reach + LIGHT_CABINET_CLEAR):
+                    p = p + side * (reach + LIGHT_CABINET_CLEAR - v)
+                    hit = True
+            if not hit:
+                break
+        if len(boundary) >= 3 and not point_in_polygon(p, boundary):
+            continue
+        if any((p - m).length < LIGHT_MIN_APART for m in moved):
+            continue
+        moved.append(p)
+    return moved
 
 
 def _light_watts_for_room(area_m2, light_count, ceiling_height):
@@ -5498,8 +5605,11 @@ class home_builder_walls_OT_add_room_lights(bpy.types.Operator):
         if closed_chains:
             return closed_chains
         use_chains = []
-        for chain in open_chains:
-            points = open_chain_boundary(chain)
+        # The open runs face one room together.
+        if not open_chains:
+            return []
+        for chain in ([w for c in open_chains for w in c],):
+            points = open_walls_boundary(open_chains)
             if len(points) < 4:
                 continue
             use_chains.append((chain, points))
@@ -5598,6 +5708,9 @@ class home_builder_walls_OT_add_room_lights(bpy.types.Operator):
                 min_spacing=self.light_spacing,
                 edge_offset=self.edge_offset
             )
+
+            light_positions = clear_lights_of_cabinets(
+                light_positions, chain, ceiling_height, points)
 
             if not light_positions:
                 continue
