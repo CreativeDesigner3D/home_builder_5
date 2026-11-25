@@ -3324,11 +3324,19 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
         with types_face_frame.suspend_recalc():
             self._assign_style_to_cabinet_inner(cabinet_obj)
         # Panels on an appliance housed in the cabinet wear its style.
+        # Collect the appliances first: a repaint can rebuild a panel's
+        # own parts (pulls, door geometry), so walking the live
+        # descendant list would reach objects that no longer exist.
         from . import appliance_panels
-        for child in list(cabinet_obj.children_recursive):
-            if (child.get('IS_APPLIANCE')
-                    and child.get('APPLIANCE_PANEL_STRUCTURE')):
-                appliance_panels.repaint(child)
+        appliances = [child for child in cabinet_obj.children_recursive
+                      if (child.get('IS_APPLIANCE')
+                          and child.get('APPLIANCE_PANEL_STRUCTURE'))]
+        for appliance in appliances:
+            try:
+                appliance.name
+            except ReferenceError:
+                continue
+            appliance_panels.repaint(appliance)
 
     def _assign_style_to_cabinet_inner(self, cabinet_obj):
         self.apply_overlay_to_cabinet(cabinet_obj)
