@@ -228,6 +228,11 @@ PART_ROLE_FB_LIGHT = 'FINISHED_BOTTOM_LIGHT'
 # so the glow has a visible source when looking up at the cabinet (the
 # area light itself renders as nothing).
 PART_ROLE_FB_LED_STRIP = 'FINISHED_BOTTOM_LED_STRIP'
+# Toe kick light: an LED strip on the underside of the cabinet bottom,
+# just behind the face frame, lighting the floor, plus an area light for
+# renders. Built when the cabinet's toe_kick_light is on.
+PART_ROLE_TK_LIGHT = 'TOE_KICK_LIGHT'
+PART_ROLE_TK_LED_STRIP = 'TOE_KICK_LED_STRIP'
 PART_ROLE_TOE_KICK_SUBFRONT = 'TOE_KICK_SUBFRONT'
 # Second beam of the sub-base, run near the back to carry the back
 # edge of the carcass bottom (see solver.kick_subrear_segments).
@@ -2491,6 +2496,9 @@ class FaceFrameCabinet(GeoNodeCage):
                         ff_scene.default_include_finish_toe_kick)
                     cab_props.finish_toe_kick_type = (
                         ff_scene.default_finish_toe_kick_type)
+                # Room lighting: a cabinet placed in a lit room is lit.
+                from . import room_lighting
+                room_lighting.seed_new_cabinet(self.obj, scene)
 
             cab_props.width = self.default_width
             cab_props.height = self.default_height
@@ -4328,6 +4336,10 @@ class FaceFrameCabinet(GeoNodeCage):
         # Toe kick valance: the board across the toe space, attached or
         # sent loose. No-op + cleanup when off.
         self._apply_toe_kick_valance(layout)
+
+        # Toe kick light: LED strip + render light in the recess. No-op
+        # + cleanup when off or when the kick has no recess.
+        self._apply_toe_kick_light(layout)
 
         # Angled corners: end stiles stay square; a mitre between two
         # of them is the user's pick (Miter Joint). Clears the automatic
@@ -7998,6 +8010,95 @@ class FaceFrameCabinet(GeoNodeCage):
             if child.get('hb_part_role') == PART_ROLE_TOE_KICK_VALANCE:
                 return child
         return None
+
+    # Recessed kick types: the toe space is open under the cabinet front.
+    _TK_LIGHT_KICK_TYPES = ('NOTCH', 'LOOSE', 'BUN_FEET')
+    # Strip: 1/2" wide, 1/8" behind the face frame, 1/8" thick, held 1"
+    # in from each cabinet end.
+    _TK_STRIP_GAP = inch(0.125)
+    _TK_STRIP_WIDTH = inch(0.5)
+    _TK_STRIP_THICK = inch(0.125)
+    _TK_STRIP_END = inch(1.0)
+
+    def _cleanup_toe_kick_light(self):
+        for child in list(self.obj.children):
+            if child.get('hb_part_role') not in (PART_ROLE_TK_LIGHT,
+                                                 PART_ROLE_TK_LED_STRIP):
+                continue
+            data = child.data
+            bpy.data.objects.remove(child, do_unlink=True)
+            if data is not None and data.users == 0:
+                if isinstance(data, bpy.types.Mesh):
+                    bpy.data.meshes.remove(data)
+                elif isinstance(data, bpy.types.Light):
+                    bpy.data.lights.remove(data)
+
+    def _toe_kick_light_child(self, role):
+        return next((c for c in self.obj.children
+                     if c.get('hb_part_role') == role), None)
+
+    def _apply_toe_kick_light(self, layout):
+        """LED strip on the underside of the cabinet bottom, just behind
+        the face frame, with an area light pointing at the floor for
+        renders. Only on a base / tall whose kick is recessed (notched,
+        loose ladder, bun feet) deep enough to take the strip, and not
+        behind a toe kick valance."""
+        cab = self.obj.face_frame_cabinet
+        height = layout.tkh
+        setback = (solver.loose_kick_setback(layout)
+                   if layout.toe_kick_type in ('LOOSE', 'BUN_FEET')
+                   else layout.tks)
+        y_front = -cab.depth + layout.fft + self._TK_STRIP_GAP
+        length = cab.width - 2.0 * self._TK_STRIP_END
+        if (not getattr(cab, 'toe_kick_light', False)
+                or layout.cabinet_type not in ('BASE', 'TALL')
+                or not layout.has_toe_kick
+                or layout.toe_kick_type not in self._TK_LIGHT_KICK_TYPES
+                or getattr(cab, 'toe_kick_valance', False)
+                or height <= self._TK_STRIP_THICK
+                or -cab.depth + setback < y_front + self._TK_STRIP_WIDTH
+                or length <= 0.0):
+            self._cleanup_toe_kick_light()
+            return
+        x0 = self._TK_STRIP_END
+        x1 = x0 + length
+        y0, y1 = y_front, y_front + self._TK_STRIP_WIDTH
+        z1 = height
+        z0 = height - self._TK_STRIP_THICK
+
+        strip = self._toe_kick_light_child(PART_ROLE_TK_LED_STRIP)
+        if strip is None:
+            mesh = bpy.data.meshes.new('Toe Kick LED Strip')
+            strip = hb_utils.new_object('Toe Kick LED Strip', mesh)
+            for coll in self.obj.users_collection:
+                coll.objects.link(strip)
+            strip.parent = self.obj
+            strip['hb_part_role'] = PART_ROLE_TK_LED_STRIP
+            strip['IS_2D_ANNOTATION'] = True
+        self._rebuild_box_mesh(strip, x0, x1, y0, y1, z0, z1)
+        mat = self._led_strip_material()
+        if strip.data.materials:
+            strip.data.materials[0] = mat
+        else:
+            strip.data.materials.append(mat)
+
+        light_obj = self._toe_kick_light_child(PART_ROLE_TK_LIGHT)
+        if light_obj is None or light_obj.type != 'LIGHT':
+            light_data = bpy.data.lights.new('Toe Kick LED Light', 'AREA')
+            light_obj = hb_utils.new_object('Toe Kick LED Light', light_data)
+            for coll in self.obj.users_collection:
+                coll.objects.link(light_obj)
+            light_obj.parent = self.obj
+            light_obj['hb_part_role'] = PART_ROLE_TK_LIGHT
+            light_obj['IS_2D_ANNOTATION'] = True
+            light_obj.data.energy = 10.0
+        light = light_obj.data
+        light.shape = 'RECTANGLE'
+        light.size = length
+        light.size_y = self._TK_STRIP_WIDTH * 0.8
+        # An area light shines down its -Z: straight at the floor.
+        light_obj.rotation_euler = (0.0, 0.0, 0.0)
+        light_obj.location = ((x0 + x1) / 2.0, (y0 + y1) / 2.0, z0 - 0.001)
 
     def _cleanup_toe_kick_valance(self):
         """Reverse of _apply_toe_kick_valance. No-op when nothing to undo."""

@@ -744,6 +744,7 @@ def _cabinet_fields(root, cab):
                 ('bool', 'include_finish_toe_kick', "Finish Toe Kick", {'when': _kick_closed}),
                 ('enum', 'finish_toe_kick_type', "Finish Kick Type",
                  {'when': lambda c: _kick_closed(c) and c.include_finish_toe_kick}),
+                ('bool', 'toe_kick_light', "Toe Kick Light", {'when': _kick_light_ok}),
                 ('bool', 'toe_kick_valance', "Toe Kick Valance", {'when': _valance_ok}),
                 ('enum', 'toe_kick_valance_profile', "Valance Profile", {'when': _valance_on}),
                 ('bool', 'toe_kick_valance_loose', "Valance Sent Loose", {'when': _valance_on}),
@@ -862,6 +863,12 @@ def _valance_ok(cab):
     # is not left open for a separate base.
     return (_cab_type(cab) in ('BASE', 'TALL')
             and cab.toe_kick_type != 'FLOATING')
+
+
+def _kick_light_ok(cab):
+    # Same kick types the light builder lights: a recess under the front.
+    return (_cab_type(cab) in ('BASE', 'TALL')
+            and cab.toe_kick_type in ('NOTCH', 'LOOSE', 'BUN_FEET'))
 
 
 def _valance_on(cab):

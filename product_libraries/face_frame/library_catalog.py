@@ -345,6 +345,7 @@ OPTION_FORMS = (
     ("Accessories", 'draw_accessories_ui'),
     ("Countertops & Backsplash", 'draw_countertop_ui'),
     ("Molding", 'draw_molding_ui'),
+    ("Lighting", 'draw_lighting_ui'),
 )
 
 
@@ -1172,6 +1173,28 @@ OPTION_PAGES = {
              {'when': lambda p: (p.default_finished_end_type != 'FINISHED'
                                  or p.default_finished_back_type
                                  != 'FINISHED')}),
+        ),
+    },
+    # Room-level: each toggle writes every cabinet in the room (see
+    # room_lighting); a cabinet's own settings still override it after.
+    'draw_lighting_ui': {
+        'kind': 'form',
+        'title': "Lighting",
+        'props': 'hb_face_frame',
+        'scope': 'scene',
+        'fields': (
+            ('bool', 'room_under_cabinet_lights', "Under Cabinet Lights"),
+            ('enum', 'room_under_cabinet_light_bottom', "Finished Bottom",
+             {'when': lambda p: p.room_under_cabinet_lights}),
+            ('notes', lambda context: (
+                "LED route and light under every upper.",
+                "Uppers with no finished bottom get this one."), None,
+             {'when': lambda p: p.room_under_cabinet_lights}),
+            ('gap', None, None),
+            ('bool', 'room_toe_kick_lights', "Toe Kick Lights"),
+            ('notes', lambda context: (
+                "LED strip in every recessed toe kick.",), None,
+             {'when': lambda p: p.room_toe_kick_lights}),
         ),
     },
     # The pull picked here is inert until one of the Assign commands

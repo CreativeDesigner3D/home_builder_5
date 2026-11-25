@@ -7124,6 +7124,21 @@ def _update_finish_toe_kick_type(self, context):
         self.finish_toe_kick_thickness = thickness
 
 
+def _update_room_under_cabinet_lights(self, context):
+    from . import room_lighting
+    room_lighting.update_under_cabinet_lights(self, context)
+
+
+def _update_room_under_cabinet_light_bottom(self, context):
+    from . import room_lighting
+    room_lighting.update_under_cabinet_light_bottom(self, context)
+
+
+def _update_room_toe_kick_lights(self, context):
+    from . import room_lighting
+    room_lighting.update_toe_kick_lights(self, context)
+
+
 def _update_exclude_light_rail(self, context):
     """Opting a cabinet in / out re-applies the room's light rail."""
     from . import light_rail
@@ -10789,6 +10804,14 @@ class Face_Frame_Cabinet_Props(PropertyGroup):
         items=_bottom_rail_profile_items,
         update=_update_cabinet_dim,
     )  # type: ignore
+    toe_kick_light: BoolProperty(
+        name="Toe Kick Light",
+        description="An LED strip under the cabinet bottom, behind the face "
+                    "frame, lighting the floor of a recessed toe kick "
+                    "(with an area light for renders)",
+        default=False,
+        update=_update_cabinet_dim,
+    )  # type: ignore
     toe_kick_valance: BoolProperty(
         name="Toe Kick Valance",
         description="A valance board across the toe space, in the plane "
@@ -13672,6 +13695,41 @@ class Face_Frame_Scene_Props(PropertyGroup):
         update=update_include_drawer_boxes,
     )  # type: ignore
 
+    # ---- Room lighting (Options > Lighting) ----
+    # Written to every cabinet in the room by room_lighting; new
+    # cabinets placed while on pick them up.
+    room_under_cabinet_lights: BoolProperty(
+        name="Under Cabinet Lights",
+        description="LED route and light under every upper cabinet in the "
+                    "room. Uppers without a finished bottom get the "
+                    "condition below; turning this off puts them back",
+        default=False,
+        update=_update_room_under_cabinet_lights,
+    )  # type: ignore
+    room_under_cabinet_light_bottom: EnumProperty(
+        name="Finished Bottom",
+        description="Finished bottom given to lit uppers that have none",
+        items=[
+            ('QUARTER', "1/4\"",
+             "1/4\" finished bottom under the cabinet bottom"),
+            ('THREE_QUARTER', "3/4\"",
+             "3/4\" finished bottom under the cabinet bottom"),
+            ('QUARTER_FLUSH', "1/4\" Flush",
+             "1/4\" finished bottom, flush at the rail bottom"),
+            ('THREE_QUARTER_FLUSH', "3/4\" Flush",
+             "3/4\" finished bottom, flush at the rail bottom"),
+        ],
+        default='QUARTER',
+        update=_update_room_under_cabinet_light_bottom,
+    )  # type: ignore
+    room_toe_kick_lights: BoolProperty(
+        name="Toe Kick Lights",
+        description="LED strip in the recessed toe kick of every base and "
+                    "tall cabinet in the room",
+        default=False,
+        update=_update_room_toe_kick_lights,
+    )  # type: ignore
+
     # ---- Finished Ends and Backs defaults ----
     # Drives the "Apply to All Exposed" bulk operator and seeds new
     # cabinets at create_cabinet_root time. Cabinet-level overrides
@@ -14604,6 +14662,15 @@ class Face_Frame_Scene_Props(PropertyGroup):
     # =====================================================================
     # UI: pulls (Options tab)
     # =====================================================================
+    def draw_lighting_ui(self, layout, context):
+        col = layout.column(align=True)
+        col.prop(self, 'room_under_cabinet_lights')
+        sub = col.column(align=True)
+        sub.enabled = self.room_under_cabinet_lights
+        sub.prop(self, 'room_under_cabinet_light_bottom')
+        col.separator()
+        col.prop(self, 'room_toe_kick_lights')
+
     def draw_finished_ends_ui(self, layout, context):
         # default_scribe and default_panel_frame_auto (with its top/bottom
         # rail and stile width children) are intentionally hidden from
