@@ -651,6 +651,28 @@ def cut_from_exterior(root, part, two_sided=False):
     return top or bottom
 
 
+def board_material_thickness(part, owner, mt):
+    """The thickness of an inside board (a shelf, a fixed shelf, a
+    divider) from the material it is cut from: the exterior's for a
+    board given the finish material on its page, or any board of a
+    Finished Interior cabinet; the fronts' for one given the door
+    material; else Material Thickness."""
+    if part is None:
+        return mt
+    root = cabinet_root(owner)
+    if root is None:
+        return mt
+    from . import part_material
+    choice = part_material.choice(part)
+    if choice == 'INTERIOR':
+        return mt
+    if choice == 'FRONT':
+        return float(prompt(root, 'Front Thickness', mt))
+    if choice == 'FINISH' or root.get('Finished Interior', False):
+        return float(prompt(root, EXTERIOR_THICKNESS_KEY, mt))
+    return mt
+
+
 def _set_back(part, p, inner, z0, z1, bottom, top):
     """The back between the sides, from z0 up to z1 - the faces of what
     it stands between. With a tongue it runs that far on into the grooves
@@ -2448,12 +2470,17 @@ def _solve_splitter(splitter_obj, vertical):
     mt = float(prompt(splitter_obj, 'Material Thickness', inch(0.75)))
     count = len(calc.prompts)
     span = dim_z if vertical else dim_x
+    # Each board is the thickness of the material it is cut from.
+    boards_t = [board_material_thickness(parts.get(('SPLITTER', i)),
+                                         splitter_obj, mt)
+                for i in range(1, count + 1)]
+    taken = sum(boards_t[:count - 1])
     sizes = None
     if vertical:
         sizes = _solve_front_heights(splitter_obj, parts, calc,
-                                     span - mt * (count - 1))
+                                     span - taken)
     if sizes is None:
-        sizes = solve_calculator(calc, span - mt * (count - 1))
+        sizes = solve_calculator(calc, span - taken)
 
     if vertical:
         # Openings run top to bottom; the last one sits on the floor of
@@ -2462,6 +2489,7 @@ def _solve_splitter(splitter_obj, vertical):
         sub_front_fitted = False
         for i in range(1, count + 1):
             size = sizes[i - 1]
+            bt = boards_t[i - 1]
             opening = parts.get(('OPENING', i))
             if opening is not None:
                 z = 0.0 if i == count else top - size
@@ -2479,16 +2507,17 @@ def _solve_splitter(splitter_obj, vertical):
                 if _drawer_stretcher_board(splitter_obj, opening):
                     width = min(_stretcher_width(splitter_obj), dim_y)
                 sink_split = _sink_split_board(splitter_obj, opening)
-                set_part(board, (0.0, 0.0, top - size - mt), length=dim_x,
-                         width=width, thickness=mt, visible=not sink_split)
+                set_part(board, (0.0, 0.0, top - size - bt), length=dim_x,
+                         width=width, thickness=bt, visible=not sink_split)
                 if sink_split and not sub_front_fitted:
                     sub_front_fitted = _fit_sink_sub_front(
-                        splitter_obj, opening, top - size - mt)
-            top -= size + mt
+                        splitter_obj, opening, top - size - bt)
+            top -= size + bt
     else:
         x = 0.0
         for i in range(1, count + 1):
             size = sizes[i - 1]
+            bt = boards_t[i - 1]
             opening = parts.get(('OPENING', i))
             if opening is not None:
                 set_cage(opening, (x, 0.0, 0.0), dim_x=size, dim_y=dim_y,
@@ -2501,8 +2530,8 @@ def _solve_splitter(splitter_obj, vertical):
                 # one. Dividers made before it was set are put right here.
                 GeoNodeCutpart(board).set_input('Mirror Z', True)
                 set_part(board, (x + size, 0.0, 0.0), length=dim_z,
-                         width=dim_y, thickness=mt)
-            x += size + mt
+                         width=dim_y, thickness=bt)
+            x += size + bt
     # A board added after the cabinet was styled is painted as it is
     # made; the ones already painted are left alone.
     root = cabinet_root(splitter_obj)
@@ -2613,7 +2642,9 @@ def _solve_shelves(interior_obj):
     clear_drivers(shelf)
     shelf[PART_ROLE_KEY] = 'SHELF'
     dim_x, dim_y, dim_z = cage_dims(interior_obj)
-    mt = float(prompt(interior_obj, 'Material Thickness', inch(0.75)))
+    mt = board_material_thickness(
+        shelf, interior_obj,
+        float(prompt(interior_obj, 'Material Thickness', inch(0.75))))
     qty = int(prompt(interior_obj, 'Shelf Quantity', 1))
     clip_gap = float(prompt(interior_obj, 'Shelf Clip Gap', inch(0.0625)))
     setback = float(prompt(interior_obj, 'Shelf Setback', inch(0.25)))

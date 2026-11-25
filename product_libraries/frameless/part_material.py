@@ -98,13 +98,23 @@ def materials(obj, own_style):
 
 
 def restyle(obj):
-    """Repaint the part's cabinet or product so the choice shows."""
+    """Repaint the part's cabinet or product so the choice shows, and
+    rebuild a cabinet whose materials differ in thickness, since a
+    board takes the thickness of the material it is cut from."""
     root = owner(obj)
     if root is None:
         return
     style = eb._style(root)
     if style is not None:
         style.apply_materials_to_cabinet(root)
+    if not root.get('IS_FRAMELESS_CABINET_CAGE'):
+        return
+    mt = float(root.get('Material Thickness', 0.0) or 0.0)
+    others = (root.get(solver_frameless.EXTERIOR_THICKNESS_KEY, mt),
+              root.get('Front Thickness', mt))
+    if any(abs(float(t) - mt) > 1e-9 for t in others):
+        from ... import hb_utils
+        hb_utils.run_calc_fix(bpy.context, root)
 
 
 def set_choice(obj, value):
