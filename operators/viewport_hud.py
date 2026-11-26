@@ -57,6 +57,7 @@ _ADDON_PKG = __package__.rsplit(".", 1)[0]
 # ---- Module state -----------------------------------------------------------
 
 _draw_handle = None        # permanent SpaceView3D draw handler
+_pass_handle = None        # PRE_VIEW handler that opens a layout pass
 _hud_shutdown = False      # set by unregister(); gates the draw + keymap ops
 _mouse = (-1, -1)          # last cursor pos, region-local
 _mouse_region = None       # region _mouse was measured in (hover is per-region)
@@ -2478,8 +2479,27 @@ def _draw_hover_chip(shader, font_id, rect, area, text):
 
 # The navigator and room palette walk the model tree on every redraw;
 # answer their children lookups from one parent map per draw.
-@hb_utils.with_children_index
+def _begin_pass():
+    """PRE_VIEW: the region has started a redraw. Open the navigator's
+    layout pass so the overlays that ask where the panel is before the
+    HUD paints it share one layout with the HUD."""
+    if _hud_shutdown:
+        return
+    region = bpy.context.region
+    if region is None or region.type != 'WINDOW':
+        return
+    scene_navigator.begin_draw_pass(region)
+
+
 def _draw_hud():
+    try:
+        _draw_hud_pass()
+    finally:
+        scene_navigator.end_draw_pass()
+
+
+@hb_utils.with_children_index
+def _draw_hud_pass():
     """Permanent POST_PIXEL callback -- runs once per 3D viewport WINDOW
     region. Cheap no-op when the HUD preference is off."""
     if _hud_shutdown or not _hud_enabled():
@@ -2971,20 +2991,29 @@ classes = (
 
 
 def register():
-    global _draw_handle, _hud_shutdown
+    global _draw_handle, _pass_handle, _hud_shutdown
     _hud_shutdown = False
     for cls in classes:
         bpy.utils.register_class(cls)
     _draw_handle = bpy.types.SpaceView3D.draw_handler_add(
         _draw_hud, (), 'WINDOW', 'POST_PIXEL')
+    _pass_handle = bpy.types.SpaceView3D.draw_handler_add(
+        _begin_pass, (), 'WINDOW', 'PRE_VIEW')
     _register_keymaps()
 
 
 def unregister():
-    global _draw_handle, _hud_shutdown
+    global _draw_handle, _pass_handle, _hud_shutdown
     _hud_shutdown = True
     unregister_tip()
     _unregister_keymaps()
+    if _pass_handle is not None:
+        try:
+            bpy.types.SpaceView3D.draw_handler_remove(_pass_handle, 'WINDOW')
+        except Exception:
+            pass
+        _pass_handle = None
+    scene_navigator.end_draw_pass()
     if _draw_handle is not None:
         try:
             bpy.types.SpaceView3D.draw_handler_remove(_draw_handle, 'WINDOW')

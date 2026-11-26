@@ -1525,6 +1525,42 @@ def close_panel():
     _auto_opened_for = None
 
 
+# One layout per viewport redraw. Every overlay that keeps its labels off
+# the panel asks where the panel is, and each ask laid the whole panel out
+# again (a hosted tab twice over), so one redraw built it three or four
+# times. The HUD opens a pass when the region starts drawing and closes it
+# after the panel is painted; asks inside the pass share one layout. Asks
+# outside a pass (clicks, hover, hit tests) always build fresh.
+_pass_region = None
+_pass_started = 0.0
+_pass_layouts = {}
+_PASS_MAX_AGE = 0.5     # seconds; a pass that never closed stops counting
+
+
+def begin_draw_pass(region):
+    global _pass_region, _pass_started
+    import time
+    _pass_layouts.clear()
+    _pass_region = region.as_pointer() if region is not None else None
+    _pass_started = time.perf_counter()
+
+
+def end_draw_pass():
+    global _pass_region
+    _pass_region = None
+    _pass_layouts.clear()
+
+
+def _pass_key(area, region, scene_name, anchor_x, anchor_top):
+    if _pass_region is None or region.as_pointer() != _pass_region:
+        return None
+    import time
+    if time.perf_counter() - _pass_started > _PASS_MAX_AGE:
+        return None
+    return (area.as_pointer(), scene_name, round(anchor_x, 2),
+            round(anchor_top, 2), region.width, region.height)
+
+
 def build_hosted_layout(context, area, region, anchor_x=-1.0, anchor_top=-1.0):
     """Return (panel_rect, entries) for the HUD-hosted panel, else None.
 
@@ -1533,7 +1569,14 @@ def build_hosted_layout(context, area, region, anchor_x=-1.0, anchor_top=-1.0):
     """
     if not panel_open() or region is None or area is None:
         return None
-    return _build_layout(region, area, context.scene.name, anchor_x, anchor_top)
+    scene_name = context.scene.name
+    key = _pass_key(area, region, scene_name, anchor_x, anchor_top)
+    if key is not None and key in _pass_layouts:
+        return _pass_layouts[key]
+    layout = _build_layout(region, area, scene_name, anchor_x, anchor_top)
+    if key is not None:
+        _pass_layouts[key] = layout
+    return layout
 
 
 def handle_navigator_click(context, mx, my, entries):
