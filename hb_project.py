@@ -246,6 +246,53 @@ def set_main_scene(scene):
     scene['IS_MAIN_SCENE'] = True
 
 
+# Registered scene property groups that hold project-level data on the
+# main scene (project info, the style pools every room reads). Add-ons
+# that keep their own project data on the main scene add their group
+# names with register_project_property_group().
+PROJECT_PROPERTY_GROUPS = ['hb_project', 'hb_face_frame', 'hb_frameless',
+                           'hb_closets']
+
+
+def register_project_property_group(name):
+    """Have migrate_project_data carry another add-on's main-scene group."""
+    if name not in PROJECT_PROPERTY_GROUPS:
+        PROJECT_PROPERTY_GROUPS.append(name)
+
+
+def unregister_project_property_group(name):
+    if name in PROJECT_PROPERTY_GROUPS:
+        PROJECT_PROPERTY_GROUPS.remove(name)
+
+
+def _migrate_property_groups(old_scene, new_scene):
+    """Copy the project-level property groups' stored values as they are.
+
+    Registered properties are not custom properties, so the key copy in
+    migrate_project_data never sees them. The raw copy runs no update
+    callbacks: setting names through RNA would rename style copies to
+    '.001' (products refer to styles by name) and some updates add
+    styles of their own. The target's own values for these groups are
+    replaced, since project-level reads only ever used the old main's.
+    """
+    try:
+        src = old_scene.bl_system_properties_get()
+        dst = new_scene.bl_system_properties_get(do_create=True)
+    except AttributeError:
+        return
+    if src is None or dst is None:
+        return
+    for name in PROJECT_PROPERTY_GROUPS:
+        if name not in src:
+            continue
+        try:
+            if name in dst:
+                del dst[name]
+            dst[name] = src[name]
+        except (TypeError, KeyError) as e:
+            print(f"HB5: could not migrate scene group '{name}': {e}")
+
+
 def migrate_project_data(old_scene, new_scene):
     """
     Copy project-level data from one scene to another.
@@ -253,12 +300,14 @@ def migrate_project_data(old_scene, new_scene):
     properties, integration IDs, revision counters) survives on the
     scene taking over as main.
 
-    Copies the scene's custom properties, skipping per-scene view state
-    and scene-type flags, and never overwriting values already set on
-    the target scene.
+    Copies the project-level property groups (PROJECT_PROPERTY_GROUPS)
+    as they are, then the scene's custom properties, skipping per-scene
+    view state and scene-type flags, and never overwriting custom values
+    already set on the target scene.
     """
     if old_scene is None or new_scene is None or old_scene == new_scene:
         return
+    _migrate_property_groups(old_scene, new_scene)
     skip_keys = {'IS_MAIN_SCENE', 'IS_LAYOUT_VIEW', 'IS_DETAIL_VIEW',
                  'IS_CROWN_DETAIL', 'home_builder', 'cycles'}
     for key in old_scene.keys():
