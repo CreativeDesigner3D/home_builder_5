@@ -1042,21 +1042,36 @@ def _finished_bottom_max_length(root):
     return FB_MAX_LENGTH
 
 
-def _finished_bottom_entry(root):
-    """Where a cabinet's applied bottom panel runs, for joining it to its
-    neighbours'. None for a cabinet with no panel, or one that keeps its
-    own (a stacked, angled or hidden cabinet)."""
+# Light valances under uppers in line are cut as one strip the same way,
+# with keys of their own so the two runs never mix.
+LV_OWNER_KEY = 'hb_light_valance_owner'     # on a hidden valance
+LV_RUN_KEY = 'hb_light_valance_run'         # on a cabinet: who it shares with
+
+_FB_RUN = {'role': 'FINISHED_BOTTOM', 'key': FINISHED_BOTTOM_KEY,
+           'owner': FB_OWNER_KEY, 'run': FB_RUN_KEY, 'led': True}
+_LV_RUN = {'role': 'LIGHT_VALANCE', 'key': LV_KEY,
+           'owner': LV_OWNER_KEY, 'run': LV_RUN_KEY, 'led': False}
+
+
+def _run_entry(root, kind):
+    """Where a cabinet's applied bottom panel (or light valance) runs,
+    for joining it to its neighbours'. None for a cabinet without one,
+    or one that keeps its own (a stacked or angled cabinet).
+
+    A cage's hide_viewport follows the selection mode, not whether the
+    cabinet is shown, so it is not looked at here."""
     if root is None or not is_solved_cabinet(root):
         return None
-    t = finished_bottom_thickness(root)
-    if t <= 0.0 or root.hide_viewport:
+    lv = kind is _LV_RUN
+    t = light_valance_thickness(root) if lv else finished_bottom_thickness(root)
+    if t <= 0.0:
         return None
     if root.parent is not None and cabinet_root(root.parent) is not None:
         return None
     if root.get(ANGLED_BACK_KEY):
         return None
     parts = carcass_parts(root)
-    panel = parts.get('FINISHED_BOTTOM')
+    panel = parts.get(kind['role'])
     if panel is None:
         return None
     cage = GeoNodeCage(root)
@@ -1064,21 +1079,25 @@ def _finished_bottom_entry(root):
     depths = angled_front_depths(root, dim_y, inch(0.75))
     if depths is not None and min(depths) < dim_y - _FB_TOL:
         return None
+    # Applied ends take their thickness out of the box, and finished
+    # sides that come down past a valance take theirs out of both.
     left_in, right_in = applied_end_insets(root, parts, 'UPPER', dim_x, dim_y)
     left_drop, right_drop = light_valance_end_drops(root, parts)
     left_in += left_drop
     right_in += right_drop
+    width = GeoNodeCutpart(panel).get_input('Width') if lv else dim_y
     world = _live_world(root)
     rot = world.to_3x3()
     led = None
-    if bool(prompt(root, FB_LED_KEY, False)):
+    if not lv and bool(prompt(root, FB_LED_KEY, False)):
         led = tuple(round(float(prompt(root, key, default)), 5)
                     for key, default in ((FB_LED_WIDTH_KEY, inch(0.875)),
                                          (FB_LED_DEPTH_KEY, inch(0.375)),
                                          (FB_LED_INSET_KEY, inch(1.5))))
     slots = panel.material_slots
     return {
-        'root': root, 'panel': panel, 't': t, 'dim_y': dim_y,
+        'root': root, 'panel': panel, 'kind': kind, 't': t, 'dim_y': dim_y,
+        'width': width,
         'start': left_in, 'length': max(dim_x - left_in - right_in, 0.0),
         'origin': world.translation.copy(),
         'x': (rot @ Vector((1.0, 0.0, 0.0))).normalized(),
@@ -1088,9 +1107,15 @@ def _finished_bottom_entry(root):
     }
 
 
+def _finished_bottom_entry(root):
+    return _run_entry(root, _FB_RUN)
+
+
 def _finished_bottoms_join(a, b):
-    """Two panels are one piece of material in one line."""
+    """Two panels (or valances) are one piece of material in one line."""
     if abs(a['t'] - b['t']) > 1e-6 or abs(a['dim_y'] - b['dim_y']) > _FB_TOL:
+        return False
+    if abs(a['width'] - b['width']) > _FB_TOL:
         return False
     if a['led'] != b['led'] or a['material'] != b['material']:
         return False
@@ -1104,13 +1129,14 @@ def _finished_bottom_chain(entry):
     """The panels touching end to end in a line with ``entry``'s, left to
     right, its own included."""
     root = entry['root']
+    kind = entry['kind']
     line = [(entry['start'], entry)]
     for scene in root.users_scene[:1]:
         for obj in scene.objects:
             if (obj is root or not obj.get('IS_FRAMELESS_CABINET_CAGE')
-                    or not obj.get(FINISHED_BOTTOM_KEY)):
+                    or not obj.get(kind['key'])):
                 continue
-            other = _finished_bottom_entry(obj)
+            other = _run_entry(obj, kind)
             if other is None or not _finished_bottoms_join(entry, other):
                 continue
             along = (other['origin'] - entry['origin']).dot(entry['x'])
@@ -1132,6 +1158,7 @@ def _apply_finished_bottom_chain(chain):
     length allows, breaking only at cabinet joints."""
     if not chain:
         return
+    kind = chain[0]['kind']
     limit = _finished_bottom_max_length(chain[0]['root'])
     pieces = [[chain[0]]]
     for entry in chain[1:]:
@@ -1146,55 +1173,59 @@ def _apply_finished_bottom_chain(chain):
         panel = owner['panel']
         GeoNodeCutpart(panel).set_input('Length', total)
         panel.hide_viewport = panel.hide_render = False
-        if FB_OWNER_KEY in panel:
-            del panel[FB_OWNER_KEY]
-        set_modifier(panel, FB_LED_MOD_NAME, (('End X', total + 0.01),))
+        if kind['owner'] in panel:
+            del panel[kind['owner']]
+        if kind['led']:
+            set_modifier(panel, FB_LED_MOD_NAME, (('End X', total + 0.01),))
         for entry in piece[1:]:
             GeoNodeCutpart(entry['panel']).set_input('Length', entry['length'])
             entry['panel'].hide_viewport = entry['panel'].hide_render = True
-            entry['panel'][FB_OWNER_KEY] = owner['root'].name
+            entry['panel'][kind['owner']] = owner['root'].name
     for entry in chain:
         if len(chain) > 1:
-            entry['root'][FB_RUN_KEY] = names
-        elif FB_RUN_KEY in entry['root']:
-            del entry['root'][FB_RUN_KEY]
+            entry['root'][kind['run']] = names
+        elif kind['run'] in entry['root']:
+            del entry['root'][kind['run']]
 
 
-def _refresh_finished_bottom_run(root):
-    """Join ``root``'s applied bottom to its neighbours' as they stand
-    now, and put right the cabinets it shared a panel with before."""
-    before = [name for name in str(root.get(FB_RUN_KEY, '')).split('\n')
+def _refresh_finished_bottom_run(root, kind=_FB_RUN):
+    """Join ``root``'s applied bottom (or light valance) to its
+    neighbours' as they stand now, and put right the cabinets it shared
+    one with before."""
+    before = [name for name in str(root.get(kind['run'], '')).split('\n')
               if name and name != root.name]
-    entry = _finished_bottom_entry(root)
+    entry = _run_entry(root, kind)
     chain = _finished_bottom_chain(entry) if entry is not None else []
     _apply_finished_bottom_chain(chain)
-    if entry is None and FB_RUN_KEY in root:
-        del root[FB_RUN_KEY]
+    if entry is None and kind['run'] in root:
+        del root[kind['run']]
     now = {e['root'].name for e in chain}
     for name in before:
         if name in now:
             continue
-        other = _finished_bottom_entry(bpy.data.objects.get(name))
+        other = _run_entry(bpy.data.objects.get(name), kind)
         if other is not None:
             _apply_finished_bottom_chain(_finished_bottom_chain(other))
 
 
 def refresh_finished_bottoms(scene):
-    """Re-join every applied bottom panel in the room (after a cabinet
-    has gone, say). Returns how many lines of panels were looked at."""
-    done = set()
+    """Re-join every applied bottom panel and light valance in the room
+    (after a cabinet has gone, say). Returns how many lines were looked
+    at."""
     count = 0
-    for obj in list(scene.objects):
-        if (obj.name in done or not obj.get('IS_FRAMELESS_CABINET_CAGE')
-                or not obj.get(FINISHED_BOTTOM_KEY)):
-            continue
-        entry = _finished_bottom_entry(obj)
-        if entry is None:
-            continue
-        chain = _finished_bottom_chain(entry)
-        _apply_finished_bottom_chain(chain)
-        done.update(e['root'].name for e in chain)
-        count += 1
+    for kind in (_FB_RUN, _LV_RUN):
+        done = set()
+        for obj in list(scene.objects):
+            if (obj.name in done or not obj.get('IS_FRAMELESS_CABINET_CAGE')
+                    or not obj.get(kind['key'])):
+                continue
+            entry = _run_entry(obj, kind)
+            if entry is None:
+                continue
+            chain = _finished_bottom_chain(entry)
+            _apply_finished_bottom_chain(chain)
+            done.update(e['root'].name for e in chain)
+            count += 1
     return count
 
 
@@ -1229,11 +1260,12 @@ def _solve_finished_bottom(root, parts, p, dim_x, dim_y, dim_z):
         _solve_light_valance(root, parts, dim_x, dim_y)
         _solve_own_finished_bottom(root, parts, p, dim_x, dim_y, dim_z)
     finally:
-        if FINISHED_BOTTOM_KEY in root or FB_RUN_KEY in root:
-            try:
-                _refresh_finished_bottom_run(root)
-            except Exception:
-                traceback.print_exc()
+        for kind in (_FB_RUN, _LV_RUN):
+            if kind['key'] in root or kind['run'] in root:
+                try:
+                    _refresh_finished_bottom_run(root, kind)
+                except Exception:
+                    traceback.print_exc()
 
 
 def _solve_own_finished_bottom(root, parts, p, dim_x, dim_y, dim_z):
