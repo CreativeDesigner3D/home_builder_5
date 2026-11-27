@@ -16,6 +16,7 @@ ellipsized), its list is clamped to the viewport and scrolls with the mouse
 wheel, and section headers click to collapse.
 """
 
+import time
 import bpy
 import gpu
 import blf
@@ -636,12 +637,43 @@ def sort_key(scene):
     return _sort_key(scene)
 
 
+# _parent_room_name runs for every layout row each time the panel is
+# laid out, and Object.users_scene walks every scene's collections, so
+# on a large file the lookups add up. Answers are kept briefly, keyed on
+# what is cheap to check every time: the layout's name and source wall,
+# and the scene count. (Counting objects walks the whole list, so it is
+# left out.) A renamed room or a relinked wall shows within the TTL.
+_PARENT_CACHE_TTL = 1.0
+_parent_cache = {}
+_parent_cache_state = [None, 0.0]
+
+
+def _parent_cache_key():
+    return len(bpy.data.scenes)
+
+
 def _parent_room_name(scene):
     """Resolve a layout view's source wall back to the room scene that owns it.
 
     Returns None when the layout view's own name already leads with that
     room name -- shown as a parent prefix it would just duplicate the room
     name the row already displays."""
+    now = time.monotonic()
+    key = _parent_cache_key()
+    if (key != _parent_cache_state[0]
+            or now - _parent_cache_state[1] > _PARENT_CACHE_TTL):
+        _parent_cache.clear()
+        _parent_cache_state[0] = key
+        _parent_cache_state[1] = now
+    entry = (scene.name, scene.get('SOURCE_WALL'))
+    if entry in _parent_cache:
+        return _parent_cache[entry]
+    result = _lookup_parent_room_name(scene)
+    _parent_cache[entry] = result
+    return result
+
+
+def _lookup_parent_room_name(scene):
     sw_name = scene.get('SOURCE_WALL')
     if not sw_name:
         return None
@@ -1539,7 +1571,6 @@ _PASS_MAX_AGE = 0.5     # seconds; a pass that never closed stops counting
 
 def begin_draw_pass(region):
     global _pass_region, _pass_started
-    import time
     _pass_layouts.clear()
     _pass_region = region.as_pointer() if region is not None else None
     _pass_started = time.perf_counter()
@@ -1554,7 +1585,6 @@ def end_draw_pass():
 def _pass_key(area, region, scene_name, anchor_x, anchor_top):
     if _pass_region is None or region.as_pointer() != _pass_region:
         return None
-    import time
     if time.perf_counter() - _pass_started > _PASS_MAX_AGE:
         return None
     return (area.as_pointer(), scene_name, round(anchor_x, 2),
