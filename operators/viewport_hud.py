@@ -61,6 +61,7 @@ _pass_handle = None        # PRE_VIEW handler that opens a layout pass
 _hud_shutdown = False      # set by unregister(); gates the draw + keymap ops
 _mouse = (-1, -1)          # last cursor pos, region-local
 _mouse_region = None       # region _mouse was measured in (hover is per-region)
+_painted = {}              # region pointer -> (nav layout, inspector layout) last painted
 _last_hover_key = None     # layout index of the widget under the cursor
 # (scene name, selected names, active name) as it stood while the cursor
 # was on HUD surface. The active tool's click-select sees a press before
@@ -2557,13 +2558,19 @@ def _draw_hud_pass():
         if layout:
             scene_navigator.paint_navigator(
                 layout[0], layout[1], mouse[0], mouse[1])
+    else:
+        layout = None
 
     # The selection inspector, when it is popped out of the panel. Last,
     # so a floating box dragged over the panel sits on top of it.
+    inspector = None
     try:
         selection_inspector.draw(context, area, region, mouse[0], mouse[1])
+        # Shared with the draw above through the redraw's pass.
+        inspector = selection_inspector.layout(context, area, region)
     except Exception as ex:
         print('Home Builder: inspector draw failed: %s' % ex)
+    _painted[region.as_pointer()] = (layout or None, inspector)
 
 
 # ---- Click + hover routing (addon keymap) -----------------------------------
@@ -2918,23 +2925,75 @@ class home_builder_OT_hud_hover(bpy.types.Operator):
         global _mouse, _mouse_region, _last_hover_key, _surface_selection
         _mouse = (event.mouse_region_x, event.mouse_region_y)
         _mouse_region = context.region
+        mx, my = _mouse
 
-        hover_key = None
+        widget_key = None
         for i, (_widget, rect) in enumerate(
                 compute_layout(context, context.area)):
-            if point_in_rect(_mouse[0], _mouse[1], rect):
-                hover_key = i
+            if point_in_rect(mx, my, rect):
+                widget_key = i
                 break
-        if hover_key is not None or _hits_panel_or_inspector(
-                context, context.area, _mouse[0], _mouse[1]):
+        # The panel and the inspector paint their own hover. Hit-test
+        # what was last painted rather than laying them out again (a
+        # selected cabinet's page is costly), and redraw only when the
+        # cursor crosses into or out of one of their rects.
+        painted = _painted.get(context.region.as_pointer())
+        if painted is None:
+            on_surface = _hits_panel_or_inspector(
+                context, context.area, mx, my)
+            surface_key = object()      # nothing painted yet: redraw
+        else:
+            on_surface, surface_key = _painted_hover(painted, mx, my)
+        if widget_key is not None or on_surface:
             _surface_selection = _grab_surface_selection(context)
         else:
             _surface_selection = None
-        if (hover_key != _last_hover_key or scene_navigator.panel_open()
-                or selection_inspector.showing(context)):
+        hover_key = (widget_key, surface_key)
+        if hover_key != _last_hover_key:
             _last_hover_key = hover_key
             context.area.tag_redraw()
         return {'PASS_THROUGH'}
+
+
+def _is_rect(v):
+    return (isinstance(v, tuple) and len(v) == 4
+            and all(isinstance(n, (int, float)) and not isinstance(n, bool)
+                    for n in v))
+
+
+def _rects_under(value, mx, my, path, out, depth=0):
+    """Collect the index paths of every rect nested in `value` that holds
+    the cursor. Layout entries are plain tuples and lists, so this reads
+    any surface's entries without knowing their shapes."""
+    if depth > 8:
+        return
+    if _is_rect(value):
+        if point_in_rect(mx, my, value):
+            out.append(path)
+        return
+    if isinstance(value, dict):
+        value = list(value.values())
+    if isinstance(value, (tuple, list)):
+        for i, item in enumerate(value):
+            _rects_under(item, mx, my, path + (i,), out, depth + 1)
+
+
+def _painted_hover(painted, mx, my):
+    """(cursor on the panel or the inspector, a key for what it is over)
+    from the layouts the last redraw painted."""
+    nav, inspector = painted
+    on_surface = False
+    hits = []
+    if nav:
+        if point_in_rect(mx, my, nav[0]):
+            on_surface = True
+            _rects_under(nav[1], mx, my, ('nav',), hits)
+    if inspector:
+        if point_in_rect(mx, my, inspector['rect']):
+            on_surface = True
+            _rects_under([inspector.get('buttons'), inspector.get('entries'),
+                          inspector.get('crumbs')], mx, my, ('insp',), hits)
+    return on_surface, tuple(hits)
 
 
 # ---- Lifecycle --------------------------------------------------------------
@@ -3014,6 +3073,7 @@ def unregister():
             pass
         _pass_handle = None
     scene_navigator.end_draw_pass()
+    _painted.clear()
     if _draw_handle is not None:
         try:
             bpy.types.SpaceView3D.draw_handler_remove(_draw_handle, 'WINDOW')

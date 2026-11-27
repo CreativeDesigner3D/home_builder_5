@@ -212,21 +212,28 @@ def _float_xy(area, w):
 def _page_blocks(context):
     """The SELECTED page without its title row: the header already
     names what is picked."""
-    from . import selected_tab
-    blocks = selected_tab._blocks(context)
+    return _strip_head(_all_blocks(context))
+
+
+def _strip_head(blocks):
     if blocks and blocks[0][0] == 'head':
         blocks = blocks[1:]
     return blocks
 
 
-def _title(context, provider=None):
+def _all_blocks(context):
     from . import selected_tab
+    return selected_tab._blocks(context)
+
+
+def _title(context, provider=None, blocks=None):
     if provider is not None:
         try:
             return str(provider.title(context))
         except Exception:
             return "Selected"
-    blocks = selected_tab._blocks(context)
+    if blocks is None:
+        blocks = _all_blocks(context)
     for block in blocks:
         if block[0] == 'head':
             return str(block[1][0])
@@ -269,12 +276,34 @@ def _crumb_rects(context, header, right):
     return out, first > 0
 
 
+# One layout per viewport redraw, shared through the navigator's draw
+# pass: the HUD paints the box and several overlays ask where it is, and
+# a selected cabinet's page is costly to build. Asks outside a pass
+# (clicks, hit tests) build fresh.
+_pass_layouts = {}
+_pass_token = [None]
+
+
 def layout(context, area, region):
     """The box and what is in it, or None when it is not showing:
     {'rect', 'header', 'title', 'buttons': [(action, rect)], 'body',
     'entries'}. Shared by draw and hit-testing so they cannot drift."""
     if area is None or region is None or not showing(context):
         return None
+    from . import scene_navigator
+    token = scene_navigator.draw_pass_token(region)
+    if token is None:
+        return _build_layout(context, area, region)
+    if token != _pass_token[0]:
+        _pass_layouts.clear()
+        _pass_token[0] = token
+    key = (area.as_pointer(), context.scene.name)
+    if key not in _pass_layouts:
+        _pass_layouts[key] = _build_layout(context, area, region)
+    return _pass_layouts[key]
+
+
+def _build_layout(context, area, region):
     from . import options_panel, selected_tab
     s = _s()
     w = WIDTH * s
@@ -283,8 +312,14 @@ def layout(context, area, region):
     # A page that draws itself (an appliance's panel run) instead of
     # blocks: it fills the room it is given, and scrolls within it.
     provider = selected_tab.page_provider(context)
-    blocks = [] if provider is not None else _page_blocks(context)
     folded = collapsed()
+    # Folded, the box is its header alone: the page is not built. The
+    # title still needs the page's head row, unless the crumbs name it.
+    crumbs_wanted = provider is None and bool(selected_tab.crumbs(context))
+    all_blocks = None
+    if provider is None and (not folded or not crumbs_wanted):
+        all_blocks = _all_blocks(context)
+    blocks = _strip_head(all_blocks) if all_blocks else []
 
     if mode() == MODE_FLOAT:
         x, top = _float_xy(area, w)
@@ -323,11 +358,13 @@ def layout(context, area, region):
                 entries = provider.build(body, context)
             else:
                 entries = options_panel.build_page(
-                    body, context, _page_blocks, _scroll_list())
+                    body, context, lambda _c: blocks, _scroll_list())
         except Exception as ex:
             print('Home Builder: the inspector failed to build: %s' % ex)
     return {'rect': rect, 'header': header,
-            'title': _title(context, provider),
+            'title': (_title(context, provider, all_blocks)
+                      if provider is not None or all_blocks is not None
+                      else "Selected"),
             'buttons': buttons, 'body': body, 'entries': entries,
             'title_right': bx, 'provider': provider,
             'crumbs': (None if provider is not None

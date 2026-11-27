@@ -1582,6 +1582,18 @@ def end_draw_pass():
     _pass_layouts.clear()
 
 
+def draw_pass_token(region):
+    """A value that stays the same for one redraw of `region`, or None
+    outside a pass. Other HUD surfaces key their own per-redraw caches
+    on it."""
+    if (_pass_region is None or region is None
+            or region.as_pointer() != _pass_region):
+        return None
+    if time.perf_counter() - _pass_started > _PASS_MAX_AGE:
+        return None
+    return (_pass_region, _pass_started)
+
+
 def _pass_key(area, region, scene_name, anchor_x, anchor_top):
     if _pass_region is None or region.as_pointer() != _pass_region:
         return None
