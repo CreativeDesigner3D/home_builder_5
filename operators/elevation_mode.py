@@ -1982,7 +1982,8 @@ def _option_available(key):
 # reading them while they are hidden (_molding_shown).
 
 MOLDING_HIDE_TAG = 'HB_ELEVATION_MOLDING_HIDDEN'
-MOLDING_MARKS = ('IS_HB_MOLDING_SWEEP', 'IS_CROWN_MOLDING',
+MOLDING_MARKS = ('IS_HB_MOLDING_SWEEP', 'IS_HB_MOLDING_INSERT',
+                 'IS_CROWN_MOLDING',
                  'IS_TOE_KICK_MOLDING', 'IS_UPPER_BOTTOM_MOLDING',
                  'IS_FRAMELESS_MOLDING', 'IS_CLOSET_MOLDING')
 _molding_tests = []
